@@ -4,6 +4,7 @@ import os
 import plotly.express as px
 from datetime import datetime, timedelta
 import re
+from st_gsheets_connection import GSheetsConnection # <-- NUEVO: Herramienta de la Nube
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -46,7 +47,6 @@ def mostrar_comentario_cierre(fila):
         st.markdown("##### 👤 Datos del Cliente")
         st.write(f"**N° Cuenta:** {fila.get('CLIENTE', 'N/D')}")
         
-        # Red de seguridad: Busca el nombre real en las columnas más comunes
         nombre_real = fila.get('NOMBRE', fila.get('SUSCRIPTOR', fila.get('NOMBRE CLIENTE', fila.get('NOMBRE_CLIENTE', 'N/D'))))
         if nombre_real != 'N/D':
             st.write(f"**Nombre:** {nombre_real}")
@@ -125,14 +125,12 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
-    # AQUÍ ESTÁ EL CAMBIO MAESTRO: Agregamos todas las posibles columnas de "Nombre"
     cols_a_mostrar = [
         'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'NOMBRE_CLIENTE', 'NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE_SUSCRIPTOR', 'COLONIA', 
         'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
         'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
     
-    # El sistema filtrará automáticamente y solo mostrará las columnas que sí existan en tu Excel
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     
     return df_visual_procesado[columnas_finales], row_styler_logic
@@ -205,12 +203,39 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 # 5. INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
+    # --- CONEXIÓN A LA NUBE ---
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+    except Exception as e:
+        st.error("Error al inicializar la conexión con Google Sheets. Verifica tus secretos.")
+        conn = None
+
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
     
     with sidebar_bottom:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
+
+        # --- BOTÓN PARA JEFES: Cargar desde la nube ---
+        st.markdown("### ☁️ Sincronización")
+        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Trae los últimos datos de la oficina", use_container_width=True):
+            if conn is not None:
+                try:
+                    df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
+                    if not df_nube.empty:
+                        st.session_state.df_base = df_nube
+                        st.success("✅ Monitor actualizado con la nube.")
+                        st.rerun()
+                    else:
+                        st.warning("La base de datos en la nube está vacía. Jaison debe subir un archivo primero.")
+                except Exception as e:
+                    st.error(f"Error al conectar con la nube: {e}")
+            else:
+                st.error("La conexión a la nube no está disponible.")
+        
+        st.divider()
+
         st.markdown("### 📥 Archivos Crudos")
         archivos_uploader_diamante = st.file_uploader(
             "Sube rep_actividades y FttxActiveDevice", 
@@ -232,15 +257,29 @@ def main():
     if 'df_base' not in st.session_state or btn_reprocesar:
         if file_act_ptr is None or file_disp_ptr is None:
             st.title("⚡ Monitor Operativo Maxcom PRO")
-            st.info("Sube los archivos requeridos en el panel izquierdo (abajo).")
-            st.warning("⚠️ El Monitor requiere el cruce de 'Actividades' y 'Dispositivos' (BT:BV) para habilitar el tablero.")
+            st.info("💡 Consejo: Usa 'ACTUALIZAR DESDE LA NUBE' en el menú izquierdo si estás fuera de la oficina, o sube los archivos crudos para guardar una nueva copia en la nube.")
+            st.warning("⚠️ Para modo editor: Sube 'Actividades' y 'Dispositivos'.")
             return
         
         res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
         if res_p_diamante is not None:
             st.session_state.df_base = res_p_diamante
             st.session_state.df_hist = res_h_diamante
-            st.success("✅ Datos sincronizados y depurados correctamente.")
+            
+            # --- GUARDADO AUTOMÁTICO EN LA NUBE ---
+            if conn is not None:
+                with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
+                    try:
+                        conn.update(
+                            spreadsheet=st.secrets["url_base_datos"],
+                            worksheet="Sheet1",
+                            data=res_p_diamante
+                        )
+                        st.success("✅ Datos sincronizados y guardados en la nube correctamente.")
+                    except Exception as e:
+                        st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
+            else:
+                st.success("✅ Datos procesados localmente.")
         else:
             return
 
