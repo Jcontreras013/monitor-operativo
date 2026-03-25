@@ -44,13 +44,22 @@ def mostrar_comentario_cierre(fila):
     col_modal_a, col_modal_b = st.columns(2)
     with col_modal_a:
         st.markdown("##### 👤 Datos del Cliente")
-        st.write(f"**Suscriptor:** {fila['CLIENTE']}")
+        st.write(f"**N° Cuenta:** {fila.get('CLIENTE', 'N/D')}")
+        
+        # Red de seguridad: Busca el nombre real en las columnas más comunes
+        nombre_real = fila.get('NOMBRE', fila.get('SUSCRIPTOR', fila.get('NOMBRE CLIENTE', fila.get('NOMBRE_CLIENTE', 'N/D'))))
+        if nombre_real != 'N/D':
+            st.write(f"**Nombre:** {nombre_real}")
+            
         st.write(f"**Ubicación (Colonia):** {fila.get('COLONIA', 'N/D')}")
     with col_modal_b:
         st.markdown("##### 🚦 Datos de Operación")
         st.write(f"**Estado Actual:** {fila['ESTADO']}")
         st.write(f"**Técnico:** {fila['TECNICO']}")
-        st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
+        if 'MX' in fila:
+            st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
+        if 'GPS' in fila:
+            st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
     
     st.divider()
     estatus_final_check = str(fila.get('ESTADO','')).upper().strip()
@@ -59,7 +68,7 @@ def mostrar_comentario_cierre(fila):
     else:
         st.markdown("**📝 COMENTARIO DE SEGUIMIENTO (EN PROCESO):**")
         
-    texto_comentario_registrado = fila['COMENTARIO']
+    texto_comentario_registrado = fila.get('COMENTARIO', '')
     if pd.isnull(texto_comentario_registrado) or texto_comentario_registrado == "":
         texto_comentario_registrado = "No existen observaciones registradas para esta gestión."
     st.info(texto_comentario_registrado)
@@ -116,11 +125,14 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
+    # AQUÍ ESTÁ EL CAMBIO MAESTRO: Agregamos todas las posibles columnas de "Nombre"
     cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 
+        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'NOMBRE_CLIENTE', 'NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE_SUSCRIPTOR', 'COLONIA', 
         'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
         'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
+    
+    # El sistema filtrará automáticamente y solo mostrará las columnas que sí existan en tu Excel
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     
     return df_visual_procesado[columnas_finales], row_styler_logic
@@ -240,18 +252,14 @@ def main():
     with sidebar_top:
         rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
         
-        # El guardián evalúa qué mostrar en la barra lateral
         if rol_usuario in ['admin', 'jefe']:
-            # Los jefes ven el menú de navegación completo
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO"])
         else:
-            # Si es monitoreo, se fuerza a que su única ruta sea el monitor y NO se dibuja el menú de opciones
             nav_menu_diamante = "⚡ Monitor en Vivo"
         
-        # Filtros del monitor (visibles para todos cuando están en esta vista)
         if nav_menu_diamante == "⚡ Monitor en Vivo":
             if rol_usuario in ['admin', 'jefe']:
-                st.divider() # Separador solo si hubo menú arriba
+                st.divider() 
                 
             st.header("🔍 Filtros en Vivo")
             m_viva_count = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
@@ -350,7 +358,6 @@ def main():
                 st.dataframe(df_pivot_diario, use_container_width=True)
 
             st.markdown("### 📥 Exportación de Consolidados")
-            # PDF ÚNICO QUE INCLUYE EL CONSOLIDADO GENERAL SIN LÍMITES
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO (INCLUYE CONSOLIDADO GENERAL)", use_container_width=True, type="primary"):
                 pdf_bytes_archivo_diario = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
                 st.download_button("📥 Descargar Archivo (PDF)", data=pdf_bytes_archivo_diario, file_name=f"Cierre_{fecha_cal_sel}.pdf", key="dl_pdf_diario")
