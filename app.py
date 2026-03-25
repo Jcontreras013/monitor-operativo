@@ -117,7 +117,7 @@ def aplicar_estilos_df(df_original_para_estilo):
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
     cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'COLONIA', 
+        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'NOMBRE', 'COLONIA', 
         'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
         'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
