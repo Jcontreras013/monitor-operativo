@@ -4,7 +4,7 @@ import os
 import plotly.express as px
 from datetime import datetime, timedelta
 import re
-from st_gsheets_connection import GSheetsConnection # <-- NUEVO: Herramienta de la Nube
+from streamlit_gsheets import GSheetsConnection
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
