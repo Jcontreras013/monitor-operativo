@@ -219,7 +219,7 @@ def main():
 
         # --- BOTÓN PARA JEFES: Cargar desde la nube ---
         st.markdown("### ☁️ Sincronización")
-         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Trae los últimos datos de la oficina", use_container_width=True):
+        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Trae los últimos datos de la oficina", use_container_width=True):
             if conn is not None:
                 try:
                     df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
