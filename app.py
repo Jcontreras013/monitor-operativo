@@ -149,8 +149,10 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if col_f in df_act.columns:
                 df_act[col_f] = pd.to_datetime(df_act[col_f], dayfirst=True, errors='coerce')
         
-        ahora_momento = pd.Timestamp(datetime.now())
-        fecha_limite_7d_ventana = ahora_momento - timedelta(days=7) 
+        # HORA HONDURAS
+        ahora_momento = datetime.utcnow() - timedelta(hours=6)
+        ahora_momento_ts = pd.Timestamp(ahora_momento)
+        fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
         
         df_act = df_act[
             (df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | 
@@ -158,14 +160,14 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             (df_act['HORA_LIQ'].isna())
         ].copy()
         
-        df_act['DIAS_RETRASO'] = (ahora_momento.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
+        df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
         
         # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
         df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
         
         def alert_2h_logic_diamante(row_check):
             if pd.notnull(row_check['HORA_INI']) and pd.isnull(row_check['HORA_LIQ']):
-                m_diff_val = (ahora_momento - row_check['HORA_INI']).total_seconds() / 60
+                m_diff_val = (ahora_momento_ts - row_check['HORA_INI']).total_seconds() / 60
                 if m_diff_val > 120 and str(row_check.get('ESTADO','')).upper().strip() != 'CERRADA':
                     return True
             return False
@@ -228,17 +230,22 @@ def main():
                 try:
                     df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
                     if not df_nube.empty:
-                        # --- LIMPIEZA FORZADA POST-NUBE (FORMATO LATINO) ---
+                        # --- LIMPIEZA FORZADA POST-NUBE (BILINGÜE Y FECHAS INTELIGENTES) ---
                         for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                             if col_f in df_nube.columns:
-                                df_nube[col_f] = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
+                                df_nube[col_f] = pd.to_datetime(df_nube[col_f], errors='coerce')
                         
-                        # Convertimos números que Google Sheets vuelve texto
+                        # Reparación Bilingüe para Offline
+                        for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
+                            if col_b in df_nube.columns:
+                                df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
+                        
+                        # Convertimos números 
                         for col in ['DIAS_RETRASO', 'MINUTOS_CALC', 'NUM', 'CLIENTE']:
                             if col in df_nube.columns:
                                 df_nube[col] = pd.to_numeric(df_nube[col], errors='coerce').fillna(0)
                         
-                        # Normalizamos el estado para los filtros
+                        # Normalizamos el estado
                         if 'ESTADO' in df_nube.columns:
                             df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
 
@@ -314,22 +321,23 @@ def main():
     # -------------------------------------------------------------
     # 🛡️ BLINDAJE DE DATOS (REGLA DE DIAMANTE CONTRA GOOGLE SHEETS)
     # -------------------------------------------------------------
-    # 1. Asegurar que las fechas regresen como Fechas (formato latino)
+    # 1. Fechas Inteligentes (Auto-detecta el formato)
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
-            df_base[col_f] = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
+            df_base[col_f] = pd.to_datetime(df_base[col_f], errors='coerce')
             
-    # 2. Asegurar que los estados lógicos regresen como Verdadero/Falso matemáticos
+    # 2. Booleanos Bilingües (Enciende el rojo sin importar el idioma)
     for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
         if col_b in df_base.columns:
-            df_base[col_b] = df_base[col_b].astype(str).str.upper() == 'TRUE'
+            df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
             
-    # 3. Asegurar que los números regresen como valores calculables
+    # 3. Números calculables
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
             df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
     # -------------------------------------------------------------
-    # Ajuste de Zona Horaria (UTC -6)
+    
+    # Ajuste de Zona Horaria (UTC -6 HONDURAS)
     ahora_local = datetime.utcnow() - timedelta(hours=6)
     hoy_date_valor = ahora_local.date()
     patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
@@ -497,7 +505,6 @@ def main():
     # ==============================================================================
     # 7. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
-    # --- FILTRO MAESTRO REGLA DE DIAMANTE (REPARACIÓN DE CARGA) ---
     
     mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
     mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
@@ -506,7 +513,7 @@ def main():
     df_monitor_vivas_full = df_monitor_filtrado[mask_hoy | mask_asignadas].copy()
     df_tablero_kpi_monitor = df_monitor_filtrado[mask_asignadas].copy()
 
-    # Recalcular retraso al vuelo usando reloj local
+    # Recalcular retraso al vuelo usando reloj local de HONDURAS
     df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
     df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
     
@@ -518,7 +525,6 @@ def main():
     df_tablero_kpi_monitor['CatD'] = df_tablero_kpi_monitor['DIAS_RETRASO'].apply(
         lambda d: ">= 7 Dia" if d >= 7 else (f"= {int(d)} Dia" if d > 0 else "= 0 Dia")
     )
-    # --------------------------------------------------------------
 
     st.title("⚡ Monitor Operativo Maxcom")
 
