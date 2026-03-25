@@ -109,11 +109,11 @@ def aplicar_estilos_df(df_original_para_estilo):
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
             
-            # Regla de Diamante de Colores
-            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #FF0000; color: white' # Rojo
-            elif val_dias >= 4 and val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #FF8C00; color: white' # Naranja oscuro
-            elif val_dias >= 1 and val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #FFFF00; color: black' # Amarillo
-            elif val_dias == 0: estilos_fila[idx_dias] = 'background-color: #00FF00; color: black' # Verde
+            # REGLA DE COLORES EXACTA
+            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: red; color: white' 
+            elif val_dias >= 4 and val_dias <= 6: estilos_fila[idx_dias] = 'background-color: darkorange; color: white' 
+            elif val_dias >= 1 and val_dias <= 3: estilos_fila[idx_dias] = 'background-color: yellow; color: black' 
+            elif val_dias == 0: estilos_fila[idx_dias] = 'background-color: green; color: black' 
                 
         return estilos_fila
 
@@ -159,6 +159,8 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         ].copy()
         
         df_act['DIAS_RETRASO'] = (ahora_momento.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
+        
+        # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
         df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
         
         def alert_2h_logic_diamante(row_check):
@@ -170,6 +172,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         df_act['ALERTA_TIEMPO'] = df_act.apply(alert_2h_logic_diamante, axis=1)
         
         def offline_seguro_diamante_logic(r_off):
+            # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
             if str(r_off.get('TECNICO', '')).strip().upper() == 'JOSUE MIGUEL SAUCEDA': return False
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
@@ -225,10 +228,10 @@ def main():
                 try:
                     df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
                     if not df_nube.empty:
-                        # --- LIMPIEZA FORZADA POST-NUBE ---
-                        df_nube['HORA_LIQ'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
-                        df_nube['HORA_INI'] = pd.to_datetime(df_nube['HORA_INI'], errors='coerce')
-                        df_nube['FECHA_APE'] = pd.to_datetime(df_nube['FECHA_APE'], errors='coerce')
+                        # --- LIMPIEZA FORZADA POST-NUBE (FORMATO LATINO) ---
+                        for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+                            if col_f in df_nube.columns:
+                                df_nube[col_f] = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
                         
                         # Convertimos números que Google Sheets vuelve texto
                         for col in ['DIAS_RETRASO', 'MINUTOS_CALC', 'NUM', 'CLIENTE']:
@@ -239,7 +242,7 @@ def main():
                         if 'ESTADO' in df_nube.columns:
                             df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
 
-                        # Regla de Diamante: Excepción para Josue Miguel Sauceda
+                        # EXCEPCIÓN JOSUE MIGUEL SAUCEDA EN LA NUBE
                         if 'TECNICO' in df_nube.columns:
                             mask_josue = df_nube['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
                             if 'DIAS_RETRASO' in df_nube.columns:
@@ -251,11 +254,11 @@ def main():
                         st.success("✅ Sincronización Exitosa: Datos normalizados")
                         st.rerun()
                     else:
-                        st.warning("⚠️ La base de datos en la nube está vacía.")
+                        st.warning("La base de datos en la nube está vacía. Jaison debe subir un archivo primero.")
                 except Exception as e:
-                    st.error(f"❌ Error al conectar con la nube: {e}")
+                    st.error(f"Error al conectar con la nube: {e}")
             else:
-                st.error("❌ La conexión a la nube no está disponible.")
+                st.error("La conexión a la nube no está disponible.")
         
         st.divider()
 
@@ -311,10 +314,10 @@ def main():
     # -------------------------------------------------------------
     # 🛡️ BLINDAJE DE DATOS (REGLA DE DIAMANTE CONTRA GOOGLE SHEETS)
     # -------------------------------------------------------------
-    # 1. Asegurar que las fechas regresen como Fechas (no como texto)
+    # 1. Asegurar que las fechas regresen como Fechas (formato latino)
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
-            df_base[col_f] = pd.to_datetime(df_base[col_f], errors='coerce')
+            df_base[col_f] = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
             
     # 2. Asegurar que los estados lógicos regresen como Verdadero/Falso matemáticos
     for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
@@ -326,7 +329,9 @@ def main():
         if col_n in df_base.columns:
             df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
     # -------------------------------------------------------------
-    hoy_date_valor = datetime.now().date()
+    # Ajuste de Zona Horaria (UTC -6)
+    ahora_local = datetime.utcnow() - timedelta(hours=6)
+    hoy_date_valor = ahora_local.date()
     patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
 
     # --- 2. MENÚ SUPERIOR CON RESTRICCIÓN RADICAL DE ROLES ---
@@ -493,25 +498,23 @@ def main():
     # 7. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
     # --- FILTRO MAESTRO REGLA DE DIAMANTE (REPARACIÓN DE CARGA) ---
-    patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
     
     mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
     mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
 
-    # Creamos las tablas base de forma segura
+    # Creamos las tablas base de forma segura (Lentes oscuros aplicados)
     df_monitor_vivas_full = df_monitor_filtrado[mask_hoy | mask_asignadas].copy()
     df_tablero_kpi_monitor = df_monitor_filtrado[mask_asignadas].copy()
 
-    # Recalcular retraso al vuelo para la nube
-    df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp.now().normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
+    # Recalcular retraso al vuelo usando reloj local
+    df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
     df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
     
-    # Aplicar excepción a Josue en el cálculo en vivo
+    # EXCEPCIÓN JOSUE MIGUEL SAUCEDA EN VIVO
     if 'TECNICO' in df_tablero_kpi_monitor.columns:
         mask_josue_kpi = df_tablero_kpi_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
         df_tablero_kpi_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
 
-    # Categorías de días para el cuadro resumen
     df_tablero_kpi_monitor['CatD'] = df_tablero_kpi_monitor['DIAS_RETRASO'].apply(
         lambda d: ">= 7 Dia" if d >= 7 else (f"= {int(d)} Dia" if d > 0 else "= 0 Dia")
     )
