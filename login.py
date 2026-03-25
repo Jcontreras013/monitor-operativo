@@ -1,16 +1,5 @@
 import streamlit as st
 
-# ==============================================================================
-# BASE DE DATOS DE USUARIOS Y ROLES (Aquí controlas quién entra y qué puede ver)
-# ==============================================================================
-USUARIOS_PERMITIDOS = {
-    "jaison": {"clave": "admin2026", "rol": "admin"},
-    "oscar": {"clave": "gerente2026", "rol": "jefe"},
-    "harin": {"clave": "operaciones2026", "rol": "jefe"},
-    "amy": {"clave": "sac2026", "rol": "jefe"},
-    "andres": {"clave": "tecnico2026", "rol": "monitoreo"}
-}
-
 def verificar_autenticacion():
     """Inicializa la memoria de sesión de Streamlit si es la primera vez que entra."""
     if 'autenticado' not in st.session_state:
@@ -36,11 +25,11 @@ def mostrar_pantalla_login():
             if btn_ingresar:
                 user_clean = usuario.strip().lower()
                 
-                # Verificamos si el usuario existe y si la clave coincide
-                if user_clean in USUARIOS_PERMITIDOS and USUARIOS_PERMITIDOS[user_clean]["clave"] == clave:
+                # Vamos a la caja fuerte (secrets) a revisar si el usuario existe y si la clave coincide
+                if user_clean in st.secrets["credenciales"] and st.secrets["credenciales"][user_clean]["clave"] == clave:
                     st.session_state['autenticado'] = True
                     st.session_state['usuario_actual'] = user_clean
-                    st.session_state['rol_actual'] = USUARIOS_PERMITIDOS[user_clean]["rol"]
+                    st.session_state['rol_actual'] = st.secrets["credenciales"][user_clean]["rol"]
                     st.success(f"✅ Acceso concedido. Bienvenido {user_clean.capitalize()}...")
                     st.rerun()
                 else:
