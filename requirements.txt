@@ -4,5 +4,5 @@ plotly
 openpyxl
 fpdf
 matplotlib
-st-gsheets-connection==0.0.3
+st-gsheets-connection
 gspread
