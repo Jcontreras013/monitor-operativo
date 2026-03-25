@@ -5,3 +5,4 @@ openpyxl
 fpdf
 matplotlib
 st-gsheets-connection
+gspread
