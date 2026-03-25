@@ -283,7 +283,26 @@ def main():
         else:
             return
 
-    df_base = st.session_state.df_base
+    df_base = st.session_state.df_base.copy()
+    
+    # -------------------------------------------------------------
+    # 🛡️ BLINDAJE DE DATOS (REGLA DE DIAMANTE CONTRA GOOGLE SHEETS)
+    # -------------------------------------------------------------
+    # 1. Asegurar que las fechas regresen como Fechas (no como texto)
+    for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+        if col_f in df_base.columns:
+            df_base[col_f] = pd.to_datetime(df_base[col_f], errors='coerce')
+            
+    # 2. Asegurar que los estados lógicos regresen como Verdadero/Falso matemáticos
+    for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
+        if col_b in df_base.columns:
+            df_base[col_b] = df_base[col_b].astype(str).str.upper() == 'TRUE'
+            
+    # 3. Asegurar que los números regresen como valores calculables
+    for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
+        if col_n in df_base.columns:
+            df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
+    # -------------------------------------------------------------
     hoy_date_valor = datetime.now().date()
     patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
 
