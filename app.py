@@ -475,14 +475,11 @@ def main():
     # ==============================================================================
     # 7. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
-    df_monitor_vivas_full = df_monitor_filtrado[
-        (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) | 
-        (df_monitor_filtrado['HORA_LIQ'].isna())
-    ].copy()
-    
-    df_tablero_kpi_monitor = df_monitor_vivas_full[
-        df_monitor_vivas_full['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
-    ]
+        mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
+        mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
+
+        df_monitor_vivas_full = df_monitor_filtrado[mask_hoy | mask_asignadas].copy()
+        df_tablero_kpi_monitor = df_monitor_filtrado[mask_asignadas].copy()
 
     st.title("⚡ Monitor Operativo Maxcom")
 
