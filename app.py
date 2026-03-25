@@ -233,7 +233,7 @@ def main():
                         # --- LIMPIEZA FORZADA POST-NUBE (BILINGÜE Y FECHAS INTELIGENTES) ---
                         for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                             if col_f in df_nube.columns:
-                                df_nube[col_f] = pd.to_datetime(df_nube[col_f], errors='coerce')
+                                df_nube[col_f] = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
                         
                         # Reparación Bilingüe para Offline
                         for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
@@ -321,10 +321,10 @@ def main():
     # -------------------------------------------------------------
     # 🛡️ BLINDAJE DE DATOS (REGLA DE DIAMANTE CONTRA GOOGLE SHEETS)
     # -------------------------------------------------------------
-    # 1. Fechas Inteligentes (Auto-detecta el formato)
+    # 1. Fechas Inteligentes
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
-            df_base[col_f] = pd.to_datetime(df_base[col_f], errors='coerce')
+            df_base[col_f] = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
             
     # 2. Booleanos Bilingües (Enciende el rojo sin importar el idioma)
     for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
@@ -357,7 +357,10 @@ def main():
                 
             st.header("🔍 Filtros en Vivo")
             m_viva_count = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
-            total_off_count_viva = int((df_base['ES_OFFLINE'] & m_viva_count).sum())
+            
+            # 💎 BLINDAJE MATEMÁTICO CONTRA EL TYPE-ERROR
+            mascara_offline_segura = df_base['ES_OFFLINE'] == True
+            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
             
             check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
             lista_tecs_monitor = ["Todos"] + sorted(df_base['TECNICO'].dropna().unique().tolist())
@@ -403,7 +406,7 @@ def main():
             st.subheader("📄 Reporte Dinámico en Vivo")
             col_f1, col_f2 = st.columns(2)
             m_viva_rep = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
-            total_off_rep = int((df_base['ES_OFFLINE'] & m_viva_rep).sum())
+            total_off_rep = int((df_base['ES_OFFLINE'] == True & m_viva_rep).sum())
             
             with col_f1: check_criticos_rep = st.toggle(f"Filtrar solo Críticas ({total_off_rep})", key="tgg_rep")
             with col_f2: tec_filtro_rep = st.selectbox("Filtrar por Técnico:", ["Todos"] + sorted(df_base['TECNICO'].dropna().unique().tolist()), key="sel_tec_rep")
@@ -544,13 +547,13 @@ def main():
             res_sop_visual_v = {
                 "FTTH / FIBRA": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
                 "Navegación / Internet": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                "ONT/ONU Offline": int(df_tablero_kpi_monitor['ES_OFFLINE'].sum()),
+                "ONT/ONU Offline": int((df_tablero_kpi_monitor['ES_OFFLINE'] == True).sum()), # 💎 Blindaje Suma Offline
                 "Niveles alterados": len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
                 "Sin señal de TV": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
             }
             st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
             st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-            st.metric("Exceden 2 Horas ⚠️", int(df_tablero_kpi_monitor['ALERTA_TIEMPO'].sum()))
+            st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor['ALERTA_TIEMPO'] == True).sum()))
 
         with col_tab_3:
             st.caption("📦 Instalaciones")
