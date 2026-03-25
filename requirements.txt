@@ -4,3 +4,4 @@ plotly
 openpyxl
 fpdf
 matplotlib
+st-gsheets-connection
