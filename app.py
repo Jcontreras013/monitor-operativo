@@ -225,22 +225,22 @@ def main():
                 df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
                 if not df_nube.empty:
                 # --- LIMPIEZA FORZADA POST-NUBE ---
-                df_nube['HORA_LIQ'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
-                df_nube['HORA_INI'] = pd.to_datetime(df_nube['HORA_INI'], errors='coerce')
-                df_nube['FECHA_APE'] = pd.to_datetime(df_nube['FECHA_APE'], errors='coerce')
+                    df_nube['HORA_LIQ'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
+                    df_nube['HORA_INI'] = pd.to_datetime(df_nube['HORA_INI'], errors='coerce')
+                    df_nube['FECHA_APE'] = pd.to_datetime(df_nube['FECHA_APE'], errors='coerce')
                 
                 # Convertimos números que Google Sheets vuelve texto
-                for col in ['DIAS_RETRASO', 'MINUTOS_CALC', 'NUM', 'CLIENTE']:
-                    if col in df_nube.columns:
-                        df_nube[col] = pd.to_numeric(df_nube[col], errors='coerce').fillna(0)
+                    for col in ['DIAS_RETRASO', 'MINUTOS_CALC', 'NUM', 'CLIENTE']:
+                        if col in df_nube.columns:
+                            df_nube[col] = pd.to_numeric(df_nube[col], errors='coerce').fillna(0)
                 
                 # Normalizamos el estado para los filtros
-                if 'ESTADO' in df_nube.columns:
-                    df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().strip()
+                    if 'ESTADO' in df_nube.columns:
+                        df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().strip()
 
-                st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa: Datos normalizados")
-                st.rerun()
+                    st.session_state.df_base = df_nube
+                    st.success("✅ Sincronización Exitosa: Datos normalizados")
+                    st.rerun()
                     else:
                         st.warning("La base de datos en la nube está vacía. Jaison debe subir un archivo primero.")
                 except Exception as e:
