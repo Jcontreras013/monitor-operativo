@@ -219,13 +219,19 @@ def main():
 
         # --- BOTÓN PARA JEFES: Cargar desde la nube ---
         st.markdown("### ☁️ Sincronización")
-        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Trae los últimos datos de la oficina", use_container_width=True):
+            if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Trae los últimos datos de la oficina", use_container_width=True):
             if conn is not None:
                 try:
                     df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
                     if not df_nube.empty:
+                        # 💎 FILTRO DE SEGURIDAD AL DESCARGAR:
+                        # Convertimos las columnas de fecha para que el filtro funcione
+                        df_nube['HORA_LIQ'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
+                        df_nube['FECHA_APE'] = pd.to_datetime(df_nube['FECHA_APE'], errors='coerce')
+                        
+                        # Guardamos en la sesión
                         st.session_state.df_base = df_nube
-                        st.success("✅ Monitor actualizado con la nube.")
+                        st.success("✅ Datos sincronizados. Aplicando filtros de hoy...")
                         st.rerun()
                     else:
                         st.warning("La base de datos en la nube está vacía. Jaison debe subir un archivo primero.")
