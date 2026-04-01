@@ -438,7 +438,7 @@ def main():
     hoy_date_valor = ahora_local.date()
     patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
 
-    # --- 2. MENÚ SUPERIOR ---
+    # --- 2. MENÚ SUPERIOR Y MULTIFILTROS LATERALES ---
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
@@ -447,6 +447,21 @@ def main():
             
         df_base_activa = df_base[df_base['DIAS_RETRASO'] >= 0].copy()
         
+        # INICIALIZAR VARIABLES DE FILTRO VACÍAS
+        filtro_actividad = []
+        filtro_estado = []
+        
+        # DIBUJAR LOS MULTIFILTROS SOLO SI ESTAMOS EN EL MONITOR
+        if nav_menu_diamante == "⚡ Monitor en Vivo":
+            st.divider()
+            st.markdown("### 🎛️ Filtros Múltiples")
+            
+            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
+            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+            
+            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            
         if nav_menu_diamante == "⚡ Monitor en Vivo":
             if rol_usuario in ['admin', 'jefe']:
                 st.divider() 
@@ -463,6 +478,14 @@ def main():
             
             df_monitor_filtrado = df_base_activa.copy()
             
+            # --- APLICAR MULTIFILTROS LATERALES ---
+            if len(filtro_actividad) > 0:
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
+                
+            if len(filtro_estado) > 0:
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
+            
+            # --- APLICAR FILTROS PRINCIPALES ---
             if check_criticos_diamante:
                 mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
                 mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP|FIBRA', na=False)
@@ -551,7 +574,6 @@ def main():
                     st.dataframe(df_sop, hide_index=True, use_container_width=True)
                     st.write(f"**Total SOP: {df_sop['Cant'].sum()}**")
                     
-                # --- AQUÍ APLICAMOS LA LECTURA PROFUNDA (ACTIVIDAD + COMENTARIO) ---
                 with ci_col:
                     st.write("**Instalaciones**")
                     txt_ins_c = df_cierre_filtrado['ACTIVIDAD'].astype(str).str.upper() + " " + df_cierre_filtrado['COMENTARIO'].astype(str).str.upper()
@@ -688,7 +710,6 @@ def main():
             st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
             st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor['ALERTA_TIEMPO'] == True).sum()))
 
-        # --- AQUÍ APLICAMOS LA LECTURA PROFUNDA (ACTIVIDAD + COMENTARIO) ---
         with col_tab_3:
             st.caption("📦 Instalaciones")
             txt_ins_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
@@ -698,7 +719,6 @@ def main():
                 "Cambio / Migración": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
                 "Recuperado": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("RECUP", na=False)])
             }
-            # Nueva estricta: Solo si dice INS/NUEVA y NO tiene nada de migración/adición
             mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
             mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
             res_ins_visual_v["Nueva"] = len(df_tablero_kpi_monitor[mask_base_ins & ~mask_excl_ins])
