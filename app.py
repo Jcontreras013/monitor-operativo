@@ -224,45 +224,72 @@ def main():
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
 
-        # --- BOTÓN PARA JEFES: Cargar desde la nube ---
+        # ==============================================================================
+        # SECCIÓN CORREGIDA: ACTUALIZAR DESDE LA NUBE (MODO ESPEJO)
+        # ==============================================================================
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True):
             if conn is not None:
                 try:
-                    df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1")
-                    if not df_nube.empty:
-                        # --- LIMPIEZA FORZADA POST-NUBE (BILINGÜE Y FECHAS INTELIGENTES) ---
-                        for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-                            if col_f in df_nube.columns:
-                                df_nube[col_f] = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
+                    with st.spinner("Descargando y aplicando formato espejo..."):
+                        # ttl=0 fuerza a que traiga los datos más frescos, sin usar caché viejo
+                        df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                         
-                        # Reparación Bilingüe para Offline
-                        for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
-                            if col_b in df_nube.columns:
-                                df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
-                        
-                        # Convertimos números 
-                        for col in ['DIAS_RETRASO', 'MINUTOS_CALC', 'NUM', 'CLIENTE']:
-                            if col in df_nube.columns:
-                                df_nube[col] = pd.to_numeric(df_nube[col], errors='coerce').fillna(0)
-                        
-                        # Normalizamos el estado
-                        if 'ESTADO' in df_nube.columns:
-                            df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
+                        if not df_nube.empty:
+                            # 0. Eliminar filas vacías o "basura" que añade Google Sheets
+                            df_nube = df_nube.dropna(how='all')
 
-                        # EXCEPCIÓN JOSUE MIGUEL SAUCEDA EN LA NUBE
-                        if 'TECNICO' in df_nube.columns:
-                            mask_josue = df_nube['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
+                            # 1. FIX FECHAS: Convertir a formato real de tiempo
+                            for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+                                if col_f in df_nube.columns:
+                                    df_nube[col_f] = pd.to_datetime(df_nube[col_f], errors='coerce')
+                            
+                            # 2. FIX BOOLEANOS: Reactivar los colores (Rojo para Offline, Naranja para Alerta)
+                            for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
+                                if col_b in df_nube.columns:
+                                    df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
+                            
+                            # 3. FIX DECIMALES (.000000): Limpiar Cuentas y Número de Órdenes
+                            for col_txt in ['NUM', 'CLIENTE']:
+                                if col_txt in df_nube.columns:
+                                    # Convertimos a entero para borrar decimales y luego a texto para la tabla
+                                    df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
+                                    df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
+                                    
                             if 'DIAS_RETRASO' in df_nube.columns:
-                                df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
-                            if 'ES_OFFLINE' in df_nube.columns:
-                                df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
+                                df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
+                                
+                            if 'MINUTOS_CALC' in df_nube.columns:
+                                df_nube['MINUTOS_CALC'] = pd.to_numeric(df_nube['MINUTOS_CALC'], errors='coerce').fillna(0.0)
 
-                        st.session_state.df_base = df_nube
-                        st.success("✅ Sincronización Exitosa: Datos normalizados")
-                        st.rerun()
-                    else:
-                        st.warning("La base de datos en la nube está vacía. Jaison debe subir un archivo primero.")
+                            # Normalizamos el estado para que los filtros funcionen
+                            if 'ESTADO' in df_nube.columns:
+                                df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
+
+                            # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
+                            if 'TECNICO' in df_nube.columns:
+                                mask_josue = df_nube['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
+                                if 'DIAS_RETRASO' in df_nube.columns:
+                                    df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
+                                if 'ES_OFFLINE' in df_nube.columns:
+                                    df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
+
+                            # 4. FIX CANTIDAD (96 vs 103): Aplicar el mismo filtro de 7 días que usa el local
+                            ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
+                            fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
+                            
+                            if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns:
+                                df_nube = df_nube[
+                                    (df_nube['HORA_LIQ'] >= fecha_limite_7d) | 
+                                    (df_nube['FECHA_APE'] >= fecha_limite_7d) | 
+                                    (df_nube['HORA_LIQ'].isna())
+                                ].copy()
+
+                            st.session_state.df_base = df_nube
+                            st.success("✅ Sincronización Exitosa: Modo Espejo Activado.")
+                            st.rerun()
+                        else:
+                            st.warning("La base de datos en la nube está vacía. Debes subir un archivo primero.")
                 except Exception as e:
                     st.error(f"Error al conectar con la nube: {e}")
             else:
