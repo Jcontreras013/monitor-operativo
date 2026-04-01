@@ -209,7 +209,7 @@ def aplicar_estilos_df(df_original_para_estilo):
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
     cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 
+        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 
         'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
         'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
@@ -390,7 +390,7 @@ def main():
     df_base = st.session_state.df_base.copy()
     
     # -------------------------------------------------------------
-    # 🛡️ BLINDAJE GLOBAL EN MEMORIA
+    # 🛡️ BLINDAJE GLOBAL EN MEMORIA Y CLASIFICACIÓN DE MOTIVO
     # -------------------------------------------------------------
     if 'SUSCRIPTOR' in df_base.columns and 'NOMBRE' not in df_base.columns:
         df_base.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
@@ -423,6 +423,21 @@ def main():
         if 'ALERTA_TIEMPO' in df_base.columns:
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
+            
+        # --- NUEVO: CREACIÓN DE COLUMNA 'MOTIVO' PARA EL FILTRO ---
+        def extraer_motivo_falla(row):
+            act = str(row.get('ACTIVIDAD', '')).upper()
+            com = str(row.get('COMENTARIO', '')).upper()
+            texto = act + " " + com
+            
+            if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
+            if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
+            if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
+            if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
+            if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
+            return "🔧 Mantenimiento General"
+            
+        df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
 
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
@@ -450,6 +465,7 @@ def main():
         # INICIALIZAR VARIABLES DE FILTRO VACÍAS
         filtro_actividad = []
         filtro_estado = []
+        filtro_motivo = []
         
         # DIBUJAR LOS MULTIFILTROS SOLO SI ESTAMOS EN EL MONITOR
         if nav_menu_diamante == "⚡ Monitor en Vivo":
@@ -458,9 +474,11 @@ def main():
             
             lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
             lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
             
             filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
             filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
             
         if nav_menu_diamante == "⚡ Monitor en Vivo":
             if rol_usuario in ['admin', 'jefe']:
@@ -484,6 +502,9 @@ def main():
                 
             if len(filtro_estado) > 0:
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
+                
+            if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns:
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
             
             # --- APLICAR FILTROS PRINCIPALES ---
             if check_criticos_diamante:
