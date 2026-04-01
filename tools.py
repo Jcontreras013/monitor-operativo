@@ -85,6 +85,8 @@ class ReporteGenerencialPDF(FPDF):
                 valclean = safestr(valstr)
                 fillr, fillg, fillb = 255, 255, 255
                 textr, textg, textb = 0, 0, 0
+                
+                # Regla visual para OCUPACION (Semanal)
                 if df.columns[i] == '% OCUPACION':
                     try:
                         pct = float(valstr.replace('%', ''))
@@ -92,6 +94,17 @@ class ReporteGenerencialPDF(FPDF):
                         elif pct >= 50: fillr, fillg, fillb = 255, 230, 153
                         elif pct >= 0: fillr, fillg, fillb = 244, 176, 132
                     except: pass
+                    
+                # Regla visual para DESAPROVECHADO (Diario) - INVERTIDA
+                elif df.columns[i] == '% DESAPROVECHADO':
+                    try:
+                        pct = float(valstr.replace('%', ''))
+                        # Si desaprovechan más del 50%, rojo alerta. Si desaprovechan poco, verde.
+                        if pct >= 50: fillr, fillg, fillb = 244, 130, 130 # Rojo
+                        elif pct >= 25: fillr, fillg, fillb = 255, 200, 100 # Naranja
+                        elif pct >= 0: fillr, fillg, fillb = 169, 208, 142 # Verde
+                    except: pass
+
                 self.set_fill_color(fillr, fillg, fillb)
                 self.set_text_color(textr, textg, textb)
                 self.cell(widthcell, 5, valclean, border=1, align=aligns[i], fill=True)
@@ -591,7 +604,7 @@ def generar_pdf_mensual(df_base, mes, anio):
     return finalizar_pdf(pdf)
 
 def generar_pdf_cierre_diario(dfbase, fechatarget):
-    """Genera el PDF del Reporte Analítico Diario con cálculo realista de tiempos (incluyendo ruta)."""
+    """Genera el PDF del Reporte Analítico Diario midiendo el Tiempo Desaprovechado."""
     dfc = dfbase[
         (dfbase['HORA_LIQ'].dt.date == fechatarget) & 
         (dfbase['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
@@ -640,27 +653,30 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
     pdf.cell(0, 10, safestr(f" Reporte Analitico de Cierre Diario: {fechatarget}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    # --- CORRECCIÓN DE TÍTULO REALIZADA AQUÍ ---
-    pdf.seccion_titulo("Rendimiento Operativo Diario (- 90 Min Ruta | Meta 8 Horas)")
+    # --- LA NUEVA LÓGICA DE TIEMPO DESAPROVECHADO ---
+    pdf.seccion_titulo("Análisis de Tiempo Desaprovechado (Meta: 6.5 Hrs Efectivas | Excluye 1.5 Hrs Ruta)")
     if not dfc.empty:
         df_tec = dfc.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), MINUTOS=('MINUTOS_CALC', 'sum')).reset_index()
-        df_tec['MINUTOS'] = df_tec['MINUTOS'].fillna(0).round(1)
         
-        # 1. Sumamos los 90 minutos de traslado al tiempo total facturado por el técnico
-        df_tec['MINUTOS TOTALES'] = df_tec['MINUTOS'] + 90.0
+        # 1. Minutos reales dedicados a las órdenes
+        df_tec['MINUTOS EFECTIVOS'] = df_tec['MINUTOS'].fillna(0).round(1)
         
-        # 2. Calculamos las Horas Trabajadas reales
-        df_tec['HRS TRABAJADAS'] = (df_tec['MINUTOS TOTALES'] / 60).round(1)
+        # 2. Minutos Perdidos: Lo que les faltó para llegar a 390 min (480 totales - 90 ruta). 
+        # Si hicieron más de 390, se queda en 0 (usando clip)
+        df_tec['MINUTOS PERDIDOS'] = (390.0 - df_tec['MINUTOS EFECTIVOS']).clip(lower=0).round(1)
         
-        # 3. Calculamos el tiempo muerto / horas perdidas respecto a la jornada de 8 hrs (clip evita negativos)
-        df_tec['HRS PERDIDAS'] = (8.0 - df_tec['HRS TRABAJADAS']).clip(lower=0).round(1)
+        # 3. Lo pasamos a horas para la tabla visual
+        df_tec['HRS TRABAJADAS'] = (df_tec['MINUTOS EFECTIVOS'] / 60).round(1)
+        df_tec['HRS PERDIDAS'] = (df_tec['MINUTOS PERDIDOS'] / 60).round(1)
         
-        # 4. Porcentaje de ocupación sobre los 480 minutos del día
-        df_tec['% OCUPACION'] = ((df_tec['MINUTOS TOTALES'] / 480) * 100).round(1) 
-        df_tec = df_tec.sort_values(by='% OCUPACION', ascending=False)
+        # 4. El % Desaprovechado en base a su meta de 390 minutos
+        df_tec['% DESAPROVECHADO'] = ((df_tec['MINUTOS PERDIDOS'] / 390.0) * 100).clip(lower=0, upper=100).round(1) 
         
-        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'MINUTOS TOTALES', 'HRS TRABAJADAS', 'HRS PERDIDAS', '% OCUPACION']].copy()
-        df_tec_table['% OCUPACION'] = df_tec_table['% OCUPACION'].astype(str) + '%'
+        # 5. Ordenamos para que los que MÁS tiempo pierden salgan de primeros
+        df_tec = df_tec.sort_values(by='% DESAPROVECHADO', ascending=False)
+        
+        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'MINUTOS EFECTIVOS', 'HRS TRABAJADAS', 'HRS PERDIDAS', '% DESAPROVECHADO']].copy()
+        df_tec_table['% DESAPROVECHADO'] = df_tec_table['% DESAPROVECHADO'].astype(str) + '%'
         
         pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[50, 20, 30, 30, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C"])
     else:
