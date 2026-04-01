@@ -40,6 +40,68 @@ st.set_page_config(
 )
 
 # ==============================================================================
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (Para usar el botón donde sea)
+# ==============================================================================
+def sincronizar_datos_nube(conn):
+    try:
+        with st.spinner("Descargando y aplicando formato espejo..."):
+            df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+            
+            if not df_nube.empty:
+                df_nube = df_nube.dropna(how='all')
+                df_nube.columns = df_nube.columns.str.upper().str.strip()
+
+                for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+                    if col_f in df_nube.columns:
+                        test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
+                        if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
+                            nums = pd.to_numeric(df_nube[col_f], errors='coerce')
+                            df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
+                        else:
+                            df_nube[col_f] = test_parse
+                
+                for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
+                    if col_b in df_nube.columns:
+                        df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
+                
+                for col_txt in ['NUM', 'CLIENTE']:
+                    if col_txt in df_nube.columns:
+                        df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
+                        df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
+                        
+                if 'DIAS_RETRASO' in df_nube.columns:
+                    df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
+                    
+                if 'MINUTOS_CALC' in df_nube.columns:
+                    df_nube['MINUTOS_CALC'] = pd.to_numeric(df_nube['MINUTOS_CALC'], errors='coerce').fillna(0.0)
+
+                if 'ESTADO' in df_nube.columns:
+                    df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
+
+                if 'TECNICO' in df_nube.columns:
+                    mask_josue = df_nube['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
+                    if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
+                    if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
+
+                ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
+                fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
+                
+                if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns:
+                    df_nube = df_nube[
+                        (df_nube['HORA_LIQ'] >= fecha_limite_7d) | 
+                        (df_nube['FECHA_APE'] >= fecha_limite_7d) | 
+                        (df_nube['HORA_LIQ'].isna())
+                    ].copy()
+
+                st.session_state.df_base = df_nube
+                st.success("✅ Sincronización Exitosa: Modo Espejo Activado.")
+                st.rerun()
+            else:
+                st.warning("La base de datos en la nube está vacía. Debes subir un archivo primero.")
+    except Exception as e:
+        st.error(f"Error al conectar con la nube: {e}")
+
+# ==============================================================================
 # 2. VENTANA EMERGENTE (DIÁLOGOS DE GESTIÓN DETALLADA)
 # ==============================================================================
 @st.dialog("Detalle de Gestión de la Orden")
@@ -140,7 +202,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# 4. FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN
+# 4. FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
@@ -228,65 +290,9 @@ def main():
         st.divider()
 
         st.markdown("### ☁️ Sincronización")
-        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True):
+        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None:
-                try:
-                    with st.spinner("Descargando y aplicando formato espejo..."):
-                        df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                        
-                        if not df_nube.empty:
-                            df_nube = df_nube.dropna(how='all')
-                            df_nube.columns = df_nube.columns.str.upper().str.strip()
-
-                            for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-                                if col_f in df_nube.columns:
-                                    test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
-                                    if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
-                                        nums = pd.to_numeric(df_nube[col_f], errors='coerce')
-                                        df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
-                                    else:
-                                        df_nube[col_f] = test_parse
-                            
-                            for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
-                                if col_b in df_nube.columns:
-                                    df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
-                            
-                            for col_txt in ['NUM', 'CLIENTE']:
-                                if col_txt in df_nube.columns:
-                                    df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
-                                    df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
-                                    
-                            if 'DIAS_RETRASO' in df_nube.columns:
-                                df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
-                                
-                            if 'MINUTOS_CALC' in df_nube.columns:
-                                df_nube['MINUTOS_CALC'] = pd.to_numeric(df_nube['MINUTOS_CALC'], errors='coerce').fillna(0.0)
-
-                            if 'ESTADO' in df_nube.columns:
-                                df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
-
-                            if 'TECNICO' in df_nube.columns:
-                                mask_josue = df_nube['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
-                                if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
-                                if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
-
-                            ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
-                            fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
-                            
-                            if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns:
-                                df_nube = df_nube[
-                                    (df_nube['HORA_LIQ'] >= fecha_limite_7d) | 
-                                    (df_nube['FECHA_APE'] >= fecha_limite_7d) | 
-                                    (df_nube['HORA_LIQ'].isna())
-                                ].copy()
-
-                            st.session_state.df_base = df_nube
-                            st.success("✅ Sincronización Exitosa: Modo Espejo Activado.")
-                            st.rerun()
-                        else:
-                            st.warning("La base de datos en la nube está vacía. Debes subir un archivo primero.")
-                except Exception as e:
-                    st.error(f"Error al conectar con la nube: {e}")
+                sincronizar_datos_nube(conn)
             else:
                 st.error("La conexión a la nube no está disponible.")
 
@@ -320,15 +326,29 @@ def main():
 
             btn_reprocesar = st.button("🔄 ACTUALIZAR TODO", use_container_width=True)
         elif rol_usuario == 'jefe' and es_movil:
-            st.caption("📱 _Modo Móvil: Usa el botón de la nube para actualizar._")
+            st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
+    # ==============================================================================
+    # 🎯 PANTALLA DE INICIO DINÁMICA (EL BOTÓN GIGANTE EN EL CENTRO)
+    # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
                 st.title("⚡ Monitor Operativo Maxcom PRO")
-                st.info("💡 Consejo: Usa el botón 'ACTUALIZAR DESDE LA NUBE' en el menú izquierdo para cargar los datos en tu pantalla.")
+                st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
+                
+                # Creado para que resalte visualmente en celulares y en PC
+                st.markdown("<br><br>", unsafe_allow_html=True)
+                col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
+                with col_c2:
+                    if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_central"):
+                        if conn is not None:
+                            sincronizar_datos_nube(conn)
+                        else:
+                            st.error("Conexión no disponible.")
                 return
         else:
+            # Procesamiento de archivos locales subidos
             res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
             if res_p_diamante is not None:
                 st.session_state.df_base = res_p_diamante
