@@ -159,7 +159,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             (df_act['HORA_LIQ'].isna())
         ].copy()
         
-        # Permitimos valores negativos quitando el .clip(lower=0) para órdenes reprogramadas a futuro
         df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
         df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
         
@@ -230,7 +229,6 @@ def main():
                             df_nube = df_nube.dropna(how='all')
                             df_nube.columns = df_nube.columns.str.upper().str.strip()
 
-                            # --- 🛠️ REPARACIÓN QUIRÚRGICA DE FECHAS (EL PROBLEMA DE ABRIL/ENERO) ---
                             for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if col_f in df_nube.columns:
                                     test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
@@ -240,12 +238,10 @@ def main():
                                     else:
                                         df_nube[col_f] = test_parse
                             
-                            # --- 🛡️ LIMPIEZA DE COLUMNAS DE BOOLEANOS Y ESTADOS ---
                             for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                                 if col_b in df_nube.columns:
                                     df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
                             
-                            # --- 🧹 LIMPIEZA DE NÚMEROS Y DECIMALES FLOTANTES ---
                             for col_txt in ['NUM', 'CLIENTE']:
                                 if col_txt in df_nube.columns:
                                     df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
@@ -265,7 +261,6 @@ def main():
                                 if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                                 if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                            # --- ✂️ FILTRO DE 7 DÍAS ---
                             ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
                             fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                             
@@ -367,32 +362,34 @@ def main():
         rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
         
         if rol_usuario in ['admin', 'jefe']:
-            # NUEVO: Opción de REPROGRAMADAS añadida al menú
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
+            
+        # 🟢 CORTE RADICAL: Excluimos permanentemente los días negativos del Monitor en Vivo
+        df_base_activa = df_base[df_base['DIAS_RETRASO'] >= 0].copy()
         
         if nav_menu_diamante == "⚡ Monitor en Vivo":
             if rol_usuario in ['admin', 'jefe']:
                 st.divider() 
                 
             st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
             
-            mascara_offline_segura = df_base['ES_OFFLINE'] == True
+            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
             
             check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
-            lista_tecs_monitor = ["Todos"] + sorted(df_base['TECNICO'].dropna().unique().tolist())
+            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
             
-            df_monitor_filtrado = df_base.copy()
+            df_monitor_filtrado = df_base_activa.copy()
             if check_criticos_diamante:
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']]
             if tec_filtro_monitor != "Todos":
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
         else:
-            df_monitor_filtrado = df_base
+            df_monitor_filtrado = df_base_activa.copy()
 
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
@@ -400,18 +397,19 @@ def main():
         st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, hide_index=True)
         return
 
-    # LÓGICA NUEVA: PANTALLA REPROGRAMADAS
+    # 🔴 NUEVO FILTRO EXCLUSIVO PARA REPROGRAMADAS
     if nav_menu_diamante == "📅 REPROGRAMADAS":
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
         
-        mask_reprog = (df_base['ESTADO'].astype(str).str.upper().str.contains('REPROGRAMADA', na=False)) & (df_base['DIAS_RETRASO'] < 0)
+        # Solo trae las órdenes que tienen un retraso negativo (no importa qué diga el estatus de la orden)
+        mask_reprog = (df_base['DIAS_RETRASO'] < 0)
         df_reprog = df_base[mask_reprog].copy()
         
         st.metric("Total Agendadas a Futuro", len(df_reprog))
         
         if not df_reprog.empty:
-            cols_visibles = ['DIAS_RETRASO', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'COMENTARIO']
+            cols_visibles = ['DIAS_RETRASO', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO']
             cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
             
             st.dataframe(
