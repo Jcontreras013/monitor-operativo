@@ -159,7 +159,8 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             (df_act['HORA_LIQ'].isna())
         ].copy()
         
-        df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
+        # Permitimos valores negativos quitando el .clip(lower=0) para órdenes reprogramadas a futuro
+        df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
         df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
         
         def alert_2h_logic_diamante(row_check):
@@ -230,11 +231,9 @@ def main():
                             df_nube.columns = df_nube.columns.str.upper().str.strip()
 
                             # --- 🛠️ REPARACIÓN QUIRÚRGICA DE FECHAS (EL PROBLEMA DE ABRIL/ENERO) ---
-                            # IMPORTANTE: dayfirst=True asegura que 01/04 se lea como 1 de Abril y no 4 de Enero
                             for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if col_f in df_nube.columns:
                                     test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
-                                    # Si Google Sheets lo mandó como número de serie (ej. 45383) se vuelve año 1970
                                     if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
                                         nums = pd.to_numeric(df_nube[col_f], errors='coerce')
                                         df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
@@ -368,7 +367,8 @@ def main():
         rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
         
         if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO"])
+            # NUEVO: Opción de REPROGRAMADAS añadida al menú
+            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
         
@@ -398,6 +398,31 @@ def main():
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
         st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, hide_index=True)
+        return
+
+    # LÓGICA NUEVA: PANTALLA REPROGRAMADAS
+    if nav_menu_diamante == "📅 REPROGRAMADAS":
+        st.title("📅 Órdenes Reprogramadas (Futuras)")
+        st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
+        
+        mask_reprog = (df_base['ESTADO'].astype(str).str.upper().str.contains('REPROGRAMADA', na=False)) & (df_base['DIAS_RETRASO'] < 0)
+        df_reprog = df_base[mask_reprog].copy()
+        
+        st.metric("Total Agendadas a Futuro", len(df_reprog))
+        
+        if not df_reprog.empty:
+            cols_visibles = ['DIAS_RETRASO', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'COMENTARIO']
+            cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
+            
+            st.dataframe(
+                df_reprog[cols_finales].style.set_properties(
+                    **{'background-color': '#1a2a3a', 'color': '#58a6ff', 'font-weight': 'bold'}, 
+                    subset=['DIAS_RETRASO']
+                ),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
         return
 
     if nav_menu_diamante == "📚 Histórico":
@@ -439,14 +464,30 @@ def main():
             if not df_cierre_filtrado.empty:
                 st.markdown("### 📊 Desglose de Producción por Categoría")
                 cs_col, ci_col, cp_col, co_col = st.columns(4)
+                
                 with cs_col:
-                    st.write("**SOP**"); st.dataframe(df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant'), hide_index=True)
+                    st.write("**SOP**")
+                    df_sop = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_sop, hide_index=True, use_container_width=True)
+                    st.write(f"**Total SOP: {df_sop['Cant'].sum()}**")
+                    
                 with ci_col:
-                    st.write("**Instalaciones**"); st.dataframe(df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('INS|NUEVA|ADIC|CAMBIO', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant'), hide_index=True)
+                    st.write("**Instalaciones**")
+                    df_ins = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('INS|NUEVA|ADIC|CAMBIO', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_ins, hide_index=True, use_container_width=True)
+                    st.write(f"**Total INS: {df_ins['Cant'].sum()}**")
+                    
                 with cp_col:
-                    st.write("**Plex**"); st.dataframe(df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('PLEX', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant'), hide_index=True)
+                    st.write("**Plex**")
+                    df_plex = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('PLEX', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_plex, hide_index=True, use_container_width=True)
+                    st.write(f"**Total PLEX: {df_plex['Cant'].sum()}**")
+                    
                 with co_col:
-                    st.write("**Otros**"); st.dataframe(df_cierre_filtrado[~(df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC', na=False, case=False))]['ACTIVIDAD'].value_counts().reset_index(name='Cant'), hide_index=True)
+                    st.write("**Otros**")
+                    df_otros = df_cierre_filtrado[~(df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC', na=False, case=False))]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_otros, hide_index=True, use_container_width=True)
+                    st.write(f"**Total Otros: {df_otros['Cant'].sum()}**")
 
             st.divider()
             
