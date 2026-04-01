@@ -84,6 +84,7 @@ class ReporteGenerencialPDF(FPDF):
                 fillr, fillg, fillb = 255, 255, 255
                 textr, textg, textb = 0, 0, 0
                 
+                # Reglas Visuales de Gamificación Positiva
                 if df.columns[i] in ['% LOGRO FINAL', '% LOGRO SEMANAL', '% LOGRO META']:
                     try:
                         pct = float(valstr.replace('%', ''))
@@ -93,14 +94,7 @@ class ReporteGenerencialPDF(FPDF):
                         elif pct >= 0: fillr, fillg, fillb = 244, 176, 132 
                     except: pass
                     
-                elif df.columns[i] in ['% DESAPROVECHADO', '% DESAPROV.']:
-                    try:
-                        pct = float(valstr.replace('%', ''))
-                        if pct >= 50: fillr, fillg, fillb = 244, 130, 130 
-                        elif pct >= 25: fillr, fillg, fillb = 255, 200, 100 
-                        elif pct >= 0: fillr, fillg, fillb = 169, 208, 142 
-                    except: pass
-
+                # Resaltar si obtuvieron bono
                 if df.columns[i] == 'BONO MIXTO':
                     if valstr != '+0.0%':
                         fillr, fillg, fillb = 220, 235, 255 
@@ -375,19 +369,27 @@ def generar_graficos_temporales(dfbase):
 # ==============================================================================
 # LÓGICA DE VALORIZACIÓN DE METAS (GAMIFICACIÓN INTELIGENTE)
 # ==============================================================================
-def calcular_aporte_meta(actividad):
-    act = str(actividad).upper()
+def calcular_aporte_meta(row):
+    """
+    Asigna un % de logro leyendo la ACTIVIDAD y el COMENTARIO.
+    """
+    act = str(row.get('ACTIVIDAD', '')).upper()
+    com = str(row.get('COMENTARIO', '')).upper()
+    txt = act + " " + com
+    
     if 'PEXTERNO' in act:
         return 100.0  
-    elif re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|SPLITTEROPT', act):
-        return 25.0   
+    elif re.search('ADIC|CAMBIO|MIGRACI|RECUP', txt):
+        return 12.5   # Lo cuenta como mantenimiento (no como instalación nueva)
+    elif re.search('INS|NUEVA|PLEX|SPLITTEROPT', act):
+        return 25.0   # Instalación Nueva pura
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
         return 12.5   
     else:
         return 12.5   
 
 # ==============================================================================
-# FUNCIONES DE CREACIÓN DE PDF
+# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO)
 # ==============================================================================
 def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     df_sem = df_base[
@@ -408,7 +410,7 @@ def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     
     pdf.seccion_titulo("Rendimiento Operativo Semanal (Basado en Metas de Cuota)")
     if not df_sem.empty:
-        df_sem['%_APORTE'] = df_sem['ACTIVIDAD'].apply(calcular_aporte_meta)
+        df_sem['%_APORTE'] = df_sem.apply(calcular_aporte_meta, axis=1)
         df_tec = df_sem.groupby('TECNICO').agg(
             ORDENES=('NUM', 'count'), 
             PORCENTAJE_META=('%_APORTE', 'sum')
@@ -482,18 +484,18 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         (dfbase['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
     ].copy()
     
-    def get_tipo_detalle(act):
-        act = str(act).upper()
-        if 'RECON' in act: return 'RECONEXIONES'
-        if 'TRASLADO' in act: return 'TRASLADOS'
-        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX', act): return 'INSTALACION'
-        if re.search('SOP|FALLA|MANT', act): return 'MANTENIMIENTO'
+    def get_tipo_detalle(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if 'RECON' in txt: return 'RECONEXIONES'
+        if 'TRASLADO' in txt: return 'TRASLADOS'
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
         return 'OTROS'
         
-    def get_tipo_orden(act):
-        act = str(act).upper()
-        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX', act): return 'INSTALACION'
-        if re.search('SOP|FALLA|MANT', act): return 'MANTENIMIENTO'
+    def get_tipo_orden(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
         return 'OTROS'
 
     def get_rango(row):
@@ -507,8 +509,8 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         return '4. Más de 6 Días'
 
     if not dfc.empty:
-        dfc['TIPOACTDETALLE'] = dfc['ACTIVIDAD'].apply(get_tipo_detalle)
-        dfc['TIPOORDEN'] = dfc['ACTIVIDAD'].apply(get_tipo_orden)
+        dfc['TIPOACTDETALLE'] = dfc.apply(get_tipo_detalle, axis=1)
+        dfc['TIPOORDEN'] = dfc.apply(get_tipo_orden, axis=1)
         if 'DIAS_RETRASO' not in dfc.columns:
             ahora = pd.Timestamp(datetime.now())
             dfc['DIAS_RETRASO'] = (ahora.normalize() - pd.to_datetime(dfc['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
@@ -530,7 +532,7 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         dfc['CANT_INS'] = (dfc['TIPOORDEN'] == 'INSTALACION').astype(int)
         dfc['CANT_SOP'] = (dfc['TIPOORDEN'] == 'MANTENIMIENTO').astype(int)
         dfc['CANT_OTR'] = (dfc['TIPOORDEN'] == 'OTROS').astype(int)
-        dfc['%_APORTE'] = dfc['ACTIVIDAD'].apply(calcular_aporte_meta)
+        dfc['%_APORTE'] = dfc.apply(calcular_aporte_meta, axis=1)
         
         df_tec = dfc.groupby('TECNICO').agg(
             CANT_INS=('CANT_INS', 'sum'),
@@ -619,23 +621,23 @@ def logica_generar_pdf(dfbase):
         
     dfbase['RANGOTIEMPO'] = dfbase.apply(getrango, axis=1)
     
-    def gettipoorden(act):
-        act = str(act).upper()
-        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX', act): return 'INSTALACION'
-        if re.search('SOP|FALLA|MANT', act): return 'MANTENIMIENTO'
+    def gettipoorden(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
         return 'OTROS'
         
-    dfbase['TIPOORDEN'] = dfbase['ACTIVIDAD'].apply(gettipoorden)
+    dfbase['TIPOORDEN'] = dfbase.apply(gettipoorden, axis=1)
     
-    def gettipodetalle(act):
-        act = str(act).upper()
-        if 'RECON' in act: return 'RECONEXIONES'
-        if 'TRASLADO' in act: return 'TRASLADOS'
-        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX', act): return 'INSTALACION'
-        if re.search('SOP|FALLA|MANT', act): return 'MANTENIMIENTO'
+    def gettipodetalle(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if 'RECON' in txt: return 'RECONEXIONES'
+        if 'TRASLADO' in txt: return 'TRASLADOS'
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
         return 'OTROS'
         
-    dfbase['TIPOACTDETALLE'] = dfbase['ACTIVIDAD'].apply(gettipodetalle)
+    dfbase['TIPOACTDETALLE'] = dfbase.apply(gettipodetalle, axis=1)
     
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 10)
@@ -648,7 +650,7 @@ def logica_generar_pdf(dfbase):
     
     pdf.seccion_titulo("Rendimiento Operativo (Basado en Metas de Cuota y Complejidad)")
     if not dfbase.empty:
-        dfbase['%_APORTE'] = dfbase['ACTIVIDAD'].apply(calcular_aporte_meta)
+        dfbase['%_APORTE'] = dfbase.apply(calcular_aporte_meta, axis=1)
         df_tec = dfbase.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), PORCENTAJE_META=('%_APORTE', 'sum')).reset_index()
         
         df_tec['% LOGRO META'] = df_tec['PORCENTAJE_META'].round(1)
@@ -692,9 +694,6 @@ def logica_generar_pdf(dfbase):
             
     return finalizar_pdf(pdf)
 
-# ------------------------------------------------------------------------------
-# LA FUNCIÓN FALTANTE (¡EL CULPABLE DEL ERROR!)
-# ------------------------------------------------------------------------------
 def finalizar_pdf(pdfobj):
     fd, tmppath = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
