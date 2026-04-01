@@ -71,11 +71,9 @@ def sincronizar_datos_nube(conn):
                     if col_b in df_nube.columns:
                         df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
 
-                # --- 2. GUILLOTINA ANTI-FALSOS CRÍTICOS EN LA NUBE ---
+                # --- GUILLOTINA ANTI-FALSOS CRÍTICOS EN LA NUBE ---
                 if 'ACTIVIDAD' in df_nube.columns:
                     act_upper = df_nube['ACTIVIDAD'].astype(str).str.upper()
-                    
-                    # PROHIBIDO MARCAR COMO CRÍTICAS (Ni offline, ni tiempo)
                     mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
                     mask_solo_sop = act_upper.str.contains('SOP|FIBRA', na=False)
                     
@@ -248,7 +246,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
                 m_diff_val = (ahora_momento_ts - row_check['HORA_INI']).total_seconds() / 60
                 act_v = str(row_check.get('ACTIVIDAD', '')).upper()
                 
-                # NO PUEDEN DAR ALERTA DE TIEMPO SI NO SON SOPFIBRA
                 if any(p in act_v for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL']):
                     return False
                 if 'SOP' not in act_v and 'FIBRA' not in act_v:
@@ -265,7 +262,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
             
-            # --- BLINDAJE ANTI-FALSOS CRÍTICOS LOCAL ---
             if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL']): 
                 return False
             if 'SOP' not in act_v_name and 'FIBRA' not in act_v_name: 
@@ -303,7 +299,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     
-    # --- 🛠️ DETECTOR DE ANCHO DE PANTALLA (PARA CELULARES) ---
     ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
 
@@ -357,7 +352,7 @@ def main():
             st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
     # ==============================================================================
-    # 🎯 PANTALLA DE INICIO DINÁMICA (EL BOTÓN GIGANTE EN EL CENTRO)
+    # 🎯 PANTALLA DE INICIO DINÁMICA
     # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
         if file_act_ptr is None or file_disp_ptr is None:
@@ -415,7 +410,6 @@ def main():
         if col_b in df_base.columns:
             df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
             
-    # --- 🛡️ PURGA FINAL DE FALSOS CRÍTICOS EN MEMORIA ---
     if 'ACTIVIDAD' in df_base.columns:
         act_upper_global = df_base['ACTIVIDAD'].astype(str).str.upper()
         
@@ -468,8 +462,15 @@ def main():
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
             
             df_monitor_filtrado = df_base_activa.copy()
+            
+            # --- 🛡️ FILTRO RADICAL APLICADO AQUÍ ---
             if check_criticos_diamante:
-                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']]
+                mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
+                mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP|FIBRA', na=False)
+                mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
+                
+                df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
+                
             if tec_filtro_monitor != "Todos":
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
         else:
@@ -600,19 +601,6 @@ def main():
             if len(rango_fecha) == 2:
                 df_sem = df_base[(df_base['HORA_LIQ'].dt.date >= rango_fecha[0]) & (df_base['HORA_LIQ'].dt.date <= rango_fecha[1]) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
                 
-                st.markdown("#### 🏆 Cumplimiento de Meta (2400 min)")
-                ranking_sem = df_sem.groupby('TECNICO')['MINUTOS_CALC'].sum().reset_index()
-                ranking_sem.columns = ['Técnico', 'Minutos Totales']
-                ranking_sem['% Meta (2400 min)'] = (ranking_sem['Minutos Totales'] / 2400 * 100).map("{:.1f}%".format)
-                st.dataframe(ranking_sem.sort_values(by='Minutos Totales', ascending=False), use_container_width=True, hide_index=True)
-                
-                st.markdown("#### ⏱️ Desglose Promedio")
-                if not df_sem.empty:
-                    df_pivot_sem = df_sem.groupby(['TECNICO', 'ACTIVIDAD']).agg(
-                        Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')
-                    ).round(1)
-                    st.dataframe(df_pivot_sem, use_container_width=True)
-
                 if st.button("🚀 GENERAR PDF SEMANAL", use_container_width=True, type="primary"):
                     pdf_sem_bytes = generar_pdf_semanal(df_base, rango_fecha[0], rango_fecha[1])
                     st.download_button("📥 Descargar PDF Semanal", data=pdf_sem_bytes, file_name=f"Semanal_{rango_fecha[0]}_al_{rango_fecha[1]}.pdf")
@@ -753,7 +741,6 @@ def main():
     with t_panel_v:
         if not df_v_tabla_monitor.empty:
             df_estilo_v, row_styler_final_v = aplicar_estilos_df(df_v_tabla_monitor)
-            # ALTURA FIJA PARA EVITAR SALTOS EN EL CELULAR
             evento_monitor_diam = st.dataframe(
                 df_estilo_v.style.apply(row_styler_final_v, axis=1).hide(axis=1, subset=['ES_OFFLINE']), 
                 column_config={"GPS": st.column_config.LinkColumn("UBICACIÓN GPS")}, 
