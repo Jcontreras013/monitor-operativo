@@ -61,7 +61,7 @@ def sincronizar_datos_nube(conn):
                 for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                     if col_f in df_nube.columns:
                         test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
-                        if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
+                        if (test_parse.dt.year <= 1970).any() or (test_parse.dt.year == 1899).any():
                             nums = pd.to_numeric(df_nube[col_f], errors='coerce')
                             df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
                         else:
@@ -551,12 +551,28 @@ def main():
                     st.dataframe(df_sop, hide_index=True, use_container_width=True)
                     st.write(f"**Total SOP: {df_sop['Cant'].sum()}**")
                     
-                # --- AQUÍ APLICAMOS LA EXCLUSIÓN EN EL CIERRE DIARIO ---
+                # --- AQUÍ APLICAMOS LA LECTURA PROFUNDA (ACTIVIDAD + COMENTARIO) ---
                 with ci_col:
                     st.write("**Instalaciones**")
-                    df_ins = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
-                    st.dataframe(df_ins, hide_index=True, use_container_width=True)
-                    st.write(f"**Total INS: {df_ins['Cant'].sum()}**")
+                    txt_ins_c = df_cierre_filtrado['ACTIVIDAD'].astype(str).str.upper() + " " + df_cierre_filtrado['COMENTARIO'].astype(str).str.upper()
+                    mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                    df_ins_cierre = df_cierre_filtrado[mask_ins_general].copy()
+                    
+                    if not df_ins_cierre.empty:
+                        def clasificar_ins_cierre(row):
+                            txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
+                            if re.search('ADIC', txt): return 'Adición'
+                            if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
+                            if re.search('RECUP', txt): return 'Recuperado'
+                            return 'Nueva'
+                        
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
+                        df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
+                        df_ins_grouped.columns = ['Instalaciones', 'Cant']
+                        st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
+                        st.write(f"**Total INS: {df_ins_grouped['Cant'].sum()}**")
+                    else:
+                        st.write("Sin datos")
                     
                 with cp_col:
                     st.write("**Plex**")
@@ -566,7 +582,9 @@ def main():
                     
                 with co_col:
                     st.write("**Otros**")
-                    df_otros = df_cierre_filtrado[~(df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False, case=False))]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    txt_otr_c = df_cierre_filtrado['ACTIVIDAD'].astype(str).str.upper() + " " + df_cierre_filtrado['COMENTARIO'].astype(str).str.upper()
+                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                    df_otros = df_cierre_filtrado[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total Otros: {df_otros['Cant'].sum()}**")
 
@@ -670,22 +688,28 @@ def main():
             st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
             st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor['ALERTA_TIEMPO'] == True).sum()))
 
-        # --- AQUÍ APLICAMOS LA EXCLUSIÓN AL MONITOR EN VIVO ---
+        # --- AQUÍ APLICAMOS LA LECTURA PROFUNDA (ACTIVIDAD + COMENTARIO) ---
         with col_tab_3:
             st.caption("📦 Instalaciones")
+            txt_ins_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
+            
             res_ins_visual_v = {
-                "Adición": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("ADIC", na=False)]),
-                "Cambio / Migración": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("CAMBIO|MIGRACI", na=False)]),
-                # NUEVA ESTRICTA: Solo es nueva si dice INS o NUEVA y NO dice nada de Adic, Cambio, Migración o Recup
-                "Nueva": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("INS|NUEVA", na=False) & ~act_tab_sop.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)]),
-                "Recuperado": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("RECUP", na=False)])
+                "Adición": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
+                "Cambio / Migración": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
+                "Recuperado": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("RECUP", na=False)])
             }
+            # Nueva estricta: Solo si dice INS/NUEVA y NO tiene nada de migración/adición
+            mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
+            mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
+            res_ins_visual_v["Nueva"] = len(df_tablero_kpi_monitor[mask_base_ins & ~mask_excl_ins])
+            
             st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
             st.write(f"**Total General INS: {sum(res_ins_visual_v.values())}**")
 
         with col_tab_4:
             st.caption("⚙️ Otros")
-            mask_otros_monitor = ~act_tab_sop.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
+            txt_otr_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
+            mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
             res_otros_monitor = df_tablero_kpi_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
             res_otros_monitor.columns = ['Otros', 'Cant']
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
