@@ -40,16 +40,23 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (Para usar el botón donde sea)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (MODO ESPEJO BLINDADO)
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("Descargando y aplicando formato espejo..."):
+        with st.spinner("Descargando y aplicando formato espejo estricto..."):
             df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
             
             if not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
+
+                if 'SUSCRIPTOR' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
+                    df_nube.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
+                elif 'NOMBRE CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
+                    df_nube.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
+                elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
+                    df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
                 for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                     if col_f in df_nube.columns:
@@ -63,6 +70,22 @@ def sincronizar_datos_nube(conn):
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                     if col_b in df_nube.columns:
                         df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
+
+                # --- 2. GUILLOTINA ANTI-FALSOS CRÍTICOS EN LA NUBE ---
+                if 'ACTIVIDAD' in df_nube.columns:
+                    act_upper = df_nube['ACTIVIDAD'].astype(str).str.upper()
+                    
+                    # PROHIBIDO MARCAR COMO CRÍTICAS (Ni offline, ni tiempo)
+                    mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
+                    mask_solo_sop = act_upper.str.contains('SOP|FIBRA', na=False)
+                    
+                    if 'ES_OFFLINE' in df_nube.columns:
+                        df_nube.loc[mask_falsos, 'ES_OFFLINE'] = False
+                        df_nube.loc[~mask_solo_sop, 'ES_OFFLINE'] = False
+                        
+                    if 'ALERTA_TIEMPO' in df_nube.columns:
+                        df_nube.loc[mask_falsos, 'ALERTA_TIEMPO'] = False
+                        df_nube.loc[~mask_solo_sop, 'ALERTA_TIEMPO'] = False
                 
                 for col_txt in ['NUM', 'CLIENTE']:
                     if col_txt in df_nube.columns:
@@ -93,8 +116,17 @@ def sincronizar_datos_nube(conn):
                         (df_nube['HORA_LIQ'].isna())
                     ].copy()
 
+                cols_orden_ideal = [
+                    'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA',
+                    'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL',
+                    'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC', 'SEGMENTO', 'ALERTA_TIEMPO'
+                ]
+                cols_presentes = [c for c in cols_orden_ideal if c in df_nube.columns]
+                cols_restantes = [c for c in df_nube.columns if c not in cols_presentes]
+                df_nube = df_nube[cols_presentes + cols_restantes]
+
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa: Modo Espejo Activado.")
+                st.success("✅ Sincronización Exitosa: Columnas Fijadas y Críticos Depurados.")
                 st.rerun()
             else:
                 st.warning("La base de datos en la nube está vacía. Debes subir un archivo primero.")
@@ -112,20 +144,16 @@ def mostrar_comentario_cierre(fila):
     with col_modal_a:
         st.markdown("##### 👤 Datos del Cliente")
         st.write(f"**N° Cuenta:** {fila.get('CLIENTE', 'N/D')}")
-        
         nombre_real = fila.get('NOMBRE', fila.get('SUSCRIPTOR', fila.get('NOMBRE CLIENTE', fila.get('NOMBRE_CLIENTE', 'N/D'))))
         if nombre_real != 'N/D':
             st.write(f"**Nombre:** {nombre_real}")
-            
         st.write(f"**Ubicación (Colonia):** {fila.get('COLONIA', 'N/D')}")
     with col_modal_b:
         st.markdown("##### 🚦 Datos de Operación")
         st.write(f"**Estado Actual:** {fila['ESTADO']}")
         st.write(f"**Técnico:** {fila['TECNICO']}")
-        if 'MX' in fila:
-            st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
-        if 'GPS' in fila:
-            st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
+        if 'MX' in fila: st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
+        if 'GPS' in fila: st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
     
     st.divider()
     estatus_final_check = str(fila.get('ESTADO','')).upper().strip()
@@ -138,7 +166,6 @@ def mostrar_comentario_cierre(fila):
     if pd.isnull(texto_comentario_registrado) or texto_comentario_registrado == "":
         texto_comentario_registrado = "No existen observaciones registradas para esta gestión."
     st.info(texto_comentario_registrado)
-    
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
 
@@ -150,55 +177,45 @@ def aplicar_estilos_df(df_original_para_estilo):
     
     def row_styler_logic(fila_v):
         estilos_fila = [''] * len(fila_v)
-        
         if fila_v.get('ES_OFFLINE') == True:
             if 'NUM' in fila_v.index:
-                idx_n = fila_v.index.get_loc('NUM')
-                estilos_fila[idx_n] = 'background-color: #9b111e; color: white; font-weight: bold'
+                estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #9b111e; color: white; font-weight: bold'
         
         est_val = str(fila_v.get('ESTADO','')).upper().strip()
         if est_val == 'CERRADA':
             if 'TIEMPO_REAL' in fila_v.index:
                 idx_tr = fila_v.index.get_loc('TIEMPO_REAL')
                 minutos_trabajados = fila_v.get('MINUTOS_CALC', 0)
-                if minutos_trabajados < 60:
-                    estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
-                elif minutos_trabajados > 119:
-                    estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
+                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
+                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
 
         if fila_v.get('ALERTA_TIEMPO') == True:
             if 'HORA_INI' in fila_v.index:
-                idx_ini = fila_v.index.get_loc('HORA_INI')
-                estilos_fila[idx_ini] = 'background-color: #ff5722; color: white; font-weight: bold'
+                estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
-            
             if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: red; color: white' 
-            elif val_dias >= 4 and val_dias <= 6: estilos_fila[idx_dias] = 'background-color: darkorange; color: white' 
-            elif val_dias >= 1 and val_dias <= 3: estilos_fila[idx_dias] = 'background-color: yellow; color: black' 
+            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: darkorange; color: white' 
+            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: yellow; color: black' 
             elif val_dias == 0: estilos_fila[idx_dias] = 'background-color: green; color: black' 
                 
         return estilos_fila
 
     if 'NUM' in df_visual_procesado.columns:
-        df_visual_procesado['NUM'] = df_visual_procesado.apply(
-            lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1
-        )
+        df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
     if 'HORA_INI' in df_visual_procesado.columns:
         df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
     cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'NOMBRE_CLIENTE', 'NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE_SUSCRIPTOR', 'COLONIA', 
+        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 
         'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
         'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
-    
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
-    
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
@@ -209,8 +226,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos)
         
-        columnas_fechas_depuracion = ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']
-        for col_f in columnas_fechas_depuracion:
+        for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
             if col_f in df_act.columns:
                 df_act[col_f] = pd.to_datetime(df_act[col_f], dayfirst=True, errors='coerce')
         
@@ -230,9 +246,18 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         def alert_2h_logic_diamante(row_check):
             if pd.notnull(row_check['HORA_INI']) and pd.isnull(row_check['HORA_LIQ']):
                 m_diff_val = (ahora_momento_ts - row_check['HORA_INI']).total_seconds() / 60
+                act_v = str(row_check.get('ACTIVIDAD', '')).upper()
+                
+                # NO PUEDEN DAR ALERTA DE TIEMPO SI NO SON SOPFIBRA
+                if any(p in act_v for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL']):
+                    return False
+                if 'SOP' not in act_v and 'FIBRA' not in act_v:
+                    return False
+                    
                 if m_diff_val > 120 and str(row_check.get('ESTADO','')).upper().strip() != 'CERRADA':
                     return True
             return False
+            
         df_act['ALERTA_TIEMPO'] = df_act.apply(alert_2h_logic_diamante, axis=1)
         
         def offline_seguro_diamante_logic(r_off):
@@ -240,12 +265,10 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
             
-            # --- BLINDAJE ANTI-FALSOS CRÍTICOS ---
-            # Excluimos explícitamente estas actividades de ser offline/críticas
-            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU']): 
+            # --- BLINDAJE ANTI-FALSOS CRÍTICOS LOCAL ---
+            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL']): 
                 return False
-            # Debe ser estrictamente SOPFIBRA o contener SOP para evaluarse como offline
-            if 'SOP' not in act_v_name: 
+            if 'SOP' not in act_v_name and 'FIBRA' not in act_v_name: 
                 return False
 
             comentario_v_val = str(r_off.get('COMENTARIO', '')).upper()
@@ -304,9 +327,6 @@ def main():
             else:
                 st.error("La conexión a la nube no está disponible.")
 
-        # ==============================================================================
-        # RESTRICCIÓN DE INTERFAZ: SOLO ADMIN VE EL CARGADOR, O JEFES EN PC
-        # ==============================================================================
         mostrar_cargador = False
         if rol_usuario == 'admin':
             mostrar_cargador = True
@@ -345,7 +365,6 @@ def main():
                 st.title("⚡ Monitor Operativo Maxcom PRO")
                 st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
                 
-                # Creado para que resalte visualmente en celulares y en PC
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
                 with col_c2:
@@ -356,7 +375,6 @@ def main():
                             st.error("Conexión no disponible.")
                 return
         else:
-            # Procesamiento de archivos locales subidos
             res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
             if res_p_diamante is not None:
                 st.session_state.df_base = res_p_diamante
@@ -377,8 +395,13 @@ def main():
     df_base = st.session_state.df_base.copy()
     
     # -------------------------------------------------------------
-    # 🛡️ BLINDAJE GLOBAL (LIMPIEZA DE DATOS EXISTENTES Y DE LA NUBE)
+    # 🛡️ BLINDAJE GLOBAL EN MEMORIA
     # -------------------------------------------------------------
+    if 'SUSCRIPTOR' in df_base.columns and 'NOMBRE' not in df_base.columns:
+        df_base.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
+    elif 'NOMBRE CLIENTE' in df_base.columns and 'NOMBRE' not in df_base.columns:
+        df_base.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
+
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
             test_parse = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
@@ -392,11 +415,20 @@ def main():
         if col_b in df_base.columns:
             df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
             
-    # --- 🛡️ PURGA FINAL DE FALSOS CRÍTICOS ---
-    # Esto asegura que si una orden de PLEXISCA venía de la nube como "offline", aquí se corrija
-    if 'ACTIVIDAD' in df_base.columns and 'ES_OFFLINE' in df_base.columns:
-        mask_no_criticas = df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA', na=False)
-        df_base.loc[mask_no_criticas, 'ES_OFFLINE'] = False
+    # --- 🛡️ PURGA FINAL DE FALSOS CRÍTICOS EN MEMORIA ---
+    if 'ACTIVIDAD' in df_base.columns:
+        act_upper_global = df_base['ACTIVIDAD'].astype(str).str.upper()
+        
+        mask_no_criticas_g = act_upper_global.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
+        mask_solo_sop_g = act_upper_global.str.contains('SOP|FIBRA', na=False)
+        
+        if 'ES_OFFLINE' in df_base.columns:
+            df_base.loc[mask_no_criticas_g, 'ES_OFFLINE'] = False
+            df_base.loc[~mask_solo_sop_g, 'ES_OFFLINE'] = False
+            
+        if 'ALERTA_TIEMPO' in df_base.columns:
+            df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
+            df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
 
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
@@ -446,8 +478,7 @@ def main():
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
-        # ALTURA FIJA AQUÍ TAMBIÉN
-        st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=500, hide_index=True)
+        st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
         return
 
     if nav_menu_diamante == "📅 REPROGRAMADAS":
@@ -463,13 +494,12 @@ def main():
             cols_visibles = ['DIAS_RETRASO', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO']
             cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
             
-            # ALTURA FIJA PARA EVITAR SALTOS EN EL CELULAR
             st.dataframe(
                 df_reprog[cols_finales].style.set_properties(
                     **{'background-color': '#1a2a3a', 'color': '#58a6ff', 'font-weight': 'bold'}, 
                     subset=['DIAS_RETRASO']
                 ),
-                use_container_width=True, height=500, hide_index=True
+                use_container_width=True, height=600, hide_index=True
             )
         else:
             st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
