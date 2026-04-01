@@ -84,20 +84,26 @@ class ReporteGenerencialPDF(FPDF):
                 fillr, fillg, fillb = 255, 255, 255
                 textr, textg, textb = 0, 0, 0
                 
-                # Reglas Visuales de Gamificación Positiva
-                if df.columns[i] in ['% LOGRO FINAL', '% LOGRO SEMANAL']:
+                if df.columns[i] in ['% LOGRO FINAL', '% LOGRO SEMANAL', '% LOGRO META']:
                     try:
                         pct = float(valstr.replace('%', ''))
-                        if pct >= 100: fillr, fillg, fillb = 146, 208, 80 # Verde fuerte (Sobrecumplió)
-                        elif pct >= 80: fillr, fillg, fillb = 169, 208, 142 # Verde suave (Excelente)
-                        elif pct >= 50: fillr, fillg, fillb = 255, 230, 153 # Naranja (Regular)
-                        elif pct >= 0: fillr, fillg, fillb = 244, 176, 132 # Naranja rojizo (Bajo)
+                        if pct >= 100: fillr, fillg, fillb = 146, 208, 80 
+                        elif pct >= 80: fillr, fillg, fillb = 169, 208, 142 
+                        elif pct >= 50: fillr, fillg, fillb = 255, 230, 153 
+                        elif pct >= 0: fillr, fillg, fillb = 244, 176, 132 
+                    except: pass
+                    
+                elif df.columns[i] in ['% DESAPROVECHADO', '% DESAPROV.']:
+                    try:
+                        pct = float(valstr.replace('%', ''))
+                        if pct >= 50: fillr, fillg, fillb = 244, 130, 130 
+                        elif pct >= 25: fillr, fillg, fillb = 255, 200, 100 
+                        elif pct >= 0: fillr, fillg, fillb = 169, 208, 142 
                     except: pass
 
-                # Resaltar si obtuvieron bono
                 if df.columns[i] == 'BONO MIXTO':
                     if valstr != '+0.0%':
-                        fillr, fillg, fillb = 220, 235, 255 # Azulito claro para premiar visualmente
+                        fillr, fillg, fillb = 220, 235, 255 
 
                 self.set_fill_color(fillr, fillg, fillb)
                 self.set_text_color(textr, textg, textb)
@@ -367,76 +373,21 @@ def generar_graficos_temporales(dfbase):
         return {}
 
 # ==============================================================================
-# 4. FUNCIONES DE PROCESAMIENTO Y DEPURACIÓN
-# ==============================================================================
-def es_offline_preciso(comentario):
-    txt = str(comentario).upper().strip()
-    if not txt or txt == 'NAN': return False
-    jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
-    if any(word in txt for word in jergasolucion): return False
-    keywordsfalla = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
-    return any(word in txt for word in keywordsfalla)
-
-def depurar_archivos_en_crudo(fileactividades, filedispositivos):
-    try:
-        xlact = pd.ExcelFile(fileactividades, engine='openpyxl')
-        sheetp = 'Prueba' if 'Prueba' in xlact.sheet_names else xlact.sheet_names[0]
-        dfpraw = pd.read_excel(xlact, sheet_name=sheetp)
-        sheethnom = 'HistoricoNoInstaladas' if 'HistoricoNoInstaladas' in xlact.sheet_names else None
-        dfhraw = pd.read_excel(xlact, sheet_name=sheethnom) if sheethnom else pd.DataFrame()
-        if filedispositivos.name.lower().endswith('.csv'):
-            dfdispfull = pd.read_csv(filedispositivos, sep=None, engine='python')
-        else:
-            dfdispfull = pd.read_excel(filedispositivos, engine='openpyxl')
-        dfdispref = pd.DataFrame()
-        coltec = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['TECNICO', 'USER', 'OPERADOR'])]
-        colmx = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['MX', 'VEHICULO', 'PLACA'])]
-        dfdispref['TECREF'] = dfdispfull[coltec[0]].astype(str).str.strip().str.upper() if coltec else "N/D"
-        dfdispref['MXREF'] = dfdispfull[colmx[0]].astype(str).str.strip() if colmx else "N/D"
-        dfp = procesar_dataframe_base(dfpraw)
-        dfp['TECKEY'] = dfp['TECNICO'].astype(str).str.strip().str.upper()
-        dffinal = dfp.merge(dfdispref.drop_duplicates('TECREF'), left_on='TECKEY', right_on='TECREF', how='left')
-        if 'MXREF' in dffinal.columns:
-            dffinal['MX'] = dffinal['MXREF'].combine_first(dffinal.get('MX', pd.Series(dtype=str)))
-        return dffinal.drop(columns=['TECKEY', 'TECREF', 'MXREF'], errors='ignore'), procesar_dataframe_base(dfhraw)
-    except Exception as e:
-        raise Exception(f"Error en cruce: {str(e)}")
-
-def procesar_dataframe_base(df):
-    df.columns = df.columns.astype(str).str.strip()
-    mapeocolumnas = {}
-    for nombreinterno, listaopciones in COLUMNS_MAPPING.items():
-        for opcion in listaopciones:
-            if opcion.upper() in [str(c).upper() for c in df.columns]:
-                realname = next(c for c in df.columns if str(c).upper() == opcion.upper())
-                mapeocolumnas[realname] = nombreinterno
-                break
-    df = df.rename(columns=mapeocolumnas)
-    for colv in COLUMNAS_VITALES_SISTEMA:
-        if colv not in df.columns: df[colv] = "N/D"
-    for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
-        df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
-    return df
-
-# ==============================================================================
 # LÓGICA DE VALORIZACIÓN DE METAS (GAMIFICACIÓN INTELIGENTE)
 # ==============================================================================
 def calcular_aporte_meta(actividad):
-    """
-    Asigna un % de logro del día basado en el tipo de orden (Complejidad).
-    """
     act = str(actividad).upper()
     if 'PEXTERNO' in act:
-        return 100.0  # 1 orden de PEXTERNO cumple el 100% del día
+        return 100.0  
     elif re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|SPLITTEROPT', act):
-        return 25.0   # Meta de 4 al día -> 100% / 4 = 25%
+        return 25.0   
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
-        return 12.5   # Meta de 8 al día -> 100% / 8 = 12.5%
+        return 12.5   
     else:
-        return 12.5   # Valor por defecto (asume meta de 8)
+        return 12.5   
 
 # ==============================================================================
-# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO)
+# FUNCIONES DE CREACIÓN DE PDF
 # ==============================================================================
 def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     df_sem = df_base[
@@ -455,7 +406,7 @@ def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     pdf.cell(0, 10, safestr(f" Reporte Analitico Semanal: {fecha_inicio} al {fecha_fin}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    pdf.seccion_titulo("Rendimiento Operativo Semanal (Basado en Metas de Cuota y Complejidad)")
+    pdf.seccion_titulo("Rendimiento Operativo Semanal (Basado en Metas de Cuota)")
     if not df_sem.empty:
         df_sem['%_APORTE'] = df_sem['ACTIVIDAD'].apply(calcular_aporte_meta)
         df_tec = df_sem.groupby('TECNICO').agg(
@@ -463,7 +414,6 @@ def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
             PORCENTAJE_META=('%_APORTE', 'sum')
         ).reset_index()
         
-        # Para la semana (Asumiendo 6 días laborales) el 100% semanal es 600 puntos
         df_tec['% LOGRO SEMANAL'] = ((df_tec['PORCENTAJE_META'] / 600.0) * 100).round(1)
         df_tec = df_tec.sort_values(by='% LOGRO SEMANAL', ascending=False)
         
@@ -527,7 +477,6 @@ def generar_pdf_mensual(df_base, mes, anio):
     return finalizar_pdf(pdf)
 
 def generar_pdf_cierre_diario(dfbase, fechatarget):
-    """Genera el PDF Diario midiendo la Productividad con BONO de Ruta Mixta."""
     dfc = dfbase[
         (dfbase['HORA_LIQ'].dt.date == fechatarget) & 
         (dfbase['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
@@ -576,10 +525,8 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
     pdf.cell(0, 10, safestr(f" Reporte Analitico de Cierre Diario: {fechatarget}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    # --- LA NUEVA LÓGICA DE GAMIFICACIÓN CON BONO ---
     pdf.seccion_titulo("Analisis de Eficiencia (Puntos por Meta + 10% Bono por Ruta Mixta)")
     if not dfc.empty:
-        # Preparamos las columnas para el conteo específico por técnico
         dfc['CANT_INS'] = (dfc['TIPOORDEN'] == 'INSTALACION').astype(int)
         dfc['CANT_SOP'] = (dfc['TIPOORDEN'] == 'MANTENIMIENTO').astype(int)
         dfc['CANT_OTR'] = (dfc['TIPOORDEN'] == 'OTROS').astype(int)
@@ -592,30 +539,23 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
             PUNTOS_BASE=('%_APORTE', 'sum')
         ).reset_index()
         
-        # Función para aplicar el bono si hicieron más de un tipo de orden
         def calcular_bono(row):
             tipos = sum([1 for x in [row['CANT_INS'], row['CANT_SOP'], row['CANT_OTR']] if x > 0])
-            if tipos > 1: return 10.0 # 10% extra por estrés de cambio de contexto
+            if tipos > 1: return 10.0 
             return 0.0
             
         df_tec['BONO_MIXTO'] = df_tec.apply(calcular_bono, axis=1)
         df_tec['LOGRO_FINAL'] = df_tec['PUNTOS_BASE'] + df_tec['BONO_MIXTO']
         
-        # Ordenamos a los más eficientes arriba
         df_tec = df_tec.sort_values(by='LOGRO_FINAL', ascending=False)
         
-        # Preparamos la tabla visual
         df_tec_table = df_tec[['TECNICO', 'CANT_INS', 'CANT_SOP', 'CANT_OTR', 'PUNTOS_BASE', 'BONO_MIXTO', 'LOGRO_FINAL']].copy()
-        
-        # Renombramos para el PDF
         df_tec_table.columns = ['TECNICO', 'INS', 'SOP', 'OTR', 'PUNTOS BASE', 'BONO MIXTO', '% LOGRO FINAL']
         
-        # Formateamos los números
         df_tec_table['PUNTOS BASE'] = df_tec_table['PUNTOS BASE'].round(1).astype(str) + '%'
         df_tec_table['BONO MIXTO'] = '+' + df_tec_table['BONO MIXTO'].round(1).astype(str) + '%'
         df_tec_table['% LOGRO FINAL'] = df_tec_table['% LOGRO FINAL'].round(1).astype(str) + '%'
         
-        # Dibujamos ajustando los anchos (Total 190)
         pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[55, 15, 15, 15, 30, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C", "C"])
     else:
         pdf.set_font("Helvetica", "", 8)
@@ -751,3 +691,77 @@ def logica_generar_pdf(dfbase):
             except: pass
             
     return finalizar_pdf(pdf)
+
+# ------------------------------------------------------------------------------
+# LA FUNCIÓN FALTANTE (¡EL CULPABLE DEL ERROR!)
+# ------------------------------------------------------------------------------
+def finalizar_pdf(pdfobj):
+    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        pdfobj.output(tmppath)
+        with open(tmppath, "rb") as f: return f.read()
+    finally:
+        try: os.remove(tmppath)
+        except: pass
+
+def es_offline_preciso(comentario):
+    txt = str(comentario).upper().strip()
+    if not txt or txt == 'NAN': return False
+    jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
+    if any(word in txt for word in jergasolucion): return False
+    keywordsfalla = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
+    return any(word in txt for word in keywordsfalla)
+
+def depurar_archivos_en_crudo(fileactividades, filedispositivos):
+    try:
+        xlact = pd.ExcelFile(fileactividades, engine='openpyxl')
+        sheetp = 'Prueba' if 'Prueba' in xlact.sheet_names else xlact.sheet_names[0]
+        dfpraw = pd.read_excel(xlact, sheet_name=sheetp)
+        sheethnom = 'HistoricoNoInstaladas' if 'HistoricoNoInstaladas' in xlact.sheet_names else None
+        dfhraw = pd.read_excel(xlact, sheet_name=sheethnom) if sheethnom else pd.DataFrame()
+        if filedispositivos.name.lower().endswith('.csv'):
+            dfdispfull = pd.read_csv(filedispositivos, sep=None, engine='python')
+        else:
+            dfdispfull = pd.read_excel(filedispositivos, engine='openpyxl')
+        dfdispref = pd.DataFrame()
+        coltec = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['TECNICO', 'USER', 'OPERADOR'])]
+        colmx = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['MX', 'VEHICULO', 'PLACA'])]
+        dfdispref['TECREF'] = dfdispfull[coltec[0]].astype(str).str.strip().str.upper() if coltec else "N/D"
+        dfdispref['MXREF'] = dfdispfull[colmx[0]].astype(str).str.strip() if colmx else "N/D"
+        dfp = procesar_dataframe_base(dfpraw)
+        dfp['TECKEY'] = dfp['TECNICO'].astype(str).str.strip().str.upper()
+        dffinal = dfp.merge(dfdispref.drop_duplicates('TECREF'), left_on='TECKEY', right_on='TECREF', how='left')
+        if 'MXREF' in dffinal.columns:
+            dffinal['MX'] = dffinal['MXREF'].combine_first(dffinal.get('MX', pd.Series(dtype=str)))
+        return dffinal.drop(columns=['TECKEY', 'TECREF', 'MXREF'], errors='ignore'), procesar_dataframe_base(dfhraw)
+    except Exception as e:
+        raise Exception(f"Error en cruce: {str(e)}")
+
+def procesar_dataframe_base(df):
+    df.columns = df.columns.astype(str).str.strip()
+    mapeocolumnas = {}
+    for nombreinterno, listaopciones in COLUMNS_MAPPING.items():
+        for opcion in listaopciones:
+            if opcion.upper() in [str(c).upper() for c in df.columns]:
+                realname = next(c for c in df.columns if str(c).upper() == opcion.upper())
+                mapeocolumnas[realname] = nombreinterno
+                break
+    df = df.rename(columns=mapeocolumnas)
+    for colv in COLUMNAS_VITALES_SISTEMA:
+        if colv not in df.columns: df[colv] = "N/D"
+    for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
+        df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
+    return df
+
+def es_alerta_administrativa(row):
+    if not hasattr(row, 'get'): return False
+    
+    act = str(row.get('ACTIVIDAD', '')).upper()
+    com = str(row.get('COMENTARIO', '')).upper()
+    
+    if any(e in act for e in ['INACTIVO', 'CORTEMORA', 'NOINSTALADO']): 
+        return True
+    if any(j in com for j in ['NO SE PUDO', 'CLIENTE NO QUISO', 'CANCELADA', 'NO PERMITE']): 
+        return True
+    return False
