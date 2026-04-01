@@ -5,6 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import re
 from streamlit_gsheets import GSheetsConnection
+import matplotlib.pyplot as plt
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -621,7 +622,7 @@ def main():
     met_v2.metric("🏠 RESIDENCIAL", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'RESIDENCIAL']))
     met_v3.metric("📋 TOTAL EN VISTA", len(df_v_tabla_monitor))
 
-    t_panel_v, t_graphs_v = st.tabs(["📋 PANEL DE CONTROL OPERATIVO", "📊 ANALISIS Y GANTT"])
+    t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL DE CONTROL OPERATIVO", "📊 ANALISIS Y GANTT", "📈 ANALÍTICA"])
     
     with t_panel_v:
         if not df_v_tabla_monitor.empty:
@@ -661,6 +662,57 @@ def main():
             st.plotly_chart(fig_barras_v, use_container_width=True)
         else:
             st.info("Sin datos de cierres para generar gráfico horario.")
+
+    with t_analitica_v:
+        st.markdown("### 📈 Análisis de Rendimiento Operativo")
+        plt.style.use('dark_background')
+        
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            # 1. Gráfico de Barras: Segmentos
+            fig1, ax1 = plt.subplots(figsize=(6, 4))
+            conteo_seg = df_v_tabla_monitor['SEGMENTO'].value_counts()
+            if not conteo_seg.empty:
+                conteo_seg.plot(kind='bar', color=['#1f6feb', '#2ea043'], ax=ax1)
+                ax1.set_title("Volumen de Órdenes por Segmento", fontsize=12, fontweight='bold')
+                ax1.set_ylabel("Cantidad de Órdenes")
+                ax1.tick_params(axis='x', rotation=0)
+                ax1.spines['top'].set_visible(False)
+                ax1.spines['right'].set_visible(False)
+                st.pyplot(fig1)
+
+        with col_m2:
+            # 2. Histograma: Tiempos
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            tiempos_validos = df_v_tabla_monitor[df_v_tabla_monitor['MINUTOS_CALC'] > 0]['MINUTOS_CALC']
+            if not tiempos_validos.empty:
+                ax2.hist(tiempos_validos, bins=15, color='#a371f7', edgecolor='white', alpha=0.8)
+                ax2.set_title("Distribución de Tiempos de Resolución", fontsize=12, fontweight='bold')
+                ax2.set_xlabel("Minutos de Trabajo")
+                ax2.set_ylabel("Frecuencia")
+                ax2.spines['top'].set_visible(False)
+                ax2.spines['right'].set_visible(False)
+                st.pyplot(fig2)
+
+        st.divider()
+
+        # 3. Tendencia Offline
+        fig3, ax3 = plt.subplots(figsize=(10, 3))
+        df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
+        if not df_offline.empty and 'HORA_INI' in df_offline.columns:
+            tendencia = df_offline.dropna(subset=['HORA_INI']).groupby(df_offline['HORA_INI'].dt.date).size()
+            if not tendencia.empty:
+                tendencia.plot(kind='line', marker='o', color='#f85149', linewidth=2, markersize=8, ax=ax3)
+                ax3.set_title("Tendencia de Fallas Críticas (Offline) por Día", fontsize=12, fontweight='bold')
+                ax3.set_ylabel("Cantidad de Fallas")
+                ax3.grid(True, linestyle='--', alpha=0.3)
+                ax3.spines['top'].set_visible(False)
+                ax3.spines['right'].set_visible(False)
+                st.pyplot(fig3)
+            else:
+                st.info("Datos insuficientes de fechas para la tendencia Offline.")
+        else:
+            st.success("¡Excelente! No hay fallas Offline registradas en esta vista.")
 
 # ==============================================================================
 # 8. SISTEMA DE LOGIN Y ARRANQUE DE LA APLICACIÓN
