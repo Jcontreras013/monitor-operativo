@@ -239,7 +239,15 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if str(r_off.get('TECNICO', '')).strip().upper() == 'JOSUE MIGUEL SAUCEDA': return False
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
-            if any(p in act_v_name for p in ['INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU']): return False
+            
+            # --- BLINDAJE ANTI-FALSOS CRÍTICOS ---
+            # Excluimos explícitamente estas actividades de ser offline/críticas
+            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU']): 
+                return False
+            # Debe ser estrictamente SOPFIBRA o contener SOP para evaluarse como offline
+            if 'SOP' not in act_v_name: 
+                return False
+
             comentario_v_val = str(r_off.get('COMENTARIO', '')).upper()
             if "ONU OFFLINE" in comentario_v_val or "OFF LINE" in comentario_v_val or "FUERA DE SERVICIO" in comentario_v_val or "OFFLINE" in comentario_v_val: return True
             return es_offline_preciso(comentario_v_val)
@@ -369,7 +377,7 @@ def main():
     df_base = st.session_state.df_base.copy()
     
     # -------------------------------------------------------------
-    # 🛡️ BLINDAJE GLOBAL
+    # 🛡️ BLINDAJE GLOBAL (LIMPIEZA DE DATOS EXISTENTES Y DE LA NUBE)
     # -------------------------------------------------------------
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
@@ -384,6 +392,12 @@ def main():
         if col_b in df_base.columns:
             df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
             
+    # --- 🛡️ PURGA FINAL DE FALSOS CRÍTICOS ---
+    # Esto asegura que si una orden de PLEXISCA venía de la nube como "offline", aquí se corrija
+    if 'ACTIVIDAD' in df_base.columns and 'ES_OFFLINE' in df_base.columns:
+        mask_no_criticas = df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA', na=False)
+        df_base.loc[mask_no_criticas, 'ES_OFFLINE'] = False
+
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
             df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
@@ -432,7 +446,8 @@ def main():
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
-        st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, hide_index=True)
+        # ALTURA FIJA AQUÍ TAMBIÉN
+        st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=500, hide_index=True)
         return
 
     if nav_menu_diamante == "📅 REPROGRAMADAS":
@@ -448,12 +463,13 @@ def main():
             cols_visibles = ['DIAS_RETRASO', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO']
             cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
             
+            # ALTURA FIJA PARA EVITAR SALTOS EN EL CELULAR
             st.dataframe(
                 df_reprog[cols_finales].style.set_properties(
                     **{'background-color': '#1a2a3a', 'color': '#58a6ff', 'font-weight': 'bold'}, 
                     subset=['DIAS_RETRASO']
                 ),
-                use_container_width=True, hide_index=True
+                use_container_width=True, height=500, hide_index=True
             )
         else:
             st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
@@ -707,10 +723,11 @@ def main():
     with t_panel_v:
         if not df_v_tabla_monitor.empty:
             df_estilo_v, row_styler_final_v = aplicar_estilos_df(df_v_tabla_monitor)
+            # ALTURA FIJA PARA EVITAR SALTOS EN EL CELULAR
             evento_monitor_diam = st.dataframe(
                 df_estilo_v.style.apply(row_styler_final_v, axis=1).hide(axis=1, subset=['ES_OFFLINE']), 
                 column_config={"GPS": st.column_config.LinkColumn("UBICACIÓN GPS")}, 
-                use_container_width=True, height=550, hide_index=True, on_select="rerun", selection_mode="single-row"
+                use_container_width=True, height=600, hide_index=True, on_select="rerun", selection_mode="single-row"
             )
             if evento_monitor_diam.selection.rows:
                 mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
