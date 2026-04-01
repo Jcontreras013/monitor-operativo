@@ -205,6 +205,9 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 # 5. INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
+    # Detectar el rol del usuario desde el inicio
+    rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
+    
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
     except Exception as e:
@@ -281,31 +284,34 @@ def main():
             else:
                 st.error("La conexión a la nube no está disponible.")
         
-        st.divider()
-
-        st.markdown("### 📥 Archivos Crudos")
-        archivos_uploader_diamante = st.file_uploader(
-            "Sube rep_actividades y FttxActiveDevice", 
-            type=["xlsx", "csv"], 
-            accept_multiple_files=True
-        )
-        
+        # ==============================================================================
+        # RESTRICCIÓN DE INTERFAZ: SOLO ADMIN VE EL CARGADOR DE ARCHIVOS CRUDOS
+        # ==============================================================================
         file_act_ptr = None
         file_disp_ptr = None
+        btn_reprocesar = False
         
-        if archivos_uploader_diamante:
-            for file_item in archivos_uploader_diamante:
-                f_name_lwr = file_item.name.lower()
-                if "actividades" in f_name_lwr: file_act_ptr = file_item
-                elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: file_disp_ptr = file_item
+        if rol_usuario == 'admin':
+            st.divider()
+            st.markdown("### 📥 Archivos Crudos")
+            archivos_uploader_diamante = st.file_uploader(
+                "Sube rep_actividades y FttxActiveDevice", 
+                type=["xlsx", "csv"], 
+                accept_multiple_files=True
+            )
+            
+            if archivos_uploader_diamante:
+                for file_item in archivos_uploader_diamante:
+                    f_name_lwr = file_item.name.lower()
+                    if "actividades" in f_name_lwr: file_act_ptr = file_item
+                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: file_disp_ptr = file_item
 
-        btn_reprocesar = st.button("🔄 ACTUALIZAR TODO", use_container_width=True)
+            btn_reprocesar = st.button("🔄 ACTUALIZAR TODO", use_container_width=True)
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         if file_act_ptr is None or file_disp_ptr is None:
             st.title("⚡ Monitor Operativo Maxcom PRO")
-            st.info("💡 Consejo: Usa 'ACTUALIZAR DESDE LA NUBE' en el menú izquierdo si estás fuera de la oficina, o sube los archivos crudos para guardar una nueva copia en la nube.")
-            st.warning("⚠️ Para modo editor: Sube 'Actividades' y 'Dispositivos'.")
+            st.info("💡 Consejo: Usa el botón 'ACTUALIZAR DESDE LA NUBE' en el menú izquierdo para cargar los datos en tu pantalla.")
             return
         
         res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
@@ -359,14 +365,11 @@ def main():
 
     # --- 2. MENÚ SUPERIOR CON RESTRICCIÓN RADICAL DE ROLES ---
     with sidebar_top:
-        rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
-        
         if rol_usuario in ['admin', 'jefe']:
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
             
-        # 🟢 CORTE RADICAL: Excluimos permanentemente los días negativos del Monitor en Vivo
         df_base_activa = df_base[df_base['DIAS_RETRASO'] >= 0].copy()
         
         if nav_menu_diamante == "⚡ Monitor en Vivo":
@@ -397,12 +400,10 @@ def main():
         st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, hide_index=True)
         return
 
-    # 🔴 NUEVO FILTRO EXCLUSIVO PARA REPROGRAMADAS
     if nav_menu_diamante == "📅 REPROGRAMADAS":
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
         
-        # Solo trae las órdenes que tienen un retraso negativo (no importa qué diga el estatus de la orden)
         mask_reprog = (df_base['DIAS_RETRASO'] < 0)
         df_reprog = df_base[mask_reprog].copy()
         
