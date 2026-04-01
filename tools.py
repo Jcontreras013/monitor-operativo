@@ -707,3 +707,18 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
                 except: pass
                 
     return finalizar_pdf(pdf)
+
+# AGREGA ESTO AL FINAL DE TU ARCHIVO tools.py
+def es_alerta_administrativa(row):
+    # PROTECCIÓN: Si no es un objeto con .get, salimos
+    if not hasattr(row, 'get'): return False
+    
+    act = str(row.get('ACTIVIDAD', '')).upper()
+    com = str(row.get('COMENTARIO', '')).upper()
+    
+    # Marcamos como alerta administrativa órdenes que se cancelan o tienen problemas de acceso
+    if any(e in act for e in ['INACTIVO', 'CORTEMORA', 'NOINSTALADO']): 
+        return True
+    if any(j in com for j in ['NO SE PUDO', 'CLIENTE NO QUISO', 'CANCELADA', 'NO PERMITE']): 
+        return True
+    return False
