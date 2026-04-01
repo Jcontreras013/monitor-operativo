@@ -110,7 +110,6 @@ def aplicar_estilos_df(df_original_para_estilo):
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
             
-            # REGLA DE COLORES EXACTA
             if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: red; color: white' 
             elif val_dias >= 4 and val_dias <= 6: estilos_fila[idx_dias] = 'background-color: darkorange; color: white' 
             elif val_dias >= 1 and val_dias <= 3: estilos_fila[idx_dias] = 'background-color: yellow; color: black' 
@@ -230,12 +229,13 @@ def main():
                             df_nube = df_nube.dropna(how='all')
                             df_nube.columns = df_nube.columns.str.upper().str.strip()
 
-                            # --- 🛠️ REPARACIÓN QUIRÚRGICA DE FECHAS GOOGLE SHEETS ---
-                            # Evita que las fechas se vuelvan 1970-01-01 00:00:00
+                            # --- 🛠️ REPARACIÓN QUIRÚRGICA DE FECHAS (EL PROBLEMA DE ABRIL/ENERO) ---
+                            # IMPORTANTE: dayfirst=True asegura que 01/04 se lea como 1 de Abril y no 4 de Enero
                             for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if col_f in df_nube.columns:
-                                    test_parse = pd.to_datetime(df_nube[col_f], errors='coerce')
-                                    if (test_parse.dt.year == 1970).any():
+                                    test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
+                                    # Si Google Sheets lo mandó como número de serie (ej. 45383) se vuelve año 1970
+                                    if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
                                         nums = pd.to_numeric(df_nube[col_f], errors='coerce')
                                         df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
                                     else:
@@ -266,7 +266,7 @@ def main():
                                 if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                                 if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                            # --- ✂️ FILTRO DE 7 DÍAS (Iguala el conteo de 96 vs 103) ---
+                            # --- ✂️ FILTRO DE 7 DÍAS ---
                             ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
                             fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                             
@@ -334,12 +334,12 @@ def main():
     df_base = st.session_state.df_base.copy()
     
     # -------------------------------------------------------------
-    # 🛡️ BLINDAJE GLOBAL (Aplica para cargas locales o cuando falla la nube)
+    # 🛡️ BLINDAJE GLOBAL
     # -------------------------------------------------------------
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
             test_parse = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
-            if (test_parse.dt.year == 1970).any():
+            if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
                 nums = pd.to_numeric(df_base[col_f], errors='coerce')
                 df_base[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
             else:
