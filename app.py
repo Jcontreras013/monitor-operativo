@@ -74,7 +74,7 @@ def sincronizar_datos_nube(conn):
                 # --- GUILLOTINA ANTI-FALSOS CRÍTICOS EN LA NUBE ---
                 if 'ACTIVIDAD' in df_nube.columns:
                     act_upper = df_nube['ACTIVIDAD'].astype(str).str.upper()
-                    mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
+                    mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
                     mask_solo_sop = act_upper.str.contains('SOP|FIBRA', na=False)
                     
                     if 'ES_OFFLINE' in df_nube.columns:
@@ -246,7 +246,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
                 m_diff_val = (ahora_momento_ts - row_check['HORA_INI']).total_seconds() / 60
                 act_v = str(row_check.get('ACTIVIDAD', '')).upper()
                 
-                if any(p in act_v for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL']):
+                if any(p in act_v for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']):
                     return False
                 if 'SOP' not in act_v and 'FIBRA' not in act_v:
                     return False
@@ -262,7 +262,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
             
-            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL']): 
+            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']): 
                 return False
             if 'SOP' not in act_v_name and 'FIBRA' not in act_v_name: 
                 return False
@@ -413,7 +413,7 @@ def main():
     if 'ACTIVIDAD' in df_base.columns:
         act_upper_global = df_base['ACTIVIDAD'].astype(str).str.upper()
         
-        mask_no_criticas_g = act_upper_global.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
+        mask_no_criticas_g = act_upper_global.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
         mask_solo_sop_g = act_upper_global.str.contains('SOP|FIBRA', na=False)
         
         if 'ES_OFFLINE' in df_base.columns:
@@ -438,7 +438,7 @@ def main():
     hoy_date_valor = ahora_local.date()
     patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
 
-    # --- 2. MENÚ SUPERIOR CON RESTRICCIÓN RADICAL DE ROLES ---
+    # --- 2. MENÚ SUPERIOR ---
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
@@ -463,11 +463,10 @@ def main():
             
             df_monitor_filtrado = df_base_activa.copy()
             
-            # --- 🛡️ FILTRO RADICAL APLICADO AQUÍ ---
             if check_criticos_diamante:
                 mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
                 mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP|FIBRA', na=False)
-                mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL', na=False)
+                mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
                 
                 df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
                 
@@ -552,9 +551,10 @@ def main():
                     st.dataframe(df_sop, hide_index=True, use_container_width=True)
                     st.write(f"**Total SOP: {df_sop['Cant'].sum()}**")
                     
+                # --- AQUÍ APLICAMOS LA EXCLUSIÓN EN EL CIERRE DIARIO ---
                 with ci_col:
                     st.write("**Instalaciones**")
-                    df_ins = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('INS|NUEVA|ADIC|CAMBIO', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    df_ins = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_ins, hide_index=True, use_container_width=True)
                     st.write(f"**Total INS: {df_ins['Cant'].sum()}**")
                     
@@ -566,7 +566,7 @@ def main():
                     
                 with co_col:
                     st.write("**Otros**")
-                    df_otros = df_cierre_filtrado[~(df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC', na=False, case=False))]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    df_otros = df_cierre_filtrado[~(df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False, case=False))]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total Otros: {df_otros['Cant'].sum()}**")
 
@@ -670,12 +670,14 @@ def main():
             st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
             st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor['ALERTA_TIEMPO'] == True).sum()))
 
+        # --- AQUÍ APLICAMOS LA EXCLUSIÓN AL MONITOR EN VIVO ---
         with col_tab_3:
             st.caption("📦 Instalaciones")
             res_ins_visual_v = {
                 "Adición": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("ADIC", na=False)]),
-                "Cambio de Medio": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("CAMBIO", na=False)]),
-                "Nueva": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("NUEVA|INSFIBRA", na=False) & ~act_tab_sop.str.contains("ADIC|CAMBIO", na=False)]),
+                "Cambio / Migración": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("CAMBIO|MIGRACI", na=False)]),
+                # NUEVA ESTRICTA: Solo es nueva si dice INS o NUEVA y NO dice nada de Adic, Cambio, Migración o Recup
+                "Nueva": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("INS|NUEVA", na=False) & ~act_tab_sop.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)]),
                 "Recuperado": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("RECUP", na=False)])
             }
             st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
@@ -683,7 +685,7 @@ def main():
 
         with col_tab_4:
             st.caption("⚙️ Otros")
-            mask_otros_monitor = ~act_tab_sop.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|NUEVA", na=False)
+            mask_otros_monitor = ~act_tab_sop.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
             res_otros_monitor = df_tablero_kpi_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
             res_otros_monitor.columns = ['Otros', 'Cant']
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
