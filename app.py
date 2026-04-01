@@ -150,7 +150,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if col_f in df_act.columns:
                 df_act[col_f] = pd.to_datetime(df_act[col_f], dayfirst=True, errors='coerce')
         
-        # HORA HONDURAS
         ahora_momento = datetime.utcnow() - timedelta(hours=6)
         ahora_momento_ts = pd.Timestamp(ahora_momento)
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
@@ -162,8 +161,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         ].copy()
         
         df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
-        
-        # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
         df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
         
         def alert_2h_logic_diamante(row_check):
@@ -175,7 +172,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         df_act['ALERTA_TIEMPO'] = df_act.apply(alert_2h_logic_diamante, axis=1)
         
         def offline_seguro_diamante_logic(r_off):
-            # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
             if str(r_off.get('TECNICO', '')).strip().upper() == 'JOSUE MIGUEL SAUCEDA': return False
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
@@ -210,7 +206,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 # 5. INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
-    # --- CONEXIÓN A LA NUBE ---
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
     except Exception as e:
@@ -224,35 +219,36 @@ def main():
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
 
-        # ==============================================================================
-        # SECCIÓN CORREGIDA: ACTUALIZAR DESDE LA NUBE (MODO ESPEJO)
-        # ==============================================================================
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True):
             if conn is not None:
                 try:
                     with st.spinner("Descargando y aplicando formato espejo..."):
-                        # ttl=0 fuerza a que traiga los datos más frescos, sin usar caché viejo
                         df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                         
                         if not df_nube.empty:
-                            # 0. Eliminar filas vacías o "basura" que añade Google Sheets
                             df_nube = df_nube.dropna(how='all')
+                            df_nube.columns = df_nube.columns.str.upper().str.strip()
 
-                            # 1. FIX FECHAS: Convertir a formato real de tiempo
+                            # --- 🛠️ REPARACIÓN QUIRÚRGICA DE FECHAS GOOGLE SHEETS ---
+                            # Evita que las fechas se vuelvan 1970-01-01 00:00:00
                             for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if col_f in df_nube.columns:
-                                    df_nube[col_f] = pd.to_datetime(df_nube[col_f], errors='coerce')
+                                    test_parse = pd.to_datetime(df_nube[col_f], errors='coerce')
+                                    if (test_parse.dt.year == 1970).any():
+                                        nums = pd.to_numeric(df_nube[col_f], errors='coerce')
+                                        df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
+                                    else:
+                                        df_nube[col_f] = test_parse
                             
-                            # 2. FIX BOOLEANOS: Reactivar los colores (Rojo para Offline, Naranja para Alerta)
+                            # --- 🛡️ LIMPIEZA DE COLUMNAS DE BOOLEANOS Y ESTADOS ---
                             for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                                 if col_b in df_nube.columns:
                                     df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
                             
-                            # 3. FIX DECIMALES (.000000): Limpiar Cuentas y Número de Órdenes
+                            # --- 🧹 LIMPIEZA DE NÚMEROS Y DECIMALES FLOTANTES ---
                             for col_txt in ['NUM', 'CLIENTE']:
                                 if col_txt in df_nube.columns:
-                                    # Convertimos a entero para borrar decimales y luego a texto para la tabla
                                     df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                                     df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                                     
@@ -262,19 +258,15 @@ def main():
                             if 'MINUTOS_CALC' in df_nube.columns:
                                 df_nube['MINUTOS_CALC'] = pd.to_numeric(df_nube['MINUTOS_CALC'], errors='coerce').fillna(0.0)
 
-                            # Normalizamos el estado para que los filtros funcionen
                             if 'ESTADO' in df_nube.columns:
                                 df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
 
-                            # EXCEPCIÓN JOSUE MIGUEL SAUCEDA
                             if 'TECNICO' in df_nube.columns:
                                 mask_josue = df_nube['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
-                                if 'DIAS_RETRASO' in df_nube.columns:
-                                    df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
-                                if 'ES_OFFLINE' in df_nube.columns:
-                                    df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
+                                if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
+                                if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                            # 4. FIX CANTIDAD (96 vs 103): Aplicar el mismo filtro de 7 días que usa el local
+                            # --- ✂️ FILTRO DE 7 DÍAS (Iguala el conteo de 96 vs 103) ---
                             ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
                             fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                             
@@ -327,15 +319,10 @@ def main():
             st.session_state.df_base = res_p_diamante
             st.session_state.df_hist = res_h_diamante
             
-            # --- GUARDADO AUTOMÁTICO EN LA NUBE ---
             if conn is not None:
                 with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
                     try:
-                        conn.update(
-                            spreadsheet=st.secrets["url_base_datos"],
-                            worksheet="Sheet1",
-                            data=res_p_diamante
-                        )
+                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=res_p_diamante)
                         st.success("✅ Datos sincronizados y guardados en la nube correctamente.")
                     except Exception as e:
                         st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
@@ -347,25 +334,31 @@ def main():
     df_base = st.session_state.df_base.copy()
     
     # -------------------------------------------------------------
-    # 🛡️ BLINDAJE DE DATOS (REGLA DE DIAMANTE CONTRA GOOGLE SHEETS)
+    # 🛡️ BLINDAJE GLOBAL (Aplica para cargas locales o cuando falla la nube)
     # -------------------------------------------------------------
-    # 1. Fechas Inteligentes
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
-            df_base[col_f] = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
+            test_parse = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
+            if (test_parse.dt.year == 1970).any():
+                nums = pd.to_numeric(df_base[col_f], errors='coerce')
+                df_base[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
+            else:
+                df_base[col_f] = test_parse
             
-    # 2. Booleanos Bilingües (Enciende el rojo sin importar el idioma)
     for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
         if col_b in df_base.columns:
             df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
             
-    # 3. Números calculables
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
             df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
+            
+    for col_txt in ['NUM', 'CLIENTE']:
+        if col_txt in df_base.columns:
+            df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
+            df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
     # -------------------------------------------------------------
     
-    # Ajuste de Zona Horaria (UTC -6 HONDURAS)
     ahora_local = datetime.utcnow() - timedelta(hours=6)
     hoy_date_valor = ahora_local.date()
     patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
@@ -386,7 +379,6 @@ def main():
             st.header("🔍 Filtros en Vivo")
             m_viva_count = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
             
-            # 💎 BLINDAJE MATEMÁTICO CONTRA EL TYPE-ERROR
             mascara_offline_segura = df_base['ES_OFFLINE'] == True
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
             
@@ -402,9 +394,6 @@ def main():
         else:
             df_monitor_filtrado = df_base
 
-    # ==============================================================================
-    # RUTAS SECUNDARIAS
-    # ==============================================================================
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
@@ -416,18 +405,12 @@ def main():
         main_historico(st.session_state.df_hist)
         return
 
-    # ==============================================================================
-    # CENTRO ÚNICO DE REPORTES
-    # ==============================================================================
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         
         tab_dinamico, tab_diario, tab_semanal, tab_mensual = st.tabs([
-            "⚡ Reporte Dinámico", 
-            "📦 Cierre Diario", 
-            "🗓️ Analítico Semanal", 
-            "🏢 Macro Mensual"
+            "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual"
         ])
 
         with tab_dinamico:
@@ -447,7 +430,6 @@ def main():
                 pdf_bytes_rendimiento = logica_generar_pdf(df_dinamico_filtrado)
                 st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf")
 
-        # --- PESTAÑA CIERRE DIARIO ---
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
@@ -474,7 +456,7 @@ def main():
                 df_resumen_act.columns = ['Actividad Realizada', 'Total de Órdenes']
                 st.dataframe(df_resumen_act, hide_index=True, use_container_width=True)
 
-            st.markdown("### ⏱️ Tiempos de Atención Promedio por Colaborador y Actividad")
+            st.markdown("### ⏱️ Tiempos de Atención Promedio")
             if not df_cierre_filtrado.empty:
                 df_pivot_diario = df_cierre_filtrado.groupby(['TECNICO', 'ACTIVIDAD']).agg(
                     Órdenes=('NUM', 'count'),
@@ -482,18 +464,18 @@ def main():
                 ).round(1)
                 st.dataframe(df_pivot_diario, use_container_width=True)
 
-            st.markdown("### 📥 Exportación de Consolidados")
-            if st.button("🚀 GENERAR PDF DE CIERRE DIARIO (INCLUYE CONSOLIDADO GENERAL)", use_container_width=True, type="primary"):
+            st.markdown("### 📥 Exportación")
+            if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
                 pdf_bytes_archivo_diario = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
-                st.download_button("📥 Descargar Archivo (PDF)", data=pdf_bytes_archivo_diario, file_name=f"Cierre_{fecha_cal_sel}.pdf", key="dl_pdf_diario")
+                st.download_button("📥 Descargar Archivo (PDF)", data=pdf_bytes_archivo_diario, file_name=f"Cierre_{fecha_cal_sel}.pdf")
             
             st.divider()
-            with st.expander("Ver Lista Detallada de Órdenes Liquidadas en Pantalla"):
+            with st.expander("Ver Lista Detallada"):
                 st.dataframe(df_cierre_filtrado[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
         with tab_semanal:
             st.subheader("Rendimiento y Tiempos Semanales")
-            rango_fecha = st.date_input("Rango de evaluación (Sugerido 7 días):", value=(hoy_date_valor - timedelta(days=7), hoy_date_valor), key="date_semanal")
+            rango_fecha = st.date_input("Rango de evaluación:", value=(hoy_date_valor - timedelta(days=7), hoy_date_valor), key="date_semanal")
             if len(rango_fecha) == 2:
                 df_sem = df_base[(df_base['HORA_LIQ'].dt.date >= rango_fecha[0]) & (df_base['HORA_LIQ'].dt.date <= rango_fecha[1]) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
                 
@@ -503,11 +485,10 @@ def main():
                 ranking_sem['% Meta (2400 min)'] = (ranking_sem['Minutos Totales'] / 2400 * 100).map("{:.1f}%".format)
                 st.dataframe(ranking_sem.sort_values(by='Minutos Totales', ascending=False), use_container_width=True, hide_index=True)
                 
-                st.markdown("#### ⏱️ Desglose Promedio por Actividad")
+                st.markdown("#### ⏱️ Desglose Promedio")
                 if not df_sem.empty:
                     df_pivot_sem = df_sem.groupby(['TECNICO', 'ACTIVIDAD']).agg(
-                        Órdenes=('NUM', 'count'),
-                        Prom_Duracion_Min=('MINUTOS_CALC', 'mean')
+                        Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')
                     ).round(1)
                     st.dataframe(df_pivot_sem, use_container_width=True)
 
@@ -522,7 +503,7 @@ def main():
             with col_mes: mes_sel = st.selectbox("Mes:", meses, index=hoy_date_valor.month - 1)
             with col_anio: anio_sel = st.number_input("Año:", min_value=2024, max_value=2030, value=2026)
             
-            st.markdown("### 🏢 Comparativa Segmento: Plex vs Residencial")
+            st.markdown("### 🏢 Comparativa Segmento")
             fig_pie_mensual = px.pie(df_base, names='SEGMENTO', hole=.4, template="plotly_dark")
             st.plotly_chart(fig_pie_mensual, use_container_width=True)
             
@@ -540,15 +521,12 @@ def main():
     mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
     mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
 
-    # Creamos las tablas base de forma segura (Lentes oscuros aplicados)
     df_monitor_vivas_full = df_monitor_filtrado[mask_hoy | mask_asignadas].copy()
     df_tablero_kpi_monitor = df_monitor_filtrado[mask_asignadas].copy()
 
-    # Recalcular retraso al vuelo usando reloj local de HONDURAS
     df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
     df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
     
-    # EXCEPCIÓN JOSUE MIGUEL SAUCEDA EN VIVO
     if 'TECNICO' in df_tablero_kpi_monitor.columns:
         mask_josue_kpi = df_tablero_kpi_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
         df_tablero_kpi_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
@@ -575,7 +553,7 @@ def main():
             res_sop_visual_v = {
                 "FTTH / FIBRA": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
                 "Navegación / Internet": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                "ONT/ONU Offline": int((df_tablero_kpi_monitor['ES_OFFLINE'] == True).sum()), # 💎 Blindaje Suma Offline
+                "ONT/ONU Offline": int((df_tablero_kpi_monitor['ES_OFFLINE'] == True).sum()), 
                 "Niveles alterados": len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
                 "Sin señal de TV": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
             }
@@ -696,7 +674,6 @@ def main():
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            # 1. Gráfico de Barras: Segmentos
             fig1, ax1 = plt.subplots(figsize=(6, 4))
             conteo_seg = df_v_tabla_monitor['SEGMENTO'].value_counts()
             if not conteo_seg.empty:
@@ -709,7 +686,6 @@ def main():
                 st.pyplot(fig1)
 
         with col_m2:
-            # 2. Histograma: Tiempos
             fig2, ax2 = plt.subplots(figsize=(6, 4))
             tiempos_validos = df_v_tabla_monitor[df_v_tabla_monitor['MINUTOS_CALC'] > 0]['MINUTOS_CALC']
             if not tiempos_validos.empty:
@@ -723,7 +699,6 @@ def main():
 
         st.divider()
 
-        # 3. Tendencia Offline
         fig3, ax3 = plt.subplots(figsize=(10, 3))
         df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
         if not df_offline.empty and 'HORA_INI' in df_offline.columns:
@@ -741,14 +716,8 @@ def main():
         else:
             st.success("¡Excelente! No hay fallas Offline registradas en esta vista.")
 
-# ==============================================================================
-# 8. SISTEMA DE LOGIN Y ARRANQUE DE LA APLICACIÓN
-# ==============================================================================
 if __name__ == "__main__": 
-    # 1. El sistema verifica si ya iniciaste sesión antes
     verificar_autenticacion()
-
-    # 2. El Guardián decide qué mostrar:
     if not st.session_state['autenticado']:
         mostrar_pantalla_login()
     else:
