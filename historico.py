@@ -42,13 +42,33 @@ def main_historico(df_hist_memoria):
         return
 
     # ==============================================================================
-    # PRE-PROCESAMIENTO RÁPIDO PARA ARCHIVOS CRUDOS
+    # PRE-PROCESAMIENTO RÁPIDO PARA ARCHIVOS CRUDOS E INYECCIÓN DE PAUTAS
     # ==============================================================================
+    # Limpieza de número de cuenta (quitar .0 para evitar errores visuales)
+    if 'CLIENTE' in df_trabajo.columns:
+        df_trabajo['CLIENTE'] = df_trabajo['CLIENTE'].astype(str).str.replace(r'\.0$', '', regex=True)
+
     # Si el archivo crudo no trae los tiempos calculados, los calculamos al vuelo
     if 'HORA_INI' in df_trabajo.columns and 'HORA_LIQ' in df_trabajo.columns and 'MINUTOS_CALC' not in df_trabajo.columns:
         df_trabajo['HORA_INI'] = pd.to_datetime(df_trabajo['HORA_INI'], errors='coerce')
         df_trabajo['HORA_LIQ'] = pd.to_datetime(df_trabajo['HORA_LIQ'], errors='coerce')
         df_trabajo['MINUTOS_CALC'] = (df_trabajo['HORA_LIQ'] - df_trabajo['HORA_INI']).dt.total_seconds() / 60
+
+    # Lógica de Auditoría de Facturación vs Servicio (Añadido)
+    def clasificar_auditoria(row):
+        actividad = str(row.get('ACTIVIDAD', '')).upper()
+        estado = str(row.get('ESTADO', '')).upper()
+        comentario = str(row.get('COMENTARIO', '')).upper()
+        
+        ins_fallida = any(x in actividad for x in ['INS', 'NUEVA']) and any(x in estado for x in ['CANCELADO', 'DEVOLUCION', 'INACTIVO'])
+        alerta_cobro = any(word in comentario for word in ['COBRO', 'FACTURA', 'SISTEMA', 'NO TIENE SERVICIO', 'RECLAMO', 'DICE QUE NO'])
+        
+        if ins_fallida and alerta_cobro: return "🚨 CRÍTICO: Cobro indebido en INS fallida"
+        if ins_fallida: return "⚠️ ANOMALÍA: INS en estado negativo"
+        if alerta_cobro: return "⚠️ ALERTA: Queja de Facturación"
+        return "✅ OK"
+
+    df_trabajo['RESULTADO_AUDITORIA'] = df_trabajo.apply(clasificar_auditoria, axis=1)
 
     # ==============================================================================
     # 1. BUSCADOR GLOBAL ULTRA RÁPIDO
@@ -84,7 +104,7 @@ def main_historico(df_hist_memoria):
     # 2. KPIS DE AUDITORÍA
     # ==============================================================================
     st.divider()
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Órdenes en Pantalla", len(df_h_filtrado))
     
     if 'ACTIVIDAD' in df_h_filtrado.columns and 'CLIENTE' in df_h_filtrado.columns:
@@ -109,11 +129,14 @@ def main_historico(df_hist_memoria):
 
     alertas_adm = df_h_filtrado.apply(detectar_alerta, axis=1).sum()
     m4.metric("Alertas / Anuladas", alertas_adm, help="Órdenes no instaladas o con problemas administrativos.")
+    
+    casos_criticos = len(df_h_filtrado[df_h_filtrado['RESULTADO_AUDITORIA'].str.contains('CRÍTICO|ANOMALÍA|ALERTA')])
+    m5.metric("Anomalías Facturación", casos_criticos, delta_color="inverse")
 
     # ==============================================================================
     # 3. TABLAS Y GRÁFICOS
     # ==============================================================================
-    t_tabla, t_graficos = st.tabs(["📄 Base de Datos Exploratoria", "📊 Analítica de Rendimiento"])
+    t_tabla, t_graficos, t_auditoria = st.tabs(["📄 Base de Datos Exploratoria", "📊 Analítica de Rendimiento", "🚨 Auditoría de Facturación"])
 
     with t_tabla:
         st.dataframe(df_h_filtrado, use_container_width=True, hide_index=True)
@@ -158,18 +181,55 @@ def main_historico(df_hist_memoria):
             else:
                 st.warning("La columna 'ACTIVIDAD' no existe en este archivo.")
 
+    with t_auditoria:
+        st.subheader("🚩 Rastreo de Cobros Indebidos e Instalaciones Fallidas")
+        st.write("Listado de órdenes filtradas por estados inactivos/devueltos o con quejas administrativas.")
+        
+        df_criticos = df_h_filtrado[df_h_filtrado['RESULTADO_AUDITORIA'].str.contains('CRÍTICO|ANOMALÍA|ALERTA')].copy()
+        
+        if not df_criticos.empty:
+            cols_deseadas = ['NUM', 'CLIENTE', 'HORA_LIQ', 'ACTIVIDAD', 'ESTADO', 'RESULTADO_AUDITORIA', 'COMENTARIO']
+            cols_ver = [c for c in cols_deseadas if c in df_criticos.columns]
+            
+            st.dataframe(
+                df_criticos[cols_ver].style.set_properties(
+                    **{'background-color': '#4c1111', 'color': '#ff9999'}, subset=['RESULTADO_AUDITORIA']
+                ),
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.success("✅ No se detectaron anomalías de facturación con los filtros actuales.")
+
     # ==============================================================================
     # 4. EXPORTACIÓN PROFESIONAL
     # ==============================================================================
     st.divider()
-    if st.button("💾 Exportar Resultados a Excel", type="primary", use_container_width=True):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_h_filtrado.to_excel(writer, index=False, sheet_name='Historial_Crudo')
-        
-        st.download_button(
-            label="⬇️ Descargar Archivo (.xlsx)",
-            data=output.getvalue(),
-            file_name=f"Analisis_Crudo_Maxcom_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    c_exp1, c_exp2 = st.columns(2)
+    
+    with c_exp1:
+        if st.button("💾 Exportar Toda la Base Filtrada (.xlsx)", type="primary", use_container_width=True):
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_h_filtrado.to_excel(writer, index=False, sheet_name='Historial_Crudo')
+            
+            st.download_button(
+                label="⬇️ Descargar Base General",
+                data=output.getvalue(),
+                file_name=f"Analisis_Crudo_Maxcom_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+    with c_exp2:
+        df_criticos_export = df_h_filtrado[df_h_filtrado['RESULTADO_AUDITORIA'].str.contains('CRÍTICO|ANOMALÍA|ALERTA')]
+        if not df_criticos_export.empty:
+            if st.button("🚨 Exportar Solo Reporte de Facturación (.xlsx)", type="primary", use_container_width=True):
+                out_crit = io.BytesIO()
+                with pd.ExcelWriter(out_crit, engine='openpyxl') as writer:
+                    df_criticos_export.to_excel(writer, index=False, sheet_name='Reclamos_Cobro')
+                
+                st.download_button(
+                    label="⬇️ Descargar Reporte Adm.",
+                    data=out_crit.getvalue(),
+                    file_name=f"Auditoria_Cobros_Maxcom_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
