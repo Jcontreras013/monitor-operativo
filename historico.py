@@ -5,91 +5,127 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import io
 
-# Importamos las herramientas necesarias de tools
-from tools import es_alerta_administrativa, logica_generar_pdf
-
 def main_historico(df_hist):
-    st.title("📚 Centro de Inteligencia Histórica - Maxcom")
-    st.caption("Análisis profundo de rendimientos, garantías y reincidencias.")
+    st.title("📚 Centro de Inteligencia Histórica")
+    st.caption("Auditoría de operaciones, reincidencias y análisis a largo plazo.")
 
     if df_hist is None or df_hist.empty:
-        st.warning("⚠️ No hay datos históricos disponibles. Cargue los archivos en el panel lateral.")
+        st.warning("⚠️ El sistema no detecta datos históricos. Asegúrese de procesar los archivos en el panel principal.")
         return
 
-    # --- 1. BUSCADOR INTEGRADO ---
-    with st.container():
-        c1, c2 = st.columns([3, 1])
+    # --- 1. BUSCADOR GLOBAL ULTRA RÁPIDO ---
+    with st.expander("🔍 Buscador Avanzado y Filtros", expanded=True):
+        c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
-            busqueda = st.text_input("🔍 Buscador Global (Nombre, Orden, Técnico):", placeholder="Ej: Darwin Aguilar")
+            busqueda = st.text_input("Buscar cliente, orden, número o técnico:", placeholder="Ej: 92408321 o Darwin")
         with c2:
-            st.write("") # Espaciador
-            st.write(f"**Registros:** {len(df_hist)}")
+            rango_fechas = st.date_input("Filtrar por fechas:", value=[] )
+        with c3:
+            if 'ESTADO' in df_hist.columns:
+                estados_disponibles = df_hist['ESTADO'].dropna().unique().tolist()
+                estado_h = st.multiselect("Estado:", estados_disponibles, default=estados_disponibles)
 
-    # Filtrado lógico del buscador
+    # Motor de filtrado
     df_h_filtrado = df_hist.copy()
+    
     if busqueda:
-        mask = df_h_filtrado.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
-        df_h_filtrado = df_h_filtrado[mask]
+        # Busca la palabra en absolutamente todas las columnas del dataframe
+        mask_busqueda = df_h_filtrado.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
+        df_h_filtrado = df_h_filtrado[mask_busqueda]
+        
+    if len(rango_fechas) == 2 and 'HORA_LIQ' in df_h_filtrado.columns:
+        df_h_filtrado['HORA_LIQ'] = pd.to_datetime(df_h_filtrado['HORA_LIQ'], errors='coerce')
+        mask_fechas = (df_h_filtrado['HORA_LIQ'].dt.date >= rango_fechas[0]) & (df_h_filtrado['HORA_LIQ'].dt.date <= rango_fechas[1])
+        df_h_filtrado = df_h_filtrado[mask_fechas]
+        
+    if 'ESTADO' in df_h_filtrado.columns and 'estado_h' in locals() and estado_h:
+        df_h_filtrado = df_h_filtrado[df_h_filtrado['ESTADO'].isin(estado_h)]
 
-    # --- 2. MÉTRICAS CLAVE ---
+    # --- 2. KPIS DE AUDITORÍA COMPLEJA ---
     st.divider()
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Órdenes Totales", len(df_h_filtrado))
+    m1.metric("Órdenes en Pantalla", len(df_h_filtrado))
     
-    # Cálculo de Garantías/Reincidencias (SOP repetidos en el mismo cliente)
-    reincidencias = df_h_filtrado[df_h_filtrado['ACTIVIDAD'].str.contains('SOP', na=False, case=False)]['CLIENTE'].duplicated().sum()
-    m2.metric("Posibles Garantías", reincidencias, help="Clientes que aparecen más de una vez con soporte")
-    
-    promedio = df_h_filtrado['MINUTOS_CALC'].mean() if 'MINUTOS_CALC' in df_h_filtrado.columns else 0
-    m3.metric("Tiempo Promedio", f"{int(promedio)} min")
-    
-    alertas_adm = df_h_filtrado.apply(es_alerta_administrativa, axis=1).sum()
-    m4.metric("Alertas Adm.", alertas_adm)
+    # Lógica de Reincidencias (Garantías): Mismos clientes pidiendo SOP múltiples veces
+    if 'ACTIVIDAD' in df_h_filtrado.columns and 'CLIENTE' in df_h_filtrado.columns:
+        mask_sop = df_h_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', case=False, na=False)
+        reincidencias = df_h_filtrado[mask_sop]['CLIENTE'].duplicated().sum()
+        m2.metric("Reincidencias (Garantías)", reincidencias, help="Clientes que han solicitado soporte más de una vez en el periodo.")
+    else:
+        m2.metric("Reincidencias", "N/D")
 
-    # --- 3. PESTAÑAS DE ANÁLISIS ---
-    t_tabla, t_graficos = st.tabs(["📄 Listado Histórico", "📊 Analítica de Rendimiento"])
+    # Lógica de Tiempos Promedio
+    if 'MINUTOS_CALC' in df_h_filtrado.columns:
+        promedio = df_h_filtrado[df_h_filtrado['MINUTOS_CALC'] > 0]['MINUTOS_CALC'].mean()
+        m3.metric("Tiempo Promedio Liquidación", f"{int(promedio)} min" if pd.notnull(promedio) else "0 min")
+    else:
+        m3.metric("Tiempo Promedio", "N/D")
+        
+    # Lógica interna de Alertas (para no depender de tools.py)
+    def detectar_alerta(row):
+        act = str(row.get('ACTIVIDAD', '')).upper()
+        com = str(row.get('COMENTARIO', '')).upper()
+        if any(e in act for e in ['INACTIVO', 'CORTEMORA', 'NOINSTALADO']): return True
+        if any(j in com for j in ['NO SE PUDO', 'CANCELADA', 'NO PERMITE', 'CLIENTE NO QUISO']): return True
+        return False
+
+    alertas_adm = df_h_filtrado.apply(detectar_alerta, axis=1).sum()
+    m4.metric("Alertas / Anuladas", alertas_adm, help="Órdenes no instaladas o con problemas administrativos.")
+
+    # --- 3. TABLAS Y GRÁFICOS MATPLOTLIB/PLOTLY ---
+    t_tabla, t_graficos = st.tabs(["📄 Base de Datos", "📊 Analítica de Rendimiento"])
 
     with t_tabla:
-        st.dataframe(df_h_filtrado, use_container_width=True, hide_index=True)
+        columnas_ver = ['NUM', 'CLIENTE', 'TECNICO', 'ACTIVIDAD', 'ESTADO', 'HORA_LIQ', 'COMENTARIO']
+        cols_existentes = [c for c in columnas_ver if c in df_h_filtrado.columns]
+        st.dataframe(df_h_filtrado[cols_existentes] if cols_existentes else df_h_filtrado, use_container_width=True, hide_index=True)
 
     with t_graficos:
         plt.style.use('dark_background')
-        g1, g2 = st.columns(2)
+        col_g1, col_g2 = st.columns(2)
 
-        with g1:
-            st.markdown("##### 🏆 Top 10 Técnicos (Volumen)")
-            fig_tec, ax_tec = plt.subplots(figsize=(8, 5))
-            top_tecs = df_h_filtrado['TECNICO'].value_counts().head(10)
-            if not top_tecs.empty:
-                top_tecs.plot(kind='barh', color='#1f6feb', ax=ax_tec)
-                ax_tec.invert_yaxis()
-                st.pyplot(fig_tec)
+        with col_g1:
+            st.markdown("##### 🏆 Ranking de Volumen por Técnico")
+            if 'TECNICO' in df_h_filtrado.columns:
+                fig_tec, ax_tec = plt.subplots(figsize=(6, 4))
+                top_tecs = df_h_filtrado['TECNICO'].value_counts().head(10)
+                if not top_tecs.empty:
+                    top_tecs.sort_values().plot(kind='barh', color='#2ea043', ax=ax_tec)
+                    ax_tec.set_xlabel("Órdenes Liquidadas")
+                    ax_tec.spines['top'].set_visible(False)
+                    ax_tec.spines['right'].set_visible(False)
+                    st.pyplot(fig_tec)
+                else:
+                    st.info("Sin datos técnicos.")
 
-        with g2:
-            st.markdown("##### 📈 Composición de Actividades")
-            # Agrupar actividades por tipo principal
-            def agrupar_act(x):
-                x = str(x).upper()
-                if 'SOP' in x: return 'SOPORTE'
-                if 'INS' in x or 'NUEVA' in x: return 'INSTALACIÓN'
-                if 'PLEX' in x: return 'PLEX'
-                return 'OTROS'
-            
-            df_h_filtrado['TIPO_GRUP'] = df_h_filtrado['ACTIVIDAD'].apply(agrupar_act)
-            fig_pie = px.pie(df_h_filtrado, names='TIPO_GRUP', hole=0.4, 
-                             color_discrete_sequence=['#238636', '#1f6feb', '#f2cc60', '#8b949e'])
-            fig_pie.update_layout(template="plotly_dark", height=350, margin=dict(l=20, r=20, t=20, b=20))
-            st.plotly_chart(fig_pie, use_container_width=True)
+        with col_g2:
+            st.markdown("##### 📈 Distribución Operativa (Tipos de Orden)")
+            if 'ACTIVIDAD' in df_h_filtrado.columns:
+                def clasificar_actividad(act):
+                    act = str(act).upper()
+                    if 'SOP' in act or 'FALLA' in act: return 'SOPORTE'
+                    if 'INS' in act or 'NUEVA' in act: return 'INSTALACIÓN'
+                    if 'PLEX' in act: return 'PLEX'
+                    return 'OTROS'
+                
+                df_pie = df_h_filtrado.copy()
+                df_pie['CATEGORIA'] = df_pie['ACTIVIDAD'].apply(clasificar_actividad)
+                
+                fig_pie = px.pie(df_pie, names='CATEGORIA', hole=0.4, 
+                                 color_discrete_sequence=['#1f6feb', '#238636', '#f2cc60', '#8b949e'])
+                fig_pie.update_layout(template="plotly_dark", height=350, margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- 4. EXPORTACIÓN ---
+    # --- 4. EXPORTACIÓN PROFESIONAL ---
     st.divider()
-    if st.button("💾 Generar Reporte de Auditoría (Excel)", use_container_width=True):
+    if st.button("💾 Exportar Histórico Completo a Excel", type="primary", use_container_width=True):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_h_filtrado.to_excel(writer, index=False, sheet_name='Historico')
+            df_h_filtrado.to_excel(writer, index=False, sheet_name='Historial_Auditoria')
+        
         st.download_button(
-            label="⬇️ Descargar Excel",
+            label="⬇️ Descargar Archivo (.xlsx)",
             data=output.getvalue(),
-            file_name=f"Historico_Maxcom_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            file_name=f"Auditoria_Maxcom_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
