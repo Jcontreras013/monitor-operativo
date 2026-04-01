@@ -7,6 +7,9 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 
+# NUEVA IMPORTACIÓN PARA DETECTAR EL TELÉFONO
+from streamlit_js_eval import streamlit_js_eval
+
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
@@ -205,9 +208,12 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 # 5. INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
-    # Detectar el rol del usuario desde el inicio
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     
+    # --- 🛠️ DETECTOR DE ANCHO DE PANTALLA (PARA CELULARES) ---
+    ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
+    es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
+
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
     except Exception as e:
@@ -283,17 +289,23 @@ def main():
                     st.error(f"Error al conectar con la nube: {e}")
             else:
                 st.error("La conexión a la nube no está disponible.")
-        
+
         # ==============================================================================
-        # RESTRICCIÓN DE INTERFAZ: SOLO ADMIN VE EL CARGADOR DE ARCHIVOS CRUDOS
+        # RESTRICCIÓN DE INTERFAZ: SOLO ADMIN VE EL CARGADOR, O JEFES EN PC
         # ==============================================================================
+        mostrar_cargador = False
+        if rol_usuario == 'admin':
+            mostrar_cargador = True
+        elif rol_usuario == 'jefe' and not es_movil:
+            mostrar_cargador = True
+
         file_act_ptr = None
         file_disp_ptr = None
         btn_reprocesar = False
         
-        if rol_usuario == 'admin':
+        if mostrar_cargador:
             st.divider()
-            st.markdown("### 📥 Archivos Crudos")
+            st.markdown("### 📥 Archivos Crudos (Modo PC)")
             archivos_uploader_diamante = st.file_uploader(
                 "Sube rep_actividades y FttxActiveDevice", 
                 type=["xlsx", "csv"], 
@@ -307,29 +319,32 @@ def main():
                     elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: file_disp_ptr = file_item
 
             btn_reprocesar = st.button("🔄 ACTUALIZAR TODO", use_container_width=True)
+        elif rol_usuario == 'jefe' and es_movil:
+            st.caption("📱 _Modo Móvil: Usa el botón de la nube para actualizar._")
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         if file_act_ptr is None or file_disp_ptr is None:
-            st.title("⚡ Monitor Operativo Maxcom PRO")
-            st.info("💡 Consejo: Usa el botón 'ACTUALIZAR DESDE LA NUBE' en el menú izquierdo para cargar los datos en tu pantalla.")
-            return
-        
-        res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
-        if res_p_diamante is not None:
-            st.session_state.df_base = res_p_diamante
-            st.session_state.df_hist = res_h_diamante
-            
-            if conn is not None:
-                with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
-                    try:
-                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=res_p_diamante)
-                        st.success("✅ Datos sincronizados y guardados en la nube correctamente.")
-                    except Exception as e:
-                        st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
-            else:
-                st.success("✅ Datos procesados localmente.")
+            if st.session_state.get('df_base') is None:
+                st.title("⚡ Monitor Operativo Maxcom PRO")
+                st.info("💡 Consejo: Usa el botón 'ACTUALIZAR DESDE LA NUBE' en el menú izquierdo para cargar los datos en tu pantalla.")
+                return
         else:
-            return
+            res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
+            if res_p_diamante is not None:
+                st.session_state.df_base = res_p_diamante
+                st.session_state.df_hist = res_h_diamante
+                
+                if conn is not None:
+                    with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
+                        try:
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=res_p_diamante)
+                            st.success("✅ Datos sincronizados y guardados en la nube correctamente.")
+                        except Exception as e:
+                            st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
+                else:
+                    st.success("✅ Datos procesados localmente.")
+            else:
+                return
 
     df_base = st.session_state.df_base.copy()
     
