@@ -86,20 +86,19 @@ class ReporteGenerencialPDF(FPDF):
                 fillr, fillg, fillb = 255, 255, 255
                 textr, textg, textb = 0, 0, 0
                 
-                # Regla visual para OCUPACION (Semanal)
-                if df.columns[i] == '% OCUPACION':
+                # Regla visual para LOGRO META (Verde si es 100% o más)
+                if df.columns[i] in ['% LOGRO META', '% LOGRO SEMANAL']:
                     try:
                         pct = float(valstr.replace('%', ''))
-                        if pct >= 80: fillr, fillg, fillb = 169, 208, 142
-                        elif pct >= 50: fillr, fillg, fillb = 255, 230, 153
+                        if pct >= 100: fillr, fillg, fillb = 169, 208, 142
+                        elif pct >= 75: fillr, fillg, fillb = 255, 230, 153
                         elif pct >= 0: fillr, fillg, fillb = 244, 176, 132
                     except: pass
                     
-                # Regla visual para DESAPROVECHADO (Diario) - INVERTIDA
-                elif df.columns[i] == '% DESAPROVECHADO':
+                # Regla visual para DESAPROVECHADO (Invertida: Rojo si es mucho)
+                elif df.columns[i] in ['% DESAPROVECHADO', '% DESAPROV.']:
                     try:
                         pct = float(valstr.replace('%', ''))
-                        # Si desaprovechan más del 50%, rojo alerta. Si desaprovechan poco, verde.
                         if pct >= 50: fillr, fillg, fillb = 244, 130, 130 # Rojo
                         elif pct >= 25: fillr, fillg, fillb = 255, 200, 100 # Naranja
                         elif pct >= 0: fillr, fillg, fillb = 169, 208, 142 # Verde
@@ -373,7 +372,7 @@ def generar_graficos_temporales(dfbase):
         return {}
 
 # ==============================================================================
-# 4. MOTOR DE ANALISIS SEMANAL (PDF DINÁMICO)
+# 4. FUNCIONES DE PROCESAMIENTO Y DEPURACIÓN
 # ==============================================================================
 def logica_generar_pdf(dfbase):
     pdf = ReporteGenerencialPDF()
@@ -421,15 +420,24 @@ def logica_generar_pdf(dfbase):
     pdf.cell(0, 10, safestr(f" Reporte Dinamico de Rendimiento de Instalacion y Mantenimiento: {ahorastr}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    pdf.seccion_titulo("Rendimiento Semanal por Tecnico (Ordenes vs Tiempo - Meta 2400 Min)")
-    dftec = dfbase.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), MINUTOS=('MINUTOS_CALC', 'sum')).reset_index()
-    dftec['MINUTOS'] = dftec['MINUTOS'].fillna(0).round(1)
-    dftec['% OCUPACION'] = ((dftec['MINUTOS'] / 2400) * 100).round(1)
-    dftec = dftec.sort_values(by='% OCUPACION', ascending=False)
-    dftectable = dftec.copy()
-    dftectable['% OCUPACION'] = dftectable['% OCUPACION'].astype(str) + '%'
-    pdf.dibujar_tabla_rendimiento(dftectable, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
-    
+    pdf.seccion_titulo("Rendimiento Operativo (Basado en Metas de Cuota y Complejidad)")
+    if not dfbase.empty:
+        dfbase['%_APORTE'] = dfbase['ACTIVIDAD'].apply(calcular_aporte_meta)
+        df_tec = dfbase.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), PORCENTAJE_META=('%_APORTE', 'sum')).reset_index()
+        
+        df_tec['% LOGRO META'] = df_tec['PORCENTAJE_META'].round(1)
+        df_tec = df_tec.sort_values(by='% LOGRO META', ascending=False)
+        
+        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO META']].copy()
+        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO META']
+        df_tec_table['% LOGRO META'] = df_tec_table['% LOGRO META'].astype(str) + '%'
+        
+        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, "Sin datos disponibles.", ln=True)
+
     pdf.add_page()
     pdf.seccion_titulo("Capitulo I - Rangos de Tiempo de Atencion")
     pdf.ln(2)
@@ -468,9 +476,6 @@ def finalizar_pdf(pdfobj):
         try: os.remove(tmppath)
         except: pass
 
-# ==============================================================================
-# 5. PROCESAMIENTO Y DETECCION
-# ==============================================================================
 def es_offline_preciso(comentario):
     txt = str(comentario).upper().strip()
     if not txt or txt == 'NAN': return False
@@ -521,7 +526,24 @@ def procesar_dataframe_base(df):
     return df
 
 # ==============================================================================
-# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO COMPLETO)
+# LÓGICA DE VALORIZACIÓN DE METAS (GAMIFICACIÓN)
+# ==============================================================================
+def calcular_aporte_meta(actividad):
+    """
+    Asigna un % de logro del día basado en el tipo de orden (Complejidad).
+    """
+    act = str(actividad).upper()
+    if 'PEXTERNO' in act:
+        return 100.0  # 1 orden de PEXTERNO cumple el 100% del día
+    elif re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|SPLITTEROPT', act):
+        return 25.0   # Meta de 4 al día -> 100% / 4 = 25%
+    elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
+        return 12.5   # Meta de 8 al día -> 100% / 8 = 12.5%
+    else:
+        return 12.5   # Valor por defecto (asume meta de 8)
+
+# ==============================================================================
+# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO)
 # ==============================================================================
 def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     df_sem = df_base[
@@ -540,14 +562,22 @@ def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     pdf.cell(0, 10, safestr(f" Reporte Analitico Semanal: {fecha_inicio} al {fecha_fin}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    pdf.seccion_titulo("Rendimiento de Productividad (Meta 2400 Minutos)")
+    pdf.seccion_titulo("Rendimiento Operativo Semanal (Basado en Metas de Cuota)")
     if not df_sem.empty:
-        df_tec = df_sem.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), MINUTOS=('MINUTOS_CALC', 'sum')).reset_index()
-        df_tec['MINUTOS'] = df_tec['MINUTOS'].fillna(0).round(1)
-        df_tec['% OCUPACION'] = ((df_tec['MINUTOS'] / 2400) * 100).round(1)
-        df_tec = df_tec.sort_values(by='% OCUPACION', ascending=False)
-        df_tec_table = df_tec.copy()
-        df_tec_table['% OCUPACION'] = df_tec_table['% OCUPACION'].astype(str) + '%'
+        df_sem['%_APORTE'] = df_sem['ACTIVIDAD'].apply(calcular_aporte_meta)
+        df_tec = df_sem.groupby('TECNICO').agg(
+            ORDENES=('NUM', 'count'), 
+            PORCENTAJE_META=('%_APORTE', 'sum')
+        ).reset_index()
+        
+        # Para la semana (Asumiendo 6 días laborales) el 100% semanal es 600 puntos
+        df_tec['% LOGRO SEMANAL'] = ((df_tec['PORCENTAJE_META'] / 600.0) * 100).round(1)
+        df_tec = df_tec.sort_values(by='% LOGRO SEMANAL', ascending=False)
+        
+        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO SEMANAL']].copy()
+        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO SEMANAL']
+        df_tec_table['% LOGRO SEMANAL'] = df_tec_table['% LOGRO SEMANAL'].astype(str) + '%'
+        
         pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
         
         imagenes = generar_graficos_temporales(df_sem)
@@ -604,7 +634,7 @@ def generar_pdf_mensual(df_base, mes, anio):
     return finalizar_pdf(pdf)
 
 def generar_pdf_cierre_diario(dfbase, fechatarget):
-    """Genera el PDF del Reporte Analítico Diario midiendo el Tiempo Desaprovechado."""
+    """Genera el PDF Diario midiendo la Productividad Real basada en Complejidad de Ordenes."""
     dfc = dfbase[
         (dfbase['HORA_LIQ'].dt.date == fechatarget) & 
         (dfbase['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
@@ -653,32 +683,38 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
     pdf.cell(0, 10, safestr(f" Reporte Analitico de Cierre Diario: {fechatarget}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    # --- LA NUEVA LÓGICA DE TIEMPO DESAPROVECHADO ---
-    pdf.seccion_titulo("Análisis de Tiempo Desaprovechado (Meta: 6.5 Hrs Efectivas | Excluye 1.5 Hrs Ruta)")
+    # --- LA NUEVA LÓGICA DE PRODUCTIVIDAD POR CUOTAS ---
+    pdf.seccion_titulo("Analisis de Productividad (Basado en Metas de Ordenes y Complejidad)")
     if not dfc.empty:
-        df_tec = dfc.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), MINUTOS=('MINUTOS_CALC', 'sum')).reset_index()
+        # Aplicamos la fórmula de "puntos/porcentaje" a cada orden
+        dfc['%_APORTE'] = dfc['ACTIVIDAD'].apply(calcular_aporte_meta)
         
-        # 1. Minutos reales dedicados a las órdenes
-        df_tec['MINUTOS EFECTIVOS'] = df_tec['MINUTOS'].fillna(0).round(1)
+        df_tec = dfc.groupby('TECNICO').agg(
+            ORDENES=('NUM', 'count'), 
+            MINUTOS_REALES=('MINUTOS_CALC', 'sum'),
+            PORCENTAJE_META=('%_APORTE', 'sum')
+        ).reset_index()
         
-        # 2. Minutos Perdidos: Lo que les faltó para llegar a 390 min (480 totales - 90 ruta). 
-        # Si hicieron más de 390, se queda en 0 (usando clip)
-        df_tec['MINUTOS PERDIDOS'] = (390.0 - df_tec['MINUTOS EFECTIVOS']).clip(lower=0).round(1)
+        # 1. Horas que realmente corrió el cronómetro (Referencia)
+        df_tec['HRS REALES'] = (df_tec['MINUTOS_REALES'] / 60.0).round(1)
         
-        # 3. Lo pasamos a horas para la tabla visual
-        df_tec['HRS TRABAJADAS'] = (df_tec['MINUTOS EFECTIVOS'] / 60).round(1)
-        df_tec['HRS PERDIDAS'] = (df_tec['MINUTOS PERDIDOS'] / 60).round(1)
+        # 2. Horas Productivas (Equivalencia de su esfuerzo vs Meta de 6.5 Hrs netas)
+        df_tec['HRS PRODUCTIVAS'] = ((df_tec['PORCENTAJE_META'] / 100.0) * 6.5).round(1)
         
-        # 4. El % Desaprovechado en base a su meta de 390 minutos
-        df_tec['% DESAPROVECHADO'] = ((df_tec['MINUTOS PERDIDOS'] / 390.0) * 100).clip(lower=0, upper=100).round(1) 
+        # 3. % Logrado en el día
+        df_tec['% LOGRO META'] = df_tec['PORCENTAJE_META'].round(1)
         
-        # 5. Ordenamos para que los que MÁS tiempo pierden salgan de primeros
-        df_tec = df_tec.sort_values(by='% DESAPROVECHADO', ascending=False)
+        # 4. Lo que desaprovecharon (Si llegaron al 100%, es 0)
+        df_tec['% DESAPROV.'] = (100.0 - df_tec['PORCENTAJE_META']).clip(lower=0).round(1)
         
-        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'MINUTOS EFECTIVOS', 'HRS TRABAJADAS', 'HRS PERDIDAS', '% DESAPROVECHADO']].copy()
-        df_tec_table['% DESAPROVECHADO'] = df_tec_table['% DESAPROVECHADO'].astype(str) + '%'
+        # Ordenamos a los que más tiempo desaprovechan arriba
+        df_tec = df_tec.sort_values(by='% DESAPROV.', ascending=False)
         
-        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[50, 20, 30, 30, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C"])
+        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'HRS REALES', 'HRS PRODUCTIVAS', '% LOGRO META', '% DESAPROV.']].copy()
+        df_tec_table['% LOGRO META'] = df_tec_table['% LOGRO META'].astype(str) + '%'
+        df_tec_table['% DESAPROV.'] = df_tec_table['% DESAPROV.'].astype(str) + '%'
+        
+        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[50, 20, 25, 35, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C"])
     else:
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(0, 0, 0)
