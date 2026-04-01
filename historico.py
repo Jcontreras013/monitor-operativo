@@ -5,31 +5,70 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import io
 
-def main_historico(df_hist):
+def main_historico(df_hist_memoria):
     st.title("📚 Centro de Inteligencia Histórica")
-    st.caption("Auditoría de operaciones, reincidencias y análisis a largo plazo.")
+    st.caption("Auditoría de operaciones pasadas mediante carga de archivos independientes.")
 
-    if df_hist is None or df_hist.empty:
-        st.warning("⚠️ El sistema no detecta datos históricos. Asegúrese de procesar los archivos en el panel principal.")
+    # ==============================================================================
+    # 0. CARGADOR EN CRUDO INDEPENDIENTE
+    # ==============================================================================
+    st.markdown("### 📥 Cargar Base de Datos Histórica")
+    archivo_historico = st.file_uploader(
+        "Sube aquí el archivo Excel o CSV crudo (ignora los datos del monitor en vivo)", 
+        type=['xlsx', 'csv']
+    )
+
+    df_trabajo = None
+
+    if archivo_historico is not None:
+        with st.spinner("Procesando archivo histórico crudo..."):
+            try:
+                if archivo_historico.name.lower().endswith('.csv'):
+                    df_trabajo = pd.read_csv(archivo_historico, low_memory=False)
+                else:
+                    df_trabajo = pd.read_excel(archivo_historico)
+                
+                # Normalizar columnas
+                df_trabajo.columns = df_trabajo.columns.str.upper().str.strip()
+                st.success(f"✅ Archivo cargado correctamente: {len(df_trabajo)} registros detectados.")
+            except Exception as e:
+                st.error(f"❌ Error al leer el archivo: {e}")
+                return
+    elif df_hist_memoria is not None and not df_hist_memoria.empty:
+        st.info("💡 Usando el historial temporal del monitor en vivo. Sube un archivo arriba para analizar otros datos.")
+        df_trabajo = df_hist_memoria.copy()
+    else:
+        st.warning("⚠️ Esperando archivo. Por favor, sube un archivo histórico para comenzar el análisis.")
         return
 
-    # --- 1. BUSCADOR GLOBAL ULTRA RÁPIDO ---
+    # ==============================================================================
+    # PRE-PROCESAMIENTO RÁPIDO PARA ARCHIVOS CRUDOS
+    # ==============================================================================
+    # Si el archivo crudo no trae los tiempos calculados, los calculamos al vuelo
+    if 'HORA_INI' in df_trabajo.columns and 'HORA_LIQ' in df_trabajo.columns and 'MINUTOS_CALC' not in df_trabajo.columns:
+        df_trabajo['HORA_INI'] = pd.to_datetime(df_trabajo['HORA_INI'], errors='coerce')
+        df_trabajo['HORA_LIQ'] = pd.to_datetime(df_trabajo['HORA_LIQ'], errors='coerce')
+        df_trabajo['MINUTOS_CALC'] = (df_trabajo['HORA_LIQ'] - df_trabajo['HORA_INI']).dt.total_seconds() / 60
+
+    # ==============================================================================
+    # 1. BUSCADOR GLOBAL ULTRA RÁPIDO
+    # ==============================================================================
+    st.divider()
     with st.expander("🔍 Buscador Avanzado y Filtros", expanded=True):
         c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
             busqueda = st.text_input("Buscar cliente, orden, número o técnico:", placeholder="Ej: 92408321 o Darwin")
         with c2:
-            rango_fechas = st.date_input("Filtrar por fechas:", value=[] )
+            rango_fechas = st.date_input("Filtrar por fechas:", value=[])
         with c3:
-            if 'ESTADO' in df_hist.columns:
-                estados_disponibles = df_hist['ESTADO'].dropna().unique().tolist()
+            if 'ESTADO' in df_trabajo.columns:
+                estados_disponibles = df_trabajo['ESTADO'].dropna().unique().tolist()
                 estado_h = st.multiselect("Estado:", estados_disponibles, default=estados_disponibles)
 
     # Motor de filtrado
-    df_h_filtrado = df_hist.copy()
+    df_h_filtrado = df_trabajo.copy()
     
     if busqueda:
-        # Busca la palabra en absolutamente todas las columnas del dataframe
         mask_busqueda = df_h_filtrado.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
         df_h_filtrado = df_h_filtrado[mask_busqueda]
         
@@ -41,27 +80,26 @@ def main_historico(df_hist):
     if 'ESTADO' in df_h_filtrado.columns and 'estado_h' in locals() and estado_h:
         df_h_filtrado = df_h_filtrado[df_h_filtrado['ESTADO'].isin(estado_h)]
 
-    # --- 2. KPIS DE AUDITORÍA COMPLEJA ---
+    # ==============================================================================
+    # 2. KPIS DE AUDITORÍA
+    # ==============================================================================
     st.divider()
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Órdenes en Pantalla", len(df_h_filtrado))
     
-    # Lógica de Reincidencias (Garantías): Mismos clientes pidiendo SOP múltiples veces
     if 'ACTIVIDAD' in df_h_filtrado.columns and 'CLIENTE' in df_h_filtrado.columns:
         mask_sop = df_h_filtrado['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', case=False, na=False)
         reincidencias = df_h_filtrado[mask_sop]['CLIENTE'].duplicated().sum()
-        m2.metric("Reincidencias (Garantías)", reincidencias, help="Clientes que han solicitado soporte más de una vez en el periodo.")
+        m2.metric("Reincidencias (SOP)", reincidencias, help="Clientes que han solicitado soporte más de una vez en esta base.")
     else:
         m2.metric("Reincidencias", "N/D")
 
-    # Lógica de Tiempos Promedio
     if 'MINUTOS_CALC' in df_h_filtrado.columns:
         promedio = df_h_filtrado[df_h_filtrado['MINUTOS_CALC'] > 0]['MINUTOS_CALC'].mean()
         m3.metric("Tiempo Promedio Liquidación", f"{int(promedio)} min" if pd.notnull(promedio) else "0 min")
     else:
         m3.metric("Tiempo Promedio", "N/D")
         
-    # Lógica interna de Alertas (para no depender de tools.py)
     def detectar_alerta(row):
         act = str(row.get('ACTIVIDAD', '')).upper()
         com = str(row.get('COMENTARIO', '')).upper()
@@ -72,13 +110,13 @@ def main_historico(df_hist):
     alertas_adm = df_h_filtrado.apply(detectar_alerta, axis=1).sum()
     m4.metric("Alertas / Anuladas", alertas_adm, help="Órdenes no instaladas o con problemas administrativos.")
 
-    # --- 3. TABLAS Y GRÁFICOS MATPLOTLIB/PLOTLY ---
-    t_tabla, t_graficos = st.tabs(["📄 Base de Datos", "📊 Analítica de Rendimiento"])
+    # ==============================================================================
+    # 3. TABLAS Y GRÁFICOS
+    # ==============================================================================
+    t_tabla, t_graficos = st.tabs(["📄 Base de Datos Exploratoria", "📊 Analítica de Rendimiento"])
 
     with t_tabla:
-        columnas_ver = ['NUM', 'CLIENTE', 'TECNICO', 'ACTIVIDAD', 'ESTADO', 'HORA_LIQ', 'COMENTARIO']
-        cols_existentes = [c for c in columnas_ver if c in df_h_filtrado.columns]
-        st.dataframe(df_h_filtrado[cols_existentes] if cols_existentes else df_h_filtrado, use_container_width=True, hide_index=True)
+        st.dataframe(df_h_filtrado, use_container_width=True, hide_index=True)
 
     with t_graficos:
         plt.style.use('dark_background')
@@ -96,7 +134,9 @@ def main_historico(df_hist):
                     ax_tec.spines['right'].set_visible(False)
                     st.pyplot(fig_tec)
                 else:
-                    st.info("Sin datos técnicos.")
+                    st.info("Sin datos de técnicos para graficar.")
+            else:
+                st.warning("La columna 'TECNICO' no existe en este archivo.")
 
         with col_g2:
             st.markdown("##### 📈 Distribución Operativa (Tipos de Orden)")
@@ -115,17 +155,21 @@ def main_historico(df_hist):
                                  color_discrete_sequence=['#1f6feb', '#238636', '#f2cc60', '#8b949e'])
                 fig_pie.update_layout(template="plotly_dark", height=350, margin=dict(l=0, r=0, t=30, b=0))
                 st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.warning("La columna 'ACTIVIDAD' no existe en este archivo.")
 
-    # --- 4. EXPORTACIÓN PROFESIONAL ---
+    # ==============================================================================
+    # 4. EXPORTACIÓN PROFESIONAL
+    # ==============================================================================
     st.divider()
-    if st.button("💾 Exportar Histórico Completo a Excel", type="primary", use_container_width=True):
+    if st.button("💾 Exportar Resultados a Excel", type="primary", use_container_width=True):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_h_filtrado.to_excel(writer, index=False, sheet_name='Historial_Auditoria')
+            df_h_filtrado.to_excel(writer, index=False, sheet_name='Historial_Crudo')
         
         st.download_button(
             label="⬇️ Descargar Archivo (.xlsx)",
             data=output.getvalue(),
-            file_name=f"Auditoria_Maxcom_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=f"Analisis_Crudo_Maxcom_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
