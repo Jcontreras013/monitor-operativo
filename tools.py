@@ -25,8 +25,8 @@ COLUMNS_MAPPING = {
     'SECTOR': ['SECTOR', 'Sect', 'Sector', 'CIUDAD', 'Ciudad', 'Zona'],
     'COLONIA': ['COLONIA', 'BARRIO', 'DIRECCION', 'LOCALIDAD'],
     'NUM': ['NUM', 'IDORDEN', 'NÚMERO'],
-    'CLIENTE': ['CLIENTE', 'CUENTA', 'NO. CLIENTE'], # <-- Solo atrapa el Número
-    'NOMBRE': ['NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE'], # <-- NUEVO: Atrapa el Texto
+    'CLIENTE': ['CLIENTE', 'CUENTA', 'NO. CLIENTE'], 
+    'NOMBRE': ['NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE'], 
     'COMENTARIO': ['COMENTARIO', 'OBSERVACIONES'],
     'MX': ['MX', 'VEHICULO', 'UNIDAD'],
     'GPS': ['GPS', 'UBICACION', 'LINK', 'COORDENADAS']
@@ -171,7 +171,7 @@ class ReporteGenerencialPDF(FPDF):
                     if pct >= 75: fr, fg, fb = 146, 208, 80
                     elif pct >= 40: fr, fg, fb = 255, 230, 153
                     elif pct >= 25: fr, fg, fb = 244, 176, 132
-                    else: fr, fg, fb = 234, 153, 153
+                    else: fr, fg, fb = 234, 153, 153 
                 self.set_fill_color(255, 255, 255)
                 self.cell(wsub, 5, cntstr, border=1, align="C", fill=True)
                 self.set_fill_color(fr, fg, fb)
@@ -640,8 +640,8 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
     pdf.cell(0, 10, safestr(f" Reporte Analitico de Cierre Diario: {fechatarget}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    # --- CÁLCULO REALISTA DE RENDIMIENTO (INCLUYENDO RUTA) ---
-    pdf.seccion_titulo("Rendimiento Operativo Diario (+ 90 Min Ruta | Meta 8 Horas)")
+    # --- CORRECCIÓN DE TÍTULO REALIZADA AQUÍ ---
+    pdf.seccion_titulo("Rendimiento Operativo Diario (- 90 Min Ruta | Meta 8 Horas)")
     if not dfc.empty:
         df_tec = dfc.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), MINUTOS=('MINUTOS_CALC', 'sum')).reset_index()
         df_tec['MINUTOS'] = df_tec['MINUTOS'].fillna(0).round(1)
@@ -659,11 +659,9 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         df_tec['% OCUPACION'] = ((df_tec['MINUTOS TOTALES'] / 480) * 100).round(1) 
         df_tec = df_tec.sort_values(by='% OCUPACION', ascending=False)
         
-        # Preparamos la tabla para el dibujado en el PDF
         df_tec_table = df_tec[['TECNICO', 'ORDENES', 'MINUTOS TOTALES', 'HRS TRABAJADAS', 'HRS PERDIDAS', '% OCUPACION']].copy()
         df_tec_table['% OCUPACION'] = df_tec_table['% OCUPACION'].astype(str) + '%'
         
-        # Ajustamos los anchos de columna para que el PDF se vea perfectamente alineado
         pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[50, 20, 30, 30, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C"])
     else:
         pdf.set_font("Helvetica", "", 8)
@@ -708,15 +706,12 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
                 
     return finalizar_pdf(pdf)
 
-# AGREGA ESTO AL FINAL DE TU ARCHIVO tools.py
 def es_alerta_administrativa(row):
-    # PROTECCIÓN: Si no es un objeto con .get, salimos
     if not hasattr(row, 'get'): return False
     
     act = str(row.get('ACTIVIDAD', '')).upper()
     com = str(row.get('COMENTARIO', '')).upper()
     
-    # Marcamos como alerta administrativa órdenes que se cancelan o tienen problemas de acceso
     if any(e in act for e in ['INACTIVO', 'CORTEMORA', 'NOINSTALADO']): 
         return True
     if any(j in com for j in ['NO SE PUDO', 'CLIENTE NO QUISO', 'CANCELADA', 'NO PERMITE']): 
