@@ -39,9 +39,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- LISTA MAESTRA DE ESTADOS ACTIVOS (Actualizada para no perder órdenes iniciadas) ---
-PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-
 # ==============================================================================
 # FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (MODO ESPEJO BLINDADO)
 # ==============================================================================
@@ -107,17 +104,14 @@ def sincronizar_datos_nube(conn):
                     if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                # --- ESCUDO PARA NO BORRAR ÓRDENES PASADAS QUE SIGUEN ASIGNADAS ---
                 ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
                 fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                 
-                if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns and 'ESTADO' in df_nube.columns:
-                    mask_vivas = df_nube['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns:
                     df_nube = df_nube[
                         (df_nube['HORA_LIQ'] >= fecha_limite_7d) | 
                         (df_nube['FECHA_APE'] >= fecha_limite_7d) | 
-                        (df_nube['HORA_LIQ'].isna()) |
-                        mask_vivas  # <--- ESTO ASEGURA QUE SIEMPRE SE VEAN, NO IMPORTA LA FECHA
+                        (df_nube['HORA_LIQ'].isna())
                     ].copy()
 
                 cols_orden_ideal = [
@@ -238,13 +232,10 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         ahora_momento_ts = pd.Timestamp(ahora_momento)
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
         
-        # --- ESCUDO PARA NO BORRAR ÓRDENES PASADAS QUE SIGUEN ASIGNADAS LOCALMENTE ---
-        mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_act = df_act[
             (df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | 
             (df_act['FECHA_APE'] >= fecha_limite_7d_ventana) | 
-            (df_act['HORA_LIQ'].isna()) |
-            mask_vivas_loc
+            (df_act['HORA_LIQ'].isna())
         ].copy()
         
         df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
@@ -433,7 +424,7 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        # --- CREACIÓN DE COLUMNA 'MOTIVO' PARA EL FILTRO ---
+        # --- NUEVO: CREACIÓN DE COLUMNA 'MOTIVO' PARA EL FILTRO ---
         def extraer_motivo_falla(row):
             act = str(row.get('ACTIVIDAD', '')).upper()
             com = str(row.get('COMENTARIO', '')).upper()
@@ -460,6 +451,7 @@ def main():
     
     ahora_local = datetime.utcnow() - timedelta(hours=6)
     hoy_date_valor = ahora_local.date()
+    patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
 
     # --- 2. MENÚ SUPERIOR Y MULTIFILTROS LATERALES ---
     with sidebar_top:
@@ -493,7 +485,7 @@ def main():
                 st.divider() 
                 
             st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
             
             mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
@@ -573,7 +565,7 @@ def main():
         with tab_dinamico:
             st.subheader("📄 Reporte Dinámico en Vivo")
             col_f1, col_f2 = st.columns(2)
-            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
             total_off_rep = int((df_base['ES_OFFLINE'] == True & m_viva_rep).sum())
             
             with col_f1: check_criticos_rep = st.toggle(f"Filtrar solo Críticas ({total_off_rep})", key="tgg_rep")
@@ -697,7 +689,7 @@ def main():
     # ==============================================================================
     
     mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
-    mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+    mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
 
     df_monitor_vivas_full = df_monitor_filtrado[mask_hoy | mask_asignadas].copy()
     df_tablero_kpi_monitor = df_monitor_filtrado[mask_asignadas].copy()
@@ -731,17 +723,17 @@ def main():
             res_sop_visual_v = {
                 "FTTH / FIBRA": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
                 "Navegación / Internet": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                "ONT/ONU Offline": int((df_tablero_kpi_monitor.get('ES_OFFLINE', False) == True).sum()), 
-                "Niveles alterados": len(df_tablero_kpi_monitor[df_tablero_kpi_monitor.get('COMENTARIO','').astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
+                "ONT/ONU Offline": int((df_tablero_kpi_monitor['ES_OFFLINE'] == True).sum()), 
+                "Niveles alterados": len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
                 "Sin señal de TV": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
             }
             st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
             st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-            st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor.get('ALERTA_TIEMPO', False) == True).sum()))
+            st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor['ALERTA_TIEMPO'] == True).sum()))
 
         with col_tab_3:
             st.caption("📦 Instalaciones")
-            txt_ins_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor.get('COMENTARIO','').astype(str).str.upper()
+            txt_ins_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
             
             res_ins_visual_v = {
                 "Adición": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
@@ -757,7 +749,7 @@ def main():
 
         with col_tab_4:
             st.caption("⚙️ Otros")
-            txt_otr_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor.get('COMENTARIO','').astype(str).str.upper()
+            txt_otr_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
             mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
             res_otros_monitor = df_tablero_kpi_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
             res_otros_monitor.columns = ['Otros', 'Cant']
@@ -884,7 +876,7 @@ def main():
         st.divider()
 
         fig3, ax3 = plt.subplots(figsize=(10, 3))
-        df_offline = df_v_tabla_monitor[df_v_tabla_monitor.get('ES_OFFLINE', False) == True]
+        df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
         if not df_offline.empty and 'HORA_INI' in df_offline.columns:
             tendencia = df_offline.dropna(subset=['HORA_INI']).groupby(df_offline['HORA_INI'].dt.date).size()
             if not tendencia.empty:
