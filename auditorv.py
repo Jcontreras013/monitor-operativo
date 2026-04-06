@@ -141,7 +141,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
         if conn is not None:
             with st.spinner("📥 Descargando reporte desde la pestaña 'Auditoria'..."):
                 try:
-                    # SE AJUSTÓ EL NOMBRE DE LA PESTAÑA A "Auditoria"
                     df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", ttl=0)
                     if not df_descarga.empty:
                         st.session_state['df_gps_memoria'] = df_descarga
@@ -157,24 +156,32 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
     # --- 2. LÓGICA DE RESTRICCIÓN: MÓVIL vs PC ---
     if not es_movil:
-        # ===== MODO PC: MUESTRA EL CARGADOR =====
-        st.markdown("### 📥 Ingreso Manual (Modo PC)")
+        # ===== MODO PC: MUESTRA EL CARGADOR Y SUBE A LA NUBE =====
+        st.markdown("### 📥 Ingreso Manual y Sincronización (Modo PC)")
         archivo_gps = st.file_uploader("Arrastra aquí el archivo Excel o CSV generado por la plataforma de GPS", type=['csv', 'xlsx'])
         
         if archivo_gps is not None:
-            with st.spinner("🔍 Leyendo archivo local..."):
+            with st.spinner("🔍 Leyendo archivo local y subiendo a la Nube..."):
                 try:
+                    # 1. Leer el archivo
                     if archivo_gps.name.endswith('.csv'): df_gps_crudo = pd.read_csv(archivo_gps)
                     else: df_gps_crudo = pd.read_excel(archivo_gps)
                     
-                    # Limpiamos la memoria de la nube si el usuario decide subir un archivo manual
+                    # 2. Subir automáticamente a Google Sheets
+                    if conn is not None:
+                        st.toast("Subiendo datos a Google Sheets...")
+                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", data=df_gps_crudo)
+                        st.success("☁️ ¡Datos subidos a la Nube exitosamente! Ya están disponibles para los móviles.")
+                    
+                    # 3. Limpiamos la memoria local vieja
                     if 'df_gps_memoria' in st.session_state:
                         del st.session_state['df_gps_memoria']
+                        
                 except Exception as e:
-                    st.error(f"❌ Error crítico al leer el archivo local: {e}")
+                    st.error(f"❌ Error crítico al leer o subir el archivo local: {e}")
     else:
         # ===== MODO MÓVIL: OCULTA EL CARGADOR Y MUESTRA MENSAJE =====
-        st.info("📱 **Modo Móvil Detectado:** El ingreso de datos manual en crudo está deshabilitado en teléfonos. Usa el botón de carga desde la nube superior.")
+        st.info("📱 **Modo Móvil Detectado:** El ingreso de datos manual en crudo está deshabilitado en teléfonos. Usa el botón de carga desde la nube superior para ver la última versión.")
 
     # --- RECUPERAR DATOS DE LA NUBE SI EXISTEN Y NO SE SUBIÓ ARCHIVO MANUAL ---
     if df_gps_crudo is None and 'df_gps_memoria' in st.session_state:
@@ -186,7 +193,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
             df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps_crudo)
         
         if df_resumen_gps is not None:
-            st.success("✅ ¡Análisis completado! Vehículos unificados y tiempos consolidados correctamente.")
+            st.success("✅ ¡Análisis completado! Vehículos unificados y tiempos consolidados.")
             
             st.markdown("### 📊 Resultados de la Auditoría")
             m1, m2, m3 = st.columns(3)
