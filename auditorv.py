@@ -139,17 +139,17 @@ def mostrar_auditoria(es_movil=False, conn=None):
     st.markdown("### ☁️ Sincronización")
     if st.button("☁️ Cargar desde la Nube (Auditoría)", use_container_width=True, type="primary"):
         if conn is not None:
-            with st.spinner("📥 Descargando reporte de rutas desde Google Sheets..."):
+            with st.spinner("📥 Descargando reporte desde la pestaña 'Auditoria'..."):
                 try:
-                    # ATENCIÓN: worksheet="GPS" es el nombre de la pestaña en tu Excel. Cámbialo si se llama distinto.
-                    df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="GPS", ttl=0)
+                    # SE AJUSTÓ EL NOMBRE DE LA PESTAÑA A "Auditoria"
+                    df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", ttl=0)
                     if not df_descarga.empty:
                         st.session_state['df_gps_memoria'] = df_descarga
-                        st.success("✅ Datos del GPS descargados de la nube correctamente.")
+                        st.success("✅ Datos descargados de la nube correctamente.")
                     else:
-                        st.warning("⚠️ La pestaña de GPS está vacía en la nube.")
+                        st.warning("⚠️ La pestaña 'Auditoria' está vacía en la nube.")
                 except Exception as e:
-                    st.error(f"❌ Error al conectar con la pestaña del GPS en la nube: {e}")
+                    st.error(f"❌ Error al conectar con la pestaña 'Auditoria' en la nube: {e}")
         else:
             st.error("❌ No se detectó la conexión a Google Sheets.")
             
