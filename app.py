@@ -538,15 +538,15 @@ def main():
     # PANTALLA: AUDITORÍA DE VEHÍCULOS (LLAMANDO A LA FUNCIÓN EXTERNA)
     # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
-        # Se manda a llamar la función del nuevo archivo auditorv.py
+        # Se manda a llamar la función pasándole la variable es_movil
         try:
-            mostrar_auditoria()
+            mostrar_auditoria(es_movil)
         except Exception as e:
-            st.error("Ocurrió un error al cargar el módulo de Auditoría.")
+            st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
         return
 
     # ==============================================================================
-    # PANTALLAS EXISTENTES (NO INSTALADO, REPROGRAMADAS, HISTÓRICO)
+    # PANTALLA EXISTENTES (NO INSTALADO, REPROGRAMADAS, HISTÓRICO)
     # ==============================================================================
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
