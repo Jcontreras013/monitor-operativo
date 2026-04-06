@@ -470,7 +470,6 @@ def main():
     # --- 2. MENÚ SUPERIOR Y MULTIFILTROS LATERALES ---
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
-            # ---> SE AGREGÓ LA NUEVA PESTAÑA "🚙 Auditoría Vehículos" <---
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
@@ -538,9 +537,9 @@ def main():
     # PANTALLA: AUDITORÍA DE VEHÍCULOS (LLAMANDO A LA FUNCIÓN EXTERNA)
     # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
-        # Se manda a llamar la función pasándole la variable es_movil
+        # Pasamos AMBAS cosas: la detección móvil (es_movil) y la conexión (conn)
         try:
-            mostrar_auditoria(es_movil)
+            mostrar_auditoria(es_movil, conn)
         except Exception as e:
             st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
         return
