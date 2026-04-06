@@ -119,9 +119,9 @@ def generar_pdf_auditoria(df_resumen):
     return finalizar_pdf(pdf)
 
 # ==============================================================================
-# PANTALLA VISUAL QUE SE LLAMARÁ DESDE APP.PY (AHORA RECIBE es_movil)
+# PANTALLA VISUAL QUE SE LLAMARÁ DESDE APP.PY
 # ==============================================================================
-def mostrar_auditoria(es_movil=False):
+def mostrar_auditoria(es_movil=False, conn=None):
     col1, col2 = st.columns([1, 4])
     with col1:
         st.write("") 
@@ -132,16 +132,28 @@ def mostrar_auditoria(es_movil=False):
 
     st.divider()
 
+    # Variable para almacenar los datos crudos antes de procesarlos
+    df_gps_crudo = None
+
     # --- 1. BOTÓN DE LA NUBE (Siempre visible para Móvil y PC) ---
     st.markdown("### ☁️ Sincronización")
     if st.button("☁️ Cargar desde la Nube (Auditoría)", use_container_width=True, type="primary"):
-        st.info("La lógica de descarga desde la nube para el GPS debe implementarse aquí.")
-        # Aquí podrás poner tu lógica de conexión a la nube en el futuro
-        
+        if conn is not None:
+            with st.spinner("📥 Descargando reporte de rutas desde Google Sheets..."):
+                try:
+                    # ATENCIÓN: worksheet="GPS" es el nombre de la pestaña en tu Excel. Cámbialo si se llama distinto.
+                    df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="GPS", ttl=0)
+                    if not df_descarga.empty:
+                        st.session_state['df_gps_memoria'] = df_descarga
+                        st.success("✅ Datos del GPS descargados de la nube correctamente.")
+                    else:
+                        st.warning("⚠️ La pestaña de GPS está vacía en la nube.")
+                except Exception as e:
+                    st.error(f"❌ Error al conectar con la pestaña del GPS en la nube: {e}")
+        else:
+            st.error("❌ No se detectó la conexión a Google Sheets.")
+            
     st.divider()
-
-    # Variable para almacenar el dataframe si se carga algo
-    df_gps = None
 
     # --- 2. LÓGICA DE RESTRICCIÓN: MÓVIL vs PC ---
     if not es_movil:
@@ -150,20 +162,28 @@ def mostrar_auditoria(es_movil=False):
         archivo_gps = st.file_uploader("Arrastra aquí el archivo Excel o CSV generado por la plataforma de GPS", type=['csv', 'xlsx'])
         
         if archivo_gps is not None:
-            with st.spinner("🔍 Analizando datos, limpiando duplicados y calculando tiempos..."):
+            with st.spinner("🔍 Leyendo archivo local..."):
                 try:
-                    if archivo_gps.name.endswith('.csv'): df_gps = pd.read_csv(archivo_gps)
-                    else: df_gps = pd.read_excel(archivo_gps)
+                    if archivo_gps.name.endswith('.csv'): df_gps_crudo = pd.read_csv(archivo_gps)
+                    else: df_gps_crudo = pd.read_excel(archivo_gps)
+                    
+                    # Limpiamos la memoria de la nube si el usuario decide subir un archivo manual
+                    if 'df_gps_memoria' in st.session_state:
+                        del st.session_state['df_gps_memoria']
                 except Exception as e:
                     st.error(f"❌ Error crítico al leer el archivo local: {e}")
     else:
         # ===== MODO MÓVIL: OCULTA EL CARGADOR Y MUESTRA MENSAJE =====
         st.info("📱 **Modo Móvil Detectado:** El ingreso de datos manual en crudo está deshabilitado en teléfonos. Usa el botón de carga desde la nube superior.")
 
+    # --- RECUPERAR DATOS DE LA NUBE SI EXISTEN Y NO SE SUBIÓ ARCHIVO MANUAL ---
+    if df_gps_crudo is None and 'df_gps_memoria' in st.session_state:
+        df_gps_crudo = st.session_state['df_gps_memoria']
 
-    # --- 3. PROCESAMIENTO Y RESULTADOS (Si el dataframe existe) ---
-    if df_gps is not None:
-        df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps)
+    # --- 3. PROCESAMIENTO Y RESULTADOS ---
+    if df_gps_crudo is not None:
+        with st.spinner("⚙️ Procesando auditoría y calculando tiempos..."):
+            df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps_crudo)
         
         if df_resumen_gps is not None:
             st.success("✅ ¡Análisis completado! Vehículos unificados y tiempos consolidados correctamente.")
