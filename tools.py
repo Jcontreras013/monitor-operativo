@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import unicodedata
 import tempfile
 import os
+import numpy as np # IMPORTANTE: Para la vectorización (optimización)
 
 def safestr(texto):
     """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
@@ -379,10 +380,12 @@ def calcular_aporte_meta(row):
     
     if 'PEXTERNO' in act:
         return 100.0  
+    # Si la orden es una instalación, pero el texto dice que es adición o migración:
     elif re.search('ADIC|CAMBIO|MIGRACI|RECUP', txt):
-        return 12.5   # Lo cuenta como mantenimiento (no como instalación nueva)
+        return 12.5   
+    # Si es una instalación pura:
     elif re.search('INS|NUEVA|PLEX|SPLITTEROPT', act):
-        return 25.0   # Instalación Nueva pura
+        return 25.0   
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
         return 12.5   
     else:
@@ -755,10 +758,8 @@ def procesar_dataframe_base(df):
 
 def es_alerta_administrativa(row):
     if not hasattr(row, 'get'): return False
-    
     act = str(row.get('ACTIVIDAD', '')).upper()
     com = str(row.get('COMENTARIO', '')).upper()
-    
     if any(e in act for e in ['INACTIVO', 'CORTEMORA', 'NOINSTALADO']): 
         return True
     if any(j in com for j in ['NO SE PUDO', 'CLIENTE NO QUISO', 'CANCELADA', 'NO PERMITE']): 
