@@ -644,8 +644,8 @@ def main():
                 pdf_bytes_rendimiento = logica_generar_pdf(df_dinamico_filtrado)
                 st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf")
 
-        # ===========================================================
-        # LA NUEVA PESTAÑA DE REPORTE GERENCIAL (DETALLADO)
+# ===========================================================
+        # 💼 PESTAÑA GERENCIAL (LA DEL ERROR CORREGIDO)
         # ===========================================================
         with tab_gerencial:
             st.subheader("📊 Reporte Detallado de Rendimiento y Jornadas")
@@ -656,11 +656,15 @@ def main():
             if archivo_gerencial:
                 with st.spinner("⏳ Analizando datos y calculando jornadas..."):
                     try:
-                        if archivo_gerencial.name.endswith('.csv'): df_gerencial_crudo = pd.read_csv(archivo_gerencial)
-                        else: df_gerencial_crudo = pd.read_excel(archivo_gerencial)
+                        # 1. Leer el archivo crudo
+                        if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
+                        else: df_raw = pd.read_excel(archivo_gerencial)
                         
-                        # Llamamos a nuestra función matemática (arriba en el código)
-                        tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_gerencial_crudo)
+                        # ---> LA SOLUCIÓN: Usamos el traductor de tools.py ANTES de calcular <---
+                        df_limpio = procesar_dataframe_base(df_raw)
+                        
+                        # 2. Llamamos a nuestra función matemática con el archivo ya traducido
+                        tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
                         
                         st.success("✅ Tablas de rendimiento generadas correctamente.")
                         
