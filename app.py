@@ -15,7 +15,6 @@ from streamlit_js_eval import streamlit_js_eval
 # ==============================================================================
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 
-# ---> AQUÍ HICIMOS LA CONEXIÓN CON TU NUEVO MÓDULO DE AUDITORÍA <---
 try:
     from auditorv import mostrar_auditoria
 except ImportError:
@@ -30,7 +29,8 @@ try:
         logica_generar_pdf,
         generar_pdf_cierre_diario,
         generar_pdf_semanal,
-        generar_pdf_mensual
+        generar_pdf_mensual,
+        generar_pdf_trimestral_detallado # <--- IMPORTACIÓN DEL NUEVO PDF GERENCIAL
     )
 except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
@@ -47,6 +47,52 @@ st.set_page_config(
 
 # --- LISTA MAESTRA DE ESTADOS ACTIVOS (Para no perder órdenes iniciadas) ---
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+
+# ==============================================================================
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS)
+# ==============================================================================
+def generar_tablas_gerenciales(df_crudo):
+    df = df_crudo.copy()
+    
+    # Asegurar formato de fechas
+    df['HORA_INI'] = pd.to_datetime(df['HORA_INI'], errors='coerce')
+    df['HORA_LIQ'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce')
+    
+    # Descartar filas sin fechas válidas para no arruinar los promedios
+    df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
+    df['FECHA'] = df['HORA_LIQ'].dt.date
+    
+    # --- TABLA 1: PRODUCCIÓN Y PORCENTAJES ---
+    totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
+    conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
+    tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
+    tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
+
+    # --- TABLA 2: EFICIENCIA Y TIEMPOS ---
+    df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
+    tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
+    tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
+    tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
+
+    # --- TABLA 3: JORNADA LABORAL ---
+    jornada = df.groupby(['TECNICO', 'FECHA']).agg(
+        Hora_Apertura=('HORA_INI', 'min'),
+        Hora_Cierre=('HORA_LIQ', 'max'),
+        Total_Ordenes=('NUM', 'count')
+    ).reset_index()
+    
+    jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
+    
+    resumen_jornada = jornada.groupby('TECNICO').agg(
+        Promedio_Horas_Dia=('Horas_En_Calle', 'mean'),
+        Dias_Laborados=('FECHA', 'nunique'),
+        Max_Horas_Dia=('Horas_En_Calle', 'max')
+    ).reset_index()
+    
+    resumen_jornada['Promedio_Horas_Dia'] = resumen_jornada['Promedio_Horas_Dia'].round(2)
+    resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
+
+    return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
 # FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (MODO ESPEJO BLINDADO)
@@ -80,7 +126,6 @@ def sincronizar_datos_nube(conn):
                     if col_b in df_nube.columns:
                         df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
 
-                # --- GUILLOTINA ANTI-FALSOS CRÍTICOS EN LA NUBE ---
                 if 'ACTIVIDAD' in df_nube.columns:
                     act_upper = df_nube['ACTIVIDAD'].astype(str).str.upper()
                     mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
@@ -113,7 +158,6 @@ def sincronizar_datos_nube(conn):
                     if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                # --- ESCUDO PARA NO BORRAR ÓRDENES PASADAS QUE SIGUEN ASIGNADAS ---
                 ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
                 fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                 
@@ -244,7 +288,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         ahora_momento_ts = pd.Timestamp(ahora_momento)
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
         
-        # --- ESCUDO PARA NO BORRAR ÓRDENES PASADAS QUE SIGUEN ASIGNADAS LOCALMENTE ---
         mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_act = df_act[
             (df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | 
@@ -427,7 +470,6 @@ def main():
             
     if 'ACTIVIDAD' in df_base.columns:
         act_upper_global = df_base['ACTIVIDAD'].astype(str).str.upper()
-        
         mask_no_criticas_g = act_upper_global.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
         mask_solo_sop_g = act_upper_global.str.contains('SOP|FIBRA', na=False)
         
@@ -439,7 +481,6 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        # --- CREACIÓN DE COLUMNA 'MOTIVO' PARA EL FILTRO ---
         def extraer_motivo_falla(row):
             act = str(row.get('ACTIVIDAD', '')).upper()
             com = str(row.get('COMENTARIO', '')).upper()
@@ -462,7 +503,6 @@ def main():
         if col_txt in df_base.columns:
             df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
             df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
-    # -------------------------------------------------------------
     
     ahora_local = datetime.utcnow() - timedelta(hours=6)
     hoy_date_valor = ahora_local.date()
@@ -476,12 +516,10 @@ def main():
             
         df_base_activa = df_base[df_base['DIAS_RETRASO'] >= 0].copy()
         
-        # INICIALIZAR VARIABLES DE FILTRO VACÍAS
         filtro_actividad = []
         filtro_estado = []
         filtro_motivo = []
         
-        # DIBUJAR LOS MULTIFILTROS SOLO SI ESTAMOS EN EL MONITOR
         if nav_menu_diamante == "⚡ Monitor en Vivo":
             st.divider()
             st.markdown("### 🎛️ Filtros Múltiples")
@@ -510,17 +548,13 @@ def main():
             
             df_monitor_filtrado = df_base_activa.copy()
             
-            # --- APLICAR MULTIFILTROS LATERALES ---
             if len(filtro_actividad) > 0:
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
-                
             if len(filtro_estado) > 0:
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
-                
             if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns:
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
             
-            # --- APLICAR FILTROS PRINCIPALES ---
             if check_criticos_diamante:
                 mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
                 mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP|FIBRA', na=False)
@@ -537,7 +571,6 @@ def main():
     # PANTALLA: AUDITORÍA DE VEHÍCULOS (LLAMANDO A LA FUNCIÓN EXTERNA)
     # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
-        # Pasamos AMBAS cosas: la detección móvil (es_movil) y la conexión (conn)
         try:
             mostrar_auditoria(es_movil, conn)
         except Exception as e:
@@ -583,14 +616,15 @@ def main():
         return
 
     # ==============================================================================
-    # PANTALLA: CENTRO DE REPORTES
+    # PANTALLA: CENTRO DE REPORTES (CON LA NUEVA PESTAÑA GERENCIAL)
     # ==============================================================================
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         
-        tab_dinamico, tab_diario, tab_semanal, tab_mensual = st.tabs([
-            "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual"
+        # -----> AQUÍ ESTÁ LA NUEVA PESTAÑA "💼 Gerencial" <-----
+        tab_dinamico, tab_diario, tab_semanal, tab_mensual, tab_gerencial = st.tabs([
+            "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual", "💼 Gerencial (Trimestral)"
         ])
 
         with tab_dinamico:
@@ -610,6 +644,59 @@ def main():
                 pdf_bytes_rendimiento = logica_generar_pdf(df_dinamico_filtrado)
                 st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf")
 
+        # ===========================================================
+        # LA NUEVA PESTAÑA DE REPORTE GERENCIAL (DETALLADO)
+        # ===========================================================
+        with tab_gerencial:
+            st.subheader("📊 Reporte Detallado de Rendimiento y Jornadas")
+            st.caption("Sube un archivo en crudo para generar las métricas de volumen, tiempos y jornada laboral de todos los técnicos.")
+            
+            archivo_gerencial = st.file_uploader("📂 Subir Reporte de Actividades (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_gerencial")
+            
+            if archivo_gerencial:
+                with st.spinner("⏳ Analizando datos y calculando jornadas..."):
+                    try:
+                        if archivo_gerencial.name.endswith('.csv'): df_gerencial_crudo = pd.read_csv(archivo_gerencial)
+                        else: df_gerencial_crudo = pd.read_excel(archivo_gerencial)
+                        
+                        # Llamamos a nuestra función matemática (arriba en el código)
+                        tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_gerencial_crudo)
+                        
+                        st.success("✅ Tablas de rendimiento generadas correctamente.")
+                        
+                        # --- VISTAS EN PANTALLA ---
+                        col_t1, col_t2 = st.columns(2)
+                        with col_t1:
+                            st.markdown("#### 📦 Producción y Participación")
+                            st.dataframe(tabla_prod, use_container_width=True, hide_index=True)
+                        with col_t2:
+                            st.markdown("#### ⏱️ Eficiencia (Minutos Promedio)")
+                            st.dataframe(tabla_efi, use_container_width=True, hide_index=True)
+                            
+                        st.divider()
+                        st.markdown("#### 📅 Utilización de Jornada (En Calle)")
+                        st.info("💡 Este cálculo se basa en restar la última orden cerrada menos la primera orden abierta de cada día laborado.")
+                        st.dataframe(res_jornada, use_container_width=True, hide_index=True)
+                        
+                        st.divider()
+                        
+                        # --- BOTÓN PARA GENERAR EL PDF ---
+                        if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
+                            with st.spinner("Dibujando secciones por técnico..."):
+                                pdf_bytes = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
+                                st.download_button(
+                                    label="📥 Descargar Reporte PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                    mime="application/pdf",
+                                    type="primary",
+                                    use_container_width=True
+                                )
+                                
+                    except Exception as e:
+                        st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
+
+        # Pestañas existentes (Diario, Semanal, Mensual)
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
