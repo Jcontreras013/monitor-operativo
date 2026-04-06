@@ -15,6 +15,12 @@ from streamlit_js_eval import streamlit_js_eval
 # ==============================================================================
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 
+# ---> AQUÍ HICIMOS LA CONEXIÓN CON TU NUEVO MÓDULO DE AUDITORÍA <---
+try:
+    from auditorv import mostrar_auditoria
+except ImportError:
+    st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
+
 try:
     from tools import (
         COLUMNS_MAPPING, 
@@ -38,6 +44,9 @@ st.set_page_config(
     page_icon="⚡",
     initial_sidebar_state="expanded"
 )
+
+# --- LISTA MAESTRA DE ESTADOS ACTIVOS (Para no perder órdenes iniciadas) ---
+PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
 # FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (MODO ESPEJO BLINDADO)
@@ -104,14 +113,17 @@ def sincronizar_datos_nube(conn):
                     if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
+                # --- ESCUDO PARA NO BORRAR ÓRDENES PASADAS QUE SIGUEN ASIGNADAS ---
                 ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
                 fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                 
-                if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns:
+                if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns and 'ESTADO' in df_nube.columns:
+                    mask_vivas = df_nube['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                     df_nube = df_nube[
                         (df_nube['HORA_LIQ'] >= fecha_limite_7d) | 
                         (df_nube['FECHA_APE'] >= fecha_limite_7d) | 
-                        (df_nube['HORA_LIQ'].isna())
+                        (df_nube['HORA_LIQ'].isna()) |
+                        mask_vivas
                     ].copy()
 
                 cols_orden_ideal = [
@@ -232,10 +244,13 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         ahora_momento_ts = pd.Timestamp(ahora_momento)
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
         
+        # --- ESCUDO PARA NO BORRAR ÓRDENES PASADAS QUE SIGUEN ASIGNADAS LOCALMENTE ---
+        mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_act = df_act[
             (df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | 
             (df_act['FECHA_APE'] >= fecha_limite_7d_ventana) | 
-            (df_act['HORA_LIQ'].isna())
+            (df_act['HORA_LIQ'].isna()) |
+            mask_vivas_loc
         ].copy()
         
         df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
@@ -424,7 +439,7 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        # --- NUEVO: CREACIÓN DE COLUMNA 'MOTIVO' PARA EL FILTRO ---
+        # --- CREACIÓN DE COLUMNA 'MOTIVO' PARA EL FILTRO ---
         def extraer_motivo_falla(row):
             act = str(row.get('ACTIVIDAD', '')).upper()
             com = str(row.get('COMENTARIO', '')).upper()
@@ -451,12 +466,12 @@ def main():
     
     ahora_local = datetime.utcnow() - timedelta(hours=6)
     hoy_date_valor = ahora_local.date()
-    patron_asignadas_viva_str = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO'
 
     # --- 2. MENÚ SUPERIOR Y MULTIFILTROS LATERALES ---
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
+            # ---> SE AGREGÓ LA NUEVA PESTAÑA "🚙 Auditoría Vehículos" <---
+            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
             
@@ -485,7 +500,7 @@ def main():
                 st.divider() 
                 
             st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             
             mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
@@ -519,6 +534,20 @@ def main():
         else:
             df_monitor_filtrado = df_base_activa.copy()
 
+    # ==============================================================================
+    # PANTALLA: AUDITORÍA DE VEHÍCULOS (LLAMANDO A LA FUNCIÓN EXTERNA)
+    # ==============================================================================
+    if nav_menu_diamante == "🚙 Auditoría Vehículos":
+        # Se manda a llamar la función del nuevo archivo auditorv.py
+        try:
+            mostrar_auditoria()
+        except Exception as e:
+            st.error("Ocurrió un error al cargar el módulo de Auditoría.")
+        return
+
+    # ==============================================================================
+    # PANTALLAS EXISTENTES (NO INSTALADO, REPROGRAMADAS, HISTÓRICO)
+    # ==============================================================================
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
@@ -554,6 +583,9 @@ def main():
         main_historico(st.session_state.df_hist)
         return
 
+    # ==============================================================================
+    # PANTALLA: CENTRO DE REPORTES
+    # ==============================================================================
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
@@ -565,7 +597,7 @@ def main():
         with tab_dinamico:
             st.subheader("📄 Reporte Dinámico en Vivo")
             col_f1, col_f2 = st.columns(2)
-            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
+            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             total_off_rep = int((df_base['ES_OFFLINE'] == True & m_viva_rep).sum())
             
             with col_f1: check_criticos_rep = st.toggle(f"Filtrar solo Críticas ({total_off_rep})", key="tgg_rep")
@@ -689,7 +721,7 @@ def main():
     # ==============================================================================
     
     mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
-    mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(patron_asignadas_viva_str, na=False, case=False)
+    mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
 
     df_monitor_vivas_full = df_monitor_filtrado[mask_hoy | mask_asignadas].copy()
     df_tablero_kpi_monitor = df_monitor_filtrado[mask_asignadas].copy()
