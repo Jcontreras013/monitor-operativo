@@ -3,6 +3,12 @@ import pandas as pd
 from datetime import datetime
 import re
 
+# Importar las herramientas de PDF que ya existen en tu sistema
+try:
+    from tools import ReporteGenerencialPDF, finalizar_pdf, safestr
+except ImportError:
+    st.error("⚠️ No se pudo importar tools.py. Asegúrate de que esté en la misma carpeta.")
+
 # ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS
 # ==============================================================================
@@ -53,6 +59,66 @@ def procesar_auditoria_vehiculos(df):
         return None, str(e)
 
 # ==============================================================================
+# GENERADOR DE PDF DINÁMICO
+# ==============================================================================
+def generar_pdf_auditoria(df_resumen):
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_fill_color(252, 252, 252)
+    ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
+    pdf.cell(0, 10, safestr(f" Auditoria de Tiempos de Ruta (GPS) - Generado: {ahorastr}"), border=1, ln=True, fill=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("Consolidado de Tiempos Reales en Calle")
+    
+    if not df_resumen.empty:
+        # Encabezados
+        pdf.set_fill_color(225, 225, 225)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 7)
+        anchos = [85, 30, 30, 45]
+        aligns = ["L", "C", "C", "C"]
+        
+        for i, col in enumerate(df_resumen.columns):
+            pdf.cell(anchos[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+        pdf.ln()
+        
+        # Filas dinámicas
+        pdf.set_font("Helvetica", "", 7)
+        for _, fila in df_resumen.iterrows():
+            for i, item in enumerate(fila):
+                valstr = str(item)[:45]
+                valclean = safestr(valstr)
+                
+                # Colores por defecto (blanco y negro)
+                fillr, fillg, fillb = 255, 255, 255
+                textr, textg, textb = 0, 0, 0
+                
+                # Reglas de colores dinámicos
+                if "Sin Salida" in valstr or "Sin Ingreso" in valstr or "Revisar" in valstr or "---" in valstr:
+                    fillr, fillg, fillb = 253, 230, 230 # Fondo rojizo
+                    textr, textg, textb = 180, 0, 0     # Texto rojo
+                elif i == 3 and "Sin" not in valstr and "Revisar" not in valstr:
+                    fillr, fillg, fillb = 230, 245, 230 # Fondo verdoso
+                    textr, textg, textb = 0, 100, 0     # Texto verde
+                    
+                pdf.set_fill_color(fillr, fillg, fillb)
+                pdf.set_text_color(textr, textg, textb)
+                pdf.cell(anchos[i], 5, valclean, border=1, align=aligns[i], fill=True)
+            pdf.ln()
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, "Sin datos para mostrar.", ln=True)
+        
+    return finalizar_pdf(pdf)
+
+# ==============================================================================
 # PANTALLA VISUAL QUE SE LLAMARÁ DESDE APP.PY
 # ==============================================================================
 def mostrar_auditoria():
@@ -83,21 +149,34 @@ def mostrar_auditoria():
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Total Vehículos Activos", len(df_resumen_gps))
                     vehiculos_calle = len(df_resumen_gps[df_resumen_gps['Última Entrada'] == "---"])
-                    m2.metric("Vehículos Aún en Calle", vehiculos_calle)
+                    m2.metric("Vehículos Aún en Calle / Sin Cierre", vehiculos_calle)
                     
                     st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
                     
                     csv_gps = df_resumen_gps.to_csv(index=False).encode('utf-8')
+                    pdf_bytes = generar_pdf_auditoria(df_resumen_gps)
+                    
                     st.divider()
                     st.markdown("### 3. Exportar Información")
-                    st.download_button(
-                        label="📥 Descargar Reporte Final (CSV)",
-                        data=csv_gps,
-                        file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                        mime="text/csv",
-                        type="primary",
-                        use_container_width=True
-                    )
+                    
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.download_button(
+                            label="🚀 Descargar Reporte (PDF)",
+                            data=pdf_bytes,
+                            file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+                    with col_d2:
+                        st.download_button(
+                            label="📥 Descargar Reporte (CSV)",
+                            data=csv_gps,
+                            file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
                 else:
                     st.error(f"❌ Ocurrió un error al procesar el formato: {mensaje_error}")
             except Exception as e:
