@@ -645,42 +645,64 @@ def main():
                 st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf")
 
 # ===========================================================
-        # 💼 PESTAÑA GERENCIAL (LA DEL ERROR CORREGIDO)
+        # 💼 PESTAÑA GERENCIAL (TABLA MAESTRA UNIFICADA)
         # ===========================================================
         with tab_gerencial:
-            st.subheader("📊 Reporte Detallado de Rendimiento y Jornadas")
-            st.caption("Sube un archivo en crudo para generar las métricas de volumen, tiempos y jornada laboral de todos los técnicos.")
+            st.subheader("📊 Reporte Gerencial Unificado")
+            st.caption("Sube el archivo en crudo. El sistema cruzará la productividad, tiempos y jornadas en una sola tabla maestra.")
             
             archivo_gerencial = st.file_uploader("📂 Subir Reporte de Actividades (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_gerencial")
             
             if archivo_gerencial:
-                with st.spinner("⏳ Analizando datos y calculando jornadas..."):
+                with st.spinner("⏳ Analizando datos, cruzando tablas y calculando jornadas..."):
                     try:
-                        # 1. Leer el archivo crudo
+                        # 1. Leer y limpiar el archivo crudo
                         if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
                         else: df_raw = pd.read_excel(archivo_gerencial)
                         
-                        # ---> LA SOLUCIÓN: Usamos el traductor de tools.py ANTES de calcular <---
                         df_limpio = procesar_dataframe_base(df_raw)
                         
-                        # 2. Llamamos a nuestra función matemática con el archivo ya traducido
+                        # 2. Generar las tablas base
                         tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
                         
-                        st.success("✅ Tablas de rendimiento generadas correctamente.")
+                        # 3. ---> MAGIA DE FUSIÓN (MERGE) <---
+                        # Unimos producción con eficiencia
+                        df_merge_1 = pd.merge(tabla_prod, tabla_efi, on=['TECNICO', 'ACTIVIDAD'], how='left')
+                        # Lo unimos con la jornada laboral
+                        df_maestra = pd.merge(df_merge_1, res_jornada, on='TECNICO', how='left')
                         
-                        # --- VISTAS EN PANTALLA ---
-                        col_t1, col_t2 = st.columns(2)
-                        with col_t1:
-                            st.markdown("#### 📦 Producción y Participación")
-                            st.dataframe(tabla_prod, use_container_width=True, hide_index=True)
-                        with col_t2:
-                            st.markdown("#### ⏱️ Eficiencia (Minutos Promedio)")
-                            st.dataframe(tabla_efi, use_container_width=True, hide_index=True)
-                            
-                        st.divider()
-                        st.markdown("#### 📅 Utilización de Jornada (En Calle)")
-                        st.info("💡 Este cálculo se basa en restar la última orden cerrada menos la primera orden abierta de cada día laborado.")
-                        st.dataframe(res_jornada, use_container_width=True, hide_index=True)
+                        # Limpiamos los nombres de las columnas para que se vean elegantes
+                        df_maestra = df_maestra.rename(columns={
+                            'TECNICO': 'Técnico',
+                            'Dias_Laborados': 'Días Trabajados',
+                            'Promedio_Horas_Dia': 'Hrs / Día',
+                            'ACTIVIDAD': 'Actividad',
+                            'Cantidad': 'Volumen',
+                            'Participacion_%': '% del Total',
+                            'Promedio_Minutos': 'Min. Promedio'
+                        })
+                        
+                        # Ordenamos las columnas de forma lógica: Quién -> Su tiempo general -> Qué hizo -> Cuánto tardó
+                        columnas_ordenadas = ['Técnico', 'Días Trabajados', 'Hrs / Día', 'Actividad', 'Volumen', '% del Total', 'Min. Promedio']
+                        df_maestra = df_maestra[columnas_ordenadas]
+                        
+                        st.success("✅ Datos procesados y unificados correctamente.")
+                        
+                        # 4. Mostrar la tabla con formato avanzado de Streamlit
+                        st.dataframe(
+                            df_maestra,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Técnico": st.column_config.TextColumn("👨‍🔧 Técnico", width="medium"),
+                                "Días Trabajados": st.column_config.NumberColumn("📅 Días", format="%d"),
+                                "Hrs / Día": st.column_config.NumberColumn("⏱️ Hrs/Día", format="%.1f h"),
+                                "Actividad": st.column_config.TextColumn("🛠️ Actividad", width="medium"),
+                                "Volumen": st.column_config.NumberColumn("📦 Volumen", format="%d ord."),
+                                "% del Total": st.column_config.ProgressColumn("📊 Participación", format="%.1f%%", min_value=0, max_value=100),
+                                "Min. Promedio": st.column_config.NumberColumn("⏳ Min. Prom.", format="%.0f min")
+                            }
+                        )
                         
                         st.divider()
                         
@@ -699,7 +721,6 @@ def main():
                                 
                     except Exception as e:
                         st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
-
         # Pestañas existentes (Diario, Semanal, Mensual)
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
