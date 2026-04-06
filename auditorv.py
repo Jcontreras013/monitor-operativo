@@ -119,9 +119,9 @@ def generar_pdf_auditoria(df_resumen):
     return finalizar_pdf(pdf)
 
 # ==============================================================================
-# PANTALLA VISUAL QUE SE LLAMARÁ DESDE APP.PY
+# PANTALLA VISUAL QUE SE LLAMARÁ DESDE APP.PY (AHORA RECIBE es_movil)
 # ==============================================================================
-def mostrar_auditoria():
+def mostrar_auditoria(es_movil=False):
     col1, col2 = st.columns([1, 4])
     with col1:
         st.write("") 
@@ -131,53 +131,74 @@ def mostrar_auditoria():
         st.caption("Consolida el tiempo real en calle de cada vehículo a partir del reporte crudo de Zonas/Rutas.")
 
     st.divider()
-    st.markdown("### 1. Cargar Reporte del GPS")
-    archivo_gps = st.file_uploader("Arrastra aquí el archivo Excel o CSV generado por la plataforma de GPS", type=['csv', 'xlsx'])
-    
-    if archivo_gps is not None:
-        with st.spinner("🔍 Analizando datos, limpiando duplicados y calculando tiempos..."):
-            try:
-                if archivo_gps.name.endswith('.csv'): df_gps = pd.read_csv(archivo_gps)
-                else: df_gps = pd.read_excel(archivo_gps)
-                    
-                df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps)
-                
-                if df_resumen_gps is not None:
-                    st.success("✅ ¡Análisis completado! Vehículos unificados y tiempos consolidados correctamente.")
-                    
-                    st.markdown("### 2. Resultados de la Auditoría")
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Total Vehículos Activos", len(df_resumen_gps))
-                    vehiculos_calle = len(df_resumen_gps[df_resumen_gps['Última Entrada'] == "---"])
-                    m2.metric("Vehículos Aún en Calle / Sin Cierre", vehiculos_calle)
-                    
-                    st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
-                    
-                    csv_gps = df_resumen_gps.to_csv(index=False).encode('utf-8')
-                    pdf_bytes = generar_pdf_auditoria(df_resumen_gps)
-                    
-                    st.divider()
-                    st.markdown("### 3. Exportar Información")
-                    
-                    col_d1, col_d2 = st.columns(2)
-                    with col_d1:
-                        st.download_button(
-                            label="🚀 Descargar Reporte (PDF)",
-                            data=pdf_bytes,
-                            file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                            mime="application/pdf",
-                            type="primary",
-                            use_container_width=True
-                        )
-                    with col_d2:
-                        st.download_button(
-                            label="📥 Descargar Reporte (CSV)",
-                            data=csv_gps,
-                            file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
-                else:
-                    st.error(f"❌ Ocurrió un error al procesar el formato: {mensaje_error}")
-            except Exception as e:
-                st.error(f"❌ Error crítico al leer el archivo: {e}")
+
+    # --- 1. BOTÓN DE LA NUBE (Siempre visible para Móvil y PC) ---
+    st.markdown("### ☁️ Sincronización")
+    if st.button("☁️ Cargar desde la Nube (Auditoría)", use_container_width=True, type="primary"):
+        st.info("La lógica de descarga desde la nube para el GPS debe implementarse aquí.")
+        # Aquí podrás poner tu lógica de conexión a la nube en el futuro
+        
+    st.divider()
+
+    # Variable para almacenar el dataframe si se carga algo
+    df_gps = None
+
+    # --- 2. LÓGICA DE RESTRICCIÓN: MÓVIL vs PC ---
+    if not es_movil:
+        # ===== MODO PC: MUESTRA EL CARGADOR =====
+        st.markdown("### 📥 Ingreso Manual (Modo PC)")
+        archivo_gps = st.file_uploader("Arrastra aquí el archivo Excel o CSV generado por la plataforma de GPS", type=['csv', 'xlsx'])
+        
+        if archivo_gps is not None:
+            with st.spinner("🔍 Analizando datos, limpiando duplicados y calculando tiempos..."):
+                try:
+                    if archivo_gps.name.endswith('.csv'): df_gps = pd.read_csv(archivo_gps)
+                    else: df_gps = pd.read_excel(archivo_gps)
+                except Exception as e:
+                    st.error(f"❌ Error crítico al leer el archivo local: {e}")
+    else:
+        # ===== MODO MÓVIL: OCULTA EL CARGADOR Y MUESTRA MENSAJE =====
+        st.info("📱 **Modo Móvil Detectado:** El ingreso de datos manual en crudo está deshabilitado en teléfonos. Usa el botón de carga desde la nube superior.")
+
+
+    # --- 3. PROCESAMIENTO Y RESULTADOS (Si el dataframe existe) ---
+    if df_gps is not None:
+        df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps)
+        
+        if df_resumen_gps is not None:
+            st.success("✅ ¡Análisis completado! Vehículos unificados y tiempos consolidados correctamente.")
+            
+            st.markdown("### 📊 Resultados de la Auditoría")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Vehículos Activos", len(df_resumen_gps))
+            vehiculos_calle = len(df_resumen_gps[df_resumen_gps['Última Entrada'] == "---"])
+            m2.metric("Vehículos Aún en Calle / Sin Cierre", vehiculos_calle)
+            
+            st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
+            
+            csv_gps = df_resumen_gps.to_csv(index=False).encode('utf-8')
+            pdf_bytes = generar_pdf_auditoria(df_resumen_gps)
+            
+            st.divider()
+            st.markdown("### 📥 Exportar Información")
+            
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.download_button(
+                    label="🚀 Descargar Reporte (PDF)",
+                    data=pdf_bytes,
+                    file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                    mime="application/pdf",
+                    type="primary",
+                    use_container_width=True
+                )
+            with col_d2:
+                st.download_button(
+                    label="📥 Descargar Reporte (CSV)",
+                    data=csv_gps,
+                    file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+        else:
+            st.error(f"❌ Ocurrió un error al procesar el formato: {mensaje_error}")
