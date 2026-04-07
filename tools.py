@@ -435,7 +435,61 @@ def logica_generar_pdf(dfbase):
     return finalizar_pdf(pdf)
 
 # ==============================================================================
-# FUNCIONES DE MOTOR (DEPURACIÓN Y PROCESAMIENTO)
+# ---> NUEVA FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
+# ==============================================================================
+def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
+    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
+    # ENCABEZADO PERSONALIZADO CON LOGO DE MAXCOM
+    # Usamos la primera imagen cargada como logo (reemplazar con la ruta de tu imagen)
+    # Por ejemplo, 'image_5.png'
+    # pdf.image('image_5.png', 10, 8, 30) # Descomentar y ajustar ruta si es necesario
+    pdf.set_font("Helvetica", "B", 12); pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE GERENCIAL: RENDIMIENTO Y JORNADA DE TECNICOS"), border=0, ln=True, align="C")
+    pdf.set_font("Helvetica", "", 9); pdf.set_text_color(100, 100, 100)
+    ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
+    pdf.cell(0, 6, safestr(f"Generado el: {ahorastr}"), ln=True, align="C"); pdf.ln(5)
+    
+    if resumen_jornada.empty:
+        pdf.cell(0, 10, "No hay datos suficientes.", ln=True); return finalizar_pdf(pdf)
+
+    lista_tecnicos = resumen_jornada['TECNICO'].dropna().unique()
+    for tecnico in lista_tecnicos:
+        if pdf.get_y() > 220: pdf.add_page()
+        pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(230, 240, 255); pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 8, safestr(f" 👤 TECNICO: {tecnico}"), border=1, ln=True, fill=True)
+        
+        df_jor = resumen_jornada[resumen_jornada['TECNICO'] == tecnico]
+        df_prod = tabla_produccion[tabla_produccion['TECNICO'] == tecnico]
+        df_efi = tabla_eficiencia[tabla_eficiencia['TECNICO'] == tecnico]
+        
+        pdf.set_font("Helvetica", "B", 8); pdf.cell(0, 6, "   RESUMEN DE JORNADA LABORAL", ln=True)
+        pdf.set_font("Helvetica", "", 8)
+        prom_horas = df_jor['Promedio_Horas_Dia'].values[0]; dias_lab = df_jor['Dias_Laborados'].values[0]; max_horas = df_jor['Max_Horas_Dia'].values[0]
+        pdf.cell(10, 5, ""); pdf.cell(50, 5, safestr(f"Dias Trabajados: {dias_lab}")); pdf.cell(60, 5, safestr(f"Promedio en Calle: {prom_horas:.2f} hrs/dia")); pdf.cell(50, 5, safestr(f"Dia mas largo: {max_horas:.2f} hrs"), ln=True); pdf.ln(2)
+        
+        pdf.set_font("Helvetica", "B", 8); pdf.cell(0, 6, "   DESGLOSE DE ACTIVIDAD Y TIEMPOS", ln=True)
+        pdf.set_fill_color(245, 245, 245); pdf.cell(10, 5, "")
+        pdf.cell(60, 5, "Tipo de Actividad", border=1, align="C", fill=True); pdf.cell(25, 5, "Volumen", border=1, align="C", fill=True); pdf.cell(25, 5, "% del Total", border=1, align="C", fill=True); pdf.cell(40, 5, "Promedio de Resolucion", border=1, align="C", fill=True); pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 8); total_ordenes_tec = 0
+        df_prod = df_prod.sort_values(by='Cantidad', ascending=False)
+        for _, fila_p in df_prod.iterrows():
+            actividad = str(fila_p['ACTIVIDAD']); cantidad = fila_p['Cantidad']; porcentaje = fila_p['Participacion_%']
+            total_ordenes_tec += cantidad
+            fila_efi = df_efi[df_efi['ACTIVIDAD'] == actividad]
+            minutos_prom = fila_efi['Promedio_Minutos'].values[0] if not fila_efi.empty else 0
+            pdf.cell(10, 5, ""); pdf.cell(60, 5, safestr(actividad[:35]), border=1); pdf.cell(25, 5, safestr(str(cantidad)), border=1, align="C"); pdf.cell(25, 5, safestr(f"{porcentaje}%"), border=1, align="C")
+            if pd.notnull(minutos_prom) and minutos_prom > 120:
+                pdf.set_text_color(200, 0, 0); pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min [!]"), border=1, align="C"); pdf.set_text_color(0, 0, 0)
+            elif pd.notnull(minutos_prom):
+                pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min"), border=1, align="C")
+            else: pdf.cell(40, 5, "---", border=1, align="C")
+            pdf.ln()
+        pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240); pdf.cell(10, 5, ""); pdf.cell(60, 5, "TOTAL ORDENES", border=1, align="R", fill=True); pdf.cell(25, 5, safestr(str(total_ordenes_tec)), border=1, align="C", fill=True); pdf.ln(8)
+    return finalizar_pdf(pdf)
+
+# ==============================================================================
+# FUNCIONES DE MOTOR (DEPURACIÓN Y PROCESAMIENTO - INTACTAS)
 # ==============================================================================
 def es_offline_preciso(comentario):
     txt = str(comentario).upper().strip()
@@ -485,60 +539,3 @@ def procesar_dataframe_base(df):
     for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
         df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
     return df
-
-def es_alerta_administrativa(row):
-    if not hasattr(row, 'get'): return False
-    act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper()
-    if any(e in act for e in ['INACTIVO', 'CORTEMORA', 'NOINSTALADO']): return True
-    if any(j in com for j in ['NO SE PUDO', 'CLIENTE NO QUISO', 'CANCELADA', 'NO PERMITE']): return True
-    return False
-
-# ==============================================================================
-# ---> NUEVA FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
-# ==============================================================================
-def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
-    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.set_font("Helvetica", "B", 12); pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, safestr("REPORTE GERENCIAL: RENDIMIENTO Y JORNADA DE TECNICOS"), border=0, ln=True, align="C")
-    pdf.set_font("Helvetica", "", 9); pdf.set_text_color(100, 100, 100)
-    ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
-    pdf.cell(0, 6, safestr(f"Generado el: {ahorastr}"), ln=True, align="C"); pdf.ln(5)
-    
-    if resumen_jornada.empty:
-        pdf.cell(0, 10, "No hay datos suficientes.", ln=True); return finalizar_pdf(pdf)
-
-    lista_tecnicos = resumen_jornada['TECNICO'].dropna().unique()
-    for tecnico in lista_tecnicos:
-        if pdf.get_y() > 220: pdf.add_page()
-        pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(230, 240, 255); pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 8, safestr(f" 👤 TECNICO: {tecnico}"), border=1, ln=True, fill=True)
-        
-        df_jor = resumen_jornada[resumen_jornada['TECNICO'] == tecnico]
-        df_prod = tabla_produccion[tabla_produccion['TECNICO'] == tecnico]
-        df_efi = tabla_eficiencia[tabla_eficiencia['TECNICO'] == tecnico]
-        
-        pdf.set_font("Helvetica", "B", 8); pdf.cell(0, 6, "   RESUMEN DE JORNADA LABORAL", ln=True)
-        pdf.set_font("Helvetica", "", 8)
-        prom_horas = df_jor['Promedio_Horas_Dia'].values[0]; dias_lab = df_jor['Dias_Laborados'].values[0]; max_horas = df_jor['Max_Horas_Dia'].values[0]
-        pdf.cell(10, 5, ""); pdf.cell(50, 5, safestr(f"Dias Trabajados: {dias_lab}")); pdf.cell(60, 5, safestr(f"Promedio en Calle: {prom_horas:.2f} hrs/dia")); pdf.cell(50, 5, safestr(f"Dia mas largo: {max_horas:.2f} hrs"), ln=True); pdf.ln(2)
-        
-        pdf.set_font("Helvetica", "B", 8); pdf.cell(0, 6, "   DESGLOSE DE ACTIVIDAD Y TIEMPOS", ln=True)
-        pdf.set_fill_color(245, 245, 245); pdf.cell(10, 5, "")
-        pdf.cell(60, 5, "Tipo de Actividad", border=1, align="C", fill=True); pdf.cell(25, 5, "Volumen", border=1, align="C", fill=True); pdf.cell(25, 5, "% del Total", border=1, align="C", fill=True); pdf.cell(40, 5, "Promedio de Resolucion", border=1, align="C", fill=True); pdf.ln()
-        
-        pdf.set_font("Helvetica", "", 8); total_ordenes_tec = 0
-        df_prod = df_prod.sort_values(by='Cantidad', ascending=False)
-        for _, fila_p in df_prod.iterrows():
-            actividad = str(fila_p['ACTIVIDAD']); cantidad = fila_p['Cantidad']; porcentaje = fila_p['Participacion_%']
-            total_ordenes_tec += cantidad
-            fila_efi = df_efi[df_efi['ACTIVIDAD'] == actividad]
-            minutos_prom = fila_efi['Promedio_Minutos'].values[0] if not fila_efi.empty else 0
-            pdf.cell(10, 5, ""); pdf.cell(60, 5, safestr(actividad[:35]), border=1); pdf.cell(25, 5, safestr(str(cantidad)), border=1, align="C"); pdf.cell(25, 5, safestr(f"{porcentaje}%"), border=1, align="C")
-            if pd.notnull(minutos_prom) and minutos_prom > 120:
-                pdf.set_text_color(200, 0, 0); pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min [!]"), border=1, align="C"); pdf.set_text_color(0, 0, 0)
-            elif pd.notnull(minutos_prom):
-                pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min"), border=1, align="C")
-            else: pdf.cell(40, 5, "---", border=1, align="C")
-            pdf.ln()
-        pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240); pdf.cell(10, 5, ""); pdf.cell(60, 5, "TOTAL ORDENES", border=1, align="R", fill=True); pdf.cell(25, 5, safestr(str(total_ordenes_tec)), border=1, align="C", fill=True); pdf.ln(8)
-    return finalizar_pdf(pdf)
