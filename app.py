@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import plotly.express as px
-import plotly.graph_objects as go # <--- NUEVA IMPORTACIÓN PARA EL GAUGE CHART
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import re
 from streamlit_gsheets import GSheetsConnection
@@ -50,10 +50,7 @@ st.set_page_config(
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS)
-# ==============================================================================
-# ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS)
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE)
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -76,7 +73,7 @@ def generar_tablas_gerenciales(df_crudo):
     df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
     
     # 🛡️ FILTRO INTELIGENTE: Si los minutos son 0 o negativos, los volvemos nulos (None)
-    # De esta manera, Pandas los ignora al calcular el promedio, pero no borramos la orden.
+    # De esta manera, Pandas los ignora al calcular el promedio, pero no borramos la orden del volumen total.
     df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
     
     tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
@@ -92,7 +89,7 @@ def generar_tablas_gerenciales(df_crudo):
     
     jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
     
-    # 🛡️ FILTRO EXTRA: Evitar que una jornada salga negativa si se cruzan días por error
+    # 🛡️ FILTRO EXTRA: Evitar que una jornada salga negativa si se cruzan días por error de la app
     jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
 
     resumen_jornada = jornada.groupby('TECNICO').agg(
@@ -677,12 +674,9 @@ def main():
                         tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
                         
                         # 3. ---> MAGIA DE FUSIÓN (MERGE) <---
-                        # Unimos producción con eficiencia
                         df_merge_1 = pd.merge(tabla_prod, tabla_efi, on=['TECNICO', 'ACTIVIDAD'], how='left')
-                        # Lo unimos con la jornada laboral
                         df_maestra = pd.merge(df_merge_1, res_jornada, on='TECNICO', how='left')
                         
-                        # Limpiamos los nombres de las columnas para que se vean elegantes
                         df_maestra = df_maestra.rename(columns={
                             'TECNICO': 'Técnico',
                             'Dias_Laborados': 'Días Trabajados',
@@ -693,13 +687,16 @@ def main():
                             'Promedio_Minutos': 'Min. Promedio'
                         })
                         
-                        # Ordenamos las columnas de forma lógica: Quién -> Su tiempo general -> Qué hizo -> Cuánto tardó
                         columnas_ordenadas = ['Técnico', 'Días Trabajados', 'Hrs / Día', 'Actividad', 'Volumen', '% del Total', 'Min. Promedio']
                         df_maestra = df_maestra[columnas_ordenadas]
                         
                         st.success("✅ Datos procesados y unificados correctamente.")
                         
-                        # 4. Mostrar la tabla con formato avanzado de Streamlit
+                        # ALERTA DE DATOS DE TIEMPO IGNORADOS
+                        ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
+                        if ordenes_con_error > 0:
+                            st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo (negativos/cero). Se incluyeron en el volumen de producción pero se ignoraron para el promedio de minutos.")
+
                         st.dataframe(
                             df_maestra,
                             use_container_width=True,
@@ -862,7 +859,7 @@ def main():
 
     st.title("⚡ Monitor Operativo Maxcom")
 
-# --- 🎨 ESTILOS CSS FORZADOS PARA LOS KPIs ---
+    # --- 🎨 ESTILOS CSS FORZADOS PARA LOS KPIs ---
     st.markdown("""
     <style>
     .kpi-container {
@@ -936,7 +933,7 @@ def main():
     </div>
     """
     st.markdown(html_kpis, unsafe_allow_html=True)
-    
+
     with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ÓRDENES ASIGNADAS)", expanded=True):
         col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
         with col_tab_1:
@@ -986,55 +983,75 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-    # --- NUEVO EXPANDER DE SEGMENTOS 2:1 Y VELOCÍMETRO ---
+    # --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-        col_tablas, col_gauge = st.columns([2, 1])
         
-        with col_tablas:
-            res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
-            col_plex_m, col_resi_m = st.columns(2)
-            
-            with col_plex_m:
-                st.write("🏢 **PLEX ASIGNADOS**")
-                st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
-                
-            with col_resi_m:
-                st.write("🏠 **RESIDENCIAL ASIGNADOS**")
-                st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+        # 1. Cálculos de Avance por Segmento
+        df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
+        
+        # PLEX
+        vivas_plex = len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'PLEX'])
+        cerradas_plex = len(df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX'])
+        total_plex = vivas_plex + cerradas_plex
+        avance_plex = (cerradas_plex / total_plex * 100) if total_plex > 0 else 0
+        
+        # RESIDENCIAL
+        vivas_resi = len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'RESIDENCIAL'])
+        cerradas_resi = len(df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL'])
+        total_resi = vivas_resi + cerradas_resi
+        avance_resi = (cerradas_resi / total_resi * 100) if total_resi > 0 else 0
+        
+        # GLOBAL
+        total_volumen_dia = cerradas_hoy + vivas_count
+        avance_global = (cerradas_hoy / total_volumen_dia * 100) if total_volumen_dia > 0 else 0
 
-        with col_gauge:
-            total_volumen_dia = cerradas_hoy + vivas_count
-            avance_pct = (cerradas_hoy / total_volumen_dia * 100) if total_volumen_dia > 0 else 0
-            
-            if avance_pct < 50: color_velocimetro = "#EF4444" 
-            elif avance_pct < 80: color_velocimetro = "#F59E0B" 
-            else: color_velocimetro = "#10B981" 
+        # Función constructora para no repetir código de diseño
+        def crear_velocimetro(valor, titulo):
+            if valor < 50: color_v = "#EF4444" 
+            elif valor < 80: color_v = "#F59E0B" 
+            else: color_v = "#10B981" 
                 
-            fig_gauge = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = avance_pct,
-                title = {'text': "Avance de Jornada", 'font': {'color': '#94A3B8', 'size': 14}},
-                number = {'suffix': "%", 'font': {'color': color_velocimetro, 'size': 40, 'weight': 'bold'}, 'valueformat': '.1f'},
+            fig = go.Figure(go.Indicator(
+                mode = "gauge+number", value = valor,
+                title = {'text': titulo, 'font': {'color': '#94A3B8', 'size': 14}},
+                number = {'suffix': "%", 'font': {'color': color_v, 'size': 32, 'weight': 'bold'}, 'valueformat': '.1f'},
                 gauge = {
                     'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#2D2F39"},
-                    'bar': {'color': color_velocimetro},
-                    'bgcolor': "#1A1D24",
-                    'borderwidth': 2,
-                    'bordercolor': "#2D2F39",
+                    'bar': {'color': color_v}, 'bgcolor': "#1A1D24", 'borderwidth': 2, 'bordercolor': "#2D2F39",
                     'steps': [
                         {'range': [0, 50], 'color': "rgba(239, 68, 68, 0.05)"},
                         {'range': [50, 80], 'color': "rgba(245, 158, 11, 0.05)"},
                         {'range': [80, 100], 'color': "rgba(16, 185, 129, 0.05)"}],
                 }
             ))
+            fig.update_layout(height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)", font={'color': "#E2E8F0"})
+            return fig
+
+        # --- FILA 1: LOS MEDIDORES POR SEGMENTO (2 COLUMNAS) ---
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.plotly_chart(crear_velocimetro(avance_resi, "🏠 Avance Residencial"), use_container_width=True)
+        with col_g2:
+            st.plotly_chart(crear_velocimetro(avance_plex, "🏢 Avance PLEX"), use_container_width=True)
             
-            fig_gauge.update_layout(
-                height=220, 
-                margin=dict(l=10, r=10, t=30, b=10), 
-                paper_bgcolor="rgba(0,0,0,0)", 
-                font={'color': "#E2E8F0"}
-            )
-            st.plotly_chart(fig_gauge, use_container_width=True)
+        # --- FILA 2: EL MEDIDOR GLOBAL (CENTRO) ---
+        espacio_izq, col_global, espacio_der = st.columns([1, 2, 1])
+        with col_global:
+            st.plotly_chart(crear_velocimetro(avance_global, "🌍 Avance Global"), use_container_width=True)
+            
+        st.divider()
+
+        # --- FILA 3: LAS TABLAS DE CARGA ---
+        col_resi_m, col_plex_m = st.columns(2)
+        res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
+        
+        with col_resi_m:
+            st.write("🏠 **RESIDENCIAL ASIGNADOS**")
+            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+            
+        with col_plex_m:
+            st.write("🏢 **PLEX ASIGNADOS**")
+            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
 
     st.divider()
     
