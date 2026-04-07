@@ -642,10 +642,10 @@ def main():
     elif status_final_btn == "C_HOY": df_v_tabla_monitor = df_monitor_vivas_full[(df_monitor_vivas_full['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
     else: df_v_tabla_monitor = df_monitor_vivas_full[(df_monitor_vivas_full['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False))]
 
-    met_v1, met_v2, met_v3 = st.columns(3)
-    met_v1.metric("🏢 PLEX", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'PLEX']))
-    met_v2.metric("🏠 RESIDENCIAL", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'RESIDENCIAL']))
-    met_v3.metric("📋 TOTAL EN VISTA", len(df_v_tabla_monitor))
+  #  met_v1, met_v2, met_v3 = st.columns(3)
+   # met_v1.metric("🏢 PLEX", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'PLEX']))
+#    met_v2.metric("🏠 RESIDENCIAL", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'RESIDENCIAL']))
+ #   met_v3.metric("📋 TOTAL EN VISTA", len(df_v_tabla_monitor))
 
     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL DE CONTROL OPERATIVO", "📊 ANALISIS Y GANTT", "📈 ANALÍTICA"])
     
