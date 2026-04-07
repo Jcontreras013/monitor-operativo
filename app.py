@@ -55,14 +55,10 @@ def procesar_fechas_seguro(df_input, columnas):
     df = df_input.copy()
     for col in columnas:
         if col in df.columns:
-            # Si la columna ya es de tipo fecha, no la tocamos para evitar daños
             if pd.api.types.is_datetime64_any_dtype(df[col]):
                 continue
                 
-            # 1. Parseo general
             parsed = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
-            
-            # 2. Reparación quirúrgica solo a las celdas numéricas de Excel (caen en 1970)
             mask_excel = parsed.dt.year <= 1970
             if mask_excel.any():
                 nums = pd.to_numeric(df.loc[mask_excel, col], errors='coerce')
@@ -83,22 +79,18 @@ def generar_tablas_gerenciales(df_crudo):
     df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
     df['FECHA'] = df['HORA_LIQ'].dt.date
     
-    # --- TABLA 1: PRODUCCIÓN Y PORCENTAJES ---
     totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
     conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
     tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
     tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
 
-    # --- TABLA 2: EFICIENCIA Y TIEMPOS ---
     df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
-    # Ignoramos negativos/cero para el promedio, pero mantenemos la orden viva
     df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
     
     tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
     tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
     tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
 
-    # --- TABLA 3: JORNADA LABORAL ---
     jornada = df.groupby(['TECNICO', 'FECHA']).agg(
         Hora_Apertura=('HORA_INI', 'min'),
         Hora_Cierre=('HORA_LIQ', 'max'),
@@ -138,7 +130,6 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                # REPARACIÓN: Aplicamos motor seguro de fechas
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
@@ -244,32 +235,119 @@ def mostrar_comentario_cierre(fila):
 
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
-    st.write(f"### 📊 Desglose de Órdenes: {segmento}")
+    st.markdown(f"<h3 style='text-align: center; color: #E2E8F0; margin-bottom: 20px;'>Desglose del Segmento: {segmento}</h3>", unsafe_allow_html=True)
     
-    # KPIs rápidos dentro del modal
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Asignadas en Ruta", len(pendientes_df))
-    col2.metric("Cerradas Hoy", len(cerradas_df))
-    total = len(pendientes_df) + len(cerradas_df)
-    avance = (len(cerradas_df) / total * 100) if total > 0 else 0
-    col3.metric("Avance Segmento", f"{avance:.1f}%")
+    cerradas = len(cerradas_df)
+    pendientes = len(pendientes_df)
+    total = cerradas + pendientes
+    avance = (cerradas / total * 100) if total > 0 else 0
+    
+    tmr = 0
+    if not cerradas_df.empty and 'MINUTOS_CALC' in cerradas_df.columns:
+        tiempos_validos = cerradas_df[cerradas_df['MINUTOS_CALC'] > 0]['MINUTOS_CALC']
+        if not tiempos_validos.empty:
+            tmr = int(tiempos_validos.mean())
+
+    html_summary = f"""
+    <style>
+    .resumen-container {{
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        margin-bottom: 25px;
+    }}
+    .resumen-card {{
+        background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%);
+        padding: 15px;
+        border-radius: 12px;
+        border: 1px solid #2D2F39;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex: 1;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }}
+    .icon-circle {{
+        width: 45px;
+        height: 45px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+    }}
+    .icon-green {{ background-color: rgba(16, 185, 129, 0.1); color: #10B981; }}
+    .icon-blue {{ background-color: rgba(59, 130, 246, 0.1); color: #3B82F6; }}
+    .icon-orange {{ background-color: rgba(245, 158, 11, 0.1); color: #F59E0B; }}
+    
+    .resumen-info {{
+        display: flex;
+        flex-direction: column;
+    }}
+    .r-val {{
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #FFFFFF;
+        line-height: 1.1;
+    }}
+    .r-lab {{
+        font-size: 0.75rem;
+        color: #94A3B8;
+        text-transform: uppercase;
+        margin-top: 4px;
+        font-weight: 600;
+    }}
+    </style>
+    
+    <div class="resumen-container">
+        <div class="resumen-card">
+            <div class="icon-circle icon-green">✅</div>
+            <div class="resumen-info">
+                <span class="r-val">{cerradas}</span>
+                <span class="r-lab">Resueltos Hoy</span>
+            </div>
+        </div>
+        
+        <div class="resumen-card">
+            <div class="icon-circle icon-blue">⏱️</div>
+            <div class="resumen-info">
+                <span class="r-val">{tmr} min</span>
+                <span class="r-lab">TMR Promedio</span>
+            </div>
+        </div>
+        
+        <div class="resumen-card">
+            <div class="icon-circle icon-orange">⏳</div>
+            <div class="resumen-info">
+                <span class="r-val">{pendientes}</span>
+                <span class="r-lab">En Ruta</span>
+            </div>
+        </div>
+    </div>
+    """
+    
+    st.markdown(html_summary, unsafe_allow_html=True)
+    
+    st.markdown(f"<p style='color:#E2E8F0; font-weight:600; margin-bottom:5px;'>Progreso de Completitud ({avance:.1f}%)</p>", unsafe_allow_html=True)
+    st.progress(int(avance))
     
     st.divider()
     
-    # Pestañas para organizar la información
-    tab_p, tab_c = st.tabs(["⏳ Lista de Pendientes", "✅ Lista de Cerradas Hoy"])
-    
-    with tab_p:
-        if not pendientes_df.empty:
-            st.dataframe(pendientes_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'COLONIA', 'ESTADO']], use_container_width=True, hide_index=True)
-        else:
-            st.success("¡Buen trabajo! No hay órdenes pendientes en este segmento.")
-            
-    with tab_c:
-        if not cerradas_df.empty:
-            st.dataframe(cerradas_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL']], use_container_width=True, hide_index=True)
-        else:
-            st.info("Aún no se han liquidado órdenes en este segmento el día de hoy.")
+    with st.expander("🔍 Ver listado detallado de órdenes"):
+        tab_p, tab_c = st.tabs(["⏳ Pendientes", "✅ Cerradas"])
+        with tab_p:
+            if not pendientes_df.empty:
+                st.dataframe(pendientes_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'COLONIA', 'ESTADO']], use_container_width=True, hide_index=True)
+            else:
+                st.success("¡Excelente! No hay órdenes pendientes.")
+        with tab_c:
+            if not cerradas_df.empty:
+                st.dataframe(cerradas_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL']], use_container_width=True, hide_index=True)
+            else:
+                st.info("Aún no se han liquidado órdenes hoy.")
+                
+    if st.button("Cerrar Resumen", use_container_width=True):
+        st.rerun()
 
 # ==============================================================================
 # LÓGICA DE ESTILOS VISUALES 
@@ -329,7 +407,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos)
         
-        # REPARACIÓN: Aplicamos motor seguro de fechas
         df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
         
         ahora_momento = datetime.utcnow() - timedelta(hours=6)
@@ -492,7 +569,6 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # REPARACIÓN: Aplicamos motor seguro de fechas en memoria general
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
 
     if 'SUSCRIPTOR' in df_base.columns and 'NOMBRE' not in df_base.columns:
@@ -986,7 +1062,7 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-   # --- NUEVO EXPANDER DE SEGMENTOS CON DETECCIÓN DE CLIC REPARADA ---
+    # --- NUEVO EXPANDER DE SEGMENTOS CON DETECCION DE CLIC (SIN TABLAS ESTÁTICAS) ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
@@ -1021,17 +1097,14 @@ def main():
                 showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}},
                 annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")],
-                clickmode="event+select" # <-- FORZAMOS A PLOTLY A ESCUCHAR EL CLIC
+                clickmode="event+select"
             )
             return fig
 
-        # Función robusta para detectar clics en cualquier versión de Streamlit
         def grafico_fue_clickeado(sel_obj):
             if not sel_obj or not hasattr(sel_obj, "selection"): return False
-            # Si Streamlit lo devuelve como Diccionario
             if isinstance(sel_obj.selection, dict):
                 return len(sel_obj.selection.get("points", [])) > 0
-            # Si Streamlit lo devuelve como Objeto
             if hasattr(sel_obj.selection, "points"):
                 return len(sel_obj.selection.points) > 0
             return False
@@ -1039,46 +1112,17 @@ def main():
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             sel_r = st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, on_select="rerun", key="pie_resi")
-            if grafico_fue_clickeado(sel_r):
-                mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
+            if grafico_fue_clickeado(sel_r): mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
                 
         with col_g2:
             sel_p = st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, on_select="rerun", key="pie_plex")
-            if grafico_fue_clickeado(sel_p):
-                mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
+            if grafico_fue_clickeado(sel_p): mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
             
         espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
         with col_global:
             sel_g = st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, on_select="rerun", key="pie_global")
-            if grafico_fue_clickeado(sel_g):
-                mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
+            if grafico_fue_clickeado(sel_g): mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
             
-        st.divider()
-
-        col_resi_m, col_plex_m = st.columns(2)
-        res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
-        
-        with col_resi_m:
-            st.write("🏠 **RESIDENCIAL ASIGNADOS**")
-            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
-            
-        with col_plex_m:
-            st.write("🏢 **PLEX ASIGNADOS**")
-            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
-            
-        st.divider()
-
-        col_resi_m, col_plex_m = st.columns(2)
-        res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
-        
-        with col_resi_m:
-            st.write("🏠 **RESIDENCIAL ASIGNADOS**")
-            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
-            
-        with col_plex_m:
-            st.write("🏢 **PLEX ASIGNADOS**")
-            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
-
     st.divider()
     
     if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
