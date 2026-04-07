@@ -986,6 +986,9 @@ def main():
     # --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         
+# --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS CIRCULARES ---
+    with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
+        
         # 1. Cálculos de Avance por Segmento
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
@@ -1005,39 +1008,61 @@ def main():
         total_volumen_dia = cerradas_hoy + vivas_count
         avance_global = (cerradas_hoy / total_volumen_dia * 100) if total_volumen_dia > 0 else 0
 
-        # Función constructora para no repetir código de diseño
-        def crear_velocimetro(valor, titulo):
+        # Función constructora para los Gráficos Circulares (Estilo Anillo/Donut)
+        def crear_velocimetro_circular(valor, titulo):
             if valor < 50: color_v = "#EF4444" 
             elif valor < 80: color_v = "#F59E0B" 
             else: color_v = "#10B981" 
                 
-            fig = go.Figure(go.Indicator(
-                mode = "gauge+number", value = valor,
-                title = {'text': titulo, 'font': {'color': '#94A3B8', 'size': 14}},
-                number = {'suffix': "%", 'font': {'color': color_v, 'size': 32, 'weight': 'bold'}, 'valueformat': '.1f'},
-                gauge = {
-                    'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#2D2F39"},
-                    'bar': {'color': color_v}, 'bgcolor': "#1A1D24", 'borderwidth': 2, 'bordercolor': "#2D2F39",
-                    'steps': [
-                        {'range': [0, 50], 'color': "rgba(239, 68, 68, 0.05)"},
-                        {'range': [50, 80], 'color': "rgba(245, 158, 11, 0.05)"},
-                        {'range': [80, 100], 'color': "rgba(16, 185, 129, 0.05)"}],
-                }
+            fig = go.Figure(go.Pie(
+                values=[valor, max(0, 100 - valor)],
+                labels=['Completado', 'Pendiente'],
+                hole=0.75, # Esto hace que sea un anillo delgado
+                marker=dict(colors=[color_v, '#2D2F39'], line=dict(color='#0B0E14', width=3)),
+                textinfo='none',
+                hoverinfo='none',
+                direction='clockwise',
+                sort=False
             ))
-            fig.update_layout(height=180, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)", font={'color': "#E2E8F0"})
+            
+            fig.update_layout(
+                showlegend=False,
+                height=160, # Tamaño mucho más compacto
+                margin=dict(l=10, r=10, t=30, b=10),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 13}},
+                # El número se coloca exactamente en el centro del anillo:
+                annotations=[dict(text=f"{valor:.1f}%", x=0.5, y=0.5, font_size=22, font_color=color_v, showarrow=False, font_weight="bold")]
+            )
             return fig
 
-        # --- FILA 1: LOS MEDIDORES POR SEGMENTO (2 COLUMNAS) ---
+        # --- FILA 1: RESIDENCIAL Y PLEX (ARRIBA) ---
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            st.plotly_chart(crear_velocimetro(avance_resi, "🏠 Avance Residencial"), use_container_width=True)
+            st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True)
         with col_g2:
-            st.plotly_chart(crear_velocimetro(avance_plex, "🏢 Avance PLEX"), use_container_width=True)
+            st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True)
             
-        # --- FILA 2: EL MEDIDOR GLOBAL (CENTRO) ---
-        espacio_izq, col_global, espacio_der = st.columns([1, 2, 1])
+        # --- FILA 2: GLOBAL (ABAJO, CENTRADO) ---
+        # Usamos [1, 1.2, 1] para empujar el gráfico hacia el centro
+        espacio_izq, col_global, espacio_der = st.columns([1, 1.2, 1])
         with col_global:
-            st.plotly_chart(crear_velocimetro(avance_global, "🌍 Avance Global"), use_container_width=True)
+            st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True)
+            
+        st.divider()
+
+        # --- FILA 3: LAS TABLAS DE CARGA ---
+        col_resi_m, col_plex_m = st.columns(2)
+        res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
+        
+        with col_resi_m:
+            st.write("🏠 **RESIDENCIAL ASIGNADOS**")
+            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+            
+        with col_plex_m:
+            st.write("🏢 **PLEX ASIGNADOS**")
+            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
             
         st.divider()
 
