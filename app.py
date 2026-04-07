@@ -269,7 +269,7 @@ def main():
         c3.metric("TÉCNICOS", vivas['TECNICO'].nunique())
         c4.metric("OFFLINE", int(vivas['ES_OFFLINE'].sum()) if 'ES_OFFLINE' in vivas.columns else 0)
 
-        with st.expander("📊 AVANCE POR SEGMENTO", expanded=True):
+with st.expander("📊 AVANCE POR SEGMENTO", expanded=True):
             df_p_plex = vivas[vivas['SEGMENTO'] == 'PLEX']
             df_c_plex = cerradas_hoy_df[cerradas_hoy_df['SEGMENTO'] == 'PLEX']
             df_p_resi = vivas[vivas['SEGMENTO'] == 'RESIDENCIAL']
@@ -285,23 +285,23 @@ def main():
                                   annotations=[dict(text=f"{val:.0f}%", x=0.5, y=0.5, font_size=20, font_color=color, showarrow=False, font_weight="bold")])
                 return fig
 
+            # --- FILA 1: RESIDENCIAL Y PLEX ---
             g1, g2 = st.columns(2)
             with g1:
                 st.plotly_chart(crear_donut(len(df_p_resi), len(df_c_resi), "🏠 RESIDENCIAL"), use_container_width=True)
-                if st.button("🔍 Detalle RESI", use_container_width=True, key="br"): mostrar_detalle_avance("RESIDENCIAL", df_p_resi, df_c_resi)
+                if st.button("🔍 Detalle RESI", use_container_width=True, key="br"): 
+                    mostrar_detalle_avance("RESIDENCIAL", df_p_resi, df_c_resi)
             with g2:
                 st.plotly_chart(crear_donut(len(df_p_plex), len(df_c_plex), "🏢 PLEX"), use_container_width=True)
-                if st.button("🔍 Detalle PLEX", use_container_width=True, key="bp"): mostrar_detalle_avance("PLEX", df_p_plex, df_c_plex)
-
-        st.divider()
-        
-        btn_act, btn_cer = st.columns(2)
-        if 'view' not in st.session_state: st.session_state.view = "ACT"
-        if btn_act.button("⏳ ACTIVAS", use_container_width=True): st.session_state.view = "ACT"; st.rerun()
-        if btn_cer.button("✅ CERRADAS HOY", use_container_width=True): st.session_state.view = "CER"; st.rerun()
-
-        df_ver = vivas if st.session_state.view == "ACT" else cerradas_hoy_df
-        df_estilo, _ = aplicar_estilos_df(df_ver)
+                if st.button("🔍 Detalle PLEX", use_container_width=True, key="bp"): 
+                    mostrar_detalle_avance("PLEX", df_p_plex, df_c_plex)
+                    
+            # --- FILA 2: GLOBAL (CENTRADO EN PIRÁMIDE) ---
+            espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
+            with col_global:
+                st.plotly_chart(crear_donut(len(vivas), len(cerradas_hoy_df), "🌍 GLOBAL"), use_container_width=True)
+                if st.button("🔍 Resumen GLOBAL", use_container_width=True, key="bg"): 
+                    mostrar_detalle_avance("GLOBAL", vivas, cerradas_hoy_df)
         
         # LA TABLA PRINCIPAL TAMBIÉN TIENE EL COLUMN_CONFIG PARA OPTIMIZAR EL ESPACIO
         tabla = st.dataframe(
