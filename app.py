@@ -46,33 +46,40 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 # ==============================================================================
-# 📱 MODO APP NATIVA (FULLSCREEN & ANTI-ZOOM)
+# 📱 MODO APP NATIVA (CORREGIDO: RECUPERAR BOTÓN DE BARRA LATERAL)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar elementos web por defecto de Streamlit */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+/* 1. Esconder el menú de 3 puntos (configuración) y el logo de Streamlit */
+div[data-testid="stToolbar"] {visibility: hidden !important;}
+footer {visibility: hidden !important;}
 
-/* Aprovechar el máximo de pantalla en el celular */
+/* 2. Asegurar que el botón para abrir la barra lateral sea visible */
+button[data-testid="stSidebarCollapseButton"] {
+    visibility: visible !important;
+    color: #3B82F6 !important; /* Un azul MaxCom para que resalte */
+}
+
+/* 3. Limpiar la parte superior pero dejar espacio para el botón */
+header[data-testid="stHeader"] {
+    background-color: rgba(0,0,0,0) !important;
+    height: 3rem !important;
+}
+
+/* 4. Ajustar el contenedor para que no se pegue tanto arriba */
 .block-container {
-    padding-top: 1rem !important;
+    padding-top: 2rem !important;
     padding-bottom: 1rem !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
 }
 
-/* Evitar el molesto zoom web al tocar botones rápido */
+/* Evitar el zoom accidental */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
 }
 </style>
-
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
