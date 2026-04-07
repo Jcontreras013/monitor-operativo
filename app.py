@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
@@ -41,27 +41,27 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded" # Expandido en PC, Streamlit lo encoge automático en celular
+    initial_sidebar_state="expanded"
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SIMPLIFICADO Y SEGURO)
+# 📱 MODO APP NATIVA (CSS SEGURO - RESPETA EL MENÚ MÓVIL)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar SOLAMENTE las herramientas de desarrollador y el footer */
-div[data-testid="stToolbar"] {visibility: hidden !important;}
+/* Ocultar la marca de agua de Streamlit en el footer */
 footer {visibility: hidden !important;}
 
-/* Ajustar el contenedor para ganar espacio en celular sin romper la cabecera */
+/* Ocultar solo el menú de 3 puntos (Deploy/Clear Cache) */
+.stAppToolbar {visibility: hidden !important;}
+
+/* Reducir espacio superior sin romper el header nativo */
 .block-container {
     padding-top: 2rem !important;
     padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
 }
 
-/* Evitar el zoom accidental al tocar botones rápido en el celular */
+/* Evitar zoom accidental en celulares */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -73,7 +73,7 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS ULTRA PRECISO (BLINDADO PARA GOOGLE SHEETS)
+# 🛡️ MOTOR SEGURO DE FECHAS (REPARADO EL BUG DE DECIMALES/00:00)
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
@@ -82,32 +82,40 @@ def parse_date_ultra_safe(val):
     hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
 
     try:
-        # 1. Si GSheets manda un objeto TIME nativo
-        if isinstance(val, dt_time):
+        # 1. Si la API de Google Sheets lo manda como un objeto 'time' de Python
+        if isinstance(val, time):
             return pd.Timestamp.combine(hoy.date(), val)
 
-        # 2. Si GSheets manda un objeto Datetime
+        # 2. Si lo manda como datetime y solo trae hora (año 1900 o 1970)
         if isinstance(val, datetime):
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
             return val
         
-        # 3. Si GSheets manda un número decimal (ej. 0.5 = 12:00 PM)
+        # 3. Si lo manda como un número (AQUÍ ESTABA EL ERROR DE LAS 00:00)
         if isinstance(val, (int, float)):
-            if val > 10000:
+            if val > 10000: # Es una fecha completa en formato Excel
                 return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 <= val < 1:
+            elif 0 <= val < 1: # Es un decimal que representa una fracción del día (ej: 0.5 = 12:00pm)
                 return hoy + pd.to_timedelta(val, unit='D')
+            else:
+                return pd.NaT
 
-        # 4. Si GSheets manda un texto
+        # 4. Intentar parsearlo si viene como texto ("11:30", "11:30:00", etc.)
         str_val = str(val).strip()
         
-        # A veces GSheets baja la hora como '1899-12-30 11:06:57'
-        if str_val.startswith('1899'):
-            hora_extraida = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), hora_extraida)
-
+        # Validación extra: si trata de parsear un decimal en texto "0.45"
+        try:
+            float_val = float(str_val)
+            if float_val > 10000:
+                return pd.to_datetime(float_val, unit='D', origin='1899-12-30')
+            elif 0 <= float_val < 1:
+                return hoy + pd.to_timedelta(float_val, unit='D')
+        except ValueError:
+            pass # No es un número, seguimos normal
+            
         parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+        
         if pd.notnull(parsed):
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
@@ -125,7 +133,7 @@ def procesar_fechas_seguro(df_input, columnas):
     return df
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE NEGATIVOS)
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -291,7 +299,7 @@ def mostrar_comentario_cierre(fila):
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES - ESTILO LIBRETA)
+# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES)
 # ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
@@ -334,6 +342,7 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
         st.info("No hay datos de operaciones para este segmento.")
 
     st.markdown("<br>", unsafe_allow_html=True)
+                
     if st.button("Cerrar Resumen", use_container_width=True):
         st.rerun()
 
@@ -373,6 +382,8 @@ def aplicar_estilos_df(df_original_para_estilo):
 
     if 'NUM' in df_visual_procesado.columns:
         df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
+    
+    # Aplicar el formato %H:%M de forma segura asegurando que no modifique strings nulos
     if 'HORA_INI' in df_visual_procesado.columns:
         df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns:
