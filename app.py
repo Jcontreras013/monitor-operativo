@@ -851,19 +851,80 @@ def main():
 
     st.title("⚡ Monitor Operativo Maxcom")
 
-# --- FILA 1: KPIs SUPERIORES VISUALES ---
+# --- 🎨 ESTILOS CSS FORZADOS PARA LOS KPIs ---
+    st.markdown("""
+    <style>
+    .kpi-container {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        margin-bottom: 20px;
+        margin-top: 10px;
+    }
+    .kpi-card {
+        background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border-left: 5px solid #3B82F6; /* Azul por defecto */
+        flex: 1;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        border-top: 1px solid #2D2F39;
+        border-right: 1px solid #2D2F39;
+        border-bottom: 1px solid #2D2F39;
+    }
+    .kpi-card.green { border-left-color: #10B981; }
+    .kpi-card.orange { border-left-color: #F59E0B; }
+    .kpi-card.red { border-left-color: #EF4444; }
+    
+    .kpi-title {
+        color: #94A3B8;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .kpi-val {
+        color: #FFFFFF;
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin: 0;
+        line-height: 1.2;
+    }
+    .kpi-val.text-green { color: #10B981; }
+    .kpi-val.text-red { color: #EF4444; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # --- 🧮 CÁLCULO DE MÉTRICAS ---
     vivas_count = len(df_tablero_kpi_monitor)
     cerradas_hoy = len(df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].str.contains('CERRADA', na=False, case=False))])
     tecs_activos = df_tablero_kpi_monitor['TECNICO'].nunique()
     offline_criticos = int((df_tablero_kpi_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_tablero_kpi_monitor))) == True).sum())
 
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    with kpi1: st.markdown(f'<div class="kpi-card"><p class="kpi-label">TOTAL ASIGNADAS</p><p class="kpi-value">{vivas_count}</p></div>', unsafe_allow_html=True)
-    with kpi2: st.markdown(f'<div class="kpi-card success"><p class="kpi-label">CERRADAS HOY</p><p class="kpi-value-green">{cerradas_hoy}</p></div>', unsafe_allow_html=True)
-    with kpi3: st.markdown(f'<div class="kpi-card"><p class="kpi-label">TÉCNICOS EN RUTA</p><p class="kpi-value">{tecs_activos}</p></div>', unsafe_allow_html=True)
-    with kpi4: st.markdown(f'<div class="kpi-card danger"><p class="kpi-label">CAÍDAS (OFFLINE)</p><p class="kpi-value-red">{offline_criticos}</p></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
+    # --- 🏗️ RENDERIZADO DE LAS TARJETAS HTML ---
+    html_kpis = f"""
+    <div class="kpi-container">
+        <div class="kpi-card">
+            <div class="kpi-title">TOTAL ASIGNADAS</div>
+            <div class="kpi-val">{vivas_count}</div>
+        </div>
+        <div class="kpi-card green">
+            <div class="kpi-title">CERRADAS HOY</div>
+            <div class="kpi-val text-green">{cerradas_hoy}</div>
+        </div>
+        <div class="kpi-card orange">
+            <div class="kpi-title">TÉCNICOS EN RUTA</div>
+            <div class="kpi-val">{tecs_activos}</div>
+        </div>
+        <div class="kpi-card red">
+            <div class="kpi-title">CAÍDAS (OFFLINE)</div>
+            <div class="kpi-val text-red">{offline_criticos}</div>
+        </div>
+    </div>
+    """
+    st.markdown(html_kpis, unsafe_allow_html=True)
     
     with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ÓRDENES ASIGNADAS)", expanded=True):
         col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
