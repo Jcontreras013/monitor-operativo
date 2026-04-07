@@ -286,8 +286,8 @@ def aplicar_estilos_df(df_original_para_estilo):
     # NUEVO ORDEN ESTRATÉGICO DE COLUMNAS
     cols_a_mostrar = [
         'DIAS_RETRASO', 'NUM', 'CLIENTE', 'MOTIVO',
-        'ESTADO', 'ACTIVIDAD', 'NOMBRE', 'COLONIA', 'HORA_INI', 
-        'TECNICO','HORA_LIQ', 'TIEMPO_REAL','COMENTARIO'
+        'ESTADO', 'ACTIVIDAD', 'NOMBRE', 'COLONIA', 'TECNICO',  
+        'HORA_INI','HORA_LIQ', 'TIEMPO_REAL','COMENTARIO'
     ]
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
