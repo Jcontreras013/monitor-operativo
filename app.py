@@ -37,7 +37,7 @@ except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
 
 # ==============================================================================
-# CONFIGURACIÓN INICIAL DE LA INTERFAZ
+# 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
 # ==============================================================================
 st.set_page_config(
     layout="wide", 
@@ -49,32 +49,36 @@ st.set_page_config(
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (EVITA EL ERROR 00:00)
+# 🛡️ MOTOR SEGURO DE FECHAS (REPARADO: NO INVIERTE MESES/DÍAS)
 # ==============================================================================
-def parse_date_safe(val):
-    if pd.isnull(val) or val == "" or str(val).strip() == "": 
-        return pd.NaT
-    # Si es un número serial de Excel (ej. 45389.46) lo convierte reteniendo la hora
-    if isinstance(val, (int, float)) and val > 10000:
-        return pd.to_datetime(val, unit='D', origin='1899-12-30')
-    # Si es un texto que parece un serial de Excel
-    try:
-        f_val = float(val)
-        if f_val > 10000: 
-            return pd.to_datetime(f_val, unit='D', origin='1899-12-30')
-    except: 
-        pass
-    # Parseo normal para textos estándar ("11:06:57") respetando los minutos
-    return pd.to_datetime(str(val), dayfirst=True, errors='coerce')
+def procesar_fechas_seguro(df_input, columnas):
+    df = df_input.copy()
+    for col in columnas:
+        if col in df.columns:
+            # Si la columna ya es de tipo fecha, no la tocamos para evitar daños
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                continue
+                
+            # 1. Parseo general
+            parsed = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
+            
+            # 2. Reparación quirúrgica solo a las celdas numéricas de Excel (caen en 1970)
+            mask_excel = parsed.dt.year <= 1970
+            if mask_excel.any():
+                nums = pd.to_numeric(df.loc[mask_excel, col], errors='coerce')
+                parsed.loc[mask_excel] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
+            
+            df[col] = parsed
+    return df
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE)
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE NEGATIVOS)
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
     
-    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_safe)
-    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_safe)
+    df['HORA_INI'] = pd.to_datetime(df['HORA_INI'], errors='coerce')
+    df['HORA_LIQ'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce')
     
     df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
     df['FECHA'] = df['HORA_LIQ'].dt.date
@@ -85,8 +89,9 @@ def generar_tablas_gerenciales(df_crudo):
     tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
     tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
 
-    # --- TABLA 2: EFICIENCIA Y TIEMPOS (PARCHE APLICADO) ---
+    # --- TABLA 2: EFICIENCIA Y TIEMPOS ---
     df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
+    # Ignoramos negativos/cero para el promedio, pero mantenemos la orden viva
     df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
     
     tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
@@ -133,9 +138,8 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-                    if col_f in df_nube.columns:
-                        df_nube[col_f] = df_nube[col_f].apply(parse_date_safe)
+                # REPARACIÓN: Aplicamos motor seguro de fechas
+                df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                     if col_b in df_nube.columns:
@@ -203,7 +207,7 @@ def sincronizar_datos_nube(conn):
         st.error(f"Error al conectar con la nube: {e}")
 
 # ==============================================================================
-# 2. VENTANA EMERGENTE
+# VENTANA EMERGENTE
 # ==============================================================================
 @st.dialog("Detalle de Gestión de la Orden")
 def mostrar_comentario_cierre(fila):
@@ -239,7 +243,7 @@ def mostrar_comentario_cierre(fila):
         st.rerun()
 
 # ==============================================================================
-# 3. LÓGICA DE ESTILOS VISUALES 
+# LÓGICA DE ESTILOS VISUALES 
 # ==============================================================================
 def aplicar_estilos_df(df_original_para_estilo):
     df_visual_procesado = df_original_para_estilo.copy()
@@ -279,7 +283,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
-    # NUEVO ORDEN ESTRATÉGICO DE COLUMNAS (Para ver las horas sin hacer scroll)
+    # NUEVO ORDEN ESTRATÉGICO DE COLUMNAS
     cols_a_mostrar = [
         'DIAS_RETRASO', 'NUM', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
         'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 
@@ -289,16 +293,15 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# 4. FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos)
         
-        for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-            if col_f in df_act.columns:
-                df_act[col_f] = df_act[col_f].apply(parse_date_safe)
+        # REPARACIÓN: Aplicamos motor seguro de fechas
+        df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
         
         ahora_momento = datetime.utcnow() - timedelta(hours=6)
         ahora_momento_ts = pd.Timestamp(ahora_momento)
@@ -368,7 +371,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         return None, None
 
 # ==============================================================================
-# 5. INTERFAZ PRINCIPAL (MAIN)
+# INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
@@ -460,18 +463,14 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # -------------------------------------------------------------
-    # 🛡️ BLINDAJE GLOBAL EN MEMORIA Y CLASIFICACIÓN DE MOTIVO
-    # -------------------------------------------------------------
+    # REPARACIÓN: Aplicamos motor seguro de fechas en memoria general
+    df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
+
     if 'SUSCRIPTOR' in df_base.columns and 'NOMBRE' not in df_base.columns:
         df_base.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
     elif 'NOMBRE CLIENTE' in df_base.columns and 'NOMBRE' not in df_base.columns:
         df_base.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
 
-    for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-        if col_f in df_base.columns:
-            df_base[col_f] = df_base[col_f].apply(parse_date_safe)
-            
     for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
         if col_b in df_base.columns:
             df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
@@ -958,6 +957,7 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
+    # --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS CIRCULARES (PIRÁMIDE INVERTIDA) ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
@@ -1054,6 +1054,7 @@ def main():
             df_estilo_v, _ = aplicar_estilos_df(df_v_tabla_monitor)
             df_mostrar = df_estilo_v.drop(columns=['ES_OFFLINE'], errors='ignore')
             
+            # LAS COLUMNAS YA ESTÁN REORDENADAS DESDE aplicar_estilos_df PARA VER HORA INI Y LIQ
             evento_monitor_diam = st.dataframe(
                 df_mostrar,
                 column_config={
