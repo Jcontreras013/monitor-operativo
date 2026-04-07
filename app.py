@@ -207,7 +207,7 @@ def sincronizar_datos_nube(conn):
         st.error(f"Error al conectar con la nube: {e}")
 
 # ==============================================================================
-# VENTANA EMERGENTE
+# VENTANAS EMERGENTES (MODALES)
 # ==============================================================================
 @st.dialog("Detalle de Gestión de la Orden")
 def mostrar_comentario_cierre(fila):
@@ -241,6 +241,35 @@ def mostrar_comentario_cierre(fila):
     st.info(texto_comentario_registrado)
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
+
+@st.dialog("Resumen de Operaciones")
+def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
+    st.write(f"### 📊 Desglose de Órdenes: {segmento}")
+    
+    # KPIs rápidos dentro del modal
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Asignadas en Ruta", len(pendientes_df))
+    col2.metric("Cerradas Hoy", len(cerradas_df))
+    total = len(pendientes_df) + len(cerradas_df)
+    avance = (len(cerradas_df) / total * 100) if total > 0 else 0
+    col3.metric("Avance Segmento", f"{avance:.1f}%")
+    
+    st.divider()
+    
+    # Pestañas para organizar la información
+    tab_p, tab_c = st.tabs(["⏳ Lista de Pendientes", "✅ Lista de Cerradas Hoy"])
+    
+    with tab_p:
+        if not pendientes_df.empty:
+            st.dataframe(pendientes_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'COLONIA', 'ESTADO']], use_container_width=True, hide_index=True)
+        else:
+            st.success("¡Buen trabajo! No hay órdenes pendientes en este segmento.")
+            
+    with tab_c:
+        if not cerradas_df.empty:
+            st.dataframe(cerradas_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL']], use_container_width=True, hide_index=True)
+        else:
+            st.info("Aún no se han liquidado órdenes en este segmento el día de hoy.")
 
 # ==============================================================================
 # LÓGICA DE ESTILOS VISUALES 
@@ -283,7 +312,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
-    # NUEVO ORDEN ESTRATÉGICO DE COLUMNAS
+    # ORDEN ESTRATÉGICO DE COLUMNAS
     cols_a_mostrar = [
         'DIAS_RETRASO', 'NUM', 'CLIENTE', 'MOTIVO',
         'ESTADO', 'ACTIVIDAD', 'NOMBRE', 'COLONIA', 'TECNICO',  
@@ -957,28 +986,27 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-    # --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS CIRCULARES (PIRÁMIDE INVERTIDA) ---
+    # --- NUEVO EXPANDER DE SEGMENTOS CON DETECCION DE CLIC ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
-        vivas_plex = len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'PLEX'])
-        cerradas_plex = len(df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX'])
-        total_plex = vivas_plex + cerradas_plex
-        avance_plex = (cerradas_plex / total_plex * 100) if total_plex > 0 else 0
+        df_plex_pend = df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'PLEX']
+        df_plex_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX']
         
-        vivas_resi = len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'RESIDENCIAL'])
-        cerradas_resi = len(df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL'])
-        total_resi = vivas_resi + cerradas_resi
-        avance_resi = (cerradas_resi / total_resi * 100) if total_resi > 0 else 0
+        df_resi_pend = df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'RESIDENCIAL']
+        df_resi_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL']
+
+        total_p = len(df_plex_pend) + len(df_plex_cerr)
+        avance_plex = (len(df_plex_cerr) / total_p * 100) if total_p > 0 else 0
         
-        total_volumen_dia = cerradas_hoy + vivas_count
-        avance_global = (cerradas_hoy / total_volumen_dia * 100) if total_volumen_dia > 0 else 0
+        total_r = len(df_resi_pend) + len(df_resi_cerr)
+        avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
+        
+        total_v = vivas_count + cerradas_hoy
+        avance_global = (cerradas_hoy / total_v * 100) if total_v > 0 else 0
 
         def crear_velocimetro_circular(valor, titulo):
-            if valor < 50: color_v = "#EF4444" 
-            elif valor < 80: color_v = "#F59E0B" 
-            else: color_v = "#10B981" 
-                
+            color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
             fig = go.Figure(go.Pie(
                 values=[valor, max(0, 100 - valor)],
                 labels=['Completado', 'Pendiente'],
@@ -989,13 +1017,8 @@ def main():
                 direction='clockwise',
                 sort=False
             ))
-            
             fig.update_layout(
-                showlegend=False,
-                height=160,
-                margin=dict(l=5, r=5, t=30, b=5),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
+                showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}},
                 annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")]
             )
@@ -1003,13 +1026,20 @@ def main():
 
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True)
+            sel_r = st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, on_select="rerun", key="pie_resi")
+            if sel_r and hasattr(sel_r, 'selection') and getattr(sel_r.selection, 'points', None) and len(sel_r.selection.points) > 0:
+                mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
+                
         with col_g2:
-            st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True)
+            sel_p = st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, on_select="rerun", key="pie_plex")
+            if sel_p and hasattr(sel_p, 'selection') and getattr(sel_p.selection, 'points', None) and len(sel_p.selection.points) > 0:
+                mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
             
         espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
         with col_global:
-            st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True)
+            sel_g = st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, on_select="rerun", key="pie_global")
+            if sel_g and hasattr(sel_g, 'selection') and getattr(sel_g.selection, 'points', None) and len(sel_g.selection.points) > 0:
+                mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
             
         st.divider()
 
@@ -1054,7 +1084,6 @@ def main():
             df_estilo_v, _ = aplicar_estilos_df(df_v_tabla_monitor)
             df_mostrar = df_estilo_v.drop(columns=['ES_OFFLINE'], errors='ignore')
             
-            # LAS COLUMNAS YA ESTÁN REORDENADAS DESDE aplicar_estilos_df PARA VER HORA INI Y LIQ
             evento_monitor_diam = st.dataframe(
                 df_mostrar,
                 column_config={
