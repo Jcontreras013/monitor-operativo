@@ -3,10 +3,11 @@ import pandas as pd
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
+
 from streamlit_js_eval import streamlit_js_eval
 
 # ==============================================================================
@@ -41,7 +42,7 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # ==============================================================================
@@ -54,14 +55,9 @@ estilo_app_nativa = """
 footer {visibility: hidden;}
 .stAppToolbar {display: none !important;}
 
-/* Hacer la cabecera transparente pero DEJARLA VISIBLE para que el menú móvil funcione */
-header[data-testid="stHeader"] {
-    background-color: transparent !important;
-}
-
 /* Aprovechar el espacio de la pantalla */
 .block-container {
-    padding-top: 1rem !important;
+    padding-top: 2rem !important;
     padding-bottom: 1rem !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
@@ -79,7 +75,7 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS
+# 🛡️ MOTOR SEGURO DE FECHAS (MANEJA CADENAS DE HORA PURAS)
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
@@ -88,21 +84,34 @@ def parse_date_ultra_safe(val):
     hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
 
     try:
+        # Manejar objetos time directos de pandas/python
+        if isinstance(val, dt_time):
+            return pd.Timestamp.combine(hoy.date(), val)
+
         if isinstance(val, datetime):
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-            return val
+            return pd.Timestamp(val)
         
         if isinstance(val, (int, float)):
             if val > 10000:
                 return pd.to_datetime(val, unit='D', origin='1899-12-30')
             elif 0 <= val < 1:
                 return hoy + pd.to_timedelta(val, unit='D')
+            else:
+                return pd.NaT
 
         str_val = str(val).strip()
-        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
         
+        # Si la cadena se parece a una hora (ej. "11:30" o "11:30:00")
+        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
+            parsed_time = pd.to_datetime(str_val).time()
+            return pd.Timestamp.combine(hoy.date(), parsed_time)
+
+        # Si es una fecha completa en string
+        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
         if pd.notnull(parsed):
+            # Si pandas le asignó el año 1900/1970, significa que solo traía la hora
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
@@ -119,7 +128,7 @@ def procesar_fechas_seguro(df_input, columnas):
     return df
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE NEGATIVOS)
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -184,7 +193,7 @@ def sincronizar_datos_nube(conn):
                 # Pasamos el filtro ultra seguro
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
-                # RECALCULAR TIEMPOS EN DESCARGA (Para que no dependa de lo que diga la nube)
+                # RECALCULAR TIEMPOS EN DESCARGA
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
                     df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
@@ -295,6 +304,9 @@ def mostrar_comentario_cierre(fila):
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
 
+# ------------------------------------------------------------------------------
+# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES)
+# ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
@@ -376,6 +388,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'NUM' in df_visual_procesado.columns:
         df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
     
+    # Aplicar el formato de hora de forma segura para la visualización
     if 'HORA_INI' in df_visual_procesado.columns:
         df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns:
@@ -548,7 +561,7 @@ def main():
                 if conn is not None:
                     with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
                         try:
-                            # 🛡️ BLINDAJE EXTRA ANTES DE SUBIR: Convertir fechas a texto
+                            # Preparar para subir asegurando que las fechas sean strings completos
                             df_to_upload = res_p_diamante.copy()
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if c_date in df_to_upload.columns:
@@ -928,7 +941,7 @@ def main():
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
         # ------------------------------------------------------------------------------
-        # 🛡️ FILTRO MAESTRO DE TÉCNICOS (EXCLUYE 'NONE', 'NAN', VACÍOS)
+        # 🛡️ FILTRO MAESTRO DE TÉCNICOS
         # ------------------------------------------------------------------------------
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
@@ -1078,7 +1091,7 @@ def main():
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-        # --- EXPANDER DE SEGMENTOS Y AVANCE CON BOTONES DIRECTOS ---
+        # --- EXPANDER DE SEGMENTOS Y AVANCE ---
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
             df_cerradas_hoy_segmento = df_monitor_valido[(df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_valido['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
             
@@ -1116,7 +1129,6 @@ def main():
                 )
                 return fig
 
-            # --- FILA 1: RESIDENCIAL Y PLEX ---
             col_g1, col_g2 = st.columns(2)
             
             with col_g1:
@@ -1129,7 +1141,6 @@ def main():
                 if st.button("🔍 Ver Resumen PLEX", use_container_width=True, key="btn_plex"):
                     mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
                 
-            # --- FILA 2: GLOBAL ---
             espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
             
             with col_global:
