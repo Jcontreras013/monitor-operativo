@@ -45,6 +45,36 @@ st.set_page_config(
     page_icon="⚡",
     initial_sidebar_state="expanded"
 )
+# ==============================================================================
+# 📱 MODO APP NATIVA (FULLSCREEN & ANTI-ZOOM)
+# ==============================================================================
+estilo_app_nativa = """
+<style>
+/* Ocultar elementos web por defecto de Streamlit */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* Aprovechar el máximo de pantalla en el celular */
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+/* Evitar el molesto zoom web al tocar botones rápido */
+html, body {
+    touch-action: manipulation;
+    overscroll-behavior: none;
+}
+</style>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+"""
+st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
