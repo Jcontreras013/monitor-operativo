@@ -287,7 +287,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     cols_a_mostrar = [
         'DIAS_RETRASO', 'NUM', 'CLIENTE', 'MOTIVO',
         'ESTADO', 'ACTIVIDAD', 'NOMBRE', 'COLONIA', 'HORA_INI', 
-        'HORA_LIQ', 'TIEMPO_REAL', 'TECNICO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
+        'TECNICO','HORA_LIQ', 'TIEMPO_REAL','COMENTARIO'
     ]
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
