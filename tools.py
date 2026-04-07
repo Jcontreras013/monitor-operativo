@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import unicodedata
 import tempfile
 import os
-import io
+import numpy as np
 
 def safestr(texto):
     """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
@@ -43,13 +43,22 @@ COLUMNAS_VITALES_SISTEMA = [
 # ==============================================================================
 class ReporteGenerencialPDF(FPDF):
     def header(self):
+        # 1. Insertar el logo si el archivo 'logo.png' existe en la misma carpeta
+        if os.path.exists('logo.png'):
+            self.image('logo.png', 10, 6, 35) # Posición X=10, Y=6, Ancho=35mm
+        
+        # 2. Mover el texto a la derecha para que no choque con el logo
+        self.set_x(50) 
         self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "", 7)
-        self.cell(100, 5, safestr("Reporte Operativo Consolidado"), ln=False, align="L")
+        self.cell(80, 5, safestr("Reporte Operativo Consolidado"), ln=False, align="L")
         self.cell(0, 5, safestr("Maxcom PRO - Modulo Gerencial"), ln=True, align="R")
+        
+        # 3. Dibujar la línea divisoria debajo del logo
         self.set_draw_color(200, 200, 200)
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(5)
+        y_line = max(self.get_y(), 18) # Asegura que la línea baje lo suficiente
+        self.line(10, y_line, 200, y_line)
+        self.set_y(y_line + 5)
 
     def footer(self):
         self.set_y(-15)
@@ -85,15 +94,15 @@ class ReporteGenerencialPDF(FPDF):
                 fillr, fillg, fillb = 255, 255, 255
                 textr, textg, textb = 0, 0, 0
                 
-                if df.columns[i] in ['% LOGRO FINAL', '% LOGRO SEMANAL', '% LOGRO META', 'Participacion_%']:
+                if df.columns[i] in ['% LOGRO FINAL', '% LOGRO SEMANAL', '% LOGRO META']:
                     try:
-                        pct = float(str(valstr).replace('%', ''))
+                        pct = float(valstr.replace('%', ''))
                         if pct >= 100: fillr, fillg, fillb = 146, 208, 80 
                         elif pct >= 80: fillr, fillg, fillb = 169, 208, 142 
                         elif pct >= 50: fillr, fillg, fillb = 255, 230, 153 
                         elif pct >= 0: fillr, fillg, fillb = 244, 176, 132 
                     except: pass
-                
+                    
                 if df.columns[i] == 'BONO MIXTO':
                     if valstr != '+0.0%':
                         fillr, fillg, fillb = 220, 235, 255 
@@ -301,6 +310,7 @@ class ReporteGenerencialPDF(FPDF):
             self.set_font("Helvetica", "", 7)
         self.ln(6)
 
+
 # ==============================================================================
 # 3. MOTOR DE GENERACIÓN DE GRÁFICOS
 # ==============================================================================
@@ -359,6 +369,8 @@ def generar_graficos_temporales(dfbase):
                 plt.close(fig2)
                 paths['bar'] = pathbar
         return paths
+    except ImportError:
+        return {}
     except Exception as e:
         return {}
 
@@ -366,14 +378,19 @@ def generar_graficos_temporales(dfbase):
 # LÓGICA DE VALORIZACIÓN DE METAS (GAMIFICACIÓN INTELIGENTE)
 # ==============================================================================
 def calcular_aporte_meta(row):
+    """
+    Asigna un % de logro leyendo la ACTIVIDAD y el COMENTARIO.
+    """
     act = str(row.get('ACTIVIDAD', '')).upper()
     com = str(row.get('COMENTARIO', '')).upper()
     txt = act + " " + com
     
     if 'PEXTERNO' in act:
         return 100.0  
+    # Si la orden es una instalación, pero el texto dice que es adición o migración:
     elif re.search('ADIC|CAMBIO|MIGRACI|RECUP', txt):
         return 12.5   
+    # Si es una instalación pura:
     elif re.search('INS|NUEVA|PLEX|SPLITTEROPT', act):
         return 25.0   
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
@@ -382,8 +399,311 @@ def calcular_aporte_meta(row):
         return 12.5   
 
 # ==============================================================================
-# 6. FUNCIONES PARA GENERAR PDF (EXISTENTES)
+# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO)
 # ==============================================================================
+def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
+    df_sem = df_base[
+        (df_base['HORA_LIQ'].dt.date >= fecha_inicio) & 
+        (df_base['HORA_LIQ'].dt.date <= fecha_fin) &
+        (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+    ].copy()
+    
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_fill_color(252, 252, 252)
+    pdf.cell(0, 10, safestr(f" Reporte Analitico Semanal: {fecha_inicio} al {fecha_fin}"), border=1, ln=True, fill=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("Rendimiento Operativo Semanal (Basado en Metas de Cuota)")
+    if not df_sem.empty:
+        df_sem['%_APORTE'] = df_sem.apply(calcular_aporte_meta, axis=1)
+        df_tec = df_sem.groupby('TECNICO').agg(
+            ORDENES=('NUM', 'count'), 
+            PORCENTAJE_META=('%_APORTE', 'sum')
+        ).reset_index()
+        
+        df_tec['% LOGRO SEMANAL'] = ((df_tec['PORCENTAJE_META'] / 600.0) * 100).round(1)
+        df_tec = df_tec.sort_values(by='% LOGRO SEMANAL', ascending=False)
+        
+        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO SEMANAL']].copy()
+        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO SEMANAL']
+        df_tec_table['% LOGRO SEMANAL'] = df_tec_table['% LOGRO SEMANAL'].astype(str) + '%'
+        
+        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
+        
+        imagenes = generar_graficos_temporales(df_sem)
+        if imagenes and 'pie' in imagenes:
+            pdf.add_page()
+            pdf.seccion_titulo("Distribucion Grafica Semanal")
+            pdf.image(imagenes['pie'], x=60, y=pdf.get_y() + 5, w=90)
+            for path in imagenes.values():
+                try: os.remove(path)
+                except: pass
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, "Sin datos de ordenes cerradas en este rango de fechas.", ln=True)
+        
+    return finalizar_pdf(pdf)
+
+def generar_pdf_mensual(df_base, mes, anio):
+    df_mes = df_base[
+        (df_base['HORA_LIQ'].dt.month == mes) & 
+        (df_base['HORA_LIQ'].dt.year == anio) &
+        (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+    ].copy()
+    
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_fill_color(252, 252, 252)
+    meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    nombre_mes = meses_nombres[mes - 1]
+    pdf.cell(0, 10, safestr(f" Reporte Consolidado Mensual: {nombre_mes} {anio}"), border=1, ln=True, fill=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("Vision Macro Gerencial - Consolidado por Ciudades")
+    if not df_mes.empty:
+        pdf.dibujar_tabla_cerradas_ciudad(df_mes)
+        
+        imagenes = generar_graficos_temporales(df_mes)
+        if imagenes and 'pie' in imagenes:
+            pdf.add_page()
+            pdf.seccion_titulo("Distribucion Grafica Mensual")
+            pdf.image(imagenes['pie'], x=60, y=pdf.get_y() + 5, w=90)
+            for path in imagenes.values():
+                try: os.remove(path)
+                except: pass
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, "Sin datos de ordenes cerradas registradas para este mes.", ln=True)
+        
+    return finalizar_pdf(pdf)
+
+def generar_pdf_cierre_diario(dfbase, fechatarget):
+    dfc = dfbase[
+        (dfbase['HORA_LIQ'].dt.date == fechatarget) & 
+        (dfbase['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+    ].copy()
+    
+    def get_tipo_detalle(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if 'RECON' in txt: return 'RECONEXIONES'
+        if 'TRASLADO' in txt: return 'TRASLADOS'
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
+        return 'OTROS'
+        
+    def get_tipo_orden(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
+        return 'OTROS'
+
+    def get_rango(row):
+        est = str(row.get('ESTADO', '')).upper()
+        dias = row.get('DIAS_RETRASO', 0)
+        if 'ANULADA' in est: return '0. Anulada'
+        if 'CERRADA' not in est: return '6. Pendiente'
+        if dias < 1: return '1. Menos de 1 Día'
+        if 1 <= dias <= 3: return '2. De 1 a 3 Días'
+        if 4 <= dias <= 6: return '3. De 3 a 6 Días'
+        return '4. Más de 6 Días'
+
+    if not dfc.empty:
+        dfc['TIPOACTDETALLE'] = dfc.apply(get_tipo_detalle, axis=1)
+        dfc['TIPOORDEN'] = dfc.apply(get_tipo_orden, axis=1)
+        if 'DIAS_RETRASO' not in dfc.columns:
+            ahora = pd.Timestamp(datetime.now())
+            dfc['DIAS_RETRASO'] = (ahora.normalize() - pd.to_datetime(dfc['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
+        dfc['RANGOTIEMPO'] = dfc.apply(get_rango, axis=1)
+
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_fill_color(252, 252, 252)
+    pdf.cell(0, 10, safestr(f" Reporte Analitico de Cierre Diario: {fechatarget}"), border=1, ln=True, fill=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("Analisis de Eficiencia (Puntos por Meta + 10% Bono por Ruta Mixta)")
+    if not dfc.empty:
+        dfc['CANT_INS'] = (dfc['TIPOORDEN'] == 'INSTALACION').astype(int)
+        dfc['CANT_SOP'] = (dfc['TIPOORDEN'] == 'MANTENIMIENTO').astype(int)
+        dfc['CANT_OTR'] = (dfc['TIPOORDEN'] == 'OTROS').astype(int)
+        dfc['%_APORTE'] = dfc.apply(calcular_aporte_meta, axis=1)
+        
+        df_tec = dfc.groupby('TECNICO').agg(
+            CANT_INS=('CANT_INS', 'sum'),
+            CANT_SOP=('CANT_SOP', 'sum'),
+            CANT_OTR=('CANT_OTR', 'sum'),
+            PUNTOS_BASE=('%_APORTE', 'sum')
+        ).reset_index()
+        
+        def calcular_bono(row):
+            tipos = sum([1 for x in [row['CANT_INS'], row['CANT_SOP'], row['CANT_OTR']] if x > 0])
+            if tipos > 1: return 10.0 
+            return 0.0
+            
+        df_tec['BONO_MIXTO'] = df_tec.apply(calcular_bono, axis=1)
+        df_tec['LOGRO_FINAL'] = df_tec['PUNTOS_BASE'] + df_tec['BONO_MIXTO']
+        
+        df_tec = df_tec.sort_values(by='LOGRO_FINAL', ascending=False)
+        
+        df_tec_table = df_tec[['TECNICO', 'CANT_INS', 'CANT_SOP', 'CANT_OTR', 'PUNTOS_BASE', 'BONO_MIXTO', 'LOGRO_FINAL']].copy()
+        df_tec_table.columns = ['TECNICO', 'INS', 'SOP', 'OTR', 'PUNTOS BASE', 'BONO MIXTO', '% LOGRO FINAL']
+        
+        df_tec_table['PUNTOS BASE'] = df_tec_table['PUNTOS BASE'].round(1).astype(str) + '%'
+        df_tec_table['BONO MIXTO'] = '+' + df_tec_table['BONO MIXTO'].round(1).astype(str) + '%'
+        df_tec_table['% LOGRO FINAL'] = df_tec_table['% LOGRO FINAL'].round(1).astype(str) + '%'
+        
+        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[55, 15, 15, 15, 30, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C", "C"])
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, "Sin datos de productividad para hoy.", ln=True)
+
+    if not dfc.empty:
+        pdf.add_page()
+        pdf.seccion_titulo("Tiempos de Atencion (Antiguedad de Ordenes Liquidadas)")
+        pdf.ln(2)
+        dfins = dfc[dfc['TIPOORDEN'] == 'INSTALACION']
+        pdf.dibujar_tabla_tiempos_rangos("Instalaciones Liquidadas por Rango", "Ciudad", dfins, 'SECTOR', showtotalcol=False)
+        dfmant = dfc[dfc['TIPOORDEN'] == 'MANTENIMIENTO']
+        pdf.dibujar_tabla_tiempos_rangos("Mantenimientos Liquidados por Rango", "Ciudad", dfmant, 'SECTOR', showtotalcol=False)
+        
+        pdf.add_page()
+        pdf.dibujar_tabla_cerradas_ciudad(dfc)
+
+        pdf.add_page()
+        pdf.seccion_titulo("Resumen Consolidado por Tipo de Actividad")
+        df_act_summary = dfc['ACTIVIDAD'].value_counts().reset_index()
+        df_act_summary.columns = ['Actividad Realizada', 'Total de Ordenes']
+        pdf.dibujar_tabla(df_act_summary, anchos=[120, 40], alineaciones=["L", "C"])
+
+        pdf.add_page()
+        pdf.dibujar_tabla_tiempos_actividad(dfc)
+
+    pdf.add_page()
+    pdf.seccion_titulo("Consolidado General de Ordenes Liquidadas")
+    if not dfc.empty:
+        pdf.dibujar_tabla(dfc[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL']], anchos=[30, 60, 60, 40], alineaciones=["C", "L", "L", "C"])
+
+    if not dfc.empty:
+        imagenes = generar_graficos_temporales(dfc)
+        if imagenes and 'pie' in imagenes:
+            pdf.add_page()
+            pdf.seccion_titulo("Distribucion Grafica de la Jornada")
+            pdf.image(imagenes['pie'], x=60, y=pdf.get_y() + 5, w=90)
+            for path in imagenes.values():
+                try: os.remove(path)
+                except: pass
+                
+    return finalizar_pdf(pdf)
+
+def logica_generar_pdf(dfbase):
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    if 'DIAS_RETRASO' not in dfbase.columns:
+        ahora = pd.Timestamp(datetime.now())
+        dfbase['DIAS_RETRASO'] = (ahora.normalize() - pd.to_datetime(dfbase['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
+        
+    def getrango(row):
+        est = str(row.get('ESTADO', '')).upper()
+        dias = row.get('DIAS_RETRASO', 0)
+        if 'ANULADA' in est: return '0. Anulada'
+        if 'CERRADA' not in est: return '6. Pendiente'
+        if dias < 1: return '1. Menos de 1 Día'
+        if 1 <= dias <= 3: return '2. De 1 a 3 Días'
+        if 4 <= dias <= 6: return '3. De 3 a 6 Días'
+        return '4. Más de 6 Días'
+        
+    dfbase['RANGOTIEMPO'] = dfbase.apply(getrango, axis=1)
+    
+    def gettipoorden(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
+        return 'OTROS'
+        
+    dfbase['TIPOORDEN'] = dfbase.apply(gettipoorden, axis=1)
+    
+    def gettipodetalle(row):
+        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+        if 'RECON' in txt: return 'RECONEXIONES'
+        if 'TRASLADO' in txt: return 'TRASLADOS'
+        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
+        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
+        return 'OTROS'
+        
+    dfbase['TIPOACTDETALLE'] = dfbase.apply(gettipodetalle, axis=1)
+    
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    ahorastr = datetime.now().strftime('%d/%m/%Y')
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_fill_color(252, 252, 252)
+    pdf.cell(0, 10, safestr(f" Reporte Dinamico de Rendimiento de Instalacion y Mantenimiento: {ahorastr}"), border=1, ln=True, fill=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("Rendimiento Operativo (Basado en Metas de Cuota y Complejidad)")
+    if not dfbase.empty:
+        dfbase['%_APORTE'] = dfbase.apply(calcular_aporte_meta, axis=1)
+        df_tec = dfbase.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), PORCENTAJE_META=('%_APORTE', 'sum')).reset_index()
+        
+        df_tec['% LOGRO META'] = df_tec['PORCENTAJE_META'].round(1)
+        df_tec = df_tec.sort_values(by='% LOGRO META', ascending=False)
+        
+        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO META']].copy()
+        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO META']
+        df_tec_table['% LOGRO META'] = df_tec_table['% LOGRO META'].astype(str) + '%'
+        
+        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, "Sin datos disponibles.", ln=True)
+
+    pdf.add_page()
+    pdf.seccion_titulo("Capitulo I - Rangos de Tiempo de Atencion")
+    pdf.ln(2)
+    dfins = dfbase[dfbase['TIPOORDEN'] == 'INSTALACION']
+    pdf.dibujar_tabla_tiempos_rangos("Instalaciones por Rango de Tiempo", "Ciudad", dfins, 'SECTOR', showtotalcol=False)
+    dfmant = dfbase[dfbase['TIPOORDEN'] == 'MANTENIMIENTO']
+    pdf.dibujar_tabla_tiempos_rangos("Mantenimientos por Rango de Tiempo", "Ciudad", dfmant, 'SECTOR', showtotalcol=False)
+    pdf.dibujar_tabla_tiempos_rangos("Rango de Tiempo de Atencion por Tipo de Orden", "Tipo Orden", dfbase, 'TIPOORDEN', showtotalcol=True)
+    
+    pdf.add_page()
+    pdf.dibujar_tabla_cerradas_ciudad(dfbase)
+    
+    imagenes = generar_graficos_temporales(dfbase)
+    if imagenes:
+        pdf.ln(5)
+        pdf.seccion_titulo("Analisis Grafico Operativo")
+        pdf.ln(5)
+        currenty = pdf.get_y()
+        if 'pie' in imagenes:
+            pdf.image(imagenes['pie'], x=15, y=currenty, w=85)
+        if 'bar' in imagenes:
+            pdf.image(imagenes['bar'], x=110, y=currenty, w=90)
+        for path in imagenes.values():
+            try: os.remove(path)
+            except: pass
+            
+    return finalizar_pdf(pdf)
+
 def finalizar_pdf(pdfobj):
     fd, tmppath = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
@@ -394,103 +714,6 @@ def finalizar_pdf(pdfobj):
         try: os.remove(tmppath)
         except: pass
 
-def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
-    df_sem = df_base[
-        (df_base['HORA_LIQ'].dt.date >= fecha_inicio) & 
-        (df_base['HORA_LIQ'].dt.date <= fecha_fin) &
-        (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-    ].copy()
-    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(84, 98, 143)
-    pdf.cell(0, 10, safestr(f" Reporte Analitico Semanal: {fecha_inicio} al {fecha_fin}"), border=1, ln=True, fill=True)
-    if not df_sem.empty:
-        df_sem['%_APORTE'] = df_sem.apply(calcular_aporte_meta, axis=1)
-        df_tec = df_sem.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), PORCENTAJE_META=('%_APORTE', 'sum')).reset_index()
-        df_tec['% LOGRO SEMANAL'] = ((df_tec['PORCENTAJE_META'] / 600.0) * 100).round(1)
-        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO SEMANAL']].copy()
-        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO SEMANAL']
-        df_tec_table['% LOGRO SEMANAL'] = df_tec_table['% LOGRO SEMANAL'].astype(str) + '%'
-        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40])
-    return finalizar_pdf(pdf)
-
-def generar_pdf_mensual(df_base, mes, anio):
-    df_mes = df_base[(df_base['HORA_LIQ'].dt.month == mes) & (df_base['HORA_LIQ'].dt.year == anio)].copy()
-    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.seccion_titulo(f"Reporte Mensual: {mes}/{anio}")
-    pdf.dibujar_tabla_cerradas_ciudad(df_mes)
-    return finalizar_pdf(pdf)
-
-def generar_pdf_cierre_diario(dfbase, fechatarget):
-    dfc = dfbase[dfbase['HORA_LIQ'].dt.date == fechatarget].copy()
-    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.seccion_titulo(f"Cierre Diario: {fechatarget}")
-    if not dfc.empty:
-        pdf.dibujar_tabla_tiempos_actividad(dfc)
-    return finalizar_pdf(pdf)
-
-def logica_generar_pdf(dfbase):
-    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.seccion_titulo("Reporte Dinamico")
-    pdf.dibujar_tabla_cerradas_ciudad(dfbase)
-    return finalizar_pdf(pdf)
-
-# ==============================================================================
-# ---> NUEVA FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
-# ==============================================================================
-def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
-    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    # ENCABEZADO PERSONALIZADO CON LOGO DE MAXCOM
-    # Usamos la primera imagen cargada como logo (reemplazar con la ruta de tu imagen)
-    # Por ejemplo, 'image_5.png'
-    # pdf.image('image_5.png', 10, 8, 30) # Descomentar y ajustar ruta si es necesario
-    pdf.set_font("Helvetica", "B", 12); pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, safestr("REPORTE GERENCIAL: RENDIMIENTO Y JORNADA DE TECNICOS"), border=0, ln=True, align="C")
-    pdf.set_font("Helvetica", "", 9); pdf.set_text_color(100, 100, 100)
-    ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
-    pdf.cell(0, 6, safestr(f"Generado el: {ahorastr}"), ln=True, align="C"); pdf.ln(5)
-    
-    if resumen_jornada.empty:
-        pdf.cell(0, 10, "No hay datos suficientes.", ln=True); return finalizar_pdf(pdf)
-
-    lista_tecnicos = resumen_jornada['TECNICO'].dropna().unique()
-    for tecnico in lista_tecnicos:
-        if pdf.get_y() > 220: pdf.add_page()
-        pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(230, 240, 255); pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 8, safestr(f" 👤 TECNICO: {tecnico}"), border=1, ln=True, fill=True)
-        
-        df_jor = resumen_jornada[resumen_jornada['TECNICO'] == tecnico]
-        df_prod = tabla_produccion[tabla_produccion['TECNICO'] == tecnico]
-        df_efi = tabla_eficiencia[tabla_eficiencia['TECNICO'] == tecnico]
-        
-        pdf.set_font("Helvetica", "B", 8); pdf.cell(0, 6, "   RESUMEN DE JORNADA LABORAL", ln=True)
-        pdf.set_font("Helvetica", "", 8)
-        prom_horas = df_jor['Promedio_Horas_Dia'].values[0]; dias_lab = df_jor['Dias_Laborados'].values[0]; max_horas = df_jor['Max_Horas_Dia'].values[0]
-        pdf.cell(10, 5, ""); pdf.cell(50, 5, safestr(f"Dias Trabajados: {dias_lab}")); pdf.cell(60, 5, safestr(f"Promedio en Calle: {prom_horas:.2f} hrs/dia")); pdf.cell(50, 5, safestr(f"Dia mas largo: {max_horas:.2f} hrs"), ln=True); pdf.ln(2)
-        
-        pdf.set_font("Helvetica", "B", 8); pdf.cell(0, 6, "   DESGLOSE DE ACTIVIDAD Y TIEMPOS", ln=True)
-        pdf.set_fill_color(245, 245, 245); pdf.cell(10, 5, "")
-        pdf.cell(60, 5, "Tipo de Actividad", border=1, align="C", fill=True); pdf.cell(25, 5, "Volumen", border=1, align="C", fill=True); pdf.cell(25, 5, "% del Total", border=1, align="C", fill=True); pdf.cell(40, 5, "Promedio de Resolucion", border=1, align="C", fill=True); pdf.ln()
-        
-        pdf.set_font("Helvetica", "", 8); total_ordenes_tec = 0
-        df_prod = df_prod.sort_values(by='Cantidad', ascending=False)
-        for _, fila_p in df_prod.iterrows():
-            actividad = str(fila_p['ACTIVIDAD']); cantidad = fila_p['Cantidad']; porcentaje = fila_p['Participacion_%']
-            total_ordenes_tec += cantidad
-            fila_efi = df_efi[df_efi['ACTIVIDAD'] == actividad]
-            minutos_prom = fila_efi['Promedio_Minutos'].values[0] if not fila_efi.empty else 0
-            pdf.cell(10, 5, ""); pdf.cell(60, 5, safestr(actividad[:35]), border=1); pdf.cell(25, 5, safestr(str(cantidad)), border=1, align="C"); pdf.cell(25, 5, safestr(f"{porcentaje}%"), border=1, align="C")
-            if pd.notnull(minutos_prom) and minutos_prom > 120:
-                pdf.set_text_color(200, 0, 0); pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min [!]"), border=1, align="C"); pdf.set_text_color(0, 0, 0)
-            elif pd.notnull(minutos_prom):
-                pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min"), border=1, align="C")
-            else: pdf.cell(40, 5, "---", border=1, align="C")
-            pdf.ln()
-        pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240); pdf.cell(10, 5, ""); pdf.cell(60, 5, "TOTAL ORDENES", border=1, align="R", fill=True); pdf.cell(25, 5, safestr(str(total_ordenes_tec)), border=1, align="C", fill=True); pdf.ln(8)
-    return finalizar_pdf(pdf)
-
-# ==============================================================================
-# FUNCIONES DE MOTOR (DEPURACIÓN Y PROCESAMIENTO - INTACTAS)
-# ==============================================================================
 def es_offline_preciso(comentario):
     txt = str(comentario).upper().strip()
     if not txt or txt == 'NAN': return False
@@ -539,3 +762,112 @@ def procesar_dataframe_base(df):
     for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
         df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
     return df
+
+# ==============================================================================
+# ---> NUEVA FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
+# ==============================================================================
+def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # --- ENCABEZADO DEL REPORTE ---
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE GERENCIAL: RENDIMIENTO Y JORNADA DE TECNICOS"), border=0, ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(100, 100, 100)
+    ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
+    pdf.cell(0, 6, safestr(f"Generado el: {ahorastr}"), ln=True, align="C")
+    pdf.ln(5)
+    
+    if resumen_jornada.empty:
+        pdf.cell(0, 10, "No hay datos suficientes para generar el reporte.", ln=True)
+        return finalizar_pdf(pdf)
+
+    # Extraemos la lista de todos los técnicos únicos (limpiando nulos)
+    lista_tecnicos = resumen_jornada['TECNICO'].dropna().unique()
+    
+    # --- CICLO: UN BLOQUE POR CADA TÉCNICO ---
+    for tecnico in lista_tecnicos:
+        if pdf.get_y() > 220:
+            pdf.add_page()
+            
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(230, 240, 255) # Azul clarito
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 8, safestr(f"   TECNICO: {tecnico}"), border=1, ln=True, fill=True)
+        
+        # Filtrar datos
+        df_jor = resumen_jornada[resumen_jornada['TECNICO'] == tecnico]
+        df_prod = tabla_produccion[tabla_produccion['TECNICO'] == tecnico]
+        df_efi = tabla_eficiencia[tabla_eficiencia['TECNICO'] == tecnico]
+        
+        # Resumen de Jornada
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(0, 6, "   RESUMEN DE JORNADA LABORAL", ln=True)
+        
+        pdf.set_font("Helvetica", "", 8)
+        prom_horas = df_jor['Promedio_Horas_Dia'].values[0] if not df_jor.empty else 0
+        dias_lab = df_jor['Dias_Laborados'].values[0] if not df_jor.empty else 0
+        max_horas = df_jor['Max_Horas_Dia'].values[0] if not df_jor.empty else 0
+        
+        pdf.cell(10, 5, "", border=0)
+        pdf.cell(50, 5, safestr(f"Dias Trabajados: {dias_lab}"), border=0)
+        pdf.cell(60, 5, safestr(f"Promedio en Calle: {prom_horas:.2f} hrs/dia"), border=0)
+        pdf.cell(50, 5, safestr(f"Dia mas largo: {max_horas:.2f} hrs"), border=0, ln=True)
+        pdf.ln(2)
+        
+        # Tabla de Producción y Eficiencia
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(0, 6, "   DESGLOSE DE ACTIVIDAD Y TIEMPOS", ln=True)
+        
+        pdf.set_fill_color(245, 245, 245)
+        pdf.cell(10, 5, "", border=0)
+        pdf.cell(60, 5, "Tipo de Actividad", border=1, align="C", fill=True)
+        pdf.cell(25, 5, "Volumen", border=1, align="C", fill=True)
+        pdf.cell(25, 5, "% del Total", border=1, align="C", fill=True)
+        pdf.cell(40, 5, "Promedio de Resolucion", border=1, align="C", fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 8)
+        total_ordenes_tec = 0
+        
+        df_prod = df_prod.sort_values(by='Cantidad', ascending=False)
+        
+        for _, fila_p in df_prod.iterrows():
+            actividad = str(fila_p['ACTIVIDAD'])
+            cantidad = fila_p['Cantidad']
+            porcentaje = fila_p['Participacion_%']
+            total_ordenes_tec += cantidad
+            
+            fila_efi = df_efi[df_efi['ACTIVIDAD'] == actividad]
+            minutos_prom = fila_efi['Promedio_Minutos'].values[0] if not fila_efi.empty else 0
+            
+            pdf.cell(10, 5, "", border=0)
+            pdf.cell(60, 5, safestr(actividad[:35]), border=1)
+            pdf.cell(25, 5, safestr(str(cantidad)), border=1, align="C")
+            pdf.cell(25, 5, safestr(f"{porcentaje}%"), border=1, align="C")
+            
+            if pd.notnull(minutos_prom) and minutos_prom > 120:
+                pdf.set_text_color(200, 0, 0)
+                pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min [!]"), border=1, align="C")
+                pdf.set_text_color(0, 0, 0)
+            elif pd.notnull(minutos_prom):
+                pdf.cell(40, 5, safestr(f"{minutos_prom:.0f} min"), border=1, align="C")
+            else:
+                pdf.cell(40, 5, "---", border=1, align="C")
+            
+            pdf.ln()
+            
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(10, 5, "", border=0)
+        pdf.cell(60, 5, "TOTAL ORDENES", border=1, align="R", fill=True)
+        pdf.cell(25, 5, safestr(str(total_ordenes_tec)), border=1, align="C", fill=True)
+        pdf.cell(65, 5, "", border=0, ln=True)
+        
+        pdf.ln(8)
+        
+    return finalizar_pdf(pdf)
