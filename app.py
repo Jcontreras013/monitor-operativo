@@ -262,7 +262,7 @@ def sincronizar_datos_nube(conn):
         st.error(f"Error al conectar con la nube: {e}")
 
 # ==============================================================================
-# VENTANAS EMERGENTES
+# VENTANAS EMERGENTES (MODALES)
 # ==============================================================================
 @st.dialog("Detalle de Gestión de la Orden")
 def mostrar_comentario_cierre(fila):
@@ -454,7 +454,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         
         def segmentar_plex_diamante_logic(r_seg):
             texto_p_scan = f"{r_seg.get('ACTIVIDAD', '')} {r_seg.get('CLIENTE', '')} {r_seg.get('COMENTARIO', '')}".upper()
-            if 'PLEX' in texto_p_scan: return 'PLEX'
+            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
             return 'RESIDENCIAL'
         df_act['SEGMENTO'] = df_act.apply(segmentar_plex_diamante_logic, axis=1)
         
@@ -601,6 +601,16 @@ def main():
             return "🔧 Mantenimiento General"
             
         df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
+
+        # ------------------------------------------------------------------------------
+        # FORZAR CÁLCULO DE SEGMENTO GLOBAL (REPARA PEXTERNO Y SPLITTEROPT COMO PLEX)
+        # ------------------------------------------------------------------------------
+        def extraer_segmento_global(row):
+            texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
+            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
+            return 'RESIDENCIAL'
+            
+        df_base['SEGMENTO'] = df_base.apply(extraer_segmento_global, axis=1)
 
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
@@ -849,14 +859,14 @@ def main():
                     
                 with cp_col:
                     st.write("**Plex**")
-                    df_plex = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('PLEX', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    df_plex = df_cierre_filtrado[df_cierre_filtrado['ACTIVIDAD'].astype(str).str.contains('PLEX|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_plex, hide_index=True, use_container_width=True)
                     st.write(f"**Total PLEX: {df_plex['Cant'].sum()}**")
                     
                 with co_col:
                     st.write("**Otros**")
                     txt_otr_c = df_cierre_filtrado['ACTIVIDAD'].astype(str).str.upper() + " " + df_cierre_filtrado['COMENTARIO'].astype(str).str.upper()
-                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|PEXTERNO|SPLITTEROPT|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
                     df_otros = df_cierre_filtrado[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total Otros: {df_otros['Cant'].sum()}**")
@@ -928,7 +938,6 @@ def main():
             (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
         )
         
-        # Aplicamos la máscara para que las métricas y gráficos SOLO usen órdenes con técnicos reales
         df_monitor_valido = df_monitor_filtrado[mask_tec_valido]
 
         mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
