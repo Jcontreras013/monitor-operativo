@@ -52,25 +52,33 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # ==============================================================================
 # FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS)
 # ==============================================================================
+# ==============================================================================
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS)
+# ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
     
-    # Asegurar formato de fechas
+    # 1. Asegurar formato de fechas
     df['HORA_INI'] = pd.to_datetime(df['HORA_INI'], errors='coerce')
     df['HORA_LIQ'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce')
     
-    # Descartar filas sin fechas válidas para no arruinar los promedios
+    # Solo descartamos si NO hay registro de hora en absoluto
     df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
     df['FECHA'] = df['HORA_LIQ'].dt.date
     
-    # --- TABLA 1: PRODUCCIÓN Y PORCENTAJES ---
+    # --- TABLA 1: PRODUCCIÓN Y PORCENTAJES (Aquí sumamos TODAS las órdenes reales) ---
     totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
     conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
     tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
     tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
 
-    # --- TABLA 2: EFICIENCIA Y TIEMPOS ---
+    # --- TABLA 2: EFICIENCIA Y TIEMPOS (Aquí aplicamos la magia de corrección) ---
     df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
+    
+    # 🛡️ FILTRO INTELIGENTE: Si los minutos son 0 o negativos, los volvemos nulos (None)
+    # De esta manera, Pandas los ignora al calcular el promedio, pero no borramos la orden.
+    df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
+    
     tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
     tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
     tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
@@ -84,6 +92,9 @@ def generar_tablas_gerenciales(df_crudo):
     
     jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
     
+    # 🛡️ FILTRO EXTRA: Evitar que una jornada salga negativa si se cruzan días por error
+    jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
+
     resumen_jornada = jornada.groupby('TECNICO').agg(
         Promedio_Horas_Dia=('Horas_En_Calle', 'mean'),
         Dias_Laborados=('FECHA', 'nunique'),
