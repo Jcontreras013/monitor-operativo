@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
@@ -41,7 +41,7 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # ==============================================================================
@@ -49,19 +49,25 @@ st.set_page_config(
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar la marca de agua de Streamlit en el footer */
-footer {visibility: hidden !important;}
+/* Ocultar marca de agua y opciones de desarrollador (Deploy) */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+.stAppToolbar {display: none !important;}
 
-/* Ocultar solo el menú de 3 puntos (Deploy/Clear Cache) */
-.stAppToolbar {visibility: hidden !important;}
-
-/* Reducir espacio superior sin romper el header nativo */
-.block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 1rem !important;
+/* Hacer la cabecera transparente pero DEJARLA VISIBLE para que el menú móvil funcione */
+header[data-testid="stHeader"] {
+    background-color: transparent !important;
 }
 
-/* Evitar zoom accidental en celulares */
+/* Aprovechar el espacio de la pantalla */
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+/* Evitar zoom accidental en celulares al tocar rápido */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -73,7 +79,7 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (REPARADO EL BUG DE DECIMALES/00:00)
+# 🛡️ MOTOR SEGURO DE FECHAS
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
@@ -82,38 +88,18 @@ def parse_date_ultra_safe(val):
     hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
 
     try:
-        # 1. Si la API de Google Sheets lo manda como un objeto 'time' de Python
-        if isinstance(val, time):
-            return pd.Timestamp.combine(hoy.date(), val)
-
-        # 2. Si lo manda como datetime y solo trae hora (año 1900 o 1970)
         if isinstance(val, datetime):
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
             return val
         
-        # 3. Si lo manda como un número (AQUÍ ESTABA EL ERROR DE LAS 00:00)
         if isinstance(val, (int, float)):
-            if val > 10000: # Es una fecha completa en formato Excel
+            if val > 10000:
                 return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 <= val < 1: # Es un decimal que representa una fracción del día (ej: 0.5 = 12:00pm)
+            elif 0 <= val < 1:
                 return hoy + pd.to_timedelta(val, unit='D')
-            else:
-                return pd.NaT
 
-        # 4. Intentar parsearlo si viene como texto ("11:30", "11:30:00", etc.)
         str_val = str(val).strip()
-        
-        # Validación extra: si trata de parsear un decimal en texto "0.45"
-        try:
-            float_val = float(str_val)
-            if float_val > 10000:
-                return pd.to_datetime(float_val, unit='D', origin='1899-12-30')
-            elif 0 <= float_val < 1:
-                return hoy + pd.to_timedelta(float_val, unit='D')
-        except ValueError:
-            pass # No es un número, seguimos normal
-            
         parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
         
         if pd.notnull(parsed):
@@ -177,7 +163,7 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (BLINDADA CONTRA GOOGLE SHEETS)
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
@@ -195,8 +181,22 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
+                # Pasamos el filtro ultra seguro
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
+                # RECALCULAR TIEMPOS EN DESCARGA (Para que no dependa de lo que diga la nube)
+                if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
+                    df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
+                    df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
+                    
+                    def format_duracion_recalculada(r):
+                        if pd.isnull(r['HORA_INI']) or pd.isnull(r['HORA_LIQ']): return "---"
+                        diff = r['HORA_LIQ'] - r['HORA_INI']
+                        hrs, rem = divmod(diff.total_seconds(), 3600)
+                        mins, _ = divmod(rem, 60)
+                        return f"{int(hrs)}h {int(mins)}m"
+                    df_nube['TIEMPO_REAL'] = df_nube.apply(format_duracion_recalculada, axis=1)
+
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                     if col_b in df_nube.columns:
                         df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
@@ -221,9 +221,6 @@ def sincronizar_datos_nube(conn):
                         
                 if 'DIAS_RETRASO' in df_nube.columns:
                     df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
-                    
-                if 'MINUTOS_CALC' in df_nube.columns:
-                    df_nube['MINUTOS_CALC'] = pd.to_numeric(df_nube['MINUTOS_CALC'], errors='coerce').fillna(0.0)
 
                 if 'ESTADO' in df_nube.columns:
                     df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
@@ -255,10 +252,10 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa: Columnas Fijadas y Críticos Depurados.")
+                st.success("✅ Sincronización Exitosa.")
                 st.rerun()
             else:
-                st.warning("La base de datos en la nube está vacía. Debes subir un archivo primero.")
+                st.warning("La base de datos en la nube está vacía.")
     except Exception as e:
         st.error(f"Error al conectar con la nube: {e}")
 
@@ -298,9 +295,6 @@ def mostrar_comentario_cierre(fila):
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
 
-# ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES)
-# ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
@@ -342,7 +336,6 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
         st.info("No hay datos de operaciones para este segmento.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-                
     if st.button("Cerrar Resumen", use_container_width=True):
         st.rerun()
 
@@ -383,13 +376,11 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'NUM' in df_visual_procesado.columns:
         df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
     
-    # Aplicar el formato %H:%M de forma segura asegurando que no modifique strings nulos
     if 'HORA_INI' in df_visual_procesado.columns:
         df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
-    # ORDEN ESTRATÉGICO DE COLUMNAS
     cols_a_mostrar = [
         'DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL',
         'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE',
@@ -557,7 +548,13 @@ def main():
                 if conn is not None:
                     with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
                         try:
-                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=res_p_diamante)
+                            # 🛡️ BLINDAJE EXTRA ANTES DE SUBIR: Convertir fechas a texto
+                            df_to_upload = res_p_diamante.copy()
+                            for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+                                if c_date in df_to_upload.columns:
+                                    df_to_upload[c_date] = df_to_upload[c_date].dt.strftime('%Y-%m-%d %H:%M:%S')
+                                    
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             st.success("✅ Datos sincronizados y guardados en la nube correctamente.")
                         except Exception as e:
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
