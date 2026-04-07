@@ -233,118 +233,30 @@ def mostrar_comentario_cierre(fila):
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
 
+# ------------------------------------------------------------------------------
+# NUEVA VENTANA DE RESUMEN (LIMPIA Y NATIVA DE STREAMLIT, SIN HTML/TABLAS)
+# ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
-    st.markdown(f"<h3 style='text-align: center; color: #E2E8F0; margin-bottom: 20px;'>Desglose del Segmento: {segmento}</h3>", unsafe_allow_html=True)
+    st.subheader(f"📊 Resumen: {segmento}")
     
     cerradas = len(cerradas_df)
     pendientes = len(pendientes_df)
     total = cerradas + pendientes
     avance = (cerradas / total * 100) if total > 0 else 0
     
-    tmr = 0
-    if not cerradas_df.empty and 'MINUTOS_CALC' in cerradas_df.columns:
-        tiempos_validos = cerradas_df[cerradas_df['MINUTOS_CALC'] > 0]['MINUTOS_CALC']
-        if not tiempos_validos.empty:
-            tmr = int(tiempos_validos.mean())
-
-    html_summary = f"""
-    <style>
-    .resumen-container {{
-        display: flex;
-        justify-content: space-between;
-        gap: 15px;
-        margin-bottom: 25px;
-    }}
-    .resumen-card {{
-        background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%);
-        padding: 15px;
-        border-radius: 12px;
-        border: 1px solid #2D2F39;
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        flex: 1;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-    }}
-    .icon-circle {{
-        width: 45px;
-        height: 45px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.2rem;
-    }}
-    .icon-green {{ background-color: rgba(16, 185, 129, 0.1); color: #10B981; }}
-    .icon-blue {{ background-color: rgba(59, 130, 246, 0.1); color: #3B82F6; }}
-    .icon-orange {{ background-color: rgba(245, 158, 11, 0.1); color: #F59E0B; }}
-    
-    .resumen-info {{
-        display: flex;
-        flex-direction: column;
-    }}
-    .r-val {{
-        font-size: 1.3rem;
-        font-weight: 700;
-        color: #FFFFFF;
-        line-height: 1.1;
-    }}
-    .r-lab {{
-        font-size: 0.75rem;
-        color: #94A3B8;
-        text-transform: uppercase;
-        margin-top: 4px;
-        font-weight: 600;
-    }}
-    </style>
-    
-    <div class="resumen-container">
-        <div class="resumen-card">
-            <div class="icon-circle icon-green">✅</div>
-            <div class="resumen-info">
-                <span class="r-val">{cerradas}</span>
-                <span class="r-lab">Resueltos Hoy</span>
-            </div>
-        </div>
-        
-        <div class="resumen-card">
-            <div class="icon-circle icon-blue">⏱️</div>
-            <div class="resumen-info">
-                <span class="r-val">{tmr} min</span>
-                <span class="r-lab">TMR Promedio</span>
-            </div>
-        </div>
-        
-        <div class="resumen-card">
-            <div class="icon-circle icon-orange">⏳</div>
-            <div class="resumen-info">
-                <span class="r-val">{pendientes}</span>
-                <span class="r-lab">En Ruta</span>
-            </div>
-        </div>
-    </div>
-    """
-    
-    st.markdown(html_summary, unsafe_allow_html=True)
-    
-    st.markdown(f"<p style='color:#E2E8F0; font-weight:600; margin-bottom:5px;'>Progreso de Completitud ({avance:.1f}%)</p>", unsafe_allow_html=True)
-    st.progress(int(avance))
+    # Métricas limpias sin riesgo de romper el formato en la nube
+    col1, col2, col3 = st.columns(3)
+    col1.metric("📦 Total Asignadas", total)
+    col2.metric("⏳ Pendientes", pendientes)
+    col3.metric("✅ Cerradas Hoy", cerradas)
     
     st.divider()
     
-    with st.expander("🔍 Ver listado detallado de órdenes"):
-        tab_p, tab_c = st.tabs(["⏳ Pendientes", "✅ Cerradas"])
-        with tab_p:
-            if not pendientes_df.empty:
-                st.dataframe(pendientes_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'COLONIA', 'ESTADO']], use_container_width=True, hide_index=True)
-            else:
-                st.success("¡Excelente! No hay órdenes pendientes.")
-        with tab_c:
-            if not cerradas_df.empty:
-                st.dataframe(cerradas_df[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL']], use_container_width=True, hide_index=True)
-            else:
-                st.info("Aún no se han liquidado órdenes hoy.")
+    # Progreso nativo de Streamlit
+    st.progress(int(avance), text=f"Progreso de Completitud ({avance:.1f}%)")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
                 
     if st.button("Cerrar Resumen", use_container_width=True):
         st.rerun()
@@ -1109,12 +1021,12 @@ def main():
         
         with col_g1:
             st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, key="pie_resi")
-            if st.button("🔍 Ver Detalle Residencial", use_container_width=True, key="btn_resi"):
+            if st.button("🔍 Ver Resumen Residencial", use_container_width=True, key="btn_resi"):
                 mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
                 
         with col_g2:
             st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, key="pie_plex")
-            if st.button("🔍 Ver Detalle PLEX", use_container_width=True, key="btn_plex"):
+            if st.button("🔍 Ver Resumen PLEX", use_container_width=True, key="btn_plex"):
                 mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
             
         # --- FILA 2: GLOBAL ---
