@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
@@ -41,46 +41,27 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" # Expandido en PC, Streamlit lo encoge automático en celular
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CORREGIDO Y BLINDADO)
+# 📱 MODO APP NATIVA (CSS SIMPLIFICADO Y SEGURO)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Esconder elementos innecesarios */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
+/* Ocultar SOLAMENTE las herramientas de desarrollador y el footer */
+div[data-testid="stToolbar"] {visibility: hidden !important;}
+footer {visibility: hidden !important;}
 
-/* Cabecera transparente para no gastar espacio */
-header[data-testid="stHeader"] {
-    background-color: transparent !important;
-}
-
-/* Ocultar botones de GitHub/Deploy de la derecha */
-div[data-testid="stToolbar"] {
-    visibility: hidden !important;
-}
-
-/* Hacer el botón del menú visible y estilo App Nativa */
-button[data-testid="stSidebarCollapseButton"] {
-    background-color: #1A1D24 !important;
-    border: 1px solid #3B82F6 !important;
-    border-radius: 8px !important;
-    color: #3B82F6 !important;
-    visibility: visible !important;
-}
-
-/* Ajustar el contenedor para ganar espacio en celular */
+/* Ajustar el contenedor para ganar espacio en celular sin romper la cabecera */
 .block-container {
-    padding-top: 3.5rem !important;
+    padding-top: 2rem !important;
     padding-bottom: 1rem !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
 }
 
-/* Evitar el zoom accidental al tocar botones */
+/* Evitar el zoom accidental al tocar botones rápido en el celular */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -92,7 +73,7 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS ULTRA PRECISO (EVITA AÑO 1900 Y 00:00)
+# 🛡️ MOTOR SEGURO DE FECHAS ULTRA PRECISO (BLINDADO PARA GOOGLE SHEETS)
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
@@ -101,20 +82,32 @@ def parse_date_ultra_safe(val):
     hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
 
     try:
+        # 1. Si GSheets manda un objeto TIME nativo
+        if isinstance(val, dt_time):
+            return pd.Timestamp.combine(hoy.date(), val)
+
+        # 2. Si GSheets manda un objeto Datetime
         if isinstance(val, datetime):
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
             return val
         
+        # 3. Si GSheets manda un número decimal (ej. 0.5 = 12:00 PM)
         if isinstance(val, (int, float)):
             if val > 10000:
                 return pd.to_datetime(val, unit='D', origin='1899-12-30')
             elif 0 <= val < 1:
                 return hoy + pd.to_timedelta(val, unit='D')
 
+        # 4. Si GSheets manda un texto
         str_val = str(val).strip()
-        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
         
+        # A veces GSheets baja la hora como '1899-12-30 11:06:57'
+        if str_val.startswith('1899'):
+            hora_extraida = pd.to_datetime(str_val).time()
+            return pd.Timestamp.combine(hoy.date(), hora_extraida)
+
+        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
         if pd.notnull(parsed):
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
@@ -602,9 +595,6 @@ def main():
             
         df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
 
-        # ------------------------------------------------------------------------------
-        # FORZAR CÁLCULO DE SEGMENTO GLOBAL (REPARA PEXTERNO Y SPLITTEROPT COMO PLEX)
-        # ------------------------------------------------------------------------------
         def extraer_segmento_global(row):
             texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
             if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
