@@ -982,9 +982,6 @@ def main():
             res_otros_monitor.columns = ['Otros', 'Cant']
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
-
-    # --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS ---
-    with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         
 # --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS CIRCULARES ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
