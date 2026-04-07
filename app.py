@@ -986,7 +986,7 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-    # --- NUEVO EXPANDER DE SEGMENTOS CON DETECCION DE CLIC ---
+   # --- NUEVO EXPANDER DE SEGMENTOS CON DETECCIÓN DE CLIC REPARADA ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
@@ -1020,26 +1020,51 @@ def main():
             fig.update_layout(
                 showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}},
-                annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")]
+                annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")],
+                clickmode="event+select" # <-- FORZAMOS A PLOTLY A ESCUCHAR EL CLIC
             )
             return fig
+
+        # Función robusta para detectar clics en cualquier versión de Streamlit
+        def grafico_fue_clickeado(sel_obj):
+            if not sel_obj or not hasattr(sel_obj, "selection"): return False
+            # Si Streamlit lo devuelve como Diccionario
+            if isinstance(sel_obj.selection, dict):
+                return len(sel_obj.selection.get("points", [])) > 0
+            # Si Streamlit lo devuelve como Objeto
+            if hasattr(sel_obj.selection, "points"):
+                return len(sel_obj.selection.points) > 0
+            return False
 
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             sel_r = st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, on_select="rerun", key="pie_resi")
-            if sel_r and hasattr(sel_r, 'selection') and getattr(sel_r.selection, 'points', None) and len(sel_r.selection.points) > 0:
+            if grafico_fue_clickeado(sel_r):
                 mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
                 
         with col_g2:
             sel_p = st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, on_select="rerun", key="pie_plex")
-            if sel_p and hasattr(sel_p, 'selection') and getattr(sel_p.selection, 'points', None) and len(sel_p.selection.points) > 0:
+            if grafico_fue_clickeado(sel_p):
                 mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
             
         espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
         with col_global:
             sel_g = st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, on_select="rerun", key="pie_global")
-            if sel_g and hasattr(sel_g, 'selection') and getattr(sel_g.selection, 'points', None) and len(sel_g.selection.points) > 0:
+            if grafico_fue_clickeado(sel_g):
                 mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
+            
+        st.divider()
+
+        col_resi_m, col_plex_m = st.columns(2)
+        res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
+        
+        with col_resi_m:
+            st.write("🏠 **RESIDENCIAL ASIGNADOS**")
+            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+            
+        with col_plex_m:
+            st.write("🏢 **PLEX ASIGNADOS**")
+            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
             
         st.divider()
 
