@@ -234,28 +234,58 @@ def mostrar_comentario_cierre(fila):
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (LIMPIA Y NATIVA DE STREAMLIT, SIN HTML/TABLAS)
+# NUEVA VENTANA DE RESUMEN (ESTILO TABLA EN PAPEL CON TOTALES)
 # ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
-    st.subheader(f"📊 Resumen: {segmento}")
+    st.subheader(f"📊 Desglose: {segmento}")
     
-    cerradas = len(cerradas_df)
-    pendientes = len(pendientes_df)
-    total = cerradas + pendientes
-    avance = (cerradas / total * 100) if total > 0 else 0
-    
-    # Métricas limpias sin riesgo de romper el formato en la nube
-    col1, col2, col3 = st.columns(3)
-    col1.metric("📦 Total Asignadas", total)
-    col2.metric("⏳ Pendientes", pendientes)
-    col3.metric("✅ Cerradas Hoy", cerradas)
-    
-    st.divider()
-    
-    # Progreso nativo de Streamlit
-    st.progress(int(avance), text=f"Progreso de Completitud ({avance:.1f}%)")
-    
+    # 1. Agrupar y contar las pendientes por Tipo de Actividad
+    if not pendientes_df.empty:
+        pend_agrupado = pendientes_df.groupby('ACTIVIDAD').size().reset_index(name='Pendiente')
+    else:
+        pend_agrupado = pd.DataFrame(columns=['ACTIVIDAD', 'Pendiente'])
+
+    # 2. Agrupar y contar las cerradas por Tipo de Actividad
+    if not cerradas_df.empty:
+        cerr_agrupado = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
+    else:
+        cerr_agrupado = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas'])
+
+    # 3. Cruzar ambas tablas para tener todo alineado (Pendientes y Cerradas juntas)
+    resumen_act = pd.merge(pend_agrupado, cerr_agrupado, on='ACTIVIDAD', how='outer').fillna(0)
+
+    if not resumen_act.empty:
+        # Darle formato a los números y renombrar la columna
+        resumen_act['Pendiente'] = resumen_act['Pendiente'].astype(int)
+        resumen_act['Cerradas'] = resumen_act['Cerradas'].astype(int)
+        resumen_act.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
+
+        # Ordenar alfabéticamente para que sea fácil de leer
+        resumen_act = resumen_act.sort_values(by='Tipo').reset_index(drop=True)
+
+        # 4. Calcular la sumatoria final
+        total_pend = resumen_act['Pendiente'].sum()
+        total_cerr = resumen_act['Cerradas'].sum()
+
+        # Añadir la fila de TOTAL al fondo
+        fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Pendiente': total_pend, 'Cerradas': total_cerr}])
+        resumen_act = pd.concat([resumen_act, fila_total], ignore_index=True)
+
+        # 5. Dibujar la tabla limpia
+        st.dataframe(
+            resumen_act,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Tipo": st.column_config.TextColumn("TIPO", width="large"),
+                "Pendiente": st.column_config.NumberColumn("PENDIENTE", format="%d"),
+                "Cerradas": st.column_config.NumberColumn("CERRADAS", format="%d")
+            }
+        )
+    else:
+        st.info("No hay datos de operaciones para este segmento.")
+
     st.markdown("<br>", unsafe_allow_html=True)
                 
     if st.button("Cerrar Resumen", use_container_width=True):
