@@ -234,7 +234,7 @@ def mostrar_comentario_cierre(fila):
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (ESTILO TABLA EN PAPEL CON TOTALES)
+# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES)
 # ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
@@ -252,35 +252,36 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     else:
         cerr_agrupado = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas'])
 
-    # 3. Cruzar ambas tablas para tener todo alineado (Pendientes y Cerradas juntas)
+    # 3. Cruzar ambas tablas para tener todo alineado
     resumen_act = pd.merge(pend_agrupado, cerr_agrupado, on='ACTIVIDAD', how='outer').fillna(0)
 
     if not resumen_act.empty:
-        # Darle formato a los números y renombrar la columna
+        # Darle formato a los números y renombrar
         resumen_act['Pendiente'] = resumen_act['Pendiente'].astype(int)
         resumen_act['Cerradas'] = resumen_act['Cerradas'].astype(int)
         resumen_act.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
 
-        # Ordenar alfabéticamente para que sea fácil de leer
+        # Ordenar alfabéticamente
         resumen_act = resumen_act.sort_values(by='Tipo').reset_index(drop=True)
 
         # 4. Calcular la sumatoria final
         total_pend = resumen_act['Pendiente'].sum()
         total_cerr = resumen_act['Cerradas'].sum()
 
-        # Añadir la fila de TOTAL al fondo
+        # Añadir la fila de TOTAL
         fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Pendiente': total_pend, 'Cerradas': total_cerr}])
         resumen_act = pd.concat([resumen_act, fila_total], ignore_index=True)
 
-        # 5. Dibujar la tabla limpia
+        # 5. Dibujar la tabla optimizada para celular
+        # Acortamos los nombres de las columnas para no forzar el ancho
         st.dataframe(
             resumen_act,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Tipo": st.column_config.TextColumn("TIPO", width="large"),
-                "Pendiente": st.column_config.NumberColumn("PENDIENTE", format="%d"),
-                "Cerradas": st.column_config.NumberColumn("CERRADAS", format="%d")
+                "Tipo": st.column_config.TextColumn("TIPO"),
+                "Pendiente": st.column_config.NumberColumn("PEND.", format="%d"),
+                "Cerradas": st.column_config.NumberColumn("CERR.", format="%d")
             }
         )
     else:
