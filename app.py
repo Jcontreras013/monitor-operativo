@@ -392,9 +392,9 @@ def aplicar_estilos_df(df_original_para_estilo):
     
     # ORDEN ESTRATÉGICO DE COLUMNAS
     cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'CLIENTE', 'MOTIVO',
-        'ESTADO', 'ACTIVIDAD', 'NOMBRE', 'COLONIA', 'TECNICO',  
-        'HORA_INI','HORA_LIQ', 'TIEMPO_REAL','COMENTARIO'
+        'DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL',
+        'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE',
+        'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
@@ -954,7 +954,7 @@ def main():
         background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%);
         padding: 20px;
         border-radius: 12px;
-        border-left: 5px solid #3B82F6; /* Azul por defecto */
+        border-left: 5px solid #3B82F6; 
         flex: 1;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
@@ -983,6 +983,10 @@ def main():
     }
     .kpi-val.text-green { color: #10B981; }
     .kpi-val.text-red { color: #EF4444; }
+    
+    .btn-detalle {
+        margin-top: -10px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1062,7 +1066,7 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-    # --- NUEVO EXPANDER DE SEGMENTOS CON DETECCION DE CLIC (SIN TABLAS ESTÁTICAS) ---
+    # --- EXPANDER DE SEGMENTOS Y AVANCE CON BOTONES DIRECTOS (SIN TABLAS ESTÁTICAS) ---
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
@@ -1096,33 +1100,31 @@ def main():
             fig.update_layout(
                 showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                 title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}},
-                annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")],
-                clickmode="event+select"
+                annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")]
             )
             return fig
 
-        def grafico_fue_clickeado(sel_obj):
-            if not sel_obj or not hasattr(sel_obj, "selection"): return False
-            if isinstance(sel_obj.selection, dict):
-                return len(sel_obj.selection.get("points", [])) > 0
-            if hasattr(sel_obj.selection, "points"):
-                return len(sel_obj.selection.points) > 0
-            return False
-
+        # --- FILA 1: RESIDENCIAL Y PLEX ---
         col_g1, col_g2 = st.columns(2)
+        
         with col_g1:
-            sel_r = st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, on_select="rerun", key="pie_resi")
-            if grafico_fue_clickeado(sel_r): mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
+            st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, key="pie_resi")
+            if st.button("🔍 Ver Detalle Residencial", use_container_width=True, key="btn_resi"):
+                mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
                 
         with col_g2:
-            sel_p = st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, on_select="rerun", key="pie_plex")
-            if grafico_fue_clickeado(sel_p): mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
+            st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, key="pie_plex")
+            if st.button("🔍 Ver Detalle PLEX", use_container_width=True, key="btn_plex"):
+                mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
             
+        # --- FILA 2: GLOBAL ---
         espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
+        
         with col_global:
-            sel_g = st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, on_select="rerun", key="pie_global")
-            if grafico_fue_clickeado(sel_g): mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
-            
+            st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
+            if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
+                mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
+
     st.divider()
     
     if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
