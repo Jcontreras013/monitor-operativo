@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import re
 from streamlit_gsheets import GSheetsConnection
@@ -613,15 +614,57 @@ def main():
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-    with st.expander("📊 CONSOLIDADO POR SEGMENTO (SOLO ASIGNADAS)", expanded=False):
-        res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
-        col_plex_m, col_resi_m = st.columns(2)
-        with col_plex_m:
-            st.write("🏢 PLEX ASIGNADOS")
-            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
-        with col_resi_m:
-            st.write("🏠 RESIDENCIAL ASIGNADOS")
-            st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+    with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
+        col_tablas, col_gauge = st.columns([2, 1])
+        
+        with col_tablas:
+            res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
+            col_plex_m, col_resi_m = st.columns(2)
+            
+            with col_plex_m:
+                st.write("🏢 **PLEX ASIGNADOS**")
+                st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='PLEX'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+                
+            with col_resi_m:
+                st.write("🏠 **RESIDENCIAL ASIGNADOS**")
+                st.dataframe(res_segmentos_monitor[res_segmentos_monitor['SEGMENTO']=='RESIDENCIAL'][['TECNICO','Cant']], hide_index=True, use_container_width=True)
+
+        with col_gauge:
+            total_volumen_dia = cerradas_hoy + vivas_count
+            avance_pct = (cerradas_hoy / total_volumen_dia * 100) if total_volumen_dia > 0 else 0
+            
+            if avance_pct < 50:
+                color_velocimetro = "#EF4444" 
+            elif avance_pct < 80:
+                color_velocimetro = "#F59E0B" 
+            else:
+                color_velocimetro = "#10B981" 
+                
+            fig_gauge = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = avance_pct,
+                title = {'text': "Avance de Jornada", 'font': {'color': '#94A3B8', 'size': 14}},
+                number = {'suffix': "%", 'font': {'color': color_velocimetro, 'size': 40, 'weight': 'bold'}, 'valueformat': '.1f'},
+                gauge = {
+                    'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#2D2F39"},
+                    'bar': {'color': color_velocimetro},
+                    'bgcolor': "#1A1D24",
+                    'borderwidth': 2,
+                    'bordercolor': "#2D2F39",
+                    'steps': [
+                        {'range': [0, 50], 'color': "rgba(239, 68, 68, 0.05)"},
+                        {'range': [50, 80], 'color': "rgba(245, 158, 11, 0.05)"},
+                        {'range': [80, 100], 'color': "rgba(16, 185, 129, 0.05)"}],
+                }
+            ))
+            
+            fig_gauge.update_layout(
+                height=220, 
+                margin=dict(l=10, r=10, t=30, b=10), 
+                paper_bgcolor="rgba(0,0,0,0)", 
+                font={'color': "#E2E8F0"}
+            )
+            st.plotly_chart(fig_gauge, use_container_width=True)
 
     st.divider()
     
@@ -641,11 +684,6 @@ def main():
     if status_final_btn == "PENDIENTE": df_v_tabla_monitor = df_tablero_kpi_monitor
     elif status_final_btn == "C_HOY": df_v_tabla_monitor = df_monitor_vivas_full[(df_monitor_vivas_full['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
     else: df_v_tabla_monitor = df_monitor_vivas_full[(df_monitor_vivas_full['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False))]
-
-  #  met_v1, met_v2, met_v3 = st.columns(3)
-   # met_v1.metric("🏢 PLEX", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'PLEX']))
-#    met_v2.metric("🏠 RESIDENCIAL", len(df_v_tabla_monitor[df_v_tabla_monitor['SEGMENTO'] == 'RESIDENCIAL']))
- #   met_v3.metric("📋 TOTAL EN VISTA", len(df_v_tabla_monitor))
 
     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL DE CONTROL OPERATIVO", "📊 ANALISIS Y GANTT", "📈 ANALÍTICA"])
     
