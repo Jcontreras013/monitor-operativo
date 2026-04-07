@@ -37,7 +37,7 @@ except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
 
 # ==============================================================================
-# 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
+# CONFIGURACIÓN INICIAL DE LA INTERFAZ
 # ==============================================================================
 st.set_page_config(
     layout="wide", 
@@ -46,8 +46,26 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- LISTA MAESTRA DE ESTADOS ACTIVOS (Para no perder órdenes iniciadas) ---
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+
+# ==============================================================================
+# 🛡️ MOTOR SEGURO DE FECHAS (EVITA EL ERROR 00:00)
+# ==============================================================================
+def parse_date_safe(val):
+    if pd.isnull(val) or val == "" or str(val).strip() == "": 
+        return pd.NaT
+    # Si es un número serial de Excel (ej. 45389.46) lo convierte reteniendo la hora
+    if isinstance(val, (int, float)) and val > 10000:
+        return pd.to_datetime(val, unit='D', origin='1899-12-30')
+    # Si es un texto que parece un serial de Excel
+    try:
+        f_val = float(val)
+        if f_val > 10000: 
+            return pd.to_datetime(f_val, unit='D', origin='1899-12-30')
+    except: 
+        pass
+    # Parseo normal para textos estándar ("11:06:57") respetando los minutos
+    return pd.to_datetime(str(val), dayfirst=True, errors='coerce')
 
 # ==============================================================================
 # FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE)
@@ -55,25 +73,20 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
     
-    # 1. Asegurar formato de fechas
-    df['HORA_INI'] = pd.to_datetime(df['HORA_INI'], errors='coerce')
-    df['HORA_LIQ'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce')
+    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_safe)
+    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_safe)
     
-    # Solo descartamos si NO hay registro de hora en absoluto
     df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
     df['FECHA'] = df['HORA_LIQ'].dt.date
     
-    # --- TABLA 1: PRODUCCIÓN Y PORCENTAJES (Aquí sumamos TODAS las órdenes reales) ---
+    # --- TABLA 1: PRODUCCIÓN Y PORCENTAJES ---
     totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
     conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
     tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
     tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
 
-    # --- TABLA 2: EFICIENCIA Y TIEMPOS (Aquí aplicamos la magia de corrección) ---
+    # --- TABLA 2: EFICIENCIA Y TIEMPOS (PARCHE APLICADO) ---
     df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
-    
-    # 🛡️ FILTRO INTELIGENTE: Si los minutos son 0 o negativos, los volvemos nulos (None)
-    # De esta manera, Pandas los ignora al calcular el promedio, pero no borramos la orden del volumen total.
     df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
     
     tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
@@ -88,8 +101,6 @@ def generar_tablas_gerenciales(df_crudo):
     ).reset_index()
     
     jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
-    
-    # 🛡️ FILTRO EXTRA: Evitar que una jornada salga negativa si se cruzan días por error de la app
     jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
 
     resumen_jornada = jornada.groupby('TECNICO').agg(
@@ -104,7 +115,7 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (MODO ESPEJO BLINDADO)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
@@ -124,12 +135,7 @@ def sincronizar_datos_nube(conn):
 
                 for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                     if col_f in df_nube.columns:
-                        test_parse = pd.to_datetime(df_nube[col_f], dayfirst=True, errors='coerce')
-                        if (test_parse.dt.year <= 1970).any() or (test_parse.dt.year == 1899).any():
-                            nums = pd.to_numeric(df_nube[col_f], errors='coerce')
-                            df_nube[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
-                        else:
-                            df_nube[col_f] = test_parse
+                        df_nube[col_f] = df_nube[col_f].apply(parse_date_safe)
                 
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                     if col_b in df_nube.columns:
@@ -197,7 +203,7 @@ def sincronizar_datos_nube(conn):
         st.error(f"Error al conectar con la nube: {e}")
 
 # ==============================================================================
-# 2. VENTANA EMERGENTE (DIÁLOGOS DE GESTIÓN DETALLADA)
+# 2. VENTANA EMERGENTE
 # ==============================================================================
 @st.dialog("Detalle de Gestión de la Orden")
 def mostrar_comentario_cierre(fila):
@@ -273,10 +279,11 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'HORA_LIQ' in df_visual_procesado.columns:
         df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     
+    # NUEVO ORDEN ESTRATÉGICO DE COLUMNAS (Para ver las horas sin hacer scroll)
     cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 
-        'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
-        'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
+        'DIAS_RETRASO', 'NUM', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 
+        'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 
+        'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC'
     ]
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
@@ -291,7 +298,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         
         for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
             if col_f in df_act.columns:
-                df_act[col_f] = pd.to_datetime(df_act[col_f], dayfirst=True, errors='coerce')
+                df_act[col_f] = df_act[col_f].apply(parse_date_safe)
         
         ahora_momento = datetime.utcnow() - timedelta(hours=6)
         ahora_momento_ts = pd.Timestamp(ahora_momento)
@@ -418,9 +425,6 @@ def main():
         elif rol_usuario == 'jefe' and es_movil:
             st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
-    # ==============================================================================
-    # 🎯 PANTALLA DE INICIO DINÁMICA
-    # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
@@ -466,12 +470,7 @@ def main():
 
     for col_f in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
         if col_f in df_base.columns:
-            test_parse = pd.to_datetime(df_base[col_f], dayfirst=True, errors='coerce')
-            if (test_parse.dt.year == 1970).any() or (test_parse.dt.year == 1899).any():
-                nums = pd.to_numeric(df_base[col_f], errors='coerce')
-                df_base[col_f] = pd.to_datetime(nums, unit='D', origin='1899-12-30')
-            else:
-                df_base[col_f] = test_parse
+            df_base[col_f] = df_base[col_f].apply(parse_date_safe)
             
     for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
         if col_b in df_base.columns:
@@ -516,7 +515,6 @@ def main():
     ahora_local = datetime.utcnow() - timedelta(hours=6)
     hoy_date_valor = ahora_local.date()
 
-    # --- 2. MENÚ SUPERIOR Y MULTIFILTROS LATERALES ---
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
@@ -576,9 +574,6 @@ def main():
         else:
             df_monitor_filtrado = df_base_activa.copy()
 
-    # ==============================================================================
-    # PANTALLA: AUDITORÍA DE VEHÍCULOS (LLAMANDO A LA FUNCIÓN EXTERNA)
-    # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         try:
             mostrar_auditoria(es_movil, conn)
@@ -586,9 +581,6 @@ def main():
             st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
         return
 
-    # ==============================================================================
-    # PANTALLA EXISTENTES (NO INSTALADO, REPROGRAMADAS, HISTÓRICO)
-    # ==============================================================================
     if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
@@ -624,9 +616,6 @@ def main():
         main_historico(st.session_state.df_hist)
         return
 
-    # ==============================================================================
-    # PANTALLA: CENTRO DE REPORTES (CON LA NUEVA PESTAÑA GERENCIAL)
-    # ==============================================================================
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
@@ -652,9 +641,6 @@ def main():
                 pdf_bytes_rendimiento = logica_generar_pdf(df_dinamico_filtrado)
                 st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf")
 
-        # ===========================================================
-        # 💼 PESTAÑA GERENCIAL (TABLA MAESTRA UNIFICADA)
-        # ===========================================================
         with tab_gerencial:
             st.subheader("📊 Reporte Gerencial Unificado")
             st.caption("Sube el archivo en crudo. El sistema cruzará la productividad, tiempos y jornadas en una sola tabla maestra.")
@@ -664,16 +650,12 @@ def main():
             if archivo_gerencial:
                 with st.spinner("⏳ Analizando datos, cruzando tablas y calculando jornadas..."):
                     try:
-                        # 1. Leer y limpiar el archivo crudo
                         if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
                         else: df_raw = pd.read_excel(archivo_gerencial)
                         
                         df_limpio = procesar_dataframe_base(df_raw)
-                        
-                        # 2. Generar las tablas base
                         tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
                         
-                        # 3. ---> MAGIA DE FUSIÓN (MERGE) <---
                         df_merge_1 = pd.merge(tabla_prod, tabla_efi, on=['TECNICO', 'ACTIVIDAD'], how='left')
                         df_maestra = pd.merge(df_merge_1, res_jornada, on='TECNICO', how='left')
                         
@@ -692,7 +674,6 @@ def main():
                         
                         st.success("✅ Datos procesados y unificados correctamente.")
                         
-                        # ALERTA DE DATOS DE TIEMPO IGNORADOS
                         ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
                         if ordenes_con_error > 0:
                             st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo (negativos/cero). Se incluyeron en el volumen de producción pero se ignoraron para el promedio de minutos.")
@@ -714,7 +695,6 @@ def main():
                         
                         st.divider()
                         
-                        # --- BOTÓN PARA GENERAR EL PDF ---
                         if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
                             with st.spinner("Dibujando secciones por técnico..."):
                                 pdf_bytes = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
@@ -730,7 +710,6 @@ def main():
                     except Exception as e:
                         st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
         
-        # Pestañas existentes (Diario, Semanal, Mensual)
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
@@ -839,7 +818,6 @@ def main():
     # ==============================================================================
     # 7. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
-    
     mask_hoy = df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor
     mask_asignadas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
 
@@ -859,7 +837,6 @@ def main():
 
     st.title("⚡ Monitor Operativo Maxcom")
 
-    # --- 🎨 ESTILOS CSS FORZADOS PARA LOS KPIs ---
     st.markdown("""
     <style>
     .kpi-container {
@@ -905,13 +882,11 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    # --- 🧮 CÁLCULO DE MÉTRICAS ---
     vivas_count = len(df_tablero_kpi_monitor)
     cerradas_hoy = len(df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].str.contains('CERRADA', na=False, case=False))])
     tecs_activos = df_tablero_kpi_monitor['TECNICO'].nunique()
     offline_criticos = int((df_tablero_kpi_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_tablero_kpi_monitor))) == True).sum())
 
-    # --- 🏗️ RENDERIZADO DE LAS TARJETAS HTML ---
     html_kpis = f"""
     <div class="kpi-container">
         <div class="kpi-card">
@@ -982,30 +957,23 @@ def main():
             res_otros_monitor.columns = ['Otros', 'Cant']
             st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
             st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
-        
-# --- NUEVO EXPANDER DE SEGMENTOS Y 3 VELOCÍMETROS CIRCULARES (PIRÁMIDE INVERTIDA) ---
+
     with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-        
-        # 1. Cálculos de Avance por Segmento
         df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
         
-        # PLEX
         vivas_plex = len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'PLEX'])
         cerradas_plex = len(df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX'])
         total_plex = vivas_plex + cerradas_plex
         avance_plex = (cerradas_plex / total_plex * 100) if total_plex > 0 else 0
         
-        # RESIDENCIAL
         vivas_resi = len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'RESIDENCIAL'])
         cerradas_resi = len(df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL'])
         total_resi = vivas_resi + cerradas_resi
         avance_resi = (cerradas_resi / total_resi * 100) if total_resi > 0 else 0
         
-        # GLOBAL
         total_volumen_dia = cerradas_hoy + vivas_count
         avance_global = (cerradas_hoy / total_volumen_dia * 100) if total_volumen_dia > 0 else 0
 
-        # Función constructora para los Gráficos Circulares (Estilo Anillo/Donut)
         def crear_velocimetro_circular(valor, titulo):
             if valor < 50: color_v = "#EF4444" 
             elif valor < 80: color_v = "#F59E0B" 
@@ -1014,7 +982,7 @@ def main():
             fig = go.Figure(go.Pie(
                 values=[valor, max(0, 100 - valor)],
                 labels=['Completado', 'Pendiente'],
-                hole=0.8, # Anillo delgado y moderno
+                hole=0.8,
                 marker=dict(colors=[color_v, '#2D2F39']),
                 textinfo='none',
                 hoverinfo='none',
@@ -1024,7 +992,7 @@ def main():
             
             fig.update_layout(
                 showlegend=False,
-                height=160, # Tamaño compacto para la pirámide
+                height=160,
                 margin=dict(l=5, r=5, t=30, b=5),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
@@ -1033,22 +1001,18 @@ def main():
             )
             return fig
 
-        # --- FILA 1: RESIDENCIAL Y PLEX (ARRIBA) ---
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True)
         with col_g2:
             st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True)
             
-        # --- FILA 2: GLOBAL (ABAJO, CENTRADO) ---
-        # Usamos [1, 1.5, 1] para crear márgenes vacíos a los lados y centrar el gráfico
         espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
         with col_global:
             st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True)
             
         st.divider()
 
-        # --- FILA 3: LAS TABLAS DE CARGA ---
         col_resi_m, col_plex_m = st.columns(2)
         res_segmentos_monitor = df_tablero_kpi_monitor.groupby(['TECNICO', 'SEGMENTO']).size().reset_index(name='Cant')
         
@@ -1087,14 +1051,17 @@ def main():
     
     with t_panel_v:
         if not df_v_tabla_monitor.empty:
-            # Quitamos el estilo nativo de pandas para que el clic funcione
             df_estilo_v, _ = aplicar_estilos_df(df_v_tabla_monitor)
-            # Quitamos ES_OFFLINE visualmente usando drop de pandas
             df_mostrar = df_estilo_v.drop(columns=['ES_OFFLINE'], errors='ignore')
             
             evento_monitor_diam = st.dataframe(
                 df_mostrar,
-                column_config={"GPS": st.column_config.LinkColumn("UBICACIÓN GPS")}, 
+                column_config={
+                    "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
+                    "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
+                    "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
+                    "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large")
+                }, 
                 use_container_width=True, 
                 height=600, 
                 hide_index=True, 
@@ -1102,7 +1069,6 @@ def main():
                 selection_mode="single-row"
             )
             
-            # Disparador del Modal
             if evento_monitor_diam.selection.rows:
                 mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
         else:
