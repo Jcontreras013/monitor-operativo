@@ -3,11 +3,10 @@ import pandas as pd
 import os
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-
 from streamlit_js_eval import streamlit_js_eval
 
 # ==============================================================================
@@ -46,16 +45,11 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO - RESPETA EL MENÚ MÓVIL)
+# 📱 MODO APP NATIVA (CORREGIDO: CERO CÓDIGO QUE OCULTE LA BARRA LATERAL)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar marca de agua y opciones de desarrollador (Deploy) */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-.stAppToolbar {display: none !important;}
-
-/* Aprovechar el espacio de la pantalla */
+/* Aprovechar el espacio de la pantalla en celular sin romper el menú nativo */
 .block-container {
     padding-top: 2rem !important;
     padding-bottom: 1rem !important;
@@ -63,7 +57,7 @@ footer {visibility: hidden;}
     padding-right: 0.5rem !important;
 }
 
-/* Evitar zoom accidental en celulares al tocar rápido */
+/* Evitar el zoom accidental al tocar botones en el celular */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -75,48 +69,38 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (MANEJA CADENAS DE HORA PURAS)
+# 🛡️ MOTOR SEGURO DE FECHAS (REPARACIÓN EXTREMA PARA GOOGLE SHEETS)
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
         return pd.NaT
     
-    hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
-
     try:
-        # Manejar objetos time directos de pandas/python
-        if isinstance(val, dt_time):
-            return pd.Timestamp.combine(hoy.date(), val)
-
-        if isinstance(val, datetime):
-            if val.year <= 1970:
-                return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-            return pd.Timestamp(val)
+        val_str = str(val).strip()
+        hoy_str = (datetime.utcnow() - timedelta(hours=6)).strftime('%Y-%m-%d')
         
-        if isinstance(val, (int, float)):
-            if val > 10000:
-                return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 <= val < 1:
-                return hoy + pd.to_timedelta(val, unit='D')
-            else:
-                return pd.NaT
-
-        str_val = str(val).strip()
-        
-        # Si la cadena se parece a una hora (ej. "11:30" o "11:30:00")
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
-            parsed_time = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), parsed_time)
-
-        # Si es una fecha completa en string
-        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
-        if pd.notnull(parsed):
-            # Si pandas le asignó el año 1900/1970, significa que solo traía la hora
-            if parsed.year <= 1970:
-                return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
-            return parsed
+        # 1. Extraer la hora a la fuerza si el string contiene "HH:MM"
+        match = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?)', val_str)
+        if match:
+            hora_pura = match.group(1)
+            # Combinamos la hora pura con la fecha de HOY
+            return pd.to_datetime(f"{hoy_str} {hora_pura}")
             
-        return pd.NaT
+        # 2. Si GSheets lo mandó como número de Excel
+        try:
+            fval = float(val)
+            if fval > 10000:
+                return pd.to_datetime(fval, unit='D', origin='1899-12-30')
+            elif 0 <= fval < 1:
+                # Es una fracción de día (ej. 0.5 = 12:00 PM)
+                horas = int(fval * 24)
+                minutos = int((fval * 24 - horas) * 60)
+                return pd.to_datetime(f"{hoy_str} {horas:02d}:{minutos:02d}:00")
+        except:
+            pass
+            
+        # 3. Intento general final
+        return pd.to_datetime(val_str, dayfirst=True, errors='coerce')
     except:
         return pd.NaT
 
@@ -128,7 +112,7 @@ def procesar_fechas_seguro(df_input, columnas):
     return df
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE NEGATIVOS)
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -172,7 +156,7 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (BLINDADA CONTRA GOOGLE SHEETS)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
@@ -190,21 +174,13 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                # Pasamos el filtro ultra seguro
+                # Aplicar parseo ultra seguro
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
-                # RECALCULAR TIEMPOS EN DESCARGA
+                # RECALCULAR TIEMPOS (Evita que la nube mande datos malos)
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
                     df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
-                    
-                    def format_duracion_recalculada(r):
-                        if pd.isnull(r['HORA_INI']) or pd.isnull(r['HORA_LIQ']): return "---"
-                        diff = r['HORA_LIQ'] - r['HORA_INI']
-                        hrs, rem = divmod(diff.total_seconds(), 3600)
-                        mins, _ = divmod(rem, 60)
-                        return f"{int(hrs)}h {int(mins)}m"
-                    df_nube['TIEMPO_REAL'] = df_nube.apply(format_duracion_recalculada, axis=1)
 
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                     if col_b in df_nube.columns:
@@ -264,7 +240,7 @@ def sincronizar_datos_nube(conn):
                 st.success("✅ Sincronización Exitosa.")
                 st.rerun()
             else:
-                st.warning("La base de datos en la nube está vacía.")
+                st.warning("La base de datos en la nube está vacía. Debes subir un archivo primero.")
     except Exception as e:
         st.error(f"Error al conectar con la nube: {e}")
 
@@ -305,7 +281,7 @@ def mostrar_comentario_cierre(fila):
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES)
+# NUEVA VENTANA DE RESUMEN (ESTILO LIBRETA)
 # ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
@@ -388,7 +364,6 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'NUM' in df_visual_procesado.columns:
         df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
     
-    # Aplicar el formato de hora de forma segura para la visualización
     if 'HORA_INI' in df_visual_procesado.columns:
         df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns:
@@ -460,10 +435,14 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         df_act['ES_OFFLINE'] = df_act.apply(offline_seguro_diamante_logic, axis=1)
         df_act['MINUTOS_CALC'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds() / 60
         
+        # ------------------------------------------------------------------------------
+        # 🛠️ CORRECCIÓN: CLASIFICACIÓN PLEX (PEXTERNO / SPLITTEROPT)
+        # ------------------------------------------------------------------------------
         def segmentar_plex_diamante_logic(r_seg):
             texto_p_scan = f"{r_seg.get('ACTIVIDAD', '')} {r_seg.get('CLIENTE', '')} {r_seg.get('COMENTARIO', '')}".upper()
             if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
             return 'RESIDENCIAL'
+            
         df_act['SEGMENTO'] = df_act.apply(segmentar_plex_diamante_logic, axis=1)
         
         def format_duracion_diamante_human(r_dur):
@@ -561,7 +540,6 @@ def main():
                 if conn is not None:
                     with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
                         try:
-                            # Preparar para subir asegurando que las fechas sean strings completos
                             df_to_upload = res_p_diamante.copy()
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if c_date in df_to_upload.columns:
@@ -616,6 +594,9 @@ def main():
             
         df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
 
+        # ------------------------------------------------------------------------------
+        # 🛠️ CORRECCIÓN GLOBAL: CLASIFICACIÓN PLEX (PEXTERNO / SPLITTEROPT)
+        # ------------------------------------------------------------------------------
         def extraer_segmento_global(row):
             texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
             if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
@@ -941,7 +922,7 @@ def main():
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
         # ------------------------------------------------------------------------------
-        # 🛡️ FILTRO MAESTRO DE TÉCNICOS
+        # 🛡️ FILTRO MAESTRO DE TÉCNICOS (EXCLUYE 'NONE', 'NAN', VACÍOS)
         # ------------------------------------------------------------------------------
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
