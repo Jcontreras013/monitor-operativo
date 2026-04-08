@@ -12,41 +12,42 @@ except ImportError:
     st.error("⚠️ No se pudo importar tools.py. Asegúrate de que esté en la misma carpeta.")
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS (ANTI-ERRORES BINARIOS)
+# LECTOR BLINDADO DE ARCHIVOS (EXAMINA EL ADN DEL ARCHIVO)
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
+    content = uploaded_file.getvalue()
     
-    if filename.endswith('.csv'):
+    # 1. Si es un Excel Real Antiguo (Comienza con D0 CF 11 E0)
+    if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
             uploaded_file.seek(0)
-            return pd.read_csv(uploaded_file, encoding='utf-8')
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            return pd.read_csv(uploaded_file, encoding='latin1')
+            return pd.read_excel(uploaded_file, engine='xlrd')
+        except ImportError:
+            raise RuntimeError("FALTA LIBRERÍA: Necesitas instalar 'xlrd' (agrega xlrd==2.0.1 a tu requirements.txt) para leer Excel viejo.")
+            
+    # 2. Si es un HTML camuflado como Excel (Muy común en GPS)
+    elif b'<table' in content.lower() or b'<html' in content.lower():
+        try:
+            html_str = content.decode('utf-8', errors='ignore')
+            dfs = pd.read_html(io.StringIO(html_str))
+            return max(dfs, key=len)
+        except Exception:
+            html_str = content.decode('latin1', errors='ignore')
+            dfs = pd.read_html(io.StringIO(html_str))
+            return max(dfs, key=len)
+            
+    # 3. Si es un Excel Moderno (.xlsx) o un CSV
     else:
-        try:
-            uploaded_file.seek(0)
-            motor = 'xlrd' if filename.endswith('.xls') else None
-            return pd.read_excel(uploaded_file, engine=motor)
-        except ImportError as e_import:
-            if 'xlrd' in str(e_import):
-                raise RuntimeError("FALTA LIBRERÍA: Necesitas instalar 'xlrd' para leer archivos .xls antiguos. Agrégalo a tu requirements.txt.")
-            raise e_import
-        except Exception as e_excel:
+        uploaded_file.seek(0)
+        if filename.endswith('.xlsx'):
+            return pd.read_excel(uploaded_file, engine='openpyxl')
+        else:
             try:
+                return pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
+            except UnicodeDecodeError:
                 uploaded_file.seek(0)
-                html_str = uploaded_file.getvalue().decode('utf-8', errors='ignore')
-                dfs = pd.read_html(io.StringIO(html_str))
-                return max(dfs, key=len)
-            except Exception:
-                try:
-                    uploaded_file.seek(0)
-                    html_str = uploaded_file.getvalue().decode('latin1', errors='ignore')
-                    dfs = pd.read_html(io.StringIO(html_str))
-                    return max(dfs, key=len)
-                except Exception:
-                    raise ValueError(f"El archivo está corrupto o es un Excel antiguo (.xls). Asegúrate de tener instalado 'xlrd'. Detalle original: {e_excel}")
+                return pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
 
 # ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
@@ -90,7 +91,7 @@ def procesar_auditoria_vehiculos(df):
         return None, str(e)
 
 # ==============================================================================
-# LÓGICA DE EXCESOS Y TELEMETRÍA (MATRIZ REPARADA)
+# LÓGICA DE EXCESOS Y TELEMETRÍA (MATRIZ)
 # ==============================================================================
 def procesar_matriz_telemetria(df_raw):
     try:
@@ -193,21 +194,19 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
     pdf.ln(5)
     
     if not df_matriz.empty:
-        pdf.seccion_titulo("Matriz Mensual de Vehiculos Infractores")
+        pdf.seccion_titulo("Matriz de Vehiculos Infractores")
         
-        # Calcular anchos de columna dinámicamente
+        num_cols = len(df_matriz.columns)
         has_prom = 'Promedio Vel. (km/h)' in df_matriz.columns
-        has_pct = '% Exceso' in df_matriz.columns
         
         w_placa = 60
         w_opcion = 30
         w_prom = 25 if has_prom else 0
-        w_pct = 20 if has_pct else 0
         
-        espacio_restante = 275 - w_placa - w_opcion - w_prom - w_pct
-        cols_extras = 2 + (1 if has_prom else 0) + (1 if has_pct else 0)
-        cols_dias = len(df_matriz.columns) - cols_extras
-        w_dia = espacio_restante / cols_dias if cols_dias > 0 else 0
+        espacio_restante = 275 - w_placa - w_opcion - w_prom
+        cols_extras = 2 + (1 if has_prom else 0)
+        cols_dias = num_cols - cols_extras
+        w_dia = espacio_restante / cols_dias if cols_dias > 0 else 10
         
         font_size = 6 if cols_dias <= 15 else 5
         pdf.set_font("Helvetica", "B", font_size)
@@ -220,7 +219,6 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
             if i == 0: w = w_placa
             elif i == 1: w = w_opcion
             elif col == 'Promedio Vel. (km/h)': w = w_prom
-            elif col == '% Exceso': w = w_pct
             else: w = w_dia
             
             nom_col = str(col).replace('Dia_', '')
@@ -234,7 +232,6 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
                 if i == 0: w = w_placa
                 elif i == 1: w = w_opcion
                 elif col_name == 'Promedio Vel. (km/h)': w = w_prom
-                elif col_name == '% Exceso': w = w_pct
                 else: w = w_dia
                 
                 valstr = str(item).replace('.0', '').strip()
@@ -242,18 +239,11 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
                 pdf.set_fill_color(255, 255, 255)
                 pdf.set_text_color(0, 0, 0)
                 
-                # Colores para Promedio
                 if col_name == 'Promedio Vel. (km/h)':
                     if valstr != "-":
                         pdf.set_fill_color(230, 240, 255)
                         pdf.set_text_color(0, 50, 150)
                         valstr = f"{valstr} km/h"
-                # Colores para % Exceso
-                elif col_name == '% Exceso':
-                    if valstr != "-":
-                        pdf.set_fill_color(255, 235, 204) # Naranjita
-                        pdf.set_text_color(150, 75, 0)
-                # Colores para conteo de días
                 elif i > 1: 
                     try:
                         num = float(valstr)
@@ -271,7 +261,7 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
             pdf.ln()
     else:
         pdf.set_font("Helvetica", "", 8); pdf.set_text_color(0, 100, 0)
-        pdf.cell(0, 6, f"No hay datos estructurados para mostrar.", ln=True)
+        pdf.cell(0, 6, f"Operacion Segura: Nadie supero los {limite_vel} km/h.", ln=True)
         
     return finalizar_pdf(pdf)
 
@@ -380,7 +370,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.markdown("### 🚀 Depuración de Infractores Reales")
         st.caption("Sube TODOS los archivos a la vez: El 'Informe Estadístico' y los archivos 'Detallados' de cada técnico.")
         
-        # Permitirle al usuario definir cuál es el límite
         limite_vel = st.number_input("Establecer límite de velocidad (km/h):", min_value=10, max_value=200, value=60, step=5)
         
         if not es_movil:
@@ -412,19 +401,15 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             
                             if df_matriz is not None:
                                 dict_promedios = {}
-                                dict_pct = {}
                                 
-                                # 2. Analizar archivos detallados para sacar promedios
+                                # 2. Analizar archivos detallados
                                 for file_det in archivos_detallados:
                                     try:
                                         df_d = read_file_robust(file_det)
                                         col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|SPEED|KM/H|KMH', str(c), re.I)), None)
                                         col_placa = next((c for c in df_d.columns if re.search(r'PLACA|ALIAS|VEHICULO|NOMBRE', str(c), re.I)), None)
                                         
-                                        if col_vel and col_placa:
-                                            placa_sucia = str(df_d[col_placa].iloc[0])
-                                            placa_limpia = placa_sucia.split('-')[0].strip()
-                                            
+                                        if col_vel:
                                             df_d['Vel_Num'] = df_d[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
                                             
                                             # Extrae solo los eventos que genuinamente superaron el límite
@@ -432,63 +417,63 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             
                                             if not df_excesos_reales.empty:
                                                 promedio = df_excesos_reales['Vel_Num'].mean()
-                                                pct_exceso = ((promedio - limite_vel) / limite_vel) * 100
                                                 
-                                                dict_promedios[placa_limpia] = round(promedio, 2)
-                                                dict_pct[placa_limpia] = round(pct_exceso, 1)
-                                    except Exception:
+                                                if col_placa:
+                                                    # Buscar a qué placa corresponde en todo el archivo detallado
+                                                    placas_unicas = df_d[col_placa].dropna().astype(str).unique()
+                                                    for p_sucia in placas_unicas:
+                                                        if 'versión de este equipo' in p_sucia: continue
+                                                        p_limpia = p_sucia.split('-')[0].strip()
+                                                        dict_promedios[p_limpia] = round(promedio, 2)
+                                    except Exception as err:
                                         pass
                                 
-                                # 3. Inyectar datos calculados a la matriz principal
+                                # 3. Inyectar datos a la matriz principal
+                                col_placa_matriz = df_matriz.columns[0]
+                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip()
+                                
                                 if dict_promedios:
-                                    col_placa_matriz = df_matriz.columns[0]
-                                    df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip()
-                                    
                                     df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios)
-                                    df_matriz['% Exceso'] = df_matriz['Placa_Match'].map(dict_pct)
                                     
                                     # 🚨 DEPURA: Borra de la matriz a todo el que no tuvo excesos confirmados
                                     df_matriz = df_matriz.dropna(subset=['Promedio Vel. (km/h)'])
-                                    
-                                    df_matriz['% Exceso'] = df_matriz['% Exceso'].astype(str) + '%'
-                                    df_matriz = df_matriz.drop(columns=['Placa_Match'])
-
-                                    if df_matriz.empty:
-                                        st.success(f"✅ ¡Excelente! Ningún vehículo superó la velocidad de {limite_vel} km/h en los archivos analizados.")
-                                    else:
-                                        st.warning(f"⚠️ Se detectaron {len(df_matriz)} vehículos con excesos confirmados (Promedio > {limite_vel} km/h).")
-                                        
-                                        # Colorear matriz en pantalla
-                                        cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)', '% Exceso']]
-                                        def color_celdas(val):
-                                            try:
-                                                if float(val) > 0: return 'background-color: #ffcccc; color: #b30000; font-weight: bold'
-                                            except: pass
-                                            return ''
-                                            
-                                        styled_df = df_matriz.style.map(color_celdas, subset=cols_estilo)
-                                        
-                                        def color_pct(val):
-                                            return 'background-color: #ffe6cc; color: #cc6600; font-weight: bold'
-                                        styled_df = styled_df.map(color_pct, subset=['% Exceso'])
-                                        
-                                        st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                                            
-                                        # Generar y Descargar PDF
-                                        pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz, limite_vel)
-                                        st.download_button(
-                                            label="📥 Descargar Reporte Final (PDF)",
-                                            data=pdf_matriz_bytes,
-                                            file_name=f"Auditoria_Velocidades_{datetime.now().strftime('%Y%m%d')}.pdf",
-                                            mime="application/pdf",
-                                            type="primary",
-                                            use_container_width=True
-                                        )
                                 else:
-                                    st.success(f"✅ No se encontraron excesos mayores a {limite_vel} km/h en los archivos detallados.")
+                                    # Si no hubo incidencias en ningún archivo, vaciamos la matriz para mostrarla limpia
+                                    df_matriz = df_matriz.iloc[0:0] 
+                                    
+                                df_matriz = df_matriz.drop(columns=['Placa_Match'], errors='ignore')
+
+                                if df_matriz.empty:
+                                    st.success(f"✅ ¡Excelente! Ningún vehículo superó la velocidad de {limite_vel} km/h en los archivos analizados.")
+                                    # Mostramos la tabla vacía para que el usuario confirme que se procesó
+                                    st.dataframe(df_matriz, hide_index=True, use_container_width=True)
+                                else:
+                                    st.warning(f"⚠️ Se detectaron {len(df_matriz)} vehículos con excesos confirmados (Promedio > {limite_vel} km/h).")
+                                    
+                                    # Colorear matriz en pantalla
+                                    cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
+                                    def color_celdas(val):
+                                        try:
+                                            if float(val) > 0: return 'background-color: #ffcccc; color: #b30000; font-weight: bold'
+                                        except: pass
+                                        return ''
+                                        
+                                    styled_df = df_matriz.style.map(color_celdas, subset=cols_estilo)
+                                    st.dataframe(styled_df, hide_index=True, use_container_width=True)
+                                        
+                                    # Generar y Descargar PDF
+                                    pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz, limite_vel)
+                                    st.download_button(
+                                        label="📥 Descargar Reporte Final (PDF)",
+                                        data=pdf_matriz_bytes,
+                                        file_name=f"Auditoria_Velocidades_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                        mime="application/pdf",
+                                        type="primary",
+                                        use_container_width=True
+                                    )
                             else:
                                 st.error(f"❌ Error al procesar matriz principal: {msg_tel}")
                         except Exception as main_e:
-                            st.error(f"❌ Ocurrió un error al procesar. Detalle: {main_e}")
+                            st.error(f"❌ Ocurrió un error al procesar. Verifica si falta instalar 'xlrd'. Detalle: {main_e}")
         else:
             st.info("📱 La carga masiva de archivos está reservada para uso en computadora (Modo PC).")
