@@ -10,7 +10,7 @@ except ImportError:
     st.error("⚠️ No se pudo importar tools.py. Asegúrate de que esté en la misma carpeta.")
 
 # ==============================================================================
-# LÓGICA DE AUDITORÍA DE VEHÍCULOS
+# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
 # ==============================================================================
 def procesar_auditoria_vehiculos(df):
     try:
@@ -59,9 +59,57 @@ def procesar_auditoria_vehiculos(df):
         return None, str(e)
 
 # ==============================================================================
-# GENERADOR DE PDF DINÁMICO
+# LÓGICA DE EXCESOS DE VELOCIDAD (NUEVO)
 # ==============================================================================
-def generar_pdf_auditoria(df_resumen):
+def procesar_excesos_velocidad(df, limite_vel):
+    try:
+        # 1. Búsqueda inteligente de columnas (soporta múltiples formatos de GPS)
+        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO|UNIDAD|NOMBRE', str(c), re.I)), None)
+        col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|SPEED|KM/H|KMH', str(c), re.I)), None)
+        col_fecha = next((c for c in df.columns if re.search(r'FECHA|HORA|TIME|DATE', str(c), re.I)), None)
+        col_ubi = next((c for c in df.columns if re.search(r'UBICACION|DIRECCION|COORDENADA|POSICION', str(c), re.I)), None)
+
+        if not col_placa or not col_vel:
+            return None, None, "El archivo no contiene las columnas necesarias (Placa/Vehículo y Velocidad)."
+
+        df = df.copy()
+        
+        # 2. Limpieza de nombres de vehículos
+        df[col_placa] = df[col_placa].astype(str).str.replace(r'\xa0', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
+        df = df[~df[col_placa].isin(['nan', '--', 'None', '', 'N/D'])]
+
+        # 3. Extracción de la velocidad pura (por si dice "85 km/h" extrae solo "85")
+        df['Vel_Numerica'] = df[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
+
+        # 4. Filtrar excesos
+        df_excesos = df[df['Vel_Numerica'] > limite_vel].copy()
+
+        if df_excesos.empty:
+            return pd.DataFrame(), pd.DataFrame(), "OK"
+
+        # 5. Formatear detalle
+        df_excesos['Vehículo / Placa'] = df_excesos[col_placa]
+        df_excesos['Velocidad (km/h)'] = df_excesos['Vel_Numerica']
+        df_excesos['Fecha y Hora'] = df_excesos[col_fecha].astype(str) if col_fecha else "N/D"
+        df_excesos['Ubicación'] = df_excesos[col_ubi].astype(str) if col_ubi else "N/D"
+
+        detalle = df_excesos[['Vehículo / Placa', 'Velocidad (km/h)', 'Fecha y Hora', 'Ubicación']].sort_values(by='Velocidad (km/h)', ascending=False)
+
+        # 6. Crear resumen Top Infractores
+        resumen = df_excesos.groupby('Vehículo / Placa').agg(
+            Total_Excesos=('Vehículo / Placa', 'count'),
+            Vel_Maxima=('Velocidad (km/h)', 'max')
+        ).reset_index().sort_values(by='Total_Excesos', ascending=False)
+        resumen.columns = ['Vehículo / Placa', 'Total de Infracciones', 'Velocidad Máxima Alcanzada']
+
+        return resumen, detalle, "OK"
+    except Exception as e:
+        return None, None, str(e)
+
+# ==============================================================================
+# GENERADORES DE PDF
+# ==============================================================================
+def generar_pdf_auditoria_tiempos(df_resumen):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -77,7 +125,6 @@ def generar_pdf_auditoria(df_resumen):
     pdf.seccion_titulo("Consolidado de Tiempos Reales en Calle")
     
     if not df_resumen.empty:
-        # Encabezados
         pdf.set_fill_color(225, 225, 225)
         pdf.set_text_color(50, 50, 50)
         pdf.set_font("Helvetica", "B", 7)
@@ -88,24 +135,21 @@ def generar_pdf_auditoria(df_resumen):
             pdf.cell(anchos[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
         pdf.ln()
         
-        # Filas dinámicas
         pdf.set_font("Helvetica", "", 7)
         for _, fila in df_resumen.iterrows():
             for i, item in enumerate(fila):
                 valstr = str(item)[:45]
                 valclean = safestr(valstr)
                 
-                # Colores por defecto (blanco y negro)
                 fillr, fillg, fillb = 255, 255, 255
                 textr, textg, textb = 0, 0, 0
                 
-                # Reglas de colores dinámicos
                 if "Sin Salida" in valstr or "Sin Ingreso" in valstr or "Revisar" in valstr or "---" in valstr:
-                    fillr, fillg, fillb = 253, 230, 230 # Fondo rojizo
-                    textr, textg, textb = 180, 0, 0     # Texto rojo
+                    fillr, fillg, fillb = 253, 230, 230 
+                    textr, textg, textb = 180, 0, 0     
                 elif i == 3 and "Sin" not in valstr and "Revisar" not in valstr:
-                    fillr, fillg, fillb = 230, 245, 230 # Fondo verdoso
-                    textr, textg, textb = 0, 100, 0     # Texto verde
+                    fillr, fillg, fillb = 230, 245, 230 
+                    textr, textg, textb = 0, 100, 0     
                     
                 pdf.set_fill_color(fillr, fillg, fillb)
                 pdf.set_text_color(textr, textg, textb)
@@ -118,8 +162,75 @@ def generar_pdf_auditoria(df_resumen):
         
     return finalizar_pdf(pdf)
 
+def generar_pdf_velocidad(df_resumen, df_detalle, limite):
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.set_fill_color(252, 252, 252)
+    ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
+    pdf.cell(0, 10, safestr(f" Auditoria de Excesos de Velocidad (> {limite} km/h) - {ahorastr}"), border=1, ln=True, fill=True)
+    pdf.ln(5)
+    
+    if not df_resumen.empty:
+        # Tabla Top Infractores
+        pdf.seccion_titulo("Resumen: Top Vehiculos con Infracciones")
+        pdf.set_fill_color(225, 225, 225)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 7)
+        anchos_res = [80, 45, 45]
+        
+        for i, col in enumerate(df_resumen.columns):
+            pdf.cell(anchos_res[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 7)
+        for _, fila in df_resumen.iterrows():
+            pdf.set_fill_color(255, 255, 255)
+            pdf.set_text_color(0, 0, 0)
+            
+            # Resaltar en rojo si supera el límite por mucho (+20km/h)
+            if fila['Velocidad Máxima Alcanzada'] >= limite + 20:
+                pdf.set_text_color(200, 0, 0)
+                
+            pdf.cell(anchos_res[0], 5, safestr(str(fila[0])[:45]), border=1, align="L", fill=True)
+            pdf.cell(anchos_res[1], 5, safestr(str(fila[1])), border=1, align="C", fill=True)
+            pdf.cell(anchos_res[2], 5, safestr(f"{fila[2]:.1f} km/h"), border=1, align="C", fill=True)
+            pdf.ln()
+            
+        pdf.ln(5)
+        
+        # Tabla Detalle
+        pdf.seccion_titulo("Detalle Completo de Eventos de Exceso")
+        pdf.set_fill_color(225, 225, 225)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 7)
+        anchos_det = [50, 25, 35, 80]
+        
+        for i, col in enumerate(df_detalle.columns):
+            pdf.cell(anchos_det[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 6)
+        pdf.set_text_color(0, 0, 0)
+        for _, fila in df_detalle.iterrows():
+            pdf.cell(anchos_det[0], 5, safestr(str(fila[0])[:35]), border=1, align="L")
+            pdf.cell(anchos_det[1], 5, safestr(f"{fila[1]:.1f}"), border=1, align="C")
+            pdf.cell(anchos_det[2], 5, safestr(str(fila[2])[:20]), border=1, align="C")
+            pdf.cell(anchos_det[3], 5, safestr(str(fila[3])[:65]), border=1, align="L")
+            pdf.ln()
+    else:
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 100, 0)
+        pdf.cell(0, 6, f"Operacion Segura. No se detectaron velocidades mayores a {limite} km/h.", ln=True)
+        
+    return finalizar_pdf(pdf)
+
 # ==============================================================================
-# PANTALLA VISUAL QUE SE LLAMARÁ DESDE APP.PY
+# PANTALLA VISUAL PRINCIPAL
 # ==============================================================================
 def mostrar_auditoria(es_movil=False, conn=None):
     col1, col2 = st.columns([1, 4])
@@ -127,105 +238,135 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.write("") 
         st.markdown("<h1 style='text-align: center;'>🚙</h1>", unsafe_allow_html=True)
     with col2:
-        st.title("Auditoría de Tiempos de Ruta (GPS)")
-        st.caption("Consolida el tiempo real en calle de cada vehículo a partir del reporte crudo de Zonas/Rutas.")
+        st.title("Auditoría de Vehículos (GPS)")
+        st.caption("Control gerencial de Tiempos en Ruta y Excesos de Velocidad.")
 
     st.divider()
 
-    # Variable para almacenar los datos crudos antes de procesarlos
-    df_gps_crudo = None
+    # ==========================================================================
+    # SEPARACIÓN EN DOS PESTAÑAS INDEPENDIENTES
+    # ==========================================================================
+    tab_tiempos, tab_velocidad = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Control de Velocidad"])
 
-    # --- 1. BOTÓN DE LA NUBE (Siempre visible para Móvil y PC) ---
-    st.markdown("### ☁️ Sincronización")
-    if st.button("☁️ Cargar desde la Nube (Auditoría)", use_container_width=True, type="primary"):
-        if conn is not None:
-            with st.spinner("📥 Descargando reporte desde la pestaña 'Auditoria'..."):
-                try:
-                    df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", ttl=0)
-                    if not df_descarga.empty:
-                        st.session_state['df_gps_memoria'] = df_descarga
-                        st.success("✅ Datos descargados de la nube correctamente.")
-                    else:
-                        st.warning("⚠️ La pestaña 'Auditoria' está vacía en la nube.")
-                except Exception as e:
-                    st.error(f"❌ Error al conectar con la pestaña 'Auditoria' en la nube: {e}")
-        else:
-            st.error("❌ No se detectó la conexión a Google Sheets.")
+    # --------------------------------------------------------------------------
+    # PESTAÑA 1: TIEMPOS (Conectado a la Nube)
+    # --------------------------------------------------------------------------
+    with tab_tiempos:
+        df_gps_crudo = None
+
+        st.markdown("### ☁️ Sincronización de Tiempos")
+        if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, type="primary"):
+            if conn is not None:
+                with st.spinner("📥 Descargando reporte desde la pestaña 'Auditoria'..."):
+                    try:
+                        df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", ttl=0)
+                        if not df_descarga.empty:
+                            st.session_state['df_gps_memoria'] = df_descarga
+                            st.success("✅ Datos descargados de la nube correctamente.")
+                        else:
+                            st.warning("⚠️ La pestaña 'Auditoria' está vacía en la nube.")
+                    except Exception as e:
+                        st.error(f"❌ Error al conectar con la pestaña 'Auditoria' en la nube: {e}")
+            else:
+                st.error("❌ No se detectó la conexión a Google Sheets.")
+                
+        st.divider()
+
+        if not es_movil:
+            st.markdown("### 📥 Ingreso Manual (Modo PC)")
+            archivo_gps_tiempos = st.file_uploader("Arrastra el archivo de Zonas/Rutas", type=['csv', 'xlsx'], key="up_tiempos")
             
-    st.divider()
-
-    # --- 2. LÓGICA DE RESTRICCIÓN: MÓVIL vs PC ---
-    if not es_movil:
-        # ===== MODO PC: MUESTRA EL CARGADOR Y SUBE A LA NUBE =====
-        st.markdown("### 📥 Ingreso Manual y Sincronización (Modo PC)")
-        archivo_gps = st.file_uploader("Arrastra aquí el archivo Excel o CSV generado por la plataforma de GPS", type=['csv', 'xlsx'])
-        
-        if archivo_gps is not None:
-            with st.spinner("🔍 Leyendo archivo local y subiendo a la Nube..."):
-                try:
-                    # 1. Leer el archivo
-                    if archivo_gps.name.endswith('.csv'): df_gps_crudo = pd.read_csv(archivo_gps)
-                    else: df_gps_crudo = pd.read_excel(archivo_gps)
-                    
-                    # 2. Subir automáticamente a Google Sheets
-                    if conn is not None:
-                        st.toast("Subiendo datos a Google Sheets...")
-                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", data=df_gps_crudo)
-                        st.success("☁️ ¡Datos subidos a la Nube exitosamente! Ya están disponibles para los móviles.")
-                    
-                    # 3. Limpiamos la memoria local vieja
-                    if 'df_gps_memoria' in st.session_state:
-                        del st.session_state['df_gps_memoria']
+            if archivo_gps_tiempos is not None:
+                with st.spinner("🔍 Leyendo archivo y subiendo a la Nube..."):
+                    try:
+                        if archivo_gps_tiempos.name.endswith('.csv'): df_gps_crudo = pd.read_csv(archivo_gps_tiempos)
+                        else: df_gps_crudo = pd.read_excel(archivo_gps_tiempos)
                         
-                except Exception as e:
-                    st.error(f"❌ Error crítico al leer o subir el archivo local: {e}")
-    else:
-        # ===== MODO MÓVIL: OCULTA EL CARGADOR Y MUESTRA MENSAJE =====
-        st.info("📱 **Modo Móvil Detectado:** El ingreso de datos manual en crudo está deshabilitado en teléfonos. Usa el botón de carga desde la nube superior para ver la última versión.")
+                        if conn is not None:
+                            st.toast("Subiendo datos a Google Sheets...")
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", data=df_gps_crudo)
+                            st.success("☁️ ¡Datos subidos a la Nube exitosamente!")
+                        
+                        if 'df_gps_memoria' in st.session_state:
+                            del st.session_state['df_gps_memoria']
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error crítico al leer o subir: {e}")
+        else:
+            st.info("📱 El ingreso de datos manual está deshabilitado en teléfonos. Usa el botón de la nube.")
 
-    # --- RECUPERAR DATOS DE LA NUBE SI EXISTEN Y NO SE SUBIÓ ARCHIVO MANUAL ---
-    if df_gps_crudo is None and 'df_gps_memoria' in st.session_state:
-        df_gps_crudo = st.session_state['df_gps_memoria']
+        if df_gps_crudo is None and 'df_gps_memoria' in st.session_state:
+            df_gps_crudo = st.session_state['df_gps_memoria']
 
-    # --- 3. PROCESAMIENTO Y RESULTADOS ---
-    if df_gps_crudo is not None:
-        with st.spinner("⚙️ Procesando auditoría y calculando tiempos..."):
-            df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps_crudo)
-        
-        if df_resumen_gps is not None:
-            st.success("✅ ¡Análisis completado! Vehículos unificados y tiempos consolidados.")
+        if df_gps_crudo is not None:
+            with st.spinner("⚙️ Procesando auditoría de tiempos..."):
+                df_resumen_gps, mensaje_error = procesar_auditoria_vehiculos(df_gps_crudo)
             
-            st.markdown("### 📊 Resultados de la Auditoría")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Vehículos Activos", len(df_resumen_gps))
-            vehiculos_calle = len(df_resumen_gps[df_resumen_gps['Última Entrada'] == "---"])
-            m2.metric("Vehículos Aún en Calle / Sin Cierre", vehiculos_calle)
-            
-            st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
-            
-            csv_gps = df_resumen_gps.to_csv(index=False).encode('utf-8')
-            pdf_bytes = generar_pdf_auditoria(df_resumen_gps)
-            
-            st.divider()
-            st.markdown("### 📥 Exportar Información")
-            
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
+            if df_resumen_gps is not None:
+                st.success("✅ Análisis completado.")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Vehículos Activos", len(df_resumen_gps))
+                m2.metric("Vehículos en Calle / Sin Cierre", len(df_resumen_gps[df_resumen_gps['Última Entrada'] == "---"]))
+                
+                st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
+                
+                pdf_bytes_tiempos = generar_pdf_auditoria_tiempos(df_resumen_gps)
+                
                 st.download_button(
-                    label="🚀 Descargar Reporte (PDF)",
-                    data=pdf_bytes,
-                    file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                    label="🚀 Descargar Reporte de Tiempos (PDF)",
+                    data=pdf_bytes_tiempos,
+                    file_name=f"Auditoria_Tiempos_{datetime.now().strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
                     type="primary",
                     use_container_width=True
                 )
-            with col_d2:
-                st.download_button(
-                    label="📥 Descargar Reporte (CSV)",
-                    data=csv_gps,
-                    file_name=f"Auditoria_Vehiculos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+            else:
+                st.error(f"❌ Error formato: {mensaje_error}")
+
+
+    # --------------------------------------------------------------------------
+    # PESTAÑA 2: EXCESOS DE VELOCIDAD (Independiente)
+    # --------------------------------------------------------------------------
+    with tab_velocidad:
+        st.markdown("### 🚀 Análisis de Telemetría y Excesos")
+        st.caption("Sube el archivo general del GPS. El sistema filtrará a los infractores.")
+        
+        limite_vel = st.number_input("Establecer límite de velocidad (km/h):", min_value=10, max_value=200, value=80, step=5)
+        
+        if not es_movil:
+            archivo_vel = st.file_uploader("Arrastra el reporte de Velocidad/Telemetría", type=['csv', 'xlsx'], key="up_vel")
+            
+            if archivo_vel is not None:
+                with st.spinner("Analizando velocidades..."):
+                    if archivo_vel.name.endswith('.csv'): df_vel_crudo = pd.read_csv(archivo_vel)
+                    else: df_vel_crudo = pd.read_excel(archivo_vel)
+                    
+                    df_res_vel, df_det_vel, msg_vel = procesar_excesos_velocidad(df_vel_crudo, limite_vel)
+                
+                if df_res_vel is not None:
+                    if df_res_vel.empty:
+                        st.success(f"✅ **¡Excelente!** Operación Segura. No se registraron velocidades superiores a {limite_vel} km/h.")
+                    else:
+                        st.error(f"⚠️ Se detectaron {len(df_det_vel)} infracciones distribuidas en {len(df_res_vel)} vehículos.")
+                        
+                        col_v1, col_v2 = st.columns([1, 1.5])
+                        with col_v1:
+                            st.markdown("**🏆 Top Infractores**")
+                            st.dataframe(df_res_vel, hide_index=True, use_container_width=True)
+                        with col_v2:
+                            st.markdown("**📍 Detalle de Eventos**")
+                            st.dataframe(df_det_vel, hide_index=True, use_container_width=True)
+                            
+                        pdf_vel_bytes = generar_pdf_velocidad(df_res_vel, df_det_vel, limite_vel)
+                        st.download_button(
+                            label="📥 Descargar Reporte de Infracciones (PDF)",
+                            data=pdf_vel_bytes,
+                            file_name=f"Infracciones_Velocidad_{datetime.now().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+                else:
+                    st.error(f"❌ Error al procesar velocidades: {msg_vel}")
         else:
-            st.error(f"❌ Ocurrió un error al procesar el formato: {mensaje_error}")
+            st.info("📱 La carga de archivos de telemetría está reservada para uso en computadora (Modo PC).")
