@@ -12,7 +12,7 @@ def get_cookie_manager():
 cookie_manager = get_cookie_manager()
 
 # ==============================================================================
-# ASIGNACIÓN DE ROLES (Las contraseñas ya no están aquí, solo el rol)
+# ASIGNACIÓN DE ROLES (Las contraseñas ya no están aquí, se leen de st.secrets)
 # ==============================================================================
 ROLES_USUARIOS = {
     "jaison": "admin",
@@ -24,11 +24,7 @@ ROLES_USUARIOS = {
 # LÓGICA DE AUTENTICACIÓN Y TEMPORIZADOR BLINDADA
 # ==============================================================================
 def verificar_autenticacion():
-    # Pausar el código hasta que el celular envíe las cookies
-    if not cookie_manager.ready():
-        st.stop()
-        
-    # 1. Leemos la cookie con seguridad
+    # 1. Leemos la cookie del celular/PC con seguridad
     ultimo_acceso_str = cookie_manager.get(cookie="token_maxcom")
     
     if ultimo_acceso_str:
@@ -41,10 +37,11 @@ def verificar_autenticacion():
             ultimo_acceso = datetime.fromisoformat(fecha_str)
             tiempo_inactivo = datetime.now() - ultimo_acceso
             
-            # 2. Verificamos el temporizador de 5 Minutos
+            # 2. Verificamos el temporizador de 5 Minutos (300 segundos)
             if tiempo_inactivo < timedelta(minutes=5):
                 
-                # ANTI-BUCLES: Solo renovamos la cookie si ha pasado más de 1 minuto
+                # 🚨 ANTI-BUCLES: Solo renovamos la cookie si ha pasado más de 1 minuto
+                # Esto evita que la app se recargue infinitamente
                 if tiempo_inactivo > timedelta(minutes=1):
                     nuevo_token = f"{datetime.now().isoformat()}|{rol_guardado}"
                     cookie_manager.set("token_maxcom", nuevo_token)
@@ -53,7 +50,7 @@ def verificar_autenticacion():
                 st.session_state['rol_actual'] = rol_guardado
                 return True
             else:
-                # 3. Si pasaron los 5 minutos sin actividad, lo expulsamos
+                # 3. Si se pasó de los 5 minutos de inactividad, destruimos la sesión
                 cookie_manager.delete("token_maxcom")
                 st.session_state['autenticado'] = False
                 return False
@@ -69,15 +66,15 @@ def verificar_autenticacion():
 # ==============================================================================
 def validar_credenciales(usuario, pwd_ingresada):
     try:
-        # Opción A: Si guardas tus contraseñas en un bloque [passwords]
+        # Opción A: Si guardas tus contraseñas en un bloque [passwords] en tu secrets.toml
         if "passwords" in st.secrets and usuario in st.secrets["passwords"]:
             return pwd_ingresada == str(st.secrets["passwords"][usuario])
             
-        # Opción B: Si guardas las variables directas (ej: jaison = "123")
+        # Opción B: Si guardas las variables directas (ej: jaison = "MiClave123")
         if usuario in st.secrets:
             return pwd_ingresada == str(st.secrets[usuario])
             
-        # Opción C: Si usas el formato (ej: pwd_jaison = "123")
+        # Opción C: Si usas el formato con prefijo (ej: pwd_jaison = "MiClave123")
         if f"pwd_{usuario}" in st.secrets:
             return pwd_ingresada == str(st.secrets[f"pwd_{usuario}"])
             
@@ -95,20 +92,20 @@ def mostrar_pantalla_login():
     
     with col2:
         st.markdown("<h2 style='text-align: center;'>🔒 Acceso Operativo</h2>", unsafe_allow_html=True)
-        st.info("⏳ Por seguridad, tu sesión se cerrará tras 5 minutos de inactividad.")
+        st.info("⏳ Por seguridad, tu sesión se cerrará tras 5 minutos de inactividad en la App.")
         
         usuario = st.text_input("👤 Usuario", key="user_input").strip().lower()
         pwd = st.text_input("🔑 Contraseña", type="password", key="pwd_input")
         
         if st.button("🚀 Ingresar", use_container_width=True, type="primary"):
             
-            # 1. Validar que el usuario exista en nuestros roles
+            # 1. Validar que el usuario exista en nuestra lista de roles
             if usuario in ROLES_USUARIOS:
-                # 2. Validar contraseña contra st.secrets
+                # 2. Validar contraseña contra st.secrets en la nube
                 if validar_credenciales(usuario, pwd):
                     rol = ROLES_USUARIOS[usuario]
                     
-                    # Crear el token inicial con la hora y el rol
+                    # Crear el token inicial con la hora de entrada y el rol
                     token = f"{datetime.now().isoformat()}|{rol}"
                     cookie_manager.set("token_maxcom", token)
                     
