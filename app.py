@@ -41,20 +41,19 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" # Expandido para que siempre esté accesible
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO - RESPETA EL MENÚ MÓVIL)
+# 📱 MODO APP NATIVA (CSS LIMPIO - NO OCULTA EL MENÚ)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar marca de agua y opciones de desarrollador (Deploy) */
+/* Ocultar SOLAMENTE la marca de agua inferior */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-.stAppToolbar {display: none !important;}
 
-/* Aprovechar el espacio de la pantalla */
+/* Reducir márgenes laterales para aprovechar la pantalla en celular */
 .block-container {
     padding-top: 2rem !important;
     padding-bottom: 1rem !important;
@@ -62,7 +61,7 @@ footer {visibility: hidden;}
     padding-right: 0.5rem !important;
 }
 
-/* Evitar zoom accidental en celulares al tocar rápido */
+/* Evitar el zoom accidental al tocar la pantalla */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -74,43 +73,50 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (MANEJA CADENAS DE HORA PURAS)
+# 🛡️ MOTOR SEGURO DE FECHAS (IGNORA LOS "00:00" FALSOS DE GOOGLE SHEETS)
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
         return pd.NaT
     
+    str_val = str(val).strip()
+    
+    # 🚨 FILTRO ANTI-BASURA: Si Sheets manda un cero o medianoche exacta, está vacío.
+    if str_val in ["0", "0.0", "00:00", "00:00:00", "12:00:00 AM", "1899-12-30 00:00:00"]:
+        return pd.NaT
+
     hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
 
     try:
-        # Manejar objetos time directos de pandas/python
         if isinstance(val, dt_time):
+            if val.hour == 0 and val.minute == 0: return pd.NaT
             return pd.Timestamp.combine(hoy.date(), val)
 
         if isinstance(val, datetime):
+            if val.hour == 0 and val.minute == 0 and val.second == 0: return pd.NaT
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
             return pd.Timestamp(val)
         
         if isinstance(val, (int, float)):
+            if val == 0 or val == 0.0: return pd.NaT
             if val > 10000:
-                return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 <= val < 1:
+                dt = pd.to_datetime(val, unit='D', origin='1899-12-30')
+                if dt.hour == 0 and dt.minute == 0: return pd.NaT
+                return dt
+            elif 0 < val < 1:
                 return hoy + pd.to_timedelta(val, unit='D')
             else:
                 return pd.NaT
 
-        str_val = str(val).strip()
-        
-        # Si la cadena se parece a una hora (ej. "11:30" o "11:30:00")
         if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
+            if str_val.startswith("00:00") or str_val == "0:00": return pd.NaT
             parsed_time = pd.to_datetime(str_val).time()
             return pd.Timestamp.combine(hoy.date(), parsed_time)
 
-        # Si es una fecha completa en string
         parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
         if pd.notnull(parsed):
-            # Si pandas le asignó el año 1900/1970, significa que solo traía la hora
+            if parsed.hour == 0 and parsed.minute == 0: return pd.NaT
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
@@ -127,7 +133,7 @@ def procesar_fechas_seguro(df_input, columnas):
     return df
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE NEGATIVOS)
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -171,11 +177,11 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (BLINDADA CONTRA GOOGLE SHEETS)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (CON DEDUPLICADOR Y CÁLCULO)
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("Descargando historial y limpiando duplicados..."):
+        with st.spinner("Descargando y aplicando formato espejo estricto..."):
             df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
             
             if not df_nube.empty:
@@ -189,10 +195,10 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                # Pasamos el filtro ultra seguro
+                # Pasamos el filtro de fechas para evitar las 00:00
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
-                # RECALCULAR TIEMPOS EN DESCARGA
+                # RECALCULAR TIEMPOS EN DESCARGA (Corrige los cálculos rotos de la nube)
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
                     df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
@@ -222,9 +228,9 @@ def sincronizar_datos_nube(conn):
                         df_nube.loc[mask_falsos, 'ALERTA_TIEMPO'] = False
                         df_nube.loc[~mask_solo_sop, 'ALERTA_TIEMPO'] = False
                 
-                # ------------------------------------------------------------------------------
-                # 🧹 DEDUPLICACIÓN ESTRICTA EN DESCARGA (ELIMINA LA BASURA DE LA NUBE)
-                # ------------------------------------------------------------------------------
+                # ----------------------------------------------------------------------
+                # 🧹 DEPURADORA DE DUPLICADOS EN LA DESCARGA
+                # ----------------------------------------------------------------------
                 for col_txt in ['NUM', 'CLIENTE']:
                     if col_txt in df_nube.columns:
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
@@ -268,7 +274,7 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa. Datos históricos cargados y limpios.")
+                st.success("✅ Sincronización Exitosa.")
                 st.rerun()
             else:
                 st.warning("La base de datos en la nube está vacía.")
@@ -311,9 +317,6 @@ def mostrar_comentario_cierre(fila):
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
 
-# ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (ESTILO LIBRETA)
-# ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
@@ -565,14 +568,12 @@ def main():
                 st.session_state.df_hist = res_h_diamante
                 
                 if conn is not None:
-                    with st.spinner("☁️ Sincronizando datos y uniendo con historial..."):
+                    with st.spinner("☁️ Sincronizando y depurando duplicados en la nube..."):
                         try:
                             # ------------------------------------------------------------------
-                            # 🛡️ UNION HISTÓRICA CON DEDUPLICACIÓN ESTRICTA
+                            # 🛡️ UNION HISTÓRICA CON DEDUPLICACIÓN ESTRICTA (EVITA LAS 80 ÓRDENES)
                             # ------------------------------------------------------------------
                             df_new = res_p_diamante.copy()
-                            
-                            # Forzar NUM a string limpio en df_new
                             if 'NUM' in df_new.columns:
                                 df_new['NUM'] = pd.to_numeric(df_new['NUM'], errors='coerce').fillna(0).astype(int).astype(str)
                                 df_new['NUM'] = df_new['NUM'].replace('0', 'N/D')
@@ -589,13 +590,11 @@ def main():
                             else:
                                 df_combined = df_new
                                 
-                            # ELIMINAR DUPLICADOS SALVANDO EL HISTORIAL CORRECTO
                             if 'NUM' in df_combined.columns:
                                 df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                                 df_nd = df_combined[df_combined['NUM'] == 'N/D']
                                 df_combined = pd.concat([df_valid_num, df_nd])
 
-                            # Preparar fechas como texto puro para evitar error de Google Sheets
                             df_to_upload = df_combined.copy()
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if c_date in df_to_upload.columns:
@@ -612,7 +611,7 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # DEDUPLICADOR FINAL EN MEMORIA
+    # DEDUPLICADOR DE SEGURIDAD EN MEMORIA
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -875,7 +874,7 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # 🛡️ Aplicamos el filtro maestro de técnicos para que los datos sean puros
+            # Filtro puro
             mask_tec_valido_rep = (
                 df_base['TECNICO'].notna() & 
                 (df_base['TECNICO'].astype(str).str.strip() != '') & 
@@ -886,9 +885,6 @@ def main():
             df_cierre_filtrado = df_base_valido_rep[(df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base_valido_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
             
-            # ====================================================================
-            # 📊 GRÁFICAS DE MEDICIÓN EN EL REPORTE DIARIO
-            # ====================================================================
             st.markdown("### 📊 Indicadores de Avance Operativo")
             vivas_rep = df_base_valido_rep[df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)]
             
@@ -926,7 +922,7 @@ def main():
             with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_global_rep, "🌍 Global"), use_container_width=True)
             
             st.divider()
-            
+
             if not df_cierre_filtrado.empty:
                 st.markdown("### 📊 Desglose de Producción por Categoría")
                 cs_col, ci_col, cp_col, co_col = st.columns(4)
@@ -1031,9 +1027,6 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
-        # ------------------------------------------------------------------------------
-        # 🛡️ FILTRO MAESTRO DE TÉCNICOS
-        # ------------------------------------------------------------------------------
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
