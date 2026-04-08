@@ -655,26 +655,24 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        def extraer_motivo_falla(row):
+def extraer_motivo_falla(row):
             act = str(row.get('ACTIVIDAD', '')).upper()
             com = str(row.get('COMENTARIO', '')).upper()
             texto = act + " " + com
             
             if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
+            
+            # 🚨 PRIORIDAD 1: Si es Instalación, Adición, Cambio, etc., se clasifica de inmediato
+            if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
+            
+            # 🚨 PRIORIDAD 2: Clasificación de Fallas / Mantenimientos
             if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
             if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
             if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
-            if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
+            
             return "🔧 Mantenimiento General"
             
         df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
-
-        def extraer_segmento_global(row):
-            texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
-            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
-            return 'RESIDENCIAL'
-            
-        df_base['SEGMENTO'] = df_base.apply(extraer_segmento_global, axis=1)
 
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns:
