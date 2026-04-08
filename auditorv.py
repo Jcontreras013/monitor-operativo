@@ -11,32 +11,40 @@ except ImportError:
     st.error("⚠️ No se pudo importar tools.py. Asegúrate de que esté en la misma carpeta.")
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS (SALVA ERRORES DE GPS Y HTML CAMUFLADOS)
+# LECTOR BLINDADO DE ARCHIVOS (ANTI-ERRORES BINARIOS)
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     
     if filename.endswith('.csv'):
         try:
+            uploaded_file.seek(0)
             return pd.read_csv(uploaded_file, encoding='utf-8')
         except UnicodeDecodeError:
             uploaded_file.seek(0)
             return pd.read_csv(uploaded_file, encoding='latin1')
     else:
         try:
-            return pd.read_excel(uploaded_file)
-        except Exception:
+            # Intento 1: Leer como Excel Real
+            uploaded_file.seek(0)
+            motor = 'xlrd' if filename.endswith('.xls') else None
+            return pd.read_excel(uploaded_file, engine=motor)
+        except Exception as e_excel:
+            # Intento 2: Si falla, intentar como HTML camuflado de forma segura
             try:
                 uploaded_file.seek(0)
-                dfs = pd.read_html(uploaded_file.getvalue(), encoding='utf-8')
+                # Convertimos los bytes a texto ignorando errores para que no colapse
+                html_texto = uploaded_file.getvalue().decode('utf-8', errors='replace')
+                dfs = pd.read_html(html_texto)
                 return max(dfs, key=len)
             except Exception:
                 try:
                     uploaded_file.seek(0)
-                    dfs = pd.read_html(uploaded_file.getvalue(), encoding='latin1')
+                    html_texto = uploaded_file.getvalue().decode('latin1', errors='replace')
+                    dfs = pd.read_html(html_texto)
                     return max(dfs, key=len)
-                except Exception as e:
-                    raise ValueError(f"No se pudo decodificar el archivo. Detalle: {e}")
+                except Exception as e_html:
+                    raise ValueError(f"Fallo como Excel ({str(e_excel)}). Fallo como Web ({str(e_html)}).")
 
 # ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
@@ -172,7 +180,7 @@ def generar_pdf_auditoria_tiempos(df_resumen):
 def generar_pdf_telemetria_matriz(df_matriz):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
-    pdf.add_page('L') # PÁGINA EN HORIZONTAL (LANDSCAPE)
+    pdf.add_page('L') 
     
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(84, 98, 143)
@@ -227,13 +235,11 @@ def generar_pdf_telemetria_matriz(df_matriz):
                 pdf.set_fill_color(255, 255, 255)
                 pdf.set_text_color(0, 0, 0)
                 
-                # Pintar la columna de promedio
                 if col_name == 'Promedio Vel. (km/h)':
                     if valstr != "-":
-                        pdf.set_fill_color(230, 240, 255) # Azul suave
-                        pdf.set_text_color(0, 50, 150)    # Texto azul oscuro
+                        pdf.set_fill_color(230, 240, 255)
+                        pdf.set_text_color(0, 50, 150)
                         valstr = f"{valstr} km/h"
-                # Pintar las columnas de días
                 elif i > 1: 
                     try:
                         num = float(valstr)
