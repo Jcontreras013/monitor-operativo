@@ -68,7 +68,7 @@ def mostrar_pantalla_login():
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown("<h2 style='text-align: center;'>🔒 Acceso Operativo</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>🔒 Control de Acceso</h2>", unsafe_allow_html=True)
         st.info("⏳ Por seguridad, tu sesión se cerrará tras 5 minutos de inactividad.")
         
         usuario = st.text_input("👤 Usuario", key="user_input").strip().lower()
