@@ -45,7 +45,7 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO)
+# 📱 MODO APP NATIVA (CSS SEGURO Y BLOQUEO DE RECARGA)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
@@ -59,16 +59,20 @@ footer {visibility: hidden;}
     padding-right: 0.5rem !important;
 }
 
+/* 🚨 BLOQUEO EXTREMO DEL PULL-TO-REFRESH (ANTI-RECARGA) 🚨 */
 html, body {
-    touch-action: manipulation;
-    overscroll-behavior: none;
+    overscroll-behavior-y: none !important;
+    overscroll-behavior-x: none !important;
+}
+
+/* Streamlit maneja el scroll en este contenedor específico */
+[data-testid="stAppViewContainer"], .stApp {
+    overscroll-behavior-y: contain !important;
+    -webkit-overflow-scrolling: touch !important;
 }
 </style>
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
-
-PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
 # ==============================================================================
