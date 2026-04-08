@@ -239,10 +239,15 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
+                # 🚨 ORDENAMIENTO CRÍTICO ANTES DE BORRAR DUPLICADOS (NUBE DIRECTO) 🚨
                 if 'NUM' in df_nube.columns:
+                    df_nube['FECHA_SORT'] = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
+                    df_nube = df_nube.sort_values(by='FECHA_SORT', na_position='first')
+                    
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                     df_invalidos = df_nube[df_nube['NUM'] == 'N/D']
                     df_nube = pd.concat([df_validos, df_invalidos])
+                    df_nube = df_nube.drop(columns=['FECHA_SORT'], errors='ignore')
                         
                 if 'DIAS_RETRASO' in df_nube.columns:
                     df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
@@ -589,10 +594,15 @@ def main():
                             else:
                                 df_combined = df_new
                                 
+                            # 🚨 ORDENAMIENTO CRÍTICO ANTES DE BORRAR DUPLICADOS (NUEVO ARCHIVO VS NUBE) 🚨
                             if 'NUM' in df_combined.columns:
+                                df_combined['FECHA_SORT'] = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
+                                df_combined = df_combined.sort_values(by='FECHA_SORT', na_position='first')
+                                
                                 df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                                 df_nd = df_combined[df_combined['NUM'] == 'N/D']
                                 df_combined = pd.concat([df_valid_num, df_nd])
+                                df_combined = df_combined.drop(columns=['FECHA_SORT'], errors='ignore')
 
                             df_to_upload = df_combined.copy()
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
@@ -610,11 +620,16 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
+    # 🚨 ORDENAMIENTO CRÍTICO ANTES DE BORRAR DUPLICADOS (VISTA LOCAL DEL MONITOR) 🚨
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
+        df_base['FECHA_SORT'] = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
+        df_base = df_base.sort_values(by='FECHA_SORT', na_position='first')
+        
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
         df_invalidos = df_base[df_base['NUM'] == 'N/D']
         df_base = pd.concat([df_validos, df_invalidos])
+        df_base = df_base.drop(columns=['FECHA_SORT'], errors='ignore')
 
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
 
