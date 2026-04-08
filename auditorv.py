@@ -1,18 +1,25 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import os
 import io
 
-# Importar las herramientas de PDF que ya existen en tu sistema
+# Importar las herramientas de PDF
 try:
     from tools import ReporteGenerencialPDF, finalizar_pdf, safestr
 except ImportError:
     st.error("⚠️ No se pudo importar tools.py. Asegúrate de que esté en la misma carpeta.")
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS 
+# HORA LOCAL HONDURAS (UTC-6)
+# ==============================================================================
+def get_hn_time():
+    """Ajusta la hora del servidor en la nube a la zona horaria de Honduras"""
+    return datetime.utcnow() - timedelta(hours=6)
+
+# ==============================================================================
+# LECTOR BLINDADO DE ARCHIVOS
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
@@ -98,6 +105,7 @@ def procesar_matriz_telemetria(df_raw):
         df = df[~df[col_placa].astype(str).str.contains('La versión de este equipo', case=False, na=False)]
         df = df[df[col_placa].astype(str).str.strip() != ''].fillna(0)
 
+        # Pre-depurar a los que tienen Total = 0
         col_total = next((c for c in df.columns if 'TOTAL' in str(c).upper()), None)
         if col_total:
             df[col_total] = pd.to_numeric(df[col_total], errors='coerce').fillna(0)
@@ -106,57 +114,6 @@ def procesar_matriz_telemetria(df_raw):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-# ==============================================================================
-# EXTRACTOR INTELIGENTE PARA ARCHIVOS DETALLADOS
-# ==============================================================================
-def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
-    try:
-        # 1. Buscar la fila de encabezados (Velocidad, Fecha, etc)
-        header_idx = None
-        for i in range(min(20, len(df_raw))):
-            row_str = " ".join(df_raw.iloc[i].astype(str)).upper()
-            if 'VELOCIDAD' in row_str or 'KM/H' in row_str or 'SPEED' in row_str:
-                header_idx = i; break
-        
-        # Si las columnas ya son el encabezado
-        if header_idx is None:
-            cols_str = " ".join(df_raw.columns.astype(str)).upper()
-            if 'VELOCIDAD' in cols_str or 'KM/H' in cols_str or 'SPEED' in cols_str:
-                df = df_raw.copy()
-            else: return {}
-        else:
-            df = df_raw.iloc[header_idx + 1:].copy()
-            df.columns = df_raw.iloc[header_idx].astype(str).str.strip().str.upper()
-        
-        # 2. Extraer velocidad
-        col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
-        if not col_vel: return {}
-        
-        df['Vel_Num'] = df[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
-        df_excesos = df[df['Vel_Num'] > limite_vel]
-        if df_excesos.empty: return {}
-        
-        promedio = round(df_excesos['Vel_Num'].mean(), 2)
-        
-        # 3. Asignar la placa (Estrategia A: Por columna)
-        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO', str(c), re.I)), None)
-        if col_placa:
-            resultados = {}
-            for p_sucia in df_excesos[col_placa].dropna().unique():
-                if 'VERSIÓN' in str(p_sucia).upper(): continue
-                p_limpia = str(p_sucia).split('-')[0].strip().upper()
-                prom_indiv = df_excesos[df_excesos[col_placa] == p_sucia]['Vel_Num'].mean()
-                resultados[p_limpia] = round(prom_indiv, 2)
-            return resultados
-            
-        # 3. Asignar la placa (Estrategia B: Escáner de texto profundo)
-        full_text = df_raw.astype(str).to_string().upper()
-        for p in placas_validas:
-            if str(p).upper() in full_text or str(p).upper() in file_name.upper(): 
-                return {str(p).upper(): promedio}
-                
-        return {}
-    except Exception: return {}
 
 # ==============================================================================
 # GENERADORES DE PDF 
@@ -164,7 +121,7 @@ def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
 def generar_pdf_auditoria_tiempos(df_resumen):
     pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(84, 98, 143)
-    pdf.cell(0, 10, safestr(f" Auditoria de Tiempos - {datetime.now().strftime('%d/%m/%Y')}"), border=1, ln=True, fill=True)
+    pdf.cell(0, 10, safestr(f" Auditoria de Tiempos - {get_hn_time().strftime('%d/%m/%Y %I:%M %p')}"), border=1, ln=True, fill=True)
     pdf.ln(5); pdf.seccion_titulo("Consolidado de Tiempos Reales")
     
     if not df_resumen.empty:
@@ -183,20 +140,21 @@ def generar_pdf_auditoria_tiempos(df_resumen):
 def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
     pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page('L') 
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(84, 98, 143); pdf.set_fill_color(252, 252, 252)
-    pdf.cell(0, 10, safestr(f" Matriz de Infracciones y Velocidad (> {limite_vel} km/h) - {datetime.now().strftime('%d/%m/%Y')}"), border=1, ln=True, fill=True)
+    pdf.cell(0, 10, safestr(f" Matriz de Infracciones y Velocidad Promedio (> {limite_vel} km/h) - {get_hn_time().strftime('%d/%m/%Y %I:%M %p')}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
     if not df_matriz.empty:
-        pdf.seccion_titulo("Vehiculos con Excesos Confirmados y Promedio de Velocidad")
+        pdf.seccion_titulo("Vehiculos con Excesos Confirmados")
         
+        has_prom = 'Promedio Vel. (km/h)' in df_matriz.columns
         col_total = next((c for c in df_matriz.columns if 'TOTAL' in str(c).upper()), None)
         
-        w_placa = 60; w_opcion = 25
-        w_prom = 30 # ESTA COLUMNA AHORA ES FIJA Y OBLIGATORIA
+        w_placa = 65; w_opcion = 25
+        w_prom = 32 if has_prom else 0 # Un poco más ancho para que se vea bien
         w_total = 15 if col_total else 0
         
         espacio_restante = 275 - w_placa - w_opcion - w_prom - w_total
-        cols_dias = len(df_matriz.columns) - 2 - 1 - (1 if col_total else 0)
+        cols_dias = len(df_matriz.columns) - 2 - (1 if has_prom else 0) - (1 if col_total else 0)
         w_dia = espacio_restante / cols_dias if cols_dias > 0 else 10
         
         font_size = 6 if cols_dias <= 15 else 5
@@ -209,7 +167,7 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
             elif col == 'Promedio Vel. (km/h)': w = w_prom
             elif str(col).upper() == 'TOTAL': w = w_total
             else: w = w_dia
-            pdf.cell(w, 6, safestr(str(col).replace('Dia_', '')[:15]), border=1, align="C", fill=True)
+            pdf.cell(w, 6, safestr(str(col).replace('Dia_', '')[:20]), border=1, align="C", fill=True)
         pdf.ln()
         
         # Filas
@@ -226,7 +184,7 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
                 pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0, 0, 0)
                 
                 if col_name == 'Promedio Vel. (km/h)':
-                    if valstr != "-" and valstr != "0.0":
+                    if valstr != "-" and valstr != "":
                         pdf.set_fill_color(230, 240, 255); pdf.set_text_color(0, 50, 150)
                         valstr = f"{valstr} km/h"
                     else:
@@ -308,14 +266,14 @@ def mostrar_auditoria(es_movil=False, conn=None):
     # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
         st.markdown("### 🚀 Matriz de Excesos y Velocidad Promedio")
-        st.caption("El sistema depurará a los que tienen 0 excesos o promedios nulos. Sube el 'Informe Estadístico' y los archivos 'Detallados'.")
+        st.caption("El sistema creará la columna Promedio y depurará a quienes no tengan incidencias reales.")
         limite_vel = st.number_input("Promediar solo velocidades mayores a (km/h):", min_value=10, max_value=200, value=60, step=5)
         
         if not es_movil:
             archivos_telemetria = st.file_uploader("Arrastra aquí TODOS los archivos Excel/CSV juntos", type=['csv', 'xlsx', 'xls'], accept_multiple_files=True, key="up_telemetria")
             
             if archivos_telemetria:
-                with st.spinner("Analizando y cruzando matrices..."):
+                with st.spinner("Analizando y cruzando matrices con escáner profundo..."):
                     archivo_principal = next((f for f in archivos_telemetria if 'estadistico' in f.name.lower() or 'informe' in f.name.lower()), None)
                     archivos_detallados = [f for f in archivos_telemetria if f != archivo_principal]
                             
@@ -323,43 +281,85 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         st.error("❌ Sube el archivo 'Informe_Estadistico'.")
                     else:
                         try:
+                            # 1. Procesar Informe Principal
                             df_raw_tel = read_file_robust(archivo_principal)
                             df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
                             
                             if df_matriz is not None:
                                 dict_promedios = {}
                                 
-                                # Extraer lista oficial de placas para el escáner
+                                # Extraer placas válidas para buscarlas en el texto crudo
                                 col_placa_matriz = df_matriz.columns[0]
                                 placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
                                 
+                                # 2. Escáner Profundo de archivos detallados
                                 if archivos_detallados:
                                     for file_det in archivos_detallados:
                                         try:
-                                            df_d = read_file_robust(file_det)
-                                            res = extraer_promedios_detallados(df_d, limite_vel, file_det.name, placas_validas)
-                                            dict_promedios.update(res)
-                                        except: pass
+                                            # Leer el texto crudo del archivo para buscar la placa
+                                            file_det.seek(0)
+                                            raw_text = file_det.getvalue().decode('utf-8', errors='ignore').upper()
+                                            if len(raw_text) < 100:
+                                                raw_text = file_det.getvalue().decode('latin1', errors='ignore').upper()
                                             
-                                # AQUI ESTÁ LA MAGIA: LA COLUMNA SE CREA OBLIGATORIAMENTE
+                                            placa_encontrada = None
+                                            for p in placas_validas:
+                                                if str(p) in raw_text or str(p) in file_det.name.upper():
+                                                    placa_encontrada = str(p)
+                                                    break
+                                            
+                                            if not placa_encontrada: continue # Ignorar archivo si no se encuentra la placa
+                                            
+                                            # Leer la tabla del archivo detallado
+                                            df_d = read_file_robust(file_det)
+                                            
+                                            # Buscar dónde empieza la tabla
+                                            header_idx = None
+                                            for i in range(min(20, len(df_d))):
+                                                if 'VELOCIDAD' in str(df_d.iloc[i].values).upper() or 'KM/H' in str(df_d.iloc[i].values).upper():
+                                                    header_idx = i; break
+                                            
+                                            if header_idx is not None:
+                                                df_d.columns = df_d.iloc[header_idx].astype(str).str.strip().str.upper()
+                                                df_d = df_d.iloc[header_idx + 1:]
+                                                
+                                            # Extraer Velocidad y Promediar
+                                            col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
+                                            if col_vel:
+                                                df_d['Vel_Num'] = df_d[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
+                                                df_excesos = df_d[df_d['Vel_Num'] > limite_vel]
+                                                if not df_excesos.empty:
+                                                    dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
+                                        except Exception:
+                                            pass
+                                            
+                                # 3. Crear la columna Promedio y Cruzar
                                 df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
                                 df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios).fillna("-")
                                 df_matriz = df_matriz.drop(columns=['Placa_Match'])
 
-                                # DEPURACIÓN: Borramos de la tabla a los que NO tuvieron un promedio calculado
-                                df_matriz = df_matriz[df_matriz['Promedio Vel. (km/h)'] != "-"]
+                                # 4. Depuración Final (Solo si se subieron detallados, borramos a los que no tienen promedio)
+                                if archivos_detallados:
+                                    df_matriz = df_matriz[df_matriz['Promedio Vel. (km/h)'] != "-"]
 
                                 if df_matriz.empty: 
-                                    st.success(f"✅ Ningún vehículo registró excesos reales mayores a {limite_vel} km/h en los reportes detallados.")
+                                    st.success("✅ La matriz quedó vacía tras la depuración. Ningún vehículo infractor cruzó datos con los archivos detallados.")
                                 else:
-                                    st.warning(f"⚠️ Se confirmaron {len(df_matriz)} vehículos infractores (Promedio > {limite_vel} km/h).")
+                                    st.warning(f"⚠️ Se muestran {len(df_matriz)} vehículos en la matriz de infractores.")
                                     
                                     # Pintar la matriz
                                     cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
                                     styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                                     st.dataframe(styled_df, hide_index=True, use_container_width=True)
                                         
-                                    st.download_button("📥 Descargar Reporte Final (PDF)", generar_pdf_telemetria_matriz(df_matriz, limite_vel), f"Auditoria_Velocidades_{datetime.now().strftime('%Y%m%d')}.pdf", "application/pdf", use_container_width=True, type="primary")
+                                    st.download_button(
+                                        label="📥 Descargar Reporte Final (PDF)", 
+                                        data=generar_pdf_telemetria_matriz(df_matriz, limite_vel), 
+                                        file_name=f"Auditoria_Velocidades_{get_hn_time().strftime('%Y%m%d')}.pdf", 
+                                        mime="application/pdf", 
+                                        use_container_width=True, 
+                                        type="primary"
+                                    )
                             else: st.error(f"❌ Error matriz principal: {msg_tel}")
                         except Exception as e: st.error(f"❌ Error de procesamiento: {e}")
         else: st.info("📱 La carga masiva está reservada para PC.")
