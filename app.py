@@ -41,19 +41,24 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded" # Expandido para que siempre esté accesible
+    initial_sidebar_state="expanded"
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS LIMPIO - NO OCULTA EL MENÚ)
+# 🛡️ MOTOR DE ZONA HORARIA Y CSS MÓVIL
 # ==============================================================================
+def get_honduras_time():
+    """Fuerza la hora de Honduras (UTC-6) para evitar el reseteo a las 6:00 PM"""
+    return datetime.utcnow() - timedelta(hours=6)
+
 estilo_app_nativa = """
 <style>
-/* Ocultar SOLAMENTE la marca de agua inferior */
+/* Ocultar marca de agua de Streamlit. NUNCA ocultar 'header' para no perder el menú móvil */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+div[data-testid="stToolbar"] {visibility: hidden !important;}
 
-/* Reducir márgenes laterales para aprovechar la pantalla en celular */
+/* Reducir márgenes para aprovechar pantalla en celulares */
 .block-container {
     padding-top: 2rem !important;
     padding-bottom: 1rem !important;
@@ -61,7 +66,6 @@ footer {visibility: hidden;}
     padding-right: 0.5rem !important;
 }
 
-/* Evitar el zoom accidental al tocar la pantalla */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -73,7 +77,7 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (IGNORA LOS "00:00" FALSOS DE GOOGLE SHEETS)
+# 🛡️ MOTOR SEGURO DE FECHAS (IGNORA LOS "00:00" Y REPARA FECHAS DE LA NUBE)
 # ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
@@ -81,11 +85,11 @@ def parse_date_ultra_safe(val):
     
     str_val = str(val).strip()
     
-    # 🚨 FILTRO ANTI-BASURA: Si Sheets manda un cero o medianoche exacta, está vacío.
+    # FILTRO ANTI-BASURA: Si es un cero o medianoche exacta
     if str_val in ["0", "0.0", "00:00", "00:00:00", "12:00:00 AM", "1899-12-30 00:00:00"]:
         return pd.NaT
 
-    hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
+    hoy = pd.Timestamp(get_honduras_time()).normalize()
 
     try:
         if isinstance(val, dt_time):
@@ -114,9 +118,14 @@ def parse_date_ultra_safe(val):
             parsed_time = pd.to_datetime(str_val).time()
             return pd.Timestamp.combine(hoy.date(), parsed_time)
 
-        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+        # 🚨 CORRECCIÓN NUBE: Si viene con formato YYYY-MM-DD, parsear directo para no voltear los meses
+        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
+            parsed = pd.to_datetime(str_val, errors='coerce')
+        else:
+            parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+
         if pd.notnull(parsed):
-            if parsed.hour == 0 and parsed.minute == 0: return pd.NaT
+            if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0: return pd.NaT
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
@@ -177,11 +186,11 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (CON DEDUPLICADOR Y CÁLCULO)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (BLINDADA CONTRA GOOGLE SHEETS)
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("Descargando y aplicando formato espejo estricto..."):
+        with st.spinner("Descargando historial y limpiando duplicados..."):
             df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
             
             if not df_nube.empty:
@@ -195,10 +204,10 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                # Pasamos el filtro de fechas para evitar las 00:00
+                # Filtro de Fechas re-calibrado
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
-                # RECALCULAR TIEMPOS EN DESCARGA (Corrige los cálculos rotos de la nube)
+                # RECALCULAR TIEMPOS EN DESCARGA
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
                     df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
@@ -229,7 +238,7 @@ def sincronizar_datos_nube(conn):
                         df_nube.loc[~mask_solo_sop, 'ALERTA_TIEMPO'] = False
                 
                 # ----------------------------------------------------------------------
-                # 🧹 DEPURADORA DE DUPLICADOS EN LA DESCARGA
+                # 🧹 DEDUPLICACIÓN ESTRICTA EN DESCARGA (ELIMINA LA BASURA DE LA NUBE)
                 # ----------------------------------------------------------------------
                 for col_txt in ['NUM', 'CLIENTE']:
                     if col_txt in df_nube.columns:
@@ -252,7 +261,7 @@ def sincronizar_datos_nube(conn):
                     if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
+                ahora_momento_ts = pd.Timestamp(get_honduras_time())
                 fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                 
                 if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns and 'ESTADO' in df_nube.columns:
@@ -274,7 +283,7 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa.")
+                st.success("✅ Sincronización Exitosa. Datos históricos cargados y limpios.")
                 st.rerun()
             else:
                 st.warning("La base de datos en la nube está vacía.")
@@ -421,8 +430,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         
         df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
         
-        ahora_momento = datetime.utcnow() - timedelta(hours=6)
-        ahora_momento_ts = pd.Timestamp(ahora_momento)
+        ahora_momento_ts = pd.Timestamp(get_honduras_time())
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
         
         mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -568,11 +576,8 @@ def main():
                 st.session_state.df_hist = res_h_diamante
                 
                 if conn is not None:
-                    with st.spinner("☁️ Sincronizando y depurando duplicados en la nube..."):
+                    with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
                         try:
-                            # ------------------------------------------------------------------
-                            # 🛡️ UNION HISTÓRICA CON DEDUPLICACIÓN ESTRICTA (EVITA LAS 80 ÓRDENES)
-                            # ------------------------------------------------------------------
                             df_new = res_p_diamante.copy()
                             if 'NUM' in df_new.columns:
                                 df_new['NUM'] = pd.to_numeric(df_new['NUM'], errors='coerce').fillna(0).astype(int).astype(str)
@@ -601,7 +606,7 @@ def main():
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
-                            st.success("✅ Datos sincronizados y unidos al histórico correctamente sin duplicados.")
+                            st.success("✅ Datos sincronizados y unidos al histórico correctamente.")
                         except Exception as e:
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
                 else:
@@ -611,7 +616,7 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # DEDUPLICADOR DE SEGURIDAD EN MEMORIA
+    # DEDUPLICADOR FINAL EN MEMORIA
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -672,7 +677,7 @@ def main():
             df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
             df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
     
-    ahora_local = datetime.utcnow() - timedelta(hours=6)
+    ahora_local = get_honduras_time()
     hoy_date_valor = ahora_local.date()
 
     with sidebar_top:
@@ -874,7 +879,7 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # Filtro puro
+            # Filtro puro de técnicos para reportes
             mask_tec_valido_rep = (
                 df_base['TECNICO'].notna() & 
                 (df_base['TECNICO'].astype(str).str.strip() != '') & 
@@ -885,6 +890,9 @@ def main():
             df_cierre_filtrado = df_base_valido_rep[(df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base_valido_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
             
+            # ====================================================================
+            # 📊 GRÁFICAS DE MEDICIÓN EN EL REPORTE DIARIO
+            # ====================================================================
             st.markdown("### 📊 Indicadores de Avance Operativo")
             vivas_rep = df_base_valido_rep[df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)]
             
@@ -1027,6 +1035,9 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
+        # ------------------------------------------------------------------------------
+        # 🛡️ FILTRO MAESTRO DE TÉCNICOS
+        # ------------------------------------------------------------------------------
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
@@ -1285,7 +1296,7 @@ def main():
         with t_graphs_v:
             df_para_gantt_final = df_v_tabla_monitor[df_v_tabla_monitor['HORA_INI'].notnull()].copy()
             if not df_para_gantt_final.empty:
-                df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(datetime.now())
+                df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
                 figura_gantt_final = px.timeline(
                     df_para_gantt_final, x_start="HORA_INI", x_end="FIN_LIMITE", 
                     y="TECNICO", color="ACTIVIDAD", text="ACTIVIDAD", 
