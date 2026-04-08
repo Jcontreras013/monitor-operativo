@@ -45,7 +45,7 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO Y BLOQUEO DE RECARGA)
+# 📱 MODO APP NATIVA (CSS SEGURO Y BLOQUEO NUCLEAR DE RECARGA)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
@@ -59,16 +59,15 @@ footer {visibility: hidden;}
     padding-right: 0.5rem !important;
 }
 
-/* 🚨 BLOQUEO EXTREMO DEL PULL-TO-REFRESH (ANTI-RECARGA) 🚨 */
-html, body {
-    overscroll-behavior-y: none !important;
-    overscroll-behavior-x: none !important;
+/* 🚨 BLOQUEO NUCLEAR DEL PULL-TO-REFRESH (ANTI-RECARGA) 🚨 */
+:root {
+    overscroll-behavior: none !important;
 }
 
-/* Streamlit maneja el scroll en este contenedor específico */
-[data-testid="stAppViewContainer"], .stApp {
-    overscroll-behavior-y: contain !important;
-    -webkit-overflow-scrolling: touch !important;
+html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
+    overscroll-behavior: none !important;
+    overscroll-behavior-y: none !important;
+    overscroll-behavior-x: none !important;
 }
 </style>
 """
