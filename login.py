@@ -12,19 +12,23 @@ def get_cookie_manager():
 cookie_manager = get_cookie_manager()
 
 # ==============================================================================
-# BASE DE DATOS DE USUARIOS (Modifica con tus contraseñas reales)
+# ASIGNACIÓN DE ROLES (Las contraseñas ya no están aquí, solo el rol)
 # ==============================================================================
-USUARIOS = {
-    "jaison": {"pwd": "123", "rol": "admin"},
-    "jefe": {"pwd": "456", "rol": "jefe"},
-    "tecnico": {"pwd": "789", "rol": "monitoreo"}
+ROLES_USUARIOS = {
+    "jaison": "admin",
+    "jefe": "jefe",
+    "tecnico": "monitoreo"
 }
 
 # ==============================================================================
 # LÓGICA DE AUTENTICACIÓN Y TEMPORIZADOR BLINDADA
 # ==============================================================================
 def verificar_autenticacion():
-    # 1. Leemos la cookie con seguridad (sin la instrucción falsa que causaba el error)
+    # Pausar el código hasta que el celular envíe las cookies
+    if not cookie_manager.ready():
+        st.stop()
+        
+    # 1. Leemos la cookie con seguridad
     ultimo_acceso_str = cookie_manager.get(cookie="token_maxcom")
     
     if ultimo_acceso_str:
@@ -40,7 +44,7 @@ def verificar_autenticacion():
             # 2. Verificamos el temporizador de 5 Minutos
             if tiempo_inactivo < timedelta(minutes=5):
                 
-                # 🚨 ANTI-BUCLES: Solo renovamos la cookie si ha pasado más de 1 minuto
+                # ANTI-BUCLES: Solo renovamos la cookie si ha pasado más de 1 minuto
                 if tiempo_inactivo > timedelta(minutes=1):
                     nuevo_token = f"{datetime.now().isoformat()}|{rol_guardado}"
                     cookie_manager.set("token_maxcom", nuevo_token)
@@ -61,6 +65,28 @@ def verificar_autenticacion():
         return False
 
 # ==============================================================================
+# BUSCADOR INTELIGENTE EN ST.SECRETS
+# ==============================================================================
+def validar_credenciales(usuario, pwd_ingresada):
+    try:
+        # Opción A: Si guardas tus contraseñas en un bloque [passwords]
+        if "passwords" in st.secrets and usuario in st.secrets["passwords"]:
+            return pwd_ingresada == str(st.secrets["passwords"][usuario])
+            
+        # Opción B: Si guardas las variables directas (ej: jaison = "123")
+        if usuario in st.secrets:
+            return pwd_ingresada == str(st.secrets[usuario])
+            
+        # Opción C: Si usas el formato (ej: pwd_jaison = "123")
+        if f"pwd_{usuario}" in st.secrets:
+            return pwd_ingresada == str(st.secrets[f"pwd_{usuario}"])
+            
+        return False
+    except Exception as e:
+        st.error(f"Error leyendo secrets: {e}")
+        return False
+
+# ==============================================================================
 # PANTALLA VISUAL DE LOGIN
 # ==============================================================================
 def mostrar_pantalla_login():
@@ -68,27 +94,33 @@ def mostrar_pantalla_login():
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.markdown("<h2 style='text-align: center;'>🔒 Control de Acceso</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>🔒 Acceso Operativo</h2>", unsafe_allow_html=True)
         st.info("⏳ Por seguridad, tu sesión se cerrará tras 5 minutos de inactividad.")
         
         usuario = st.text_input("👤 Usuario", key="user_input").strip().lower()
         pwd = st.text_input("🔑 Contraseña", type="password", key="pwd_input")
         
         if st.button("🚀 Ingresar", use_container_width=True, type="primary"):
-            if usuario in USUARIOS and pwd == USUARIOS[usuario]["pwd"]:
-                rol = USUARIOS[usuario]["rol"]
-                
-                # Crear el token inicial con la hora y el rol
-                token = f"{datetime.now().isoformat()}|{rol}"
-                cookie_manager.set("token_maxcom", token)
-                
-                st.session_state['autenticado'] = True
-                st.session_state['rol_actual'] = rol
-                
-                st.success("✅ Acceso concedido, cargando sistema...")
-                st.rerun()
+            
+            # 1. Validar que el usuario exista en nuestros roles
+            if usuario in ROLES_USUARIOS:
+                # 2. Validar contraseña contra st.secrets
+                if validar_credenciales(usuario, pwd):
+                    rol = ROLES_USUARIOS[usuario]
+                    
+                    # Crear el token inicial con la hora y el rol
+                    token = f"{datetime.now().isoformat()}|{rol}"
+                    cookie_manager.set("token_maxcom", token)
+                    
+                    st.session_state['autenticado'] = True
+                    st.session_state['rol_actual'] = rol
+                    
+                    st.success("✅ Acceso concedido, cargando sistema...")
+                    st.rerun()
+                else:
+                    st.error("❌ Contraseña incorrecta")
             else:
-                st.error("❌ Usuario o contraseña incorrectos")
+                st.error("❌ Usuario no registrado")
 
 # ==============================================================================
 # BOTÓN DE LOGOUT VOLUNTARIO
