@@ -9,3 +9,4 @@ gspread
 streamlit-js-eval
 lxml
 html5lib
+xlrd==2.0.1
