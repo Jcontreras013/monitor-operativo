@@ -7,3 +7,5 @@ matplotlib
 st-gsheets-connection
 gspread
 streamlit-js-eval
+lxml
+html5lib
