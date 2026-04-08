@@ -521,6 +521,10 @@ def main():
             else:
                 st.error("La conexión a la nube no está disponible.")
 
+        # 🚨 AQUÍ ESTÁ EL BOTÓN DE LOGOUT INTEGRADO 🚨
+        st.markdown("<br>", unsafe_allow_html=True)
+        mostrar_boton_logout()
+
         mostrar_cargador = False
         if rol_usuario == 'admin':
             mostrar_cargador = True
@@ -661,10 +665,10 @@ def main():
             
             if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
             
-            # 🚨 PRIORIDAD 1: Si es Instalación, Adición, Cambio, etc., se clasifica de inmediato
+            # 🚨 PRIORIDAD 1: INSTALACIONES
             if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
             
-            # 🚨 PRIORIDAD 2: Clasificación de Fallas / Mantenimientos
+            # 🚨 PRIORIDAD 2: FALLAS
             if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
             if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
             if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
