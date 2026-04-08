@@ -41,21 +41,44 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded" # Restaurado a estado normal
+    initial_sidebar_state="expanded" # La barra inicia normal
 )
+
+# ==============================================================================
+# 📱 MODO APP NATIVA (CSS SEGURO - LA FLECHA NUNCA DESAPARECE)
+# ==============================================================================
+estilo_app_nativa = """
+<style>
+/* Ocultar marca de agua inferior y opciones de cuenta, sin tocar la cabecera */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+
+/* Aprovechar el espacio de la pantalla */
+.block-container {
+    padding-top: 2rem !important;
+    padding-bottom: 1rem !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+/* Evitar zoom accidental en celulares al tocar rápido */
+html, body {
+    touch-action: manipulation;
+    overscroll-behavior: none;
+}
+</style>
+"""
+st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR DE ZONA HORARIA
+# 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
 # ==============================================================================
 def get_honduras_time():
     """Fuerza la hora de Honduras (UTC-6) para evitar el reseteo a las 6:00 PM"""
     return datetime.utcnow() - timedelta(hours=6)
 
-# ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (IGNORA LOS "00:00" Y REPARA FECHAS DE LA NUBE)
-# ==============================================================================
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
         return pd.NaT
@@ -95,7 +118,6 @@ def parse_date_ultra_safe(val):
             parsed_time = pd.to_datetime(str_val).time()
             return pd.Timestamp.combine(hoy.date(), parsed_time)
 
-        # 🚨 CORRECCIÓN NUBE: Si viene con formato YYYY-MM-DD, parsear directo para no voltear los meses
         if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
             parsed = pd.to_datetime(str_val, errors='coerce')
         else:
@@ -163,7 +185,7 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (BLINDADA CONTRA GOOGLE SHEETS)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
@@ -181,10 +203,8 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                # Filtro de Fechas re-calibrado
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
-                # RECALCULAR TIEMPOS EN DESCARGA
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
                     df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
@@ -214,9 +234,6 @@ def sincronizar_datos_nube(conn):
                         df_nube.loc[mask_falsos, 'ALERTA_TIEMPO'] = False
                         df_nube.loc[~mask_solo_sop, 'ALERTA_TIEMPO'] = False
                 
-                # ----------------------------------------------------------------------
-                # 🧹 DEDUPLICACIÓN ESTRICTA EN DESCARGA (ELIMINA LA BASURA DE LA NUBE)
-                # ----------------------------------------------------------------------
                 for col_txt in ['NUM', 'CLIENTE']:
                     if col_txt in df_nube.columns:
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
@@ -593,7 +610,6 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # DEDUPLICADOR FINAL EN MEMORIA
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -955,11 +971,35 @@ def main():
 
             st.divider()
             
-            st.markdown("### 📈 Resumen Consolidado por Actividad")
-            if not df_cierre_filtrado.empty:
-                df_resumen_act = df_cierre_filtrado['ACTIVIDAD'].value_counts().reset_index()
-                df_resumen_act.columns = ['Actividad Realizada', 'Total de Órdenes']
-                st.dataframe(df_resumen_act, hide_index=True, use_container_width=True)
+            st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
+            p_rep = vivas_rep.groupby('ACTIVIDAD').size().reset_index(name='PEND.') if not vivas_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'PEND.'])
+            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERR.') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERR.'])
+            
+            resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            
+            if not resumen_global_rep.empty:
+                resumen_global_rep['PEND.'] = resumen_global_rep['PEND.'].astype(int)
+                resumen_global_rep['CERR.'] = resumen_global_rep['CERR.'].astype(int)
+                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
+                resumen_global_rep = resumen_global_rep.sort_values(by='TIPO').reset_index(drop=True)
+                
+                tot_p = resumen_global_rep['PEND.'].sum()
+                tot_c = resumen_global_rep['CERR.'].sum()
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'PEND.': tot_p, 'CERR.': tot_c}])
+                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
+                
+                st.dataframe(
+                    resumen_global_rep,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "TIPO": st.column_config.TextColumn("Actividad Realizada"),
+                        "PEND.": st.column_config.NumberColumn("Asignadas / Pendientes", format="%d"),
+                        "CERR.": st.column_config.NumberColumn("Cerradas Hoy", format="%d")
+                    }
+                )
+            else:
+                st.info("No hay datos de operaciones consolidadas para esta fecha.")
 
             st.markdown("### ⏱️ Tiempos de Atención Promedio")
             if not df_cierre_filtrado.empty:
