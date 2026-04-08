@@ -41,53 +41,17 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded" # Restaurado a estado normal
 )
 
+PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+
 # ==============================================================================
-# 🛡️ MOTOR DE ZONA HORARIA Y CSS MÓVIL (FLECHA CORREGIDA)
+# 🛡️ MOTOR DE ZONA HORARIA
 # ==============================================================================
 def get_honduras_time():
     """Fuerza la hora de Honduras (UTC-6) para evitar el reseteo a las 6:00 PM"""
     return datetime.utcnow() - timedelta(hours=6)
-
-estilo_app_nativa = """
-<style>
-/* Ocultar marca de agua de Streamlit y footer */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-
-/* Ocultar solo el panel derecho de herramientas de Streamlit (Deploy), dejando el header intacto */
-header [data-testid="stToolbar"] {
-    display: none !important;
-}
-
-/* ¡AQUÍ ESTÁ LA MAGIA! Rescatamos la flecha (collapsedControl) y la forzamos a verse azul */
-[data-testid="collapsedControl"] {
-    visibility: visible !important;
-    display: flex !important;
-    color: #3B82F6 !important; 
-    background-color: transparent !important;
-    z-index: 99999 !important;
-}
-
-/* Reducir márgenes para aprovechar pantalla en celulares */
-.block-container {
-    padding-top: 3rem !important;
-    padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-}
-
-html, body {
-    touch-action: manipulation;
-    overscroll-behavior: none;
-}
-</style>
-"""
-st.markdown(estilo_app_nativa, unsafe_allow_html=True)
-
-PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS (IGNORA LOS "00:00" Y REPARA FECHAS DE LA NUBE)
@@ -629,6 +593,7 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
+    # DEDUPLICADOR FINAL EN MEMORIA
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
