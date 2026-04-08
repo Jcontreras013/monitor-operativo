@@ -5,7 +5,6 @@ import extra_streamlit_components as stx
 # ==============================================================================
 # INICIALIZAR EL ADMINISTRADOR DE COOKIES
 # ==============================================================================
-# 🚨 AQUÍ ESTABA EL ERROR: Se eliminó la instrucción obsoleta
 @st.cache_resource
 def get_cookie_manager():
     return stx.CookieManager()
@@ -25,11 +24,7 @@ USUARIOS = {
 # LÓGICA DE AUTENTICACIÓN Y TEMPORIZADOR BLINDADA
 # ==============================================================================
 def verificar_autenticacion():
-    # Pausar el código hasta que el celular envíe las cookies
-    if not cookie_manager.ready():
-        st.stop()
-        
-    # 1. Leemos la cookie con seguridad
+    # 1. Leemos la cookie con seguridad (sin la instrucción falsa que causaba el error)
     ultimo_acceso_str = cookie_manager.get(cookie="token_maxcom")
     
     if ultimo_acceso_str:
@@ -44,16 +39,18 @@ def verificar_autenticacion():
             
             # 2. Verificamos el temporizador de 5 Minutos
             if tiempo_inactivo < timedelta(minutes=5):
-                # Como sigue activo, RENOVAMOS la cookie desde este momento
-                nuevo_token = f"{datetime.now().isoformat()}|{rol_guardado}"
-                cookie_manager.set("token_maxcom", nuevo_token, key="update_session")
+                
+                # 🚨 ANTI-BUCLES: Solo renovamos la cookie si ha pasado más de 1 minuto
+                if tiempo_inactivo > timedelta(minutes=1):
+                    nuevo_token = f"{datetime.now().isoformat()}|{rol_guardado}"
+                    cookie_manager.set("token_maxcom", nuevo_token)
                 
                 st.session_state['autenticado'] = True
                 st.session_state['rol_actual'] = rol_guardado
                 return True
             else:
-                # 3. Si pasaron los 5 minutos, lo expulsamos
-                cookie_manager.delete("token_maxcom", key="delete_timeout")
+                # 3. Si pasaron los 5 minutos sin actividad, lo expulsamos
+                cookie_manager.delete("token_maxcom")
                 st.session_state['autenticado'] = False
                 return False
         except Exception:
@@ -83,7 +80,7 @@ def mostrar_pantalla_login():
                 
                 # Crear el token inicial con la hora y el rol
                 token = f"{datetime.now().isoformat()}|{rol}"
-                cookie_manager.set("token_maxcom", token, key="login_set")
+                cookie_manager.set("token_maxcom", token)
                 
                 st.session_state['autenticado'] = True
                 st.session_state['rol_actual'] = rol
@@ -98,7 +95,7 @@ def mostrar_pantalla_login():
 # ==============================================================================
 def mostrar_boton_logout():
     if st.button("🚪 Cerrar Sesión", use_container_width=True, type="secondary"):
-        cookie_manager.delete("token_maxcom", key="logout_del")
+        cookie_manager.delete("token_maxcom")
         st.session_state['autenticado'] = False
         st.session_state['rol_actual'] = None
         st.rerun()
