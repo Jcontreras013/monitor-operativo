@@ -59,11 +59,11 @@ def procesar_auditoria_vehiculos(df):
         return None, str(e)
 
 # ==============================================================================
-# LÓGICA DE EXCESOS DE VELOCIDAD (NUEVO)
+# LÓGICA DE EXCESOS DE VELOCIDAD
 # ==============================================================================
 def procesar_excesos_velocidad(df, limite_vel):
     try:
-        # 1. Búsqueda inteligente de columnas (soporta múltiples formatos de GPS)
+        # Búsqueda inteligente de columnas
         col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO|UNIDAD|NOMBRE', str(c), re.I)), None)
         col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|SPEED|KM/H|KMH', str(c), re.I)), None)
         col_fecha = next((c for c in df.columns if re.search(r'FECHA|HORA|TIME|DATE', str(c), re.I)), None)
@@ -74,20 +74,20 @@ def procesar_excesos_velocidad(df, limite_vel):
 
         df = df.copy()
         
-        # 2. Limpieza de nombres de vehículos
+        # Limpieza de nombres
         df[col_placa] = df[col_placa].astype(str).str.replace(r'\xa0', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
         df = df[~df[col_placa].isin(['nan', '--', 'None', '', 'N/D'])]
 
-        # 3. Extracción de la velocidad pura (por si dice "85 km/h" extrae solo "85")
+        # Extracción de la velocidad pura
         df['Vel_Numerica'] = df[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
 
-        # 4. Filtrar excesos
+        # Filtrar excesos
         df_excesos = df[df['Vel_Numerica'] > limite_vel].copy()
 
         if df_excesos.empty:
             return pd.DataFrame(), pd.DataFrame(), "OK"
 
-        # 5. Formatear detalle
+        # Formatear detalle
         df_excesos['Vehículo / Placa'] = df_excesos[col_placa]
         df_excesos['Velocidad (km/h)'] = df_excesos['Vel_Numerica']
         df_excesos['Fecha y Hora'] = df_excesos[col_fecha].astype(str) if col_fecha else "N/D"
@@ -95,7 +95,7 @@ def procesar_excesos_velocidad(df, limite_vel):
 
         detalle = df_excesos[['Vehículo / Placa', 'Velocidad (km/h)', 'Fecha y Hora', 'Ubicación']].sort_values(by='Velocidad (km/h)', ascending=False)
 
-        # 6. Crear resumen Top Infractores
+        # Crear resumen Top Infractores
         resumen = df_excesos.groupby('Vehículo / Placa').agg(
             Total_Excesos=('Vehículo / Placa', 'count'),
             Vel_Maxima=('Velocidad (km/h)', 'max')
@@ -311,15 +311,26 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
                 
                 pdf_bytes_tiempos = generar_pdf_auditoria_tiempos(df_resumen_gps)
+                csv_gps = df_resumen_gps.to_csv(index=False).encode('utf-8')
                 
-                st.download_button(
-                    label="🚀 Descargar Reporte de Tiempos (PDF)",
-                    data=pdf_bytes_tiempos,
-                    file_name=f"Auditoria_Tiempos_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    type="primary",
-                    use_container_width=True
-                )
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.download_button(
+                        label="🚀 Descargar Reporte (PDF)",
+                        data=pdf_bytes_tiempos,
+                        file_name=f"Auditoria_Tiempos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True
+                    )
+                with col_d2:
+                    st.download_button(
+                        label="📥 Descargar Reporte (CSV)",
+                        data=csv_gps,
+                        file_name=f"Auditoria_Tiempos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
             else:
                 st.error(f"❌ Error formato: {mensaje_error}")
 
