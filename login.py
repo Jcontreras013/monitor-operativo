@@ -5,7 +5,8 @@ import extra_streamlit_components as stx
 # ==============================================================================
 # INICIALIZAR EL ADMINISTRADOR DE COOKIES
 # ==============================================================================
-@st.cache_resource(experimental_allow_widgets=True)
+# 🚨 AQUÍ ESTABA EL ERROR: Se eliminó la instrucción obsoleta
+@st.cache_resource
 def get_cookie_manager():
     return stx.CookieManager()
 
@@ -24,11 +25,11 @@ USUARIOS = {
 # LÓGICA DE AUTENTICACIÓN Y TEMPORIZADOR BLINDADA
 # ==============================================================================
 def verificar_autenticacion():
-    # 🚨 LA MAGIA ESTÁ AQUÍ: Pausar el código hasta que el celular envíe las cookies
+    # Pausar el código hasta que el celular envíe las cookies
     if not cookie_manager.ready():
         st.stop()
         
-    # 1. Ahora sí, leemos la cookie con seguridad
+    # 1. Leemos la cookie con seguridad
     ultimo_acceso_str = cookie_manager.get(cookie="token_maxcom")
     
     if ultimo_acceso_str:
