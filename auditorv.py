@@ -279,8 +279,15 @@ def mostrar_auditoria(es_movil=False, conn=None):
             if archivo_gps_tiempos is not None:
                 with st.spinner("🔍 Leyendo archivo y subiendo a la Nube..."):
                     try:
-                        if archivo_gps_tiempos.name.endswith('.csv'): df_gps_crudo = pd.read_csv(archivo_gps_tiempos)
-                        else: df_gps_crudo = pd.read_excel(archivo_gps_tiempos)
+                        # 🛡️ PROTECCIÓN DE CODIFICACIÓN (Evita el error utf-8 en CSVs con tildes/ñ)
+                        if archivo_gps_tiempos.name.endswith('.csv'): 
+                            try:
+                                df_gps_crudo = pd.read_csv(archivo_gps_tiempos, encoding='utf-8')
+                            except UnicodeDecodeError:
+                                archivo_gps_tiempos.seek(0)
+                                df_gps_crudo = pd.read_csv(archivo_gps_tiempos, encoding='latin1')
+                        else: 
+                            df_gps_crudo = pd.read_excel(archivo_gps_tiempos)
                         
                         if conn is not None:
                             st.toast("Subiendo datos a Google Sheets...")
@@ -349,8 +356,15 @@ def mostrar_auditoria(es_movil=False, conn=None):
             
             if archivo_vel is not None:
                 with st.spinner("Analizando velocidades..."):
-                    if archivo_vel.name.endswith('.csv'): df_vel_crudo = pd.read_csv(archivo_vel)
-                    else: df_vel_crudo = pd.read_excel(archivo_vel)
+                    # 🛡️ PROTECCIÓN DE CODIFICACIÓN PARA VELOCIDAD TAMBIÉN
+                    if archivo_vel.name.endswith('.csv'): 
+                        try:
+                            df_vel_crudo = pd.read_csv(archivo_vel, encoding='utf-8')
+                        except UnicodeDecodeError:
+                            archivo_vel.seek(0)
+                            df_vel_crudo = pd.read_csv(archivo_vel, encoding='latin1')
+                    else: 
+                        df_vel_crudo = pd.read_excel(archivo_vel)
                     
                     df_res_vel, df_det_vel, msg_vel = procesar_excesos_velocidad(df_vel_crudo, limite_vel)
                 
