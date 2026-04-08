@@ -45,7 +45,7 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 🛡️ MOTOR DE ZONA HORARIA Y CSS MÓVIL
+# 🛡️ MOTOR DE ZONA HORARIA Y CSS MÓVIL (FLECHA CORREGIDA)
 # ==============================================================================
 def get_honduras_time():
     """Fuerza la hora de Honduras (UTC-6) para evitar el reseteo a las 6:00 PM"""
@@ -53,14 +53,27 @@ def get_honduras_time():
 
 estilo_app_nativa = """
 <style>
-/* Ocultar marca de agua de Streamlit. NUNCA ocultar 'header' para no perder el menú móvil */
+/* Ocultar marca de agua de Streamlit y footer */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-div[data-testid="stToolbar"] {visibility: hidden !important;}
+
+/* Ocultar solo el panel derecho de herramientas de Streamlit (Deploy), dejando el header intacto */
+header [data-testid="stToolbar"] {
+    display: none !important;
+}
+
+/* ¡AQUÍ ESTÁ LA MAGIA! Rescatamos la flecha (collapsedControl) y la forzamos a verse azul */
+[data-testid="collapsedControl"] {
+    visibility: visible !important;
+    display: flex !important;
+    color: #3B82F6 !important; 
+    background-color: transparent !important;
+    z-index: 99999 !important;
+}
 
 /* Reducir márgenes para aprovechar pantalla en celulares */
 .block-container {
-    padding-top: 2rem !important;
+    padding-top: 3rem !important;
     padding-bottom: 1rem !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
@@ -606,7 +619,7 @@ def main():
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
-                            st.success("✅ Datos sincronizados y unidos al histórico correctamente.")
+                            st.success("✅ Datos sincronizados y unidos al histórico correctamente sin duplicados.")
                         except Exception as e:
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
                 else:
@@ -616,7 +629,6 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # DEDUPLICADOR FINAL EN MEMORIA
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -879,7 +891,6 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # Filtro puro de técnicos para reportes
             mask_tec_valido_rep = (
                 df_base['TECNICO'].notna() & 
                 (df_base['TECNICO'].astype(str).str.strip() != '') & 
@@ -890,11 +901,11 @@ def main():
             df_cierre_filtrado = df_base_valido_rep[(df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base_valido_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
             
-            # ====================================================================
-            # 📊 GRÁFICAS DE MEDICIÓN EN EL REPORTE DIARIO
-            # ====================================================================
             st.markdown("### 📊 Indicadores de Avance Operativo")
-            vivas_rep = df_base_valido_rep[df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)]
+            vivas_rep = df_base_valido_rep[
+                (df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & 
+                (df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            ]
             
             df_plex_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'PLEX']
             df_plex_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'PLEX']
@@ -1035,9 +1046,6 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
-        # ------------------------------------------------------------------------------
-        # 🛡️ FILTRO MAESTRO DE TÉCNICOS
-        # ------------------------------------------------------------------------------
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
