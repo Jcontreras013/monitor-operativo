@@ -874,8 +874,58 @@ def main():
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
-            df_cierre_filtrado = df_base[(df_base['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+            
+            # 🛡️ Aplicamos el filtro maestro de técnicos para que los datos sean puros
+            mask_tec_valido_rep = (
+                df_base['TECNICO'].notna() & 
+                (df_base['TECNICO'].astype(str).str.strip() != '') & 
+                (~df_base['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            )
+            df_base_valido_rep = df_base[mask_tec_valido_rep]
+
+            df_cierre_filtrado = df_base_valido_rep[(df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base_valido_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
+            
+            # ====================================================================
+            # 📊 GRÁFICAS DE MEDICIÓN EN EL REPORTE DIARIO
+            # ====================================================================
+            st.markdown("### 📊 Indicadores de Avance Operativo")
+            vivas_rep = df_base_valido_rep[df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)]
+            
+            df_plex_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'PLEX']
+            df_plex_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'PLEX']
+            
+            df_resi_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'RESIDENCIAL']
+
+            total_p_rep = len(df_plex_pend_rep) + len(df_plex_cerr_rep)
+            avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
+            
+            total_r_rep = len(df_resi_pend_rep) + len(df_resi_cerr_rep)
+            avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
+            
+            total_v_rep = len(vivas_rep) + len(df_cierre_filtrado)
+            avance_global_rep = (len(df_cierre_filtrado) / total_v_rep * 100) if total_v_rep > 0 else 0
+
+            def crear_velocimetro_rep(valor, titulo):
+                color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
+                fig = go.Figure(go.Pie(
+                    values=[valor, max(0, 100 - valor)], labels=['Completado', 'Pendiente'], hole=0.8,
+                    marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False
+                ))
+                fig.update_layout(
+                    showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}},
+                    annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")]
+                )
+                return fig
+
+            col_gr1, col_gr2, col_gr3 = st.columns(3)
+            with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_resi_rep, "🏠 Residencial"), use_container_width=True)
+            with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_plex_rep, "🏢 PLEX"), use_container_width=True)
+            with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_global_rep, "🌍 Global"), use_container_width=True)
+            
+            st.divider()
             
             if not df_cierre_filtrado.empty:
                 st.markdown("### 📊 Desglose de Producción por Categoría")
