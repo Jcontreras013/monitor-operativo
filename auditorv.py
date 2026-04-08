@@ -11,6 +11,41 @@ except ImportError:
     st.error("⚠️ No se pudo importar tools.py. Asegúrate de que esté en la misma carpeta.")
 
 # ==============================================================================
+# LECTOR BLINDADO DE ARCHIVOS (SALVA ERRORES DE GPS Y HTML CAMUFLADOS)
+# ==============================================================================
+def read_file_robust(uploaded_file):
+    """
+    Muchos sistemas de GPS exportan un HTML o un formato raro pero le ponen extensión .xls.
+    Esta función detecta el engaño y busca la tabla real.
+    """
+    filename = uploaded_file.name.lower()
+    
+    if filename.endswith('.csv'):
+        try:
+            return pd.read_csv(uploaded_file, encoding='utf-8')
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding='latin1')
+    else:
+        try:
+            # Intento 1: Leer como Excel normal (openpyxl o xlrd)
+            return pd.read_excel(uploaded_file)
+        except Exception:
+            # Intento 2: Leer como HTML camuflado
+            try:
+                uploaded_file.seek(0)
+                dfs = pd.read_html(uploaded_file.getvalue(), encoding='utf-8')
+                # Devolver la tabla más grande (suele ser la de datos, no la de formato)
+                return max(dfs, key=len)
+            except Exception:
+                try:
+                    uploaded_file.seek(0)
+                    dfs = pd.read_html(uploaded_file.getvalue(), encoding='latin1')
+                    return max(dfs, key=len)
+                except Exception as e:
+                    raise ValueError(f"No se pudo decodificar el archivo ni como Excel ni como HTML. Detalle: {e}")
+
+# ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
 # ==============================================================================
 def procesar_auditoria_vehiculos(df):
@@ -22,7 +57,7 @@ def procesar_auditoria_vehiculos(df):
             col_salida = next((c for c in df.columns if 'SALIDA' in str(c).upper()), None)
             
             if not (col_placa and col_ingreso and col_salida):
-                return None, "El archivo no tiene el formato esperado. Faltan columnas de Placa, Ingreso o Salida."
+                return None, "El archivo no tiene el formato esperado para medir tiempos. Asegúrate de que tenga columnas de Placa, Ingreso y Salida."
             df = df.rename(columns={col_placa: 'Placa-Alias', col_ingreso: 'Hora Ingreso', col_salida: 'Hora Salida'})
         
         df['Placa-Alias'] = df['Placa-Alias'].astype(str).str.replace(r'\xa0', ' ', regex=True)
@@ -60,37 +95,56 @@ def procesar_auditoria_vehiculos(df):
         return None, str(e)
 
 # ==============================================================================
-# LÓGICA DE EXCESOS Y TELEMETRÍA (ADAPTADO AL FORMATO MATRIZ DEL GPS)
+# LÓGICA DE EXCESOS Y TELEMETRÍA (MATRIZ REPARADA)
 # ==============================================================================
 def procesar_matriz_telemetria(df_raw):
     try:
-        # 1. Buscar dinámicamente la fila donde están los verdaderos encabezados (Ej: "Placas - Alias")
+        # 1. Buscar dinámicamente la fila donde empiezan los datos reales (encabezados)
         header_idx = None
-        for i in range(min(20, len(df_raw))): # Buscar en las primeras 20 filas
+        for i in range(min(20, len(df_raw))):
+            # Analizamos la primera columna buscando palabras clave
             val = str(df_raw.iloc[i, 0]).upper()
             if 'PLACA' in val or 'ALIAS' in val or 'VEHICULO' in val:
                 header_idx = i
                 break
                 
         if header_idx is None:
-            return None, "No se encontró la fila de encabezados (Placas - Alias) en el archivo."
+            return None, "No se encontró la fila de encabezados (Ej: 'Placas - Alias') en el archivo."
 
-        # 2. Reconstruir el DataFrame desde esa fila
+        # 2. Reconstruir el DataFrame cortando la basura de arriba
         df = df_raw.iloc[header_idx + 1:].copy()
-        df.columns = df_raw.iloc[header_idx].astype(str).str.strip()
+        
+        # 3. Extraer los nombres de las columnas de la fila identificada
+        raw_columns = df_raw.iloc[header_idx].astype(str).str.strip().tolist()
+        
+        # 4. LIMPIEZA DE COLUMNAS: Pandas llama "nan" a las celdas vacías. 
+        # Vamos a nombrar las columnas vacías basándonos en su posición para no perder los días.
+        clean_columns = []
+        for i, col in enumerate(raw_columns):
+            if col.lower() == 'nan' or col == '':
+                # Si es una columna después de la placa y la opción, asumimos que es un día sin nombre
+                if i > 1: 
+                    clean_columns.append(f"Dia_{i-1}")
+                else:
+                    clean_columns.append(f"Info_{i}")
+            else:
+                clean_columns.append(col)
+                
+        df.columns = clean_columns
         
         col_placa = df.columns[0]
         
-        # 3. Limpieza de basura del GPS
+        # 5. Limpiar la basura inyectada por el GPS (textos informativos entre filas)
         df = df.dropna(subset=[col_placa])
         df = df[~df[col_placa].astype(str).str.contains('La versión de este equipo', case=False, na=False)]
         df = df[df[col_placa].astype(str).str.strip() != '']
         
-        # 4. Rellenar nulos con 0 para la matriz numérica
+        # 6. Rellenar nulos numéricos con 0 para que la matriz quede limpia
         df = df.fillna(0)
         
-        # Limpiar un poco los nombres de las placas por estética
-        df[col_placa] = df[col_placa].astype(str).str.split('-').str[0].str.strip()
+        # 7. Limpiar un poco los nombres de las placas (quitar el texto extra después del guion si es muy largo)
+        # Opcional: Si prefieres ver todo el texto, comenta la siguiente línea.
+        # df[col_placa] = df[col_placa].astype(str).str.split('-').str[0].str.strip()
 
         return df, "OK"
     except Exception as e:
@@ -155,7 +209,7 @@ def generar_pdf_auditoria_tiempos(df_resumen):
 def generar_pdf_telemetria_matriz(df_matriz):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
-    pdf.add_page('L') # PÁGINA EN HORIZONTAL PARA QUE QUEPAN LOS DÍAS
+    pdf.add_page('L') # PÁGINA EN HORIZONTAL (LANDSCAPE)
     
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(84, 98, 143)
@@ -167,49 +221,58 @@ def generar_pdf_telemetria_matriz(df_matriz):
     
     if not df_matriz.empty:
         pdf.seccion_titulo("Matriz de Eventos por Vehiculo y Fecha")
+        
+        num_cols = len(df_matriz.columns)
+        
+        # Ajuste dinámico de anchos para Landscape (ancho usable aprox 275mm)
+        w_placa = 80  # Ancho generoso para el nombre del vehículo
+        w_opcion = 35 # Ancho para la actividad (Ej: "Aceleracion Fuerte")
+        
+        espacio_restante = 275 - w_placa - w_opcion
+        cols_dias = num_cols - 2
+        w_dia = espacio_restante / cols_dias if cols_dias > 0 else 0
+        
+        # Ajuste dinámico de fuente (si son 31 días, la letra debe ser más chica)
+        font_size = 6 if cols_dias <= 15 else 5
+        pdf.set_font("Helvetica", "B", font_size)
+        
+        # ---------------- ENCABEZADOS ----------------
         pdf.set_fill_color(225, 225, 225)
         pdf.set_text_color(50, 50, 50)
         
-        num_cols = len(df_matriz.columns)
-        # Calcular anchos: Col 1 y 2 más grandes, el resto (días) pequeños
-        w_placa = 45
-        w_opcion = 45
-        w_restante = 270 - w_placa - w_opcion # 270mm aprox de ancho usable en Landscape
-        w_dia = w_restante / (num_cols - 2) if num_cols > 2 else 0
-        
-        pdf.set_font("Helvetica", "B", 6)
-        
-        # Dibujar Encabezados
         for i, col in enumerate(df_matriz.columns):
             w = w_placa if i == 0 else (w_opcion if i == 1 else w_dia)
-            pdf.cell(w, 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+            # Limpiar nombre de columna por si dice "Dia_3" dejar solo "3"
+            nom_col = str(col).replace('Dia_', '')
+            pdf.cell(w, 6, safestr(nom_col[:15]), border=1, align="C", fill=True)
         pdf.ln()
         
-        # Dibujar Filas
-        pdf.set_font("Helvetica", "", 6)
+        # ---------------- FILAS ----------------
+        pdf.set_font("Helvetica", "", font_size)
         for _, fila in df_matriz.iterrows():
-            pdf.set_fill_color(255, 255, 255)
-            pdf.set_text_color(0, 0, 0)
-            
             for i, item in enumerate(fila):
                 w = w_placa if i == 0 else (w_opcion if i == 1 else w_dia)
-                valstr = str(item)
+                valstr = str(item).replace('.0', '').strip()
                 
-                # Si es número mayor a 0 en las columnas de días, poner en rojito
-                if i > 1:
+                # Limpiar colores
+                pdf.set_fill_color(255, 255, 255)
+                pdf.set_text_color(0, 0, 0)
+                
+                if i > 1: # Columnas de conteo (días y total)
                     try:
                         num = float(valstr)
                         if num > 0:
-                            pdf.set_fill_color(253, 230, 230)
-                            pdf.set_text_color(180, 0, 0)
+                            pdf.set_fill_color(253, 230, 230) # Fondo rojizo
+                            pdf.set_text_color(180, 0, 0)      # Texto rojo
+                            valstr = str(int(num))
                         else:
-                            pdf.set_fill_color(255, 255, 255)
-                            pdf.set_text_color(0, 0, 0)
-                            valstr = "-" # Más limpio a la vista que un cero
+                            valstr = "-" # Visualmente más limpio que puros ceros
                     except:
-                        pass
+                        if valstr == '0': valstr = "-"
                 
-                pdf.cell(w, 5, safestr(valstr[:35]), border=1, align="C" if i > 1 else "L", fill=True)
+                # Truncar texto si es muy largo para que no rompa la celda
+                max_chars = 50 if i == 0 else (20 if i == 1 else 5)
+                pdf.cell(w, 5, safestr(valstr[:max_chars]), border=1, align="C" if i > 1 else "L", fill=True)
             pdf.ln()
     else:
         pdf.set_font("Helvetica", "", 8)
@@ -219,7 +282,7 @@ def generar_pdf_telemetria_matriz(df_matriz):
     return finalizar_pdf(pdf)
 
 # ==============================================================================
-# PANTALLA VISUAL PRINCIPAL
+# PANTALLA VISUAL PRINCIPAL (PESTAÑAS)
 # ==============================================================================
 def mostrar_auditoria(es_movil=False, conn=None):
     col1, col2 = st.columns([1, 4])
@@ -228,14 +291,15 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.markdown("<h1 style='text-align: center;'>🚙</h1>", unsafe_allow_html=True)
     with col2:
         st.title("Auditoría de Vehículos (GPS)")
-        st.caption("Control gerencial de Tiempos en Ruta y Excesos de Velocidad.")
+        st.caption("Control gerencial de Tiempos en Ruta y Análisis de Telemetría.")
 
     st.divider()
 
-    tab_tiempos, tab_velocidad = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Telemetría (Eventos)"])
+    # Separación en Pestañas
+    tab_tiempos, tab_telemetria = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Telemetría (Eventos)"])
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 1: TIEMPOS (Conectado a la Nube)
+    # PESTAÑA 1: TIEMPOS
     # --------------------------------------------------------------------------
     with tab_tiempos:
         df_gps_crudo = None
@@ -265,16 +329,8 @@ def mostrar_auditoria(es_movil=False, conn=None):
             if archivo_gps_tiempos is not None:
                 with st.spinner("🔍 Leyendo archivo y subiendo a la Nube..."):
                     try:
-                        if archivo_gps_tiempos.name.endswith('.csv'): 
-                            try:
-                                df_gps_crudo = pd.read_csv(archivo_gps_tiempos, encoding='utf-8')
-                            except UnicodeDecodeError:
-                                archivo_gps_tiempos.seek(0)
-                                df_gps_crudo = pd.read_csv(archivo_gps_tiempos, encoding='latin1')
-                        elif archivo_gps_tiempos.name.endswith('.xls'):
-                            df_gps_crudo = pd.read_excel(archivo_gps_tiempos) # Soporte .xls activado
-                        else: 
-                            df_gps_crudo = pd.read_excel(archivo_gps_tiempos)
+                        # Usar el lector blindado
+                        df_gps_crudo = read_file_robust(archivo_gps_tiempos)
                         
                         if conn is not None:
                             st.toast("Subiendo datos a Google Sheets...")
@@ -328,34 +384,38 @@ def mostrar_auditoria(es_movil=False, conn=None):
             else:
                 st.error(f"❌ Error formato: {mensaje_error}")
 
-
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: TELEMETRÍA EVENTOS (El reporte tipo Matriz del GPS)
+    # PESTAÑA 2: TELEMETRÍA (Matriz del GPS)
     # --------------------------------------------------------------------------
-    with tab_velocidad:
+    with tab_telemetria:
         st.markdown("### 🚀 Análisis de Eventos (Matriz)")
-        st.caption("Sube el archivo Excel que contiene el conteo de eventos por día (Aceleración, Frenado, Excesos).")
+        st.caption("Sube el archivo Excel (Informe Estadístico) que contiene el conteo de eventos por día.")
         
         if not es_movil:
             archivo_telemetria = st.file_uploader("Arrastra el reporte matriz de Eventos (.xls, .xlsx, .csv)", type=['csv', 'xlsx', 'xls'], key="up_telemetria")
             
             if archivo_telemetria is not None:
                 with st.spinner("Analizando y limpiando matriz..."):
-                    # Leer archivo evitando errores de formato
-                    if archivo_telemetria.name.endswith('.csv'): 
-                        try:
-                            df_raw_tel = pd.read_csv(archivo_telemetria, encoding='utf-8', header=None)
-                        except UnicodeDecodeError:
-                            archivo_telemetria.seek(0)
-                            df_raw_tel = pd.read_csv(archivo_telemetria, encoding='latin1', header=None)
-                    else: 
-                        df_raw_tel = pd.read_excel(archivo_telemetria, header=None)
-                    
+                    # Usar el lector blindado para sortear los HTML camuflados
+                    df_raw_tel = read_file_robust(archivo_telemetria)
                     df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
                 
                 if df_matriz is not None:
                     st.success("✅ Matriz depurada y estructurada correctamente.")
-                    st.dataframe(df_matriz, hide_index=True, use_container_width=True)
+                    
+                    # Mostrar la matriz en pantalla coloreando los mayores a 0
+                    def color_excesos(val):
+                        try:
+                            if float(val) > 0:
+                                return 'background-color: #ffcccc; color: #b30000; font-weight: bold'
+                        except: pass
+                        return ''
+                    
+                    # Aplicar estilo solo a las columnas de días (desde la 3ra en adelante)
+                    cols_dias = df_matriz.columns[2:]
+                    styled_df = df_matriz.style.map(color_excesos, subset=cols_dias)
+                    
+                    st.dataframe(styled_df, hide_index=True, use_container_width=True)
                         
                     pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz)
                     st.download_button(
