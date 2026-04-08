@@ -41,19 +41,17 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded" # La barra inicia normal
+    initial_sidebar_state="expanded" 
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO - LA FLECHA NUNCA DESAPARECE)
+# 📱 MODO APP NATIVA (CSS SEGURO)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar marca de agua inferior y opciones de cuenta, sin tocar la cabecera */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 
-/* Aprovechar el espacio de la pantalla */
 .block-container {
     padding-top: 2rem !important;
     padding-bottom: 1rem !important;
@@ -61,7 +59,6 @@ footer {visibility: hidden;}
     padding-right: 0.5rem !important;
 }
 
-/* Evitar zoom accidental en celulares al tocar rápido */
 html, body {
     touch-action: manipulation;
     overscroll-behavior: none;
@@ -76,7 +73,7 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
 # ==============================================================================
 def get_honduras_time():
-    """Fuerza la hora de Honduras (UTC-6) para evitar el reseteo a las 6:00 PM"""
+    """Fuerza la hora de Honduras (UTC-6)"""
     return datetime.utcnow() - timedelta(hours=6)
 
 def parse_date_ultra_safe(val):
@@ -85,7 +82,6 @@ def parse_date_ultra_safe(val):
     
     str_val = str(val).strip()
     
-    # FILTRO ANTI-BASURA: Si es un cero o medianoche exacta
     if str_val in ["0", "0.0", "00:00", "00:00:00", "12:00:00 AM", "1899-12-30 00:00:00"]:
         return pd.NaT
 
@@ -239,9 +235,11 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
-                # 🚨 ORDENAMIENTO CRÍTICO ANTES DE BORRAR DUPLICADOS (NUBE DIRECTO) 🚨
+                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
-                    df_nube['FECHA_SORT'] = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
+                    # Forzar conversión a datetime para evitar errores de '<' not supported between Timestamp and str
+                    temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
+                    df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
                     df_nube = df_nube.sort_values(by='FECHA_SORT', na_position='first')
                     
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -594,9 +592,10 @@ def main():
                             else:
                                 df_combined = df_new
                                 
-                            # 🚨 ORDENAMIENTO CRÍTICO ANTES DE BORRAR DUPLICADOS (NUEVO ARCHIVO VS NUBE) 🚨
+                            # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (CARGA) 🚨
                             if 'NUM' in df_combined.columns:
-                                df_combined['FECHA_SORT'] = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
+                                temp_date_c = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
+                                df_combined['FECHA_SORT'] = pd.to_datetime(temp_date_c, errors='coerce')
                                 df_combined = df_combined.sort_values(by='FECHA_SORT', na_position='first')
                                 
                                 df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -620,10 +619,11 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # 🚨 ORDENAMIENTO CRÍTICO ANTES DE BORRAR DUPLICADOS (VISTA LOCAL DEL MONITOR) 🚨
+    # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (VISTA LOCAL) 🚨
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
-        df_base['FECHA_SORT'] = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
+        temp_date_b = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
+        df_base['FECHA_SORT'] = pd.to_datetime(temp_date_b, errors='coerce')
         df_base = df_base.sort_values(by='FECHA_SORT', na_position='first')
         
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
