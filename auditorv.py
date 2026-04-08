@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import re
 import os
+import io
 
 # Importar las herramientas de PDF que ya existen en tu sistema
 try:
@@ -25,26 +26,30 @@ def read_file_robust(uploaded_file):
             return pd.read_csv(uploaded_file, encoding='latin1')
     else:
         try:
-            # Intento 1: Leer como Excel Real
+            # Intento 1: Leer como Excel
             uploaded_file.seek(0)
+            # Forzar xlrd si es .xls antiguo
             motor = 'xlrd' if filename.endswith('.xls') else None
             return pd.read_excel(uploaded_file, engine=motor)
+        except ImportError as e_import:
+            if 'xlrd' in str(e_import):
+                raise RuntimeError("FALTA LIBRERÍA: Necesitas instalar 'xlrd' para leer archivos .xls antiguos. Agrégalo a tu requirements.txt.")
+            raise e_import
         except Exception as e_excel:
-            # Intento 2: Si falla, intentar como HTML camuflado de forma segura
+            # Intento 2: Si falla, intentar como HTML camuflado de FORMA SEGURA (StringIO)
             try:
                 uploaded_file.seek(0)
-                # Convertimos los bytes a texto ignorando errores para que no colapse
-                html_texto = uploaded_file.getvalue().decode('utf-8', errors='replace')
-                dfs = pd.read_html(html_texto)
+                html_str = uploaded_file.getvalue().decode('utf-8', errors='ignore')
+                dfs = pd.read_html(io.StringIO(html_str))
                 return max(dfs, key=len)
             except Exception:
                 try:
                     uploaded_file.seek(0)
-                    html_texto = uploaded_file.getvalue().decode('latin1', errors='replace')
-                    dfs = pd.read_html(html_texto)
+                    html_str = uploaded_file.getvalue().decode('latin1', errors='ignore')
+                    dfs = pd.read_html(io.StringIO(html_str))
                     return max(dfs, key=len)
-                except Exception as e_html:
-                    raise ValueError(f"Fallo como Excel ({str(e_excel)}). Fallo como Web ({str(e_html)}).")
+                except Exception:
+                    raise ValueError(f"El archivo está corrupto o es un Excel antiguo (.xls). Asegúrate de tener instalado 'xlrd'. Detalle original: {e_excel}")
 
 # ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
@@ -316,7 +321,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         
                         if 'df_gps_memoria' in st.session_state: del st.session_state['df_gps_memoria']
                     except Exception as e:
-                        st.error(f"❌ Error crítico al leer o subir: {e}")
+                        st.error(f"❌ Error al leer o subir. Verifique que xlrd esté instalado. Detalle: {e}")
         else:
             st.info("📱 El ingreso de datos manual está deshabilitado en teléfonos.")
 
@@ -388,58 +393,61 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     if archivo_principal is None:
                         st.error("❌ No encontré el archivo principal. Asegúrate de subir el archivo llamado 'Informe_Estadistico'.")
                     else:
-                        df_raw_tel = read_file_robust(archivo_principal)
-                        df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
-                        
-                        if df_matriz is not None:
-                            dict_promedios = {}
+                        try:
+                            df_raw_tel = read_file_robust(archivo_principal)
+                            df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
                             
-                            for file_det in archivos_detallados:
-                                try:
-                                    df_d = read_file_robust(file_det)
-                                    col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|SPEED|KM/H|KMH', str(c), re.I)), None)
-                                    col_placa = next((c for c in df_d.columns if re.search(r'PLACA|ALIAS|VEHICULO|NOMBRE', str(c), re.I)), None)
-                                    
-                                    if col_vel and col_placa:
-                                        placa_sucia = str(df_d[col_placa].iloc[0])
-                                        placa_limpia = placa_sucia.split('-')[0].strip()
+                            if df_matriz is not None:
+                                dict_promedios = {}
+                                
+                                for file_det in archivos_detallados:
+                                    try:
+                                        df_d = read_file_robust(file_det)
+                                        col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|SPEED|KM/H|KMH', str(c), re.I)), None)
+                                        col_placa = next((c for c in df_d.columns if re.search(r'PLACA|ALIAS|VEHICULO|NOMBRE', str(c), re.I)), None)
                                         
-                                        df_d['Vel_Num'] = df_d[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
-                                        promedio = df_d['Vel_Num'].mean()
-                                        dict_promedios[placa_limpia] = round(promedio, 2)
-                                except Exception:
-                                    pass
-                            
-                            if dict_promedios:
-                                col_placa_matriz = df_matriz.columns[0]
-                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip()
-                                df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios)
-                                df_matriz['Promedio Vel. (km/h)'] = df_matriz['Promedio Vel. (km/h)'].fillna("-")
-                                df_matriz = df_matriz.drop(columns=['Placa_Match'])
+                                        if col_vel and col_placa:
+                                            placa_sucia = str(df_d[col_placa].iloc[0])
+                                            placa_limpia = placa_sucia.split('-')[0].strip()
+                                            
+                                            df_d['Vel_Num'] = df_d[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
+                                            promedio = df_d['Vel_Num'].mean()
+                                            dict_promedios[placa_limpia] = round(promedio, 2)
+                                    except Exception:
+                                        pass
+                                
+                                if dict_promedios:
+                                    col_placa_matriz = df_matriz.columns[0]
+                                    df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip()
+                                    df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios)
+                                    df_matriz['Promedio Vel. (km/h)'] = df_matriz['Promedio Vel. (km/h)'].fillna("-")
+                                    df_matriz = df_matriz.drop(columns=['Placa_Match'])
 
-                            st.success(f"✅ ¡Matriz cruzada con {len(dict_promedios)} archivos detallados!")
-                            
-                            cols_estilo = [c for c in df_matriz.columns if c != df_matriz.columns[0] and c != df_matriz.columns[1]]
-                            def color_celdas(val):
-                                try:
-                                    if isinstance(val, str) and "km/h" in val: return ''
-                                    if float(val) > 0: return 'background-color: #ffcccc; color: #b30000; font-weight: bold'
-                                except: pass
-                                return ''
+                                st.success(f"✅ ¡Matriz cruzada con {len(dict_promedios)} archivos detallados!")
                                 
-                            styled_df = df_matriz.style.map(color_celdas, subset=cols_estilo)
-                            st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                                
-                            pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz)
-                            st.download_button(
-                                label="📥 Descargar Reporte Final (PDF)",
-                                data=pdf_matriz_bytes,
-                                file_name=f"Auditoria_Velocidades_{datetime.now().strftime('%Y%m%d')}.pdf",
-                                mime="application/pdf",
-                                type="primary",
-                                use_container_width=True
-                            )
-                        else:
-                            st.error(f"❌ Error al procesar matriz principal: {msg_tel}")
+                                cols_estilo = [c for c in df_matriz.columns if c != df_matriz.columns[0] and c != df_matriz.columns[1]]
+                                def color_celdas(val):
+                                    try:
+                                        if isinstance(val, str) and "km/h" in val: return ''
+                                        if float(val) > 0: return 'background-color: #ffcccc; color: #b30000; font-weight: bold'
+                                    except: pass
+                                    return ''
+                                    
+                                styled_df = df_matriz.style.map(color_celdas, subset=cols_estilo)
+                                st.dataframe(styled_df, hide_index=True, use_container_width=True)
+                                    
+                                pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz)
+                                st.download_button(
+                                    label="📥 Descargar Reporte Final (PDF)",
+                                    data=pdf_matriz_bytes,
+                                    file_name=f"Auditoria_Velocidades_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                    mime="application/pdf",
+                                    type="primary",
+                                    use_container_width=True
+                                )
+                            else:
+                                st.error(f"❌ Error al procesar matriz principal: {msg_tel}")
+                        except Exception as main_e:
+                            st.error(f"❌ Ocurrió un error al procesar. Asegúrate de instalar 'xlrd'. Detalle: {main_e}")
         else:
             st.info("📱 La carga masiva de archivos está reservada para uso en computadora (Modo PC).")
