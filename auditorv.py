@@ -126,7 +126,7 @@ def procesar_matriz_telemetria(df_raw):
         return None, f"Error al limpiar la matriz: {str(e)}"
 
 # ==============================================================================
-# GENERADORES DE PDF (ACTUALIZADOS PARA PROMEDIO Y % EXCESO)
+# GENERADORES DE PDF 
 # ==============================================================================
 def generar_pdf_auditoria_tiempos(df_resumen):
     pdf = ReporteGenerencialPDF()
@@ -374,13 +374,13 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 st.error(f"❌ Error formato: {mensaje_error}")
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: TELEMETRÍA (Matriz del GPS + Promedios Detallados)
+    # PESTAÑA 2: TELEMETRÍA EVENTOS (Matriz del GPS + Promedios Detallados)
     # --------------------------------------------------------------------------
     with tab_velocidad:
         st.markdown("### 🚀 Depuración de Infractores Reales")
         st.caption("Sube TODOS los archivos a la vez: El 'Informe Estadístico' y los archivos 'Detallados' de cada técnico.")
         
-        # Permitirle al usuario definir cuál es el límite para no quedar encerrado en 60
+        # Permitirle al usuario definir cuál es el límite
         limite_vel = st.number_input("Establecer límite de velocidad (km/h):", min_value=10, max_value=200, value=60, step=5)
         
         if not es_movil:
@@ -406,6 +406,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         st.error("❌ No encontré el archivo principal. Asegúrate de subir el archivo llamado 'Informe_Estadistico'.")
                     else:
                         try:
+                            # 1. Leer Matriz Principal (Informe Estadístico)
                             df_raw_tel = read_file_robust(archivo_principal)
                             df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
                             
@@ -413,6 +414,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 dict_promedios = {}
                                 dict_pct = {}
                                 
+                                # 2. Analizar archivos detallados para sacar promedios
                                 for file_det in archivos_detallados:
                                     try:
                                         df_d = read_file_robust(file_det)
@@ -425,7 +427,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             
                                             df_d['Vel_Num'] = df_d[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
                                             
-                                            # DEPURA: Extrae solo los eventos que genuinamente superaron el límite
+                                            # Extrae solo los eventos que genuinamente superaron el límite
                                             df_excesos_reales = df_d[df_d['Vel_Num'] > limite_vel]
                                             
                                             if not df_excesos_reales.empty:
@@ -437,6 +439,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     except Exception:
                                         pass
                                 
+                                # 3. Inyectar datos calculados a la matriz principal
                                 if dict_promedios:
                                     col_placa_matriz = df_matriz.columns[0]
                                     df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip()
@@ -444,7 +447,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios)
                                     df_matriz['% Exceso'] = df_matriz['Placa_Match'].map(dict_pct)
                                     
-                                    # 🚨 DEPURA: Borra de la matriz a todo el que no tuvo excesos promediados (Se portaron bien)
+                                    # 🚨 DEPURA: Borra de la matriz a todo el que no tuvo excesos confirmados
                                     df_matriz = df_matriz.dropna(subset=['Promedio Vel. (km/h)'])
                                     
                                     df_matriz['% Exceso'] = df_matriz['% Exceso'].astype(str) + '%'
@@ -455,6 +458,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     else:
                                         st.warning(f"⚠️ Se detectaron {len(df_matriz)} vehículos con excesos confirmados (Promedio > {limite_vel} km/h).")
                                         
+                                        # Colorear matriz en pantalla
                                         cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)', '% Exceso']]
                                         def color_celdas(val):
                                             try:
@@ -470,6 +474,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                         
                                         st.dataframe(styled_df, hide_index=True, use_container_width=True)
                                             
+                                        # Generar y Descargar PDF
                                         pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz, limite_vel)
                                         st.download_button(
                                             label="📥 Descargar Reporte Final (PDF)",
