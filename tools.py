@@ -374,6 +374,25 @@ def generar_graficos_temporales(dfbase):
     except Exception as e:
         return {}
 
+def _generar_dona_png(pct, titulo):
+    """Función de apoyo para dibujar los anillos de avance en el PDF."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        color = "#EF4444" if pct < 50 else ("#F59E0B" if pct < 80 else "#10B981")
+        fig, ax = plt.subplots(figsize=(2.5, 2.5))
+        ax.pie([pct, max(0, 100-pct)], colors=[color, '#E5E7EB'], startangle=90, counterclock=False, wedgeprops=dict(width=0.3, edgecolor='w'))
+        ax.text(0, 0, f"{pct:.0f}%", ha='center', va='center', fontsize=20, fontweight='bold', color=color)
+        plt.title(titulo, fontsize=10, color='#333333', fontweight='bold', pad=5)
+        fd, path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        plt.savefig(path, bbox_inches='tight', dpi=120, transparent=True)
+        plt.close(fig)
+        return path
+    except:
+        return None
+
 # ==============================================================================
 # LÓGICA DE VALORIZACIÓN DE METAS (GAMIFICACIÓN INTELIGENTE)
 # ==============================================================================
@@ -574,7 +593,59 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 6, "Sin datos de productividad para hoy.", ln=True)
 
+    # ==============================================================================
+    # 🌟 NUEVA PÁGINA 2: INDICADORES DE AVANCE OPERATIVO (DONUTS)
+    # ==============================================================================
     if not dfc.empty:
+        pdf.add_page()
+        pdf.seccion_titulo("Indicadores de Avance Operativo (Completado vs Pendiente)")
+        
+        # Filtrar técnicos inválidos para la lectura global
+        mask_tec = (
+            dfbase['TECNICO'].notna() & 
+            (dfbase['TECNICO'].astype(str).str.strip() != '') & 
+            (~dfbase['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+        )
+        dfv = dfbase[mask_tec].copy()
+        
+        PATRON_VIVA = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+        df_vivas = dfv[dfv['ESTADO'].astype(str).str.contains(PATRON_VIVA, na=False, case=False)]
+        
+        # Residencial
+        resi_pend = len(df_vivas[df_vivas['SEGMENTO'] == 'RESIDENCIAL'])
+        resi_cerr = len(dfc[dfc['SEGMENTO'] == 'RESIDENCIAL'])
+        t_resi = resi_pend + resi_cerr
+        pct_resi = (resi_cerr / t_resi * 100) if t_resi > 0 else 0
+        
+        # Plex
+        plex_pend = len(df_vivas[df_vivas['SEGMENTO'] == 'PLEX'])
+        plex_cerr = len(dfc[dfc['SEGMENTO'] == 'PLEX'])
+        t_plex = plex_pend + plex_cerr
+        pct_plex = (plex_cerr / t_plex * 100) if t_plex > 0 else 0
+        
+        # Global
+        t_global = len(df_vivas) + len(dfc)
+        pct_global = (len(dfc) / t_global * 100) if t_global > 0 else 0
+
+        # Dibujar e inyectar las 3 donas
+        path_resi = _generar_dona_png(pct_resi, "Residencial")
+        path_plex = _generar_dona_png(pct_plex, "PLEX")
+        path_global = _generar_dona_png(pct_global, "Global")
+
+        current_y = pdf.get_y()
+        if path_resi: pdf.image(path_resi, x=20, y=current_y, w=50)
+        if path_plex: pdf.image(path_plex, x=80, y=current_y, w=50)
+        if path_global: pdf.image(path_global, x=140, y=current_y, w=50)
+        
+        pdf.ln(60) # Mover el cursor debajo de las imágenes
+        
+        # Eliminar las imágenes temporales
+        for path in [path_resi, path_plex, path_global]:
+            if path:
+                try: os.remove(path)
+                except: pass
+        
+        # Continúa el reporte normal
         pdf.add_page()
         pdf.seccion_titulo("Tiempos de Atencion (Antiguedad de Ordenes Liquidadas)")
         pdf.ln(2)
@@ -764,7 +835,7 @@ def procesar_dataframe_base(df):
     return df
 
 # ==============================================================================
-# ---> NUEVA FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
+# ---> FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
 # ==============================================================================
 def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
     pdf = ReporteGenerencialPDF()
