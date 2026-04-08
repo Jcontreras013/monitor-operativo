@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-
 from streamlit_js_eval import streamlit_js_eval
 
 # ==============================================================================
@@ -42,7 +41,7 @@ st.set_page_config(
     layout="wide", 
     page_title="Monitor Operativo Maxcom PRO", 
     page_icon="⚡",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # ==============================================================================
@@ -50,14 +49,13 @@ st.set_page_config(
 # ==============================================================================
 estilo_app_nativa = """
 <style>
-/* Ocultar marca de agua y opciones de desarrollador (Deploy) */
+/* Ocultar marca de agua y footer. JAMÁS OCULTAR LA CABECERA para no perder el menú en móvil */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-.stAppToolbar {display: none !important;}
 
 /* Aprovechar el espacio de la pantalla */
 .block-container {
-    padding-top: 2rem !important;
+    padding-top: 3rem !important;
     padding-bottom: 1rem !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
@@ -75,16 +73,19 @@ st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS (MANEJA CADENAS DE HORA PURAS)
+# 🛡️ MOTOR SEGURO DE FECHAS (REPARADO BUG DE 00:00 Y ZONA HORARIA DE HONDURAS)
 # ==============================================================================
+def obtener_hora_honduras():
+    # Fuerza la hora estricta UTC-6 para evitar cortes a las 6:00 PM
+    return datetime.utcnow() - timedelta(hours=6)
+
 def parse_date_ultra_safe(val):
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
         return pd.NaT
     
-    hoy = pd.Timestamp(datetime.utcnow() - timedelta(hours=6)).normalize()
+    hoy = pd.Timestamp(obtener_hora_honduras()).normalize()
 
     try:
-        # Manejar objetos time directos de pandas/python
         if isinstance(val, dt_time):
             return pd.Timestamp.combine(hoy.date(), val)
 
@@ -103,15 +104,13 @@ def parse_date_ultra_safe(val):
 
         str_val = str(val).strip()
         
-        # Si la cadena se parece a una hora (ej. "11:30" o "11:30:00")
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
-            parsed_time = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), parsed_time)
-
-        # Si es una fecha completa en string
-        parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+        # Validación directa si viene como formato perfecto de GSheets
+        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
+            parsed = pd.to_datetime(str_val, errors='coerce')
+        else:
+            parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+        
         if pd.notnull(parsed):
-            # Si pandas le asignó el año 1900/1970, significa que solo traía la hora
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
@@ -128,7 +127,7 @@ def procesar_fechas_seguro(df_input, columnas):
     return df
 
 # ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL (TABLAS DETALLADAS CON PARCHE NEGATIVOS)
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL
 # ==============================================================================
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -172,11 +171,11 @@ def generar_tablas_gerenciales(df_crudo):
     return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 # ==============================================================================
-# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN (BLINDADA CONTRA GOOGLE SHEETS)
+# FUNCIÓN COMPARTIDA DE SINCRONIZACIÓN DESDE LA NUBE
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("Descargando y aplicando formato espejo estricto..."):
+        with st.spinner("Descargando historial desde la nube..."):
             df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
             
             if not df_nube.empty:
@@ -190,7 +189,7 @@ def sincronizar_datos_nube(conn):
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
 
-                # Pasamos el filtro ultra seguro
+                # Filtro ultra seguro
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
                 # RECALCULAR TIEMPOS EN DESCARGA
@@ -239,7 +238,8 @@ def sincronizar_datos_nube(conn):
                     if 'DIAS_RETRASO' in df_nube.columns: df_nube.loc[mask_josue, 'DIAS_RETRASO'] = 0
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
-                ahora_momento_ts = pd.Timestamp(datetime.utcnow() - timedelta(hours=6))
+                # Filtro de 7 días usando ZONA HORARIA CORRECTA
+                ahora_momento_ts = pd.Timestamp(obtener_hora_honduras())
                 fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
                 
                 if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns and 'ESTADO' in df_nube.columns:
@@ -304,9 +304,6 @@ def mostrar_comentario_cierre(fila):
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True):
         st.rerun()
 
-# ------------------------------------------------------------------------------
-# NUEVA VENTANA DE RESUMEN (OPTIMIZADA PARA MÓVILES)
-# ------------------------------------------------------------------------------
 @st.dialog("Resumen de Operaciones")
 def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
@@ -388,7 +385,6 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'NUM' in df_visual_procesado.columns:
         df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
     
-    # Aplicar el formato de hora de forma segura para la visualización
     if 'HORA_INI' in df_visual_procesado.columns:
         df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns:
@@ -412,8 +408,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         
         df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
         
-        ahora_momento = datetime.utcnow() - timedelta(hours=6)
-        ahora_momento_ts = pd.Timestamp(ahora_momento)
+        ahora_momento_ts = pd.Timestamp(obtener_hora_honduras())
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
         
         mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -559,16 +554,35 @@ def main():
                 st.session_state.df_hist = res_h_diamante
                 
                 if conn is not None:
-                    with st.spinner("☁️ Sincronizando datos con la nube para el equipo..."):
+                    with st.spinner("☁️ Sincronizando datos y uniendo con historial..."):
                         try:
-                            # Preparar para subir asegurando que las fechas sean strings completos
-                            df_to_upload = res_p_diamante.copy()
+                            # ------------------------------------------------------------------
+                            # 🛡️ SOLUCIÓN MAESTRA: EVITAR QUE LA NUBE SE BORRE AL SUBIR EL EXCEL
+                            # ------------------------------------------------------------------
+                            df_new = res_p_diamante.copy()
+                            
+                            # Primero, DESCARGAMOS lo que ya está en la nube
+                            df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                            
+                            if not df_cloud.empty:
+                                df_cloud.columns = df_cloud.columns.str.upper().str.strip()
+                                if 'NUM' in df_cloud.columns:
+                                    df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.strip()
+                                df_new['NUM'] = df_new['NUM'].astype(str).str.strip()
+                                
+                                # Unimos el archivo de hoy con el archivo de ayer de la nube
+                                df_combined = pd.concat([df_cloud, df_new]).drop_duplicates(subset=['NUM'], keep='last')
+                            else:
+                                df_combined = df_new
+                                
+                            # Convertimos fechas a texto para que Google Sheets no las destruya a "00:00"
+                            df_to_upload = df_combined.copy()
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if c_date in df_to_upload.columns:
-                                    df_to_upload[c_date] = df_to_upload[c_date].dt.strftime('%Y-%m-%d %H:%M:%S')
+                                    df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
-                            st.success("✅ Datos sincronizados y guardados en la nube correctamente.")
+                            st.success("✅ Datos sincronizados y unidos al histórico correctamente.")
                         except Exception as e:
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
                 else:
@@ -632,7 +646,7 @@ def main():
             df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
             df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
     
-    ahora_local = datetime.utcnow() - timedelta(hours=6)
+    ahora_local = obtener_hora_honduras()
     hoy_date_valor = ahora_local.date()
 
     with sidebar_top:
@@ -1201,7 +1215,7 @@ def main():
         with t_graphs_v:
             df_para_gantt_final = df_v_tabla_monitor[df_v_tabla_monitor['HORA_INI'].notnull()].copy()
             if not df_para_gantt_final.empty:
-                df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(datetime.now())
+                df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(obtener_hora_honduras())
                 figura_gantt_final = px.timeline(
                     df_para_gantt_final, x_start="HORA_INI", x_end="FIN_LIMITE", 
                     y="TECNICO", color="ACTIVIDAD", text="ACTIVIDAD", 
