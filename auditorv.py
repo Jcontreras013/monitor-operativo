@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import re
+import os
 
 # Importar las herramientas de PDF que ya existen en tu sistema
 try:
@@ -59,52 +60,41 @@ def procesar_auditoria_vehiculos(df):
         return None, str(e)
 
 # ==============================================================================
-# LÓGICA DE EXCESOS DE VELOCIDAD
+# LÓGICA DE EXCESOS Y TELEMETRÍA (ADAPTADO AL FORMATO MATRIZ DEL GPS)
 # ==============================================================================
-def procesar_excesos_velocidad(df, limite_vel):
+def procesar_matriz_telemetria(df_raw):
     try:
-        # Búsqueda inteligente de columnas
-        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO|UNIDAD|NOMBRE', str(c), re.I)), None)
-        col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|SPEED|KM/H|KMH', str(c), re.I)), None)
-        col_fecha = next((c for c in df.columns if re.search(r'FECHA|HORA|TIME|DATE', str(c), re.I)), None)
-        col_ubi = next((c for c in df.columns if re.search(r'UBICACION|DIRECCION|COORDENADA|POSICION', str(c), re.I)), None)
+        # 1. Buscar dinámicamente la fila donde están los verdaderos encabezados (Ej: "Placas - Alias")
+        header_idx = None
+        for i in range(min(20, len(df_raw))): # Buscar en las primeras 20 filas
+            val = str(df_raw.iloc[i, 0]).upper()
+            if 'PLACA' in val or 'ALIAS' in val or 'VEHICULO' in val:
+                header_idx = i
+                break
+                
+        if header_idx is None:
+            return None, "No se encontró la fila de encabezados (Placas - Alias) en el archivo."
 
-        if not col_placa or not col_vel:
-            return None, None, "El archivo no contiene las columnas necesarias (Placa/Vehículo y Velocidad)."
-
-        df = df.copy()
+        # 2. Reconstruir el DataFrame desde esa fila
+        df = df_raw.iloc[header_idx + 1:].copy()
+        df.columns = df_raw.iloc[header_idx].astype(str).str.strip()
         
-        # Limpieza de nombres
-        df[col_placa] = df[col_placa].astype(str).str.replace(r'\xa0', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
-        df = df[~df[col_placa].isin(['nan', '--', 'None', '', 'N/D'])]
+        col_placa = df.columns[0]
+        
+        # 3. Limpieza de basura del GPS
+        df = df.dropna(subset=[col_placa])
+        df = df[~df[col_placa].astype(str).str.contains('La versión de este equipo', case=False, na=False)]
+        df = df[df[col_placa].astype(str).str.strip() != '']
+        
+        # 4. Rellenar nulos con 0 para la matriz numérica
+        df = df.fillna(0)
+        
+        # Limpiar un poco los nombres de las placas por estética
+        df[col_placa] = df[col_placa].astype(str).str.split('-').str[0].str.strip()
 
-        # Extracción de la velocidad pura
-        df['Vel_Numerica'] = df[col_vel].astype(str).str.extract(r'(\d+\.?\d*)')[0].astype(float)
-
-        # Filtrar excesos
-        df_excesos = df[df['Vel_Numerica'] > limite_vel].copy()
-
-        if df_excesos.empty:
-            return pd.DataFrame(), pd.DataFrame(), "OK"
-
-        # Formatear detalle
-        df_excesos['Vehículo / Placa'] = df_excesos[col_placa]
-        df_excesos['Velocidad (km/h)'] = df_excesos['Vel_Numerica']
-        df_excesos['Fecha y Hora'] = df_excesos[col_fecha].astype(str) if col_fecha else "N/D"
-        df_excesos['Ubicación'] = df_excesos[col_ubi].astype(str) if col_ubi else "N/D"
-
-        detalle = df_excesos[['Vehículo / Placa', 'Velocidad (km/h)', 'Fecha y Hora', 'Ubicación']].sort_values(by='Velocidad (km/h)', ascending=False)
-
-        # Crear resumen Top Infractores
-        resumen = df_excesos.groupby('Vehículo / Placa').agg(
-            Total_Excesos=('Vehículo / Placa', 'count'),
-            Vel_Maxima=('Velocidad (km/h)', 'max')
-        ).reset_index().sort_values(by='Total_Excesos', ascending=False)
-        resumen.columns = ['Vehículo / Placa', 'Total de Infracciones', 'Velocidad Máxima Alcanzada']
-
-        return resumen, detalle, "OK"
+        return df, "OK"
     except Exception as e:
-        return None, None, str(e)
+        return None, f"Error al limpiar la matriz: {str(e)}"
 
 # ==============================================================================
 # GENERADORES DE PDF
@@ -162,70 +152,69 @@ def generar_pdf_auditoria_tiempos(df_resumen):
         
     return finalizar_pdf(pdf)
 
-def generar_pdf_velocidad(df_resumen, df_detalle, limite):
+def generar_pdf_telemetria_matriz(df_matriz):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
-    pdf.add_page()
+    pdf.add_page('L') # PÁGINA EN HORIZONTAL PARA QUE QUEPAN LOS DÍAS
     
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(84, 98, 143)
     pdf.set_draw_color(220, 220, 220)
     pdf.set_fill_color(252, 252, 252)
     ahorastr = datetime.now().strftime('%d/%m/%Y %I:%M %p')
-    pdf.cell(0, 10, safestr(f" Auditoria de Excesos de Velocidad (> {limite} km/h) - {ahorastr}"), border=1, ln=True, fill=True)
+    pdf.cell(0, 10, safestr(f" Auditoria de Telemetria e Infracciones Diarias - Generado: {ahorastr}"), border=1, ln=True, fill=True)
     pdf.ln(5)
     
-    if not df_resumen.empty:
-        # Tabla Top Infractores
-        pdf.seccion_titulo("Resumen: Top Vehiculos con Infracciones")
+    if not df_matriz.empty:
+        pdf.seccion_titulo("Matriz de Eventos por Vehiculo y Fecha")
         pdf.set_fill_color(225, 225, 225)
         pdf.set_text_color(50, 50, 50)
-        pdf.set_font("Helvetica", "B", 7)
-        anchos_res = [80, 45, 45]
         
-        for i, col in enumerate(df_resumen.columns):
-            pdf.cell(anchos_res[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+        num_cols = len(df_matriz.columns)
+        # Calcular anchos: Col 1 y 2 más grandes, el resto (días) pequeños
+        w_placa = 45
+        w_opcion = 45
+        w_restante = 270 - w_placa - w_opcion # 270mm aprox de ancho usable en Landscape
+        w_dia = w_restante / (num_cols - 2) if num_cols > 2 else 0
+        
+        pdf.set_font("Helvetica", "B", 6)
+        
+        # Dibujar Encabezados
+        for i, col in enumerate(df_matriz.columns):
+            w = w_placa if i == 0 else (w_opcion if i == 1 else w_dia)
+            pdf.cell(w, 6, safestr(str(col).upper()), border=1, align="C", fill=True)
         pdf.ln()
         
-        pdf.set_font("Helvetica", "", 7)
-        for _, fila in df_resumen.iterrows():
+        # Dibujar Filas
+        pdf.set_font("Helvetica", "", 6)
+        for _, fila in df_matriz.iterrows():
             pdf.set_fill_color(255, 255, 255)
             pdf.set_text_color(0, 0, 0)
             
-            # Resaltar en rojo si supera el límite por mucho (+20km/h)
-            if fila['Velocidad Máxima Alcanzada'] >= limite + 20:
-                pdf.set_text_color(200, 0, 0)
+            for i, item in enumerate(fila):
+                w = w_placa if i == 0 else (w_opcion if i == 1 else w_dia)
+                valstr = str(item)
                 
-            pdf.cell(anchos_res[0], 5, safestr(str(fila[0])[:45]), border=1, align="L", fill=True)
-            pdf.cell(anchos_res[1], 5, safestr(str(fila[1])), border=1, align="C", fill=True)
-            pdf.cell(anchos_res[2], 5, safestr(f"{fila[2]:.1f} km/h"), border=1, align="C", fill=True)
-            pdf.ln()
-            
-        pdf.ln(5)
-        
-        # Tabla Detalle
-        pdf.seccion_titulo("Detalle Completo de Eventos de Exceso")
-        pdf.set_fill_color(225, 225, 225)
-        pdf.set_text_color(50, 50, 50)
-        pdf.set_font("Helvetica", "B", 7)
-        anchos_det = [50, 25, 35, 80]
-        
-        for i, col in enumerate(df_detalle.columns):
-            pdf.cell(anchos_det[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
-        pdf.ln()
-        
-        pdf.set_font("Helvetica", "", 6)
-        pdf.set_text_color(0, 0, 0)
-        for _, fila in df_detalle.iterrows():
-            pdf.cell(anchos_det[0], 5, safestr(str(fila[0])[:35]), border=1, align="L")
-            pdf.cell(anchos_det[1], 5, safestr(f"{fila[1]:.1f}"), border=1, align="C")
-            pdf.cell(anchos_det[2], 5, safestr(str(fila[2])[:20]), border=1, align="C")
-            pdf.cell(anchos_det[3], 5, safestr(str(fila[3])[:65]), border=1, align="L")
+                # Si es número mayor a 0 en las columnas de días, poner en rojito
+                if i > 1:
+                    try:
+                        num = float(valstr)
+                        if num > 0:
+                            pdf.set_fill_color(253, 230, 230)
+                            pdf.set_text_color(180, 0, 0)
+                        else:
+                            pdf.set_fill_color(255, 255, 255)
+                            pdf.set_text_color(0, 0, 0)
+                            valstr = "-" # Más limpio a la vista que un cero
+                    except:
+                        pass
+                
+                pdf.cell(w, 5, safestr(valstr[:35]), border=1, align="C" if i > 1 else "L", fill=True)
             pdf.ln()
     else:
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(0, 100, 0)
-        pdf.cell(0, 6, f"Operacion Segura. No se detectaron velocidades mayores a {limite} km/h.", ln=True)
+        pdf.cell(0, 6, f"No hay datos estructurados para mostrar.", ln=True)
         
     return finalizar_pdf(pdf)
 
@@ -243,10 +232,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
     st.divider()
 
-    # ==========================================================================
-    # SEPARACIÓN EN DOS PESTAÑAS INDEPENDIENTES
-    # ==========================================================================
-    tab_tiempos, tab_velocidad = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Control de Velocidad"])
+    tab_tiempos, tab_velocidad = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Telemetría (Eventos)"])
 
     # --------------------------------------------------------------------------
     # PESTAÑA 1: TIEMPOS (Conectado a la Nube)
@@ -274,18 +260,19 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
         if not es_movil:
             st.markdown("### 📥 Ingreso Manual (Modo PC)")
-            archivo_gps_tiempos = st.file_uploader("Arrastra el archivo de Zonas/Rutas", type=['csv', 'xlsx'], key="up_tiempos")
+            archivo_gps_tiempos = st.file_uploader("Arrastra el archivo de Zonas/Rutas (Tiempos)", type=['csv', 'xlsx', 'xls'], key="up_tiempos")
             
             if archivo_gps_tiempos is not None:
                 with st.spinner("🔍 Leyendo archivo y subiendo a la Nube..."):
                     try:
-                        # 🛡️ PROTECCIÓN DE CODIFICACIÓN (Evita el error utf-8 en CSVs con tildes/ñ)
                         if archivo_gps_tiempos.name.endswith('.csv'): 
                             try:
                                 df_gps_crudo = pd.read_csv(archivo_gps_tiempos, encoding='utf-8')
                             except UnicodeDecodeError:
                                 archivo_gps_tiempos.seek(0)
                                 df_gps_crudo = pd.read_csv(archivo_gps_tiempos, encoding='latin1')
+                        elif archivo_gps_tiempos.name.endswith('.xls'):
+                            df_gps_crudo = pd.read_excel(archivo_gps_tiempos) # Soporte .xls activado
                         else: 
                             df_gps_crudo = pd.read_excel(archivo_gps_tiempos)
                         
@@ -343,55 +330,43 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: EXCESOS DE VELOCIDAD (Independiente)
+    # PESTAÑA 2: TELEMETRÍA EVENTOS (El reporte tipo Matriz del GPS)
     # --------------------------------------------------------------------------
     with tab_velocidad:
-        st.markdown("### 🚀 Análisis de Telemetría y Excesos")
-        st.caption("Sube el archivo general del GPS. El sistema filtrará a los infractores.")
-        
-        limite_vel = st.number_input("Establecer límite de velocidad (km/h):", min_value=10, max_value=200, value=80, step=5)
+        st.markdown("### 🚀 Análisis de Eventos (Matriz)")
+        st.caption("Sube el archivo Excel que contiene el conteo de eventos por día (Aceleración, Frenado, Excesos).")
         
         if not es_movil:
-            archivo_vel = st.file_uploader("Arrastra el reporte de Velocidad/Telemetría", type=['csv', 'xlsx'], key="up_vel")
+            archivo_telemetria = st.file_uploader("Arrastra el reporte matriz de Eventos (.xls, .xlsx, .csv)", type=['csv', 'xlsx', 'xls'], key="up_telemetria")
             
-            if archivo_vel is not None:
-                with st.spinner("Analizando velocidades..."):
-                    # 🛡️ PROTECCIÓN DE CODIFICACIÓN PARA VELOCIDAD TAMBIÉN
-                    if archivo_vel.name.endswith('.csv'): 
+            if archivo_telemetria is not None:
+                with st.spinner("Analizando y limpiando matriz..."):
+                    # Leer archivo evitando errores de formato
+                    if archivo_telemetria.name.endswith('.csv'): 
                         try:
-                            df_vel_crudo = pd.read_csv(archivo_vel, encoding='utf-8')
+                            df_raw_tel = pd.read_csv(archivo_telemetria, encoding='utf-8', header=None)
                         except UnicodeDecodeError:
-                            archivo_vel.seek(0)
-                            df_vel_crudo = pd.read_csv(archivo_vel, encoding='latin1')
+                            archivo_telemetria.seek(0)
+                            df_raw_tel = pd.read_csv(archivo_telemetria, encoding='latin1', header=None)
                     else: 
-                        df_vel_crudo = pd.read_excel(archivo_vel)
+                        df_raw_tel = pd.read_excel(archivo_telemetria, header=None)
                     
-                    df_res_vel, df_det_vel, msg_vel = procesar_excesos_velocidad(df_vel_crudo, limite_vel)
+                    df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
                 
-                if df_res_vel is not None:
-                    if df_res_vel.empty:
-                        st.success(f"✅ **¡Excelente!** Operación Segura. No se registraron velocidades superiores a {limite_vel} km/h.")
-                    else:
-                        st.error(f"⚠️ Se detectaron {len(df_det_vel)} infracciones distribuidas en {len(df_res_vel)} vehículos.")
+                if df_matriz is not None:
+                    st.success("✅ Matriz depurada y estructurada correctamente.")
+                    st.dataframe(df_matriz, hide_index=True, use_container_width=True)
                         
-                        col_v1, col_v2 = st.columns([1, 1.5])
-                        with col_v1:
-                            st.markdown("**🏆 Top Infractores**")
-                            st.dataframe(df_res_vel, hide_index=True, use_container_width=True)
-                        with col_v2:
-                            st.markdown("**📍 Detalle de Eventos**")
-                            st.dataframe(df_det_vel, hide_index=True, use_container_width=True)
-                            
-                        pdf_vel_bytes = generar_pdf_velocidad(df_res_vel, df_det_vel, limite_vel)
-                        st.download_button(
-                            label="📥 Descargar Reporte de Infracciones (PDF)",
-                            data=pdf_vel_bytes,
-                            file_name=f"Infracciones_Velocidad_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf",
-                            type="primary",
-                            use_container_width=True
-                        )
+                    pdf_matriz_bytes = generar_pdf_telemetria_matriz(df_matriz)
+                    st.download_button(
+                        label="📥 Descargar Reporte Detallado (PDF)",
+                        data=pdf_matriz_bytes,
+                        file_name=f"Telemetria_Matriz_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True
+                    )
                 else:
-                    st.error(f"❌ Error al procesar velocidades: {msg_vel}")
+                    st.error(f"❌ Error al procesar matriz: {msg_tel}")
         else:
             st.info("📱 La carga de archivos de telemetría está reservada para uso en computadora (Modo PC).")
