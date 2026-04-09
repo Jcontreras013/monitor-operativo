@@ -35,19 +35,22 @@ def forzar_columnas_unicas(df):
     return df
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS
+# LECTOR BLINDADO DE ARCHIVOS (XLS, XLSX, CSV, HTML)
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
     df = None
     
+    # 1. Es un archivo Excel antiguo REAL (.xls binario)
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
             uploaded_file.seek(0)
             df = pd.read_excel(uploaded_file, engine='xlrd')
         except ImportError:
-            raise RuntimeError("FALTA LIBRERÍA: Instala 'xlrd' en tu requirements.txt para leer Excel viejo.")
+            st.error("Falta librería xlrd para leer este XLS antiguo.")
+            
+    # 2. Es una tabla web (HTML) disfrazada de Excel (Muy común en los GPS)
     elif b'<table' in content.lower() or b'<html' in content.lower():
         try:
             dfs = pd.read_html(io.StringIO(content.decode('utf-8', errors='ignore')))
@@ -55,11 +58,14 @@ def read_file_robust(uploaded_file):
         except Exception:
             dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
             df = max(dfs, key=len)
+            
+    # 3. Es un XLSX moderno o un archivo de texto (CSV/TSV) disfrazado de XLS
     else:
         uploaded_file.seek(0)
         if filename.endswith('.xlsx'): 
             df = pd.read_excel(uploaded_file, engine='openpyxl')
         else:
+            # Si dice .xls pero no es binario, el GPS lo guardó como CSV/Texto.
             try: 
                 df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
             except UnicodeDecodeError:
@@ -165,7 +171,6 @@ def procesar_auditoria_semanal(df_input):
         df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
         df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
         
-        # Extraer la fecha para agrupar por días
         df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
         df = df.dropna(subset=['Fecha'])
         
@@ -175,7 +180,6 @@ def procesar_auditoria_semanal(df_input):
         f_inicio = df['Fecha'].min()
         f_fin = df['Fecha'].max()
 
-        # Agrupar por Vehículo Y por Fecha (Para calcular cada día individual)
         diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_segs(row):
@@ -199,7 +203,6 @@ def procesar_auditoria_semanal(df_input):
 
         diario['segundos'] = diario.apply(calc_segs, axis=1)
         
-        # Agrupar el acumulado de la Semana
         semanal = diario.groupby('_P').agg(
             Dias_Laborados=('Fecha', 'nunique'),
             Total_Segundos=('segundos', 'sum')
@@ -515,14 +518,17 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         st.error("❌ Sube el archivo 'Informe_Estadistico'.")
                     else:
                         try:
+                            # Procesar Informe Principal
                             df_raw_tel = read_file_robust(archivo_principal)
                             df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
                             
                             if df_matriz is not None:
                                 dict_promedios = {}
+                                
                                 col_placa_matriz = df_matriz.columns[0]
                                 placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
                                 
+                                # Escáner Profundo de archivos detallados
                                 if archivos_detallados:
                                     for file_det in archivos_detallados:
                                         try:
@@ -538,6 +544,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             if not placa_encontrada: continue 
                                             
                                             df_d = read_file_robust(file_det)
+                                            
                                             header_idx = None
                                             for i in range(min(20, len(df_d))):
                                                 if 'VELOCIDAD' in str(df_d.iloc[i].values).upper() or 'KM/H' in str(df_d.iloc[i].values).upper():
@@ -545,7 +552,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             
                                             if header_idx is not None:
                                                 df_d.columns = df_d.iloc[header_idx].astype(str).str.strip().str.upper()
-                                                df_d = forzar_columnas_unicas(df_d) 
+                                                df_d = forzar_columnas_unicas(df_d) # Barrido interno
                                                 df_d = df_d.iloc[header_idx + 1:]
                                                 
                                                 col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
@@ -556,10 +563,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                                         dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
                                         except Exception: pass
                                             
+                                # Crear la columna Promedio y Cruzar
                                 df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
                                 df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios).fillna("-")
                                 df_matriz = df_matriz.drop(columns=['Placa_Match'])
 
+                                # Depuración Final
                                 if archivos_detallados:
                                     df_matriz = df_matriz[df_matriz['Promedio Vel. (km/h)'] != "-"]
 
@@ -586,13 +595,14 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
     # --- PESTAÑA 3: MÉTRICA DE EFICIENCIA TOTAL ---
     with tab_eficiencia:
+        col_e1, col_e2 = st.columns([4, 1])
+        with col_e2: 
+            if st.button("🔄 Refrescar", key="ref_e"): st.rerun()
+            
         st.markdown("### ⚖️ Cruce de Productividad vs Tiempos GPS")
         st.caption("Calcula el porcentaje real de tiempo que el técnico estuvo produciendo mientras estaba en la calle.")
         
-        col_e1, col_e2 = st.columns(2)
-        with col_e1: fecha_ini_e = st.date_input("Fecha Inicio", value=get_hn_time().date() - timedelta(days=7), key="d_ini_e")
-        with col_e2: fecha_fin_e = st.date_input("Fecha Fin", value=get_hn_time().date(), key="d_fin_e")
-        
+        st.info("💡 Las fechas se tomarán automáticamente del archivo GPS que subas.")
         archivo_detallado = st.file_uploader("📥 Sube el reporte 'DetencionDetallado' (GPS)", type=['csv', 'xlsx', 'xls'], key="up_detallado")
         
         if st.button("🚀 Calcular Eficiencia Real", use_container_width=True, type="primary"):
@@ -601,55 +611,54 @@ def mostrar_auditoria(es_movil=False, conn=None):
             elif not archivo_detallado:
                 st.warning("⚠️ Sube el archivo 'DetencionDetallado' del GPS para poder cruzar los tiempos.")
             else:
-                with st.spinner("🧠 Cruzando Inteligencia de Datos..."):
+                with st.spinner("🧠 Escaneando fechas y cruzando Inteligencia de Datos..."):
                     try:
-                        # 1. PROCESAR PRODUCTIVIDAD (ACTIVIDADES)
-                        df_act = st.session_state.df_base.copy()
-                        df_act['HORA_LIQ'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
-                        df_act['HORA_INI'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
-                        df_act['Fecha_Ord'] = df_act['HORA_LIQ'].dt.date
-                        
-                        # Filtrar por fechas y solo cerradas
-                        df_act = df_act[(df_act['Fecha_Ord'] >= fecha_ini_e) & (df_act['Fecha_Ord'] <= fecha_fin_e)]
-                        df_act = df_act[df_act['ESTADO'].astype(str).str.upper().str.contains('CERRADA', na=False)]
-                        
-                        df_act['Segundos_Prod'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds()
-                        df_act.loc[df_act['Segundos_Prod'] < 0, 'Segundos_Prod'] = 0
-                        
-                        resumen_prod = df_act.groupby('TECNICO').agg(
-                            Ordenes=('NUM', 'count'),
-                            Seg_Prod=('Segundos_Prod', 'sum')
-                        ).reset_index()
-                        
-                        # 2. PROCESAR TIEMPOS DE CALLE (GPS)
+                        # 1. PROCESAR TIEMPOS DE CALLE (GPS) PARA SACAR LAS FECHAS
                         df_gps_raw = read_file_robust(archivo_detallado)
                         res_gps, msg_gps, f_in, f_out = procesar_auditoria_semanal(df_gps_raw)
                         
-                        # 3. EXTRAER MOTOR ENCENDIDO (RALENTÍ)
-                        archivo_detallado.seek(0)
-                        lineas_texto = archivo_detallado.getvalue().decode('utf-8', errors='ignore').splitlines()
-                        if len(lineas_texto) < 10:
+                        if res_gps is not None and f_in is not None and f_out is not None:
+                        
+                            # 2. PROCESAR PRODUCTIVIDAD (ACTIVIDADES) USANDO LAS FECHAS DEL GPS
+                            df_act = st.session_state.df_base.copy()
+                            df_act['HORA_LIQ'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
+                            df_act['HORA_INI'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
+                            df_act['Fecha_Ord'] = df_act['HORA_LIQ'].dt.date
+                            
+                            df_act = df_act[(df_act['Fecha_Ord'] >= f_in) & (df_act['Fecha_Ord'] <= f_out)]
+                            df_act = df_act[df_act['ESTADO'].astype(str).str.upper().str.contains('CERRADA', na=False)]
+                            
+                            df_act['Segundos_Prod'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds()
+                            df_act.loc[df_act['Segundos_Prod'] < 0, 'Segundos_Prod'] = 0
+                            
+                            resumen_prod = df_act.groupby('TECNICO').agg(
+                                Ordenes=('NUM', 'count'),
+                                Seg_Prod=('Segundos_Prod', 'sum')
+                            ).reset_index()
+                            
+                            # 3. EXTRAER MOTOR ENCENDIDO (RALENTÍ)
                             archivo_detallado.seek(0)
-                            lineas_texto = archivo_detallado.getvalue().decode('latin1', errors='ignore').splitlines()
-                            
-                        dict_ralenti = {}
-                        for linea in lineas_texto:
-                            if "Tiempo de detencion con motor encendido" in linea:
-                                match = re.search(r'Placa:?\s*(.*?)(?:",|$)', linea)
-                                if match:
-                                    placa = match.group(1).replace('"', '').strip()
-                                    tiempo = linea.split(',')[-1].strip()
-                                    if not tiempo: tiempo = linea.split(',')[-2].strip()
-                                    dict_ralenti[placa] = tiempo
-                                    
-                        # Convertir GPS a segundos
-                        def time_to_sec(t_str):
-                            if pd.isnull(t_str) or not isinstance(t_str, str): return 0
-                            parts = t_str.split(':')
-                            if len(parts) == 3: return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
-                            return 0
-                            
-                        if res_gps is not None:
+                            lineas_texto = archivo_detallado.getvalue().decode('utf-8', errors='ignore').splitlines()
+                            if len(lineas_texto) < 10:
+                                archivo_detallado.seek(0)
+                                lineas_texto = archivo_detallado.getvalue().decode('latin1', errors='ignore').splitlines()
+                                
+                            dict_ralenti = {}
+                            for linea in lineas_texto:
+                                if "Tiempo de detencion con motor encendido" in linea:
+                                    match = re.search(r'Placa:?\s*(.*?)(?:",|$)', linea)
+                                    if match:
+                                        placa = match.group(1).replace('"', '').strip()
+                                        tiempo = linea.split(',')[-1].strip()
+                                        if not tiempo: tiempo = linea.split(',')[-2].strip()
+                                        dict_ralenti[placa] = tiempo
+                                        
+                            def time_to_sec(t_str):
+                                if pd.isnull(t_str) or not isinstance(t_str, str): return 0
+                                parts = t_str.split(':')
+                                if len(parts) == 3: return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
+                                return 0
+                                
                             res_gps['Seg_Calle'] = res_gps['Tiempo Total Semana'].apply(time_to_sec)
                             res_gps['Motor_Encendido'] = res_gps['Vehículo / Placa'].map(dict_ralenti).fillna("00:00:00")
                             
@@ -684,7 +693,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             ]
                             df_visual = df_final[columnas_mostrar].rename(columns={'Motor_Encendido': 'Ralentí (Motor Encendido)'})
                             
-                            st.success("✅ Cruce de Eficiencia completado exitosamente.")
+                            st.success(f"✅ Cruce de Eficiencia completado exitosamente (Del {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}).")
                             st.dataframe(
                                 df_visual.style.format({'% Eficiencia': "{:.1f}%"}).map(
                                     lambda x: 'background-color: #2ea043; color: white' if x >= 65 else ('background-color: #d32f2f; color: white' if x < 40 else ''),
@@ -693,6 +702,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 use_container_width=True, hide_index=True
                             )
                         else:
-                            st.error(f"No se pudieron extraer los tiempos del archivo GPS. Error: {msg_gps}")
+                            st.error(f"No se pudieron extraer las fechas o los tiempos del archivo GPS. Error: {msg_gps}")
                     except Exception as e:
                         st.error(f"❌ Error durante el cruce de datos: {e}")
