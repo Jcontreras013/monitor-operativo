@@ -70,10 +70,11 @@ def read_file_robust(uploaded_file):
     return forzar_columnas_unicas(df)
 
 # ==============================================================================
-# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
+# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS) -> REPARADA PARA FECHAS
 # ==============================================================================
-def procesar_auditoria_vehiculos(df):
+def procesar_auditoria_vehiculos(df_input):
     try:
+        df = df_input.copy()
         col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO', str(c), re.I)), None)
         col_ingreso = next((c for c in df.columns if re.search(r'INGRESO|ENTRADA', str(c), re.I)), None)
         col_salida = next((c for c in df.columns if re.search(r'SALIDA', str(c), re.I)), None)
@@ -84,8 +85,9 @@ def procesar_auditoria_vehiculos(df):
         df['Placa-Alias'] = df['Placa-Alias'].astype(str).str.replace(r'\xa0', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
         df = df[~df['Placa-Alias'].isin(['nan', '--', 'None', ''])]
         
-        df['Hora Ingreso'] = pd.to_datetime(df['Hora Ingreso'], errors='coerce')
-        df['Hora Salida'] = pd.to_datetime(df['Hora Salida'], errors='coerce')
+        # 🚨 PARSEO INTELIGENTE DE FECHAS (Arregla el "Sin Salida") 🚨
+        df['Hora Ingreso'] = pd.to_datetime(df['Hora Ingreso'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['Hora Ingreso'], dayfirst=False, errors='coerce'))
+        df['Hora Salida'] = pd.to_datetime(df['Hora Salida'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['Hora Salida'], dayfirst=False, errors='coerce'))
         
         resumen = df.groupby('Placa-Alias').agg(Primera_Salida=('Hora Salida', 'min'), Ultima_Entrada=('Hora Ingreso', 'max')).reset_index()
         
@@ -110,7 +112,7 @@ def procesar_auditoria_vehiculos(df):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA)
+# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA) -> INTACTA
 # ==============================================================================
 def procesar_matriz_telemetria(df_raw):
     try:
@@ -152,7 +154,7 @@ def procesar_matriz_telemetria(df_raw):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# EXTRACTOR INTELIGENTE PARA ARCHIVOS DETALLADOS
+# EXTRACTOR INTELIGENTE PARA ARCHIVOS DETALLADOS -> INTACTO
 # ==============================================================================
 def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
     try:
@@ -199,7 +201,7 @@ def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
     except Exception: return {}
 
 # ==============================================================================
-# GENERADORES DE PDF 
+# GENERADORES DE PDF -> INTACTOS
 # ==============================================================================
 def generar_pdf_auditoria_tiempos(df_resumen):
     pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
@@ -310,6 +312,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
     # --- PESTAÑA 1: TIEMPOS ---
     with tab_tiempos:
+        
+        # 🚨 BOTÓN DE REFRESCAR 🚨
+        col_t1, col_t2 = st.columns([4, 1])
+        with col_t2: 
+            if st.button("🔄 Refrescar", key="ref_t"): st.rerun()
+            
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
         if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, type="primary"):
@@ -352,6 +360,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
     # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
+        
+        # 🚨 BOTÓN DE REFRESCAR 🚨
+        col_v1, col_v2 = st.columns([4, 1])
+        with col_v2: 
+            if st.button("🔄 Refrescar", key="ref_v"): st.rerun()
+            
         st.markdown("### 🚀 Matriz de Excesos y Velocidad Promedio")
         st.caption("El sistema creará la columna Promedio y depurará a quienes no tengan incidencias reales.")
         limite_vel = st.number_input("Promediar solo velocidades mayores a (km/h):", min_value=10, max_value=200, value=60, step=5)
