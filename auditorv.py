@@ -19,33 +19,42 @@ def get_hn_time():
     return datetime.utcnow() - timedelta(hours=6)
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS
+# LECTOR BLINDADO DE ARCHIVOS (ANTI-DUPLICADOS)
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
+    df = None
     
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
             uploaded_file.seek(0)
-            return pd.read_excel(uploaded_file, engine='xlrd')
+            df = pd.read_excel(uploaded_file, engine='xlrd')
         except ImportError:
             raise RuntimeError("FALTA LIBRERÍA: Instala 'xlrd' en tu requirements.txt para leer Excel viejo.")
     elif b'<table' in content.lower() or b'<html' in content.lower():
         try:
             dfs = pd.read_html(io.StringIO(content.decode('utf-8', errors='ignore')))
-            return max(dfs, key=len)
+            df = max(dfs, key=len)
         except Exception:
             dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
-            return max(dfs, key=len)
+            df = max(dfs, key=len)
     else:
         uploaded_file.seek(0)
-        if filename.endswith('.xlsx'): return pd.read_excel(uploaded_file, engine='openpyxl')
+        if filename.endswith('.xlsx'): 
+            df = pd.read_excel(uploaded_file, engine='openpyxl')
         else:
-            try: return pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
+            try: 
+                df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
             except UnicodeDecodeError:
                 uploaded_file.seek(0)
-                return pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
+                df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
+
+    # 🚨 BLINDAJE DEFINITIVO: Eliminar columnas duplicadas para evitar el error de PyArrow 🚨
+    if df is not None and not df.empty:
+        df = df.loc[:, ~df.columns.duplicated(keep='first')]
+        
+    return df
 
 # ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
@@ -99,6 +108,10 @@ def procesar_matriz_telemetria(df_raw):
         
         clean_columns = [f"Dia_{i-1}" if i > 1 else f"Info_{i}" if col.lower() in ['nan', ''] else col for i, col in enumerate(raw_columns)]
         df.columns = clean_columns
+        
+        # Eliminar cualquier columna duplicada generada por el renombre automático
+        df = df.loc[:, ~df.columns.duplicated(keep='first')]
+        
         col_placa = df.columns[0]
         col_opcion = df.columns[1] if len(df.columns) > 1 else None
         
@@ -139,6 +152,7 @@ def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
         else:
             df = df_raw.iloc[header_idx + 1:].copy()
             df.columns = df_raw.iloc[header_idx].astype(str).str.strip().str.upper()
+            df = df.loc[:, ~df.columns.duplicated(keep='first')] # Bloqueo anti-duplicados interno
         
         col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
         if not col_vel: return {}
@@ -373,12 +387,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                                 df_d.columns = df_d.iloc[header_idx].astype(str).str.strip().str.upper()
                                                 df_d = df_d.iloc[header_idx + 1:]
                                                 
-                                            col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
-                                            if col_vel:
-                                                df_d['Vel_Num'] = df_d[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
-                                                df_excesos = df_d[df_d['Vel_Num'] > limite_vel]
-                                                if not df_excesos.empty:
-                                                    dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
+                                                col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
+                                                if col_vel:
+                                                    df_d['Vel_Num'] = df_d[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
+                                                    df_excesos = df_d[df_d['Vel_Num'] > limite_vel]
+                                                    if not df_excesos.empty:
+                                                        dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
                                         except Exception: pass
                                             
                                 # Crear la columna Promedio y Cruzar
