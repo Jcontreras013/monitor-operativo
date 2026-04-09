@@ -1,13 +1,13 @@
-gspread
 streamlit
 pandas==1.5.3
-plotly
+gspread
+st-gsheets-connection
+xlrd==2.0.1
 openpyxl
 fpdf
 matplotlib
-st-gsheets-connection
+plotly
 streamlit-js-eval
 lxml
 html5lib
-xlrd==2.0.1
 extra-streamlit-components
