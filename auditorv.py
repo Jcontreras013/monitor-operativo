@@ -19,7 +19,23 @@ def get_hn_time():
     return datetime.utcnow() - timedelta(hours=6)
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS (ANTI-DUPLICADOS)
+# ESCUDO ANTI-DUPLICADOS (Evita el crash de PyArrow)
+# ==============================================================================
+def forzar_columnas_unicas(df):
+    """Detecta columnas con el mismo nombre y las renombra (ej. Col, Col_1)."""
+    if df is None or df.empty: return df
+    df.columns = df.columns.astype(str).str.strip()
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique():
+        dup_indices = cols[cols == dup].index.tolist()
+        for i, idx in enumerate(dup_indices):
+            if i != 0:
+                cols.iat[idx] = f"{dup}_{i}"
+    df.columns = cols
+    return df
+
+# ==============================================================================
+# LECTOR BLINDADO DE ARCHIVOS
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
@@ -50,11 +66,8 @@ def read_file_robust(uploaded_file):
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
 
-    # 🚨 BLINDAJE DEFINITIVO: Eliminar columnas duplicadas para evitar el error de PyArrow 🚨
-    if df is not None and not df.empty:
-        df = df.loc[:, ~df.columns.duplicated(keep='first')]
-        
-    return df
+    # Pasar por la barredora antes de devolver el archivo
+    return forzar_columnas_unicas(df)
 
 # ==============================================================================
 # LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
@@ -89,7 +102,11 @@ def procesar_auditoria_vehiculos(df):
         resumen['Primera Salida'] = resumen['Primera_Salida'].dt.strftime('%I:%M %p').fillna("---")
         resumen['Última Entrada'] = resumen['Ultima_Entrada'].dt.strftime('%I:%M %p').fillna("---")
         
-        return resumen[['Vehículo / Placa', 'Primera Salida', 'Última Entrada', 'Tiempo Real en Calle']], "OK"
+        # Ajuste de nombre para que no tire error de KeyError
+        resumen = resumen.rename(columns={'Placa-Alias': 'Vehículo / Placa'})
+        
+        final_df = resumen[['Vehículo / Placa', 'Primera Salida', 'Última Entrada', 'Tiempo Real en Calle']].copy()
+        return forzar_columnas_unicas(final_df), "OK"
     except Exception as e: return None, str(e)
 
 # ==============================================================================
@@ -109,8 +126,8 @@ def procesar_matriz_telemetria(df_raw):
         clean_columns = [f"Dia_{i-1}" if i > 1 else f"Info_{i}" if col.lower() in ['nan', ''] else col for i, col in enumerate(raw_columns)]
         df.columns = clean_columns
         
-        # Eliminar cualquier columna duplicada generada por el renombre automático
-        df = df.loc[:, ~df.columns.duplicated(keep='first')]
+        # Pasar por la barredora para las columnas dinámicas
+        df = forzar_columnas_unicas(df)
         
         col_placa = df.columns[0]
         col_opcion = df.columns[1] if len(df.columns) > 1 else None
@@ -152,7 +169,7 @@ def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
         else:
             df = df_raw.iloc[header_idx + 1:].copy()
             df.columns = df_raw.iloc[header_idx].astype(str).str.strip().str.upper()
-            df = df.loc[:, ~df.columns.duplicated(keep='first')] # Bloqueo anti-duplicados interno
+            df = forzar_columnas_unicas(df) # Barredora interna
         
         col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
         if not col_vel: return {}
@@ -385,6 +402,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             
                                             if header_idx is not None:
                                                 df_d.columns = df_d.iloc[header_idx].astype(str).str.strip().str.upper()
+                                                df_d = forzar_columnas_unicas(df_d) # Barrido interno
                                                 df_d = df_d.iloc[header_idx + 1:]
                                                 
                                                 col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
