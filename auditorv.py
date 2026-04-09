@@ -22,25 +22,18 @@ def get_hn_time():
 # ESCUDO ANTI-DUPLICADOS (Evita el crash de PyArrow)
 # ==============================================================================
 def forzar_columnas_unicas(df):
-    """Detecta columnas con el mismo nombre y las renombra (ej. Col, Col_1)."""
     if df is None or df.empty: return df
-    # Convertir encabezados a string y limpiar espacios
     cols = pd.Series(df.columns).astype(str).str.strip()
-    
-    # Manejar nombres vacíos o duplicados
     new_cols = []
     counts = {}
     for col in cols:
-        if col == "" or "Unnamed" in col:
-            col = "Columna_Vacia"
-        
-        if col in counts:
-            counts[col] += 1
-            new_cols.append(f"{col}_{counts[col]}")
+        nombre = col if col not in ["", "nan"] and "Unnamed" not in col else "Columna"
+        if nombre in counts:
+            counts[nombre] += 1
+            new_cols.append(f"{nombre}_{counts[nombre]}")
         else:
-            counts[col] = 0
-            new_cols.append(col)
-            
+            counts[nombre] = 0
+            new_cols.append(nombre)
     df.columns = new_cols
     return df
 
@@ -56,13 +49,13 @@ def read_file_robust(uploaded_file):
         try:
             uploaded_file.seek(0)
             df = pd.read_excel(uploaded_file, engine='xlrd')
-        except ImportError:
-            raise RuntimeError("FALTA LIBRERÍA: Instala 'xlrd' en tu requirements.txt para leer Excel viejo.")
+        except:
+            st.error("Error leyendo Excel antiguo (.xls)")
     elif b'<table' in content.lower() or b'<html' in content.lower():
         try:
             dfs = pd.read_html(io.StringIO(content.decode('utf-8', errors='ignore')))
             df = max(dfs, key=len)
-        except Exception:
+        except:
             dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
             df = max(dfs, key=len)
     else:
@@ -72,64 +65,53 @@ def read_file_robust(uploaded_file):
         else:
             try: 
                 df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
-            except UnicodeDecodeError:
+            except:
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
 
     return forzar_columnas_unicas(df)
 
 # ==============================================================================
-# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS) - REPARADA
+# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS)
 # ==============================================================================
 def procesar_auditoria_vehiculos(df_input):
     try:
-        # Trabajamos sobre una copia limpia
         df = df_input.copy()
-        
-        # Identificar columnas por contenido (no solo por nombre exacto)
         col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO', str(c), re.I)), None)
         col_ingreso = next((c for c in df.columns if re.search(r'INGRESO|ENTRADA', str(c), re.I)), None)
         col_salida = next((c for c in df.columns if re.search(r'SALIDA', str(c), re.I)), None)
         
         if not (col_placa and col_ingreso and col_salida): 
-            return None, "No se encontraron las columnas necesarias (Placa, Ingreso, Salida)."
+            return None, "Columnas no detectadas."
             
-        # Renombrar solo las necesarias para el cálculo interno
-        df = df.rename(columns={col_placa: '_PLACA_INT', col_ingreso: '_INGRESO_INT', col_salida: '_SALIDA_INT'})
+        df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
+        df['_P'] = df['_P'].astype(str).str.strip()
+        df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
         
-        # Limpieza de datos
-        df['_PLACA_INT'] = df['_PLACA_INT'].astype(str).str.strip()
-        df = df[~df['_PLACA_INT'].isin(['nan', '--', 'None', '', 'Columna_Vacia'])]
+        # 🚨 PARSEO ULTRA-SEGURO DE FECHAS
+        df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
+        df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
         
-        df['_INGRESO_INT'] = pd.to_datetime(df['_INGRESO_INT'], errors='coerce')
-        df['_SALIDA_INT'] = pd.to_datetime(df['_SALIDA_INT'], errors='coerce')
-        
-        # Agrupar
-        resumen = df.groupby('_PLACA_INT').agg(
-            Primera_Salida=('_SALIDA_INT', 'min'), 
-            Ultima_Entrada=('_INGRESO_INT', 'max')
-        ).reset_index()
+        resumen = df.groupby('_P').agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_tiempo(row):
-            if pd.isnull(row['Primera_Salida']): return "Sin Salida"
-            if pd.isnull(row['Ultima_Entrada']): return "Sin Ingreso"
-            if row['Ultima_Entrada'] >= row['Primera_Salida']:
-                diff = row['Ultima_Entrada'] - row['Primera_Salida']
+            if pd.isnull(row['P_S']): return "Sin Salida"
+            if pd.isnull(row['U_E']): return "Sin Ingreso"
+            if row['U_E'] >= row['P_S']:
+                diff = row['U_E'] - row['P_S']
                 h, r = divmod(int(diff.total_seconds()), 3600); m, s = divmod(r, 60)
                 return f"{h:02d}:{m:02d}:{s:02d}"
             return "Revisar"
                 
         resumen['Tiempo Real en Calle'] = resumen.apply(calc_tiempo, axis=1)
-        resumen['Salida'] = resumen['Primera_Salida'].dt.strftime('%I:%M %p').fillna("---")
-        resumen['Entrada'] = resumen['Ultima_Entrada'].dt.strftime('%I:%M %p').fillna("---")
+        resumen['Primera Salida'] = resumen['P_S'].dt.strftime('%I:%M %p').fillna("---")
+        resumen['Última Entrada'] = resumen['U_E'].dt.strftime('%I:%M %p').fillna("---")
         
-        # Formatear tabla final para el usuario
-        resumen = resumen.rename(columns={'_PLACA_INT': 'Vehículo / Placa', 'Salida': 'Primera Salida', 'Entrada': 'Última Entrada'})
+        resumen = resumen.rename(columns={'_P': 'Vehículo / Placa'})
         final_df = resumen[['Vehículo / Placa', 'Primera Salida', 'Última Entrada', 'Tiempo Real en Calle']].copy()
         
         return forzar_columnas_unicas(final_df), "OK"
-    except Exception as e: 
-        return None, f"Error en procesamiento: {str(e)}"
+    except Exception as e: return None, str(e)
 
 # ==============================================================================
 # LÓGICA DE TELEMETRÍA (MATRIZ REPARADA)
@@ -140,13 +122,11 @@ def procesar_matriz_telemetria(df_raw):
         for i in range(min(20, len(df_raw))):
             if any(k in str(df_raw.iloc[i, 0]).upper() for k in ['PLACA', 'ALIAS', 'VEHICULO']):
                 header_idx = i; break
-        if header_idx is None: return None, "No se encontró encabezado en Estadístico."
+        if header_idx is None: return None, "Formato no reconocido."
 
         df = df_raw.iloc[header_idx + 1:].copy()
         raw_columns = df_raw.iloc[header_idx].astype(str).str.strip().tolist()
-        
-        clean_columns = [f"Dia_{i-1}" if i > 1 else f"Info_{i}" if col.lower() in ['nan', ''] else col for i, col in enumerate(raw_columns)]
-        df.columns = clean_columns
+        df.columns = [f"Dia_{i-1}" if i > 1 else f"Info_{i}" if col.lower() in ['nan', ''] else col for i, col in enumerate(raw_columns)]
         df = forzar_columnas_unicas(df)
         
         col_placa = df.columns[0]
@@ -159,7 +139,7 @@ def procesar_matriz_telemetria(df_raw):
             df = df[~df[col_opcion].astype(str).str.contains('Tiempo', case=False, na=False)]
             
         df = df[df[col_placa].astype(str).str.strip() != ''].fillna(0)
-
+        
         col_total = next((c for c in df.columns if 'TOTAL' in str(c).upper()), None)
         if col_total:
             df[col_total] = pd.to_numeric(df[col_total], errors='coerce').fillna(0)
@@ -168,52 +148,43 @@ def procesar_matriz_telemetria(df_raw):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-# ==============================================================================
-# EXTRACTOR INTELIGENTE PARA ARCHIVOS DETALLADOS
-# ==============================================================================
 def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
     try:
         header_idx = None
         for i in range(min(20, len(df_raw))):
             row_str = " ".join(df_raw.iloc[i].astype(str)).upper()
-            if 'VELOCIDAD' in row_str or 'KM/H' in row_str or 'SPEED' in row_str:
+            if 'VELOCIDAD' in row_str or 'KM/H' in row_str:
                 header_idx = i; break
         
-        if header_idx is None:
-            cols_str = " ".join(df_raw.columns.astype(str)).upper()
-            if 'VELOCIDAD' in cols_str or 'KM/H' in cols_str or 'SPEED' in cols_str: df = df_raw.copy()
-            else: return {}
+        if header_idx is None: df = df_raw.copy()
         else:
             df = df_raw.iloc[header_idx + 1:].copy()
             df.columns = df_raw.iloc[header_idx].astype(str).str.strip().str.upper()
             df = forzar_columnas_unicas(df)
         
-        col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
+        col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H', str(c), re.I)), None)
         if not col_vel: return {}
         
-        df['Vel_Num'] = df[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
-        df_excesos = df[df['Vel_Num'] > limite_vel]
-        if df_excesos.empty: return {}
+        df['V_N'] = df[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
+        df_ex = df[df['V_N'] > limite_vel]
+        if df_ex.empty: return {}
         
-        promedio = round(df_excesos['Vel_Num'].mean(), 2)
-        
-        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO', str(c), re.I)), None)
+        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS', str(c), re.I)), None)
         if col_placa:
-            resultados = {}
-            for p_sucia in df_excesos[col_placa].dropna().unique():
-                if 'VERSIÓN' in str(p_sucia).upper(): continue
-                p_limpia = str(p_sucia).split('-')[0].strip().upper()
-                prom_indiv = df_excesos[df_excesos[col_placa] == p_sucia]['Vel_Num'].mean()
-                resultados[p_limpia] = round(prom_indiv, 2)
-            return resultados
+            res = {}
+            for p in df_ex[col_placa].dropna().unique():
+                if 'VERSIÓN' in str(p).upper(): continue
+                res[str(p).split('-')[0].strip().upper()] = round(df_ex[df_ex[col_placa] == p]['V_N'].mean(), 2)
+            return res
             
+        # Respaldo si no encuentra columna de placa
         full_text = df_raw.astype(str).to_string().upper()
+        promedio = round(df_ex['V_N'].mean(), 2)
         for p in placas_validas:
             if str(p).upper() in full_text or str(p).upper() in file_name.upper(): 
                 return {str(p).upper(): promedio}
-                
         return {}
-    except Exception: return {}
+    except: return {}
 
 # ==============================================================================
 # GENERADORES DE PDF 
@@ -304,17 +275,18 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
 # PANTALLA VISUAL PRINCIPAL
 # ==============================================================================
 def mostrar_auditoria(es_movil=False, conn=None):
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        st.write(""); st.markdown("<h1 style='text-align: center;'>🚙</h1>", unsafe_allow_html=True)
-    with col2:
-        st.title("Auditoría de Vehículos (GPS)")
-        st.caption("Control gerencial de Tiempos en Ruta y Análisis de Telemetría.")
+    st.title("🚙 Auditoría de Vehículos (GPS)")
+    st.caption("Control gerencial de Tiempos en Ruta y Análisis de Telemetría.")
     st.divider()
 
-    tab_tiempos, tab_velocidad = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Telemetría (Matriz y Promedios)"])
+    tab_tiempos, tab_velocidad = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Telemetría"])
 
+    # --- PESTAÑA 1: TIEMPOS ---
     with tab_tiempos:
+        col_a1, col_a2 = st.columns([4, 1])
+        with col_a2: 
+            if st.button("🔄 Refrescar", key="ref_t"): st.rerun()
+            
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
         if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, type="primary"):
@@ -331,13 +303,13 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.divider()
         if not es_movil:
             st.markdown("### 📥 Ingreso Manual (Modo PC)")
-            archivo_gps_tiempos = st.file_uploader("Arrastra el archivo de Zonas/Rutas (Tiempos)", type=['csv', 'xlsx', 'xls'], key="up_tiempos")
-            if archivo_gps_tiempos:
+            archivo_t = st.file_uploader("Subir Zonas/Rutas", type=['csv', 'xlsx', 'xls'], key="u_t")
+            
+            if archivo_t:
                 with st.spinner("Procesando y Subiendo..."):
                     try:
-                        df_gps_crudo = read_file_robust(archivo_gps_tiempos)
+                        df_gps_crudo = read_file_robust(archivo_t)
                         if conn:
-                            # Subir tal cual el archivo crudo para respaldo
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", data=df_gps_crudo)
                             st.success("☁️ ¡Datos subidos exitosamente!")
                     except Exception as e: st.error(f"❌ Error al subir: {e}")
@@ -348,60 +320,66 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
         if df_gps_crudo is not None:
             with st.spinner("⚙️ Analizando tiempos..."):
-                df_resumen_gps, msj = procesar_auditoria_vehiculos(df_gps_crudo)
-            if df_resumen_gps is not None:
+                res_t, msg = procesar_auditoria_vehiculos(df_gps_crudo)
+            if res_t is not None:
                 st.success("✅ Análisis completado.")
-                st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
-                st.download_button("🚀 Descargar Reporte (PDF)", generar_pdf_auditoria_tiempos(df_resumen_gps), f"Auditoria_Tiempos.pdf", "application/pdf", use_container_width=True, type="primary")
-            else: st.error(f"❌ Error: {msj}")
+                st.dataframe(res_t, use_container_width=True, hide_index=True)
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.download_button("🚀 Descargar Reporte (PDF)", generar_pdf_auditoria_tiempos(res_t), f"Auditoria_Tiempos.pdf", "application/pdf", use_container_width=True, type="primary")
+            else: st.error(f"❌ Error: {msg}")
 
+    # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
+        col_b1, col_b2 = st.columns([4, 1])
+        with col_b2: 
+            if st.button("🔄 Refrescar", key="ref_v"): st.rerun()
+            
         st.markdown("### 🚀 Matriz de Excesos y Velocidad Promedio")
-        limite_vel = st.number_input("Promediar solo velocidades mayores a (km/h):", min_value=10, max_value=200, value=60, step=5)
+        limite = st.number_input("Límite Vel. (km/h):", value=60, step=5)
         
         if not es_movil:
-            archivos_telemetria = st.file_uploader("Arrastra aquí TODOS los archivos Excel/CSV juntos", type=['csv', 'xlsx', 'xls'], accept_multiple_files=True, key="up_telemetria")
+            archivos_v = st.file_uploader("Subir Estadístico + Detallados", type=['csv', 'xlsx', 'xls'], accept_multiple_files=True, key="u_v")
             
-            if archivos_telemetria:
-                with st.spinner("Analizando y cruzando matrices..."):
-                    archivo_principal = next((f for f in archivos_telemetria if 'estadistico' in f.name.lower() or 'informe' in f.name.lower()), None)
-                    archivos_detallados = [f for f in archivos_telemetria if f != archivo_principal]
-                            
-                    if not archivo_principal:
-                        st.error("❌ Falta el archivo 'Informe_Estadistico' o similar.")
-                    else:
+            if archivos_v:
+                with st.spinner("Cruzando datos..."):
+                    main_f = next((f for f in archivos_v if 'estadistico' in f.name.lower() or 'informe' in f.name.lower()), None)
+                    archivos_detallados = [f for f in archivos_v if f != main_f]
+                    
+                    if main_f:
                         try:
-                            df_raw_tel = read_file_robust(archivo_principal)
-                            df_matriz, msg_tel = procesar_matriz_telemetria(df_raw_tel)
+                            df_m = read_file_robust(main_f)
+                            res_m, msg = procesar_matriz_telemetria(df_m)
                             
-                            if df_matriz is not None:
+                            if res_m is not None:
                                 dict_promedios = {}
-                                col_placa_matriz = df_matriz.columns[0]
-                                placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
+                                col_placa_matriz = res_m.columns[0]
+                                placas_validas = res_m[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
                                 
                                 if archivos_detallados:
                                     for file_det in archivos_detallados:
                                         try:
                                             df_d = read_file_robust(file_det)
-                                            res_indiv = extraer_promedios_detallados(df_d, limite_vel, file_det.name, placas_validas)
+                                            res_indiv = extraer_promedios_detallados(df_d, limite, file_det.name, placas_validas)
                                             dict_promedios.update(res_indiv)
                                         except Exception: pass
                                             
-                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
-                                df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios).fillna("-")
-                                df_matriz = df_matriz.drop(columns=['Placa_Match'])
+                                res_m['Placa_Match'] = res_m[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
+                                res_m['Promedio Vel. (km/h)'] = res_m['Placa_Match'].map(dict_promedios).fillna("-")
+                                res_m = res_m.drop(columns=['Placa_Match'])
 
                                 if archivos_detallados:
-                                    df_matriz = df_matriz[df_matriz['Promedio Vel. (km/h)'] != "-"]
+                                    res_m = res_m[res_m['Promedio Vel. (km/h)'] != "-"]
 
-                                if df_matriz.empty: 
+                                if res_m.empty: 
                                     st.success("✅ La matriz quedó vacía tras la depuración.")
                                 else:
-                                    st.warning(f"⚠️ Se muestran {len(df_matriz)} vehículos infractores.")
-                                    cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
-                                    styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
+                                    st.warning(f"⚠️ Se muestran {len(res_m)} vehículos infractores.")
+                                    cols_estilo = [c for c in res_m.columns if c not in [res_m.columns[0], res_m.columns[1], 'Promedio Vel. (km/h)']]
+                                    styled_df = res_m.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                                     st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                                    st.download_button("📥 Descargar Reporte Final (PDF)", generar_pdf_telemetria_matriz(df_matriz, limite_vel), f"Auditoria_Velocidades.pdf", "application/pdf", use_container_width=True, type="primary")
-                            else: st.error(f"❌ Error matriz principal: {msg_tel}")
+                                    st.download_button("📥 Descargar Reporte Final (PDF)", generar_pdf_telemetria_matriz(res_m, limite), f"Auditoria_Velocidades.pdf", "application/pdf", use_container_width=True, type="primary")
+                            else: st.error(f"❌ Error matriz principal: {msg}")
                         except Exception as e: st.error(f"❌ Error: {e}")
+                    else: st.warning("Falta archivo 'Estadístico'")
         else: st.info("📱 La carga masiva está reservada para PC.")
