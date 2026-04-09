@@ -69,27 +69,33 @@ def read_file_robust(uploaded_file):
     return forzar_columnas_unicas(df)
 
 # ==============================================================================
-# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS) -> REPARADA
+# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS) -> REPARADA Y EXATA
 # ==============================================================================
 def procesar_auditoria_vehiculos(df_input):
     try:
         df = df_input.copy()
-        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO', str(c), re.I)), None)
-        col_ingreso = next((c for c in df.columns if re.search(r'INGRESO|ENTRADA', str(c), re.I)), None)
-        col_salida = next((c for c in df.columns if re.search(r'SALIDA', str(c), re.I)), None)
+        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
+        
+        # 🚨 BUSCADOR INTELIGENTE: Ignora Latitudes y Longitudes, va directo a la HORA
+        col_ingreso = next((c for c in df.columns if re.search(r'(?i)HORA.*INGRESO|HORA.*ENTRADA', str(c))), None)
+        if not col_ingreso:
+            col_ingreso = next((c for c in df.columns if re.search(r'(?i)INGRESO|ENTRADA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
+            
+        col_salida = next((c for c in df.columns if re.search(r'(?i)HORA.*SALIDA', str(c))), None)
+        if not col_salida:
+            col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
         
         if not (col_placa and col_ingreso and col_salida): 
-            return None, "Columnas no detectadas."
+            return None, "Columnas de Hora o Placa no detectadas correctamente."
             
         df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
         df['_P'] = df['_P'].astype(str).str.strip()
         df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
         
-        # 🚨 LIMPIEZA DE FECHAS (Quita puntos y formatos raros como 'a. m.' antes de procesar)
         df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
         df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
         
-        # 🚨 PARSEO ULTRA-SEGURO DE FECHAS (Arregla el error de "Sin Salida")
+        # Convierte todo y transforma los "--" en vacíos legibles para la matemática
         df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
         df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
         
@@ -115,7 +121,7 @@ def procesar_auditoria_vehiculos(df_input):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA) -> INTACTA COMO PEDISTE
+# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA) -> INTACTA
 # ==============================================================================
 def procesar_matriz_telemetria(df_raw):
     try:
