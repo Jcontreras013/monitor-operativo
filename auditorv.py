@@ -35,51 +35,36 @@ def forzar_columnas_unicas(df):
     return df
 
 # ==============================================================================
-# LECTOR DE ARCHIVOS 100% BLINDADO (REPARADO PARA EVITAR "No tables found")
+# LECTOR BLINDADO DE ARCHIVOS
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
     df = None
     
-    # 1. Intentar como Excel binario antiguo
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
             uploaded_file.seek(0)
             df = pd.read_excel(uploaded_file, engine='xlrd')
-            return forzar_columnas_unicas(df)
-        except Exception: pass
-        
-    # 2. Intentar como HTML (si tiene tags web)
-    if b'<table' in content.lower() or b'<html' in content.lower():
+        except ImportError:
+            st.error("Falta librería xlrd para Excel antiguo.")
+    elif b'<table' in content.lower() or b'<html' in content.lower():
         try:
             dfs = pd.read_html(io.StringIO(content.decode('utf-8', errors='ignore')))
-            if dfs: return forzar_columnas_unicas(max(dfs, key=len))
+            df = max(dfs, key=len)
         except Exception:
-            try:
-                dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
-                if dfs: return forzar_columnas_unicas(max(dfs, key=len))
-            except Exception:
-                pass # SILENCIAR EL ERROR: Si no encuentra tablas, pasa al plan C
-                
-    # 3. Intentar como XLSX moderno
-    if filename.endswith('.xlsx'):
+            dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
+            df = max(dfs, key=len)
+    else:
         uploaded_file.seek(0)
-        try:
+        if filename.endswith('.xlsx'): 
             df = pd.read_excel(uploaded_file, engine='openpyxl')
-            return forzar_columnas_unicas(df)
-        except Exception: pass
-        
-    # 4. Plan C: Intentar como CSV (texto plano, el formato real del GPS)
-    uploaded_file.seek(0)
-    try: 
-        df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
-    except UnicodeDecodeError:
-        uploaded_file.seek(0)
-        try:
-            df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
-        except Exception: pass
-    except Exception: pass
+        else:
+            try: 
+                df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
+            except UnicodeDecodeError:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
 
     return forzar_columnas_unicas(df)
 
@@ -107,13 +92,13 @@ def procesar_auditoria_vehiculos(df_input):
     try:
         df = df_input.copy()
         
-        # --- BUSCADOR INTELIGENTE DE ENCABEZADOS (Limpia metadata del GPS) ---
+        # 🚨 ESCUDO ANTI-FLOAT: Convertimos todo a texto puro con una lista
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         if not col_placa:
             for i in range(min(15, len(df))):
-                row_str = " ".join(df.iloc[i].astype(str)).upper()
+                row_str = " ".join([str(x) for x in df.iloc[i].values]).upper()
                 if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
-                    df.columns = df.iloc[i].astype(str).str.strip()
+                    df.columns = [str(x).strip() for x in df.iloc[i].values]
                     df = df.iloc[i+1:].reset_index(drop=True)
                     df = forzar_columnas_unicas(df)
                     break
@@ -143,7 +128,8 @@ def procesar_auditoria_vehiculos(df_input):
         resumen = df.groupby('_P').agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_tiempo(row):
-            ps = row['P_S']; ue = row['U_E']
+            ps = row['P_S']
+            ue = row['U_E']
             if pd.isnull(ps): return "Sin Salida"
             if pd.isnull(ue): return "Sin Ingreso"
             
@@ -178,13 +164,13 @@ def procesar_auditoria_semanal(df_input):
     try:
         df = df_input.copy()
         
-        # --- BUSCADOR INTELIGENTE DE ENCABEZADOS (Limpia metadata del GPS) ---
+        # 🚨 ESCUDO ANTI-FLOAT
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         if not col_placa:
             for i in range(min(15, len(df))):
-                row_str = " ".join(df.iloc[i].astype(str)).upper()
+                row_str = " ".join([str(x) for x in df.iloc[i].values]).upper()
                 if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
-                    df.columns = df.iloc[i].astype(str).str.strip()
+                    df.columns = [str(x).strip() for x in df.iloc[i].values]
                     df = df.iloc[i+1:].reset_index(drop=True)
                     df = forzar_columnas_unicas(df)
                     break
@@ -300,18 +286,19 @@ def procesar_matriz_telemetria(df_raw):
 def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
     try:
         header_idx = None
+        # 🚨 ESCUDO ANTI-FLOAT
         for i in range(min(20, len(df_raw))):
-            row_str = " ".join(df_raw.iloc[i].astype(str)).upper()
+            row_str = " ".join([str(x) for x in df_raw.iloc[i].values]).upper()
             if 'VELOCIDAD' in row_str or 'KM/H' in row_str or 'SPEED' in row_str:
                 header_idx = i; break
         
         if header_idx is None:
-            cols_str = " ".join(df_raw.columns.astype(str)).upper()
+            cols_str = " ".join([str(x) for x in df_raw.columns]).upper()
             if 'VELOCIDAD' in cols_str or 'KM/H' in cols_str or 'SPEED' in cols_str: df = df_raw.copy()
             else: return {}
         else:
             df = df_raw.iloc[header_idx + 1:].copy()
-            df.columns = df_raw.iloc[header_idx].astype(str).str.strip().str.upper()
+            df.columns = [str(x).strip().upper() for x in df_raw.iloc[header_idx].values]
             df = forzar_columnas_unicas(df)
         
         col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
@@ -579,11 +566,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             df_d = read_file_robust(file_det)
                                             header_idx = None
                                             for i in range(min(20, len(df_d))):
-                                                if 'VELOCIDAD' in str(df_d.iloc[i].values).upper() or 'KM/H' in str(df_d.iloc[i].values).upper():
+                                                row_str = " ".join([str(x) for x in df_d.iloc[i].values]).upper()
+                                                if 'VELOCIDAD' in row_str or 'KM/H' in row_str:
                                                     header_idx = i; break
                                             
                                             if header_idx is not None:
-                                                df_d.columns = df_d.iloc[header_idx].astype(str).str.strip().str.upper()
+                                                df_d.columns = [str(x).strip().upper() for x in df_d.iloc[header_idx].values]
                                                 df_d = forzar_columnas_unicas(df_d) 
                                                 df_d = df_d.iloc[header_idx + 1:]
                                                 
@@ -669,19 +657,18 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         for file_det in archivos_detallados:
                             df_temp = read_file_robust(file_det)
                             if df_temp is not None and not df_temp.empty:
-                                # LIMPIEZA DE METADATA (Por si el GPS pone títulos en las primeras filas)
+                                # 🚨 ESCUDO ANTI-FLOAT AQUÍ TAMBIÉN
                                 col_placa_temp = next((c for c in df_temp.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
                                 if not col_placa_temp:
                                     for i in range(min(15, len(df_temp))):
-                                        row_str = " ".join(df_temp.iloc[i].astype(str)).upper()
+                                        row_str = " ".join([str(x) for x in df_temp.iloc[i].values]).upper()
                                         if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
-                                            df_temp.columns = df_temp.iloc[i].astype(str).str.strip()
+                                            df_temp.columns = [str(x).strip() for x in df_temp.iloc[i].values]
                                             df_temp = df_temp.iloc[i+1:].reset_index(drop=True)
                                             df_temp = forzar_columnas_unicas(df_temp)
                                             break
                                 df_gps_list.append(df_temp)
                                 
-                            # Extraer motor encendido del texto puro
                             file_det.seek(0)
                             lineas = file_det.getvalue().decode('utf-8', errors='ignore').splitlines()
                             if len(lineas) < 5: 
