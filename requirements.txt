@@ -1,3 +1,4 @@
+gspread
 streamlit
 pandas==1.5.3
 plotly
@@ -5,7 +6,6 @@ openpyxl
 fpdf
 matplotlib
 st-gsheets-connection
-gspread
 streamlit-js-eval
 lxml
 html5lib
