@@ -69,14 +69,13 @@ def read_file_robust(uploaded_file):
     return forzar_columnas_unicas(df)
 
 # ==============================================================================
-# LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS) -> REPARADA Y EXATA
+# 1. LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS DIARIOS)
 # ==============================================================================
 def procesar_auditoria_vehiculos(df_input):
     try:
         df = df_input.copy()
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         
-        # 🚨 BUSCADOR INTELIGENTE: Ignora Latitudes y Longitudes, va directo a la HORA
         col_ingreso = next((c for c in df.columns if re.search(r'(?i)HORA.*INGRESO|HORA.*ENTRADA', str(c))), None)
         if not col_ingreso:
             col_ingreso = next((c for c in df.columns if re.search(r'(?i)INGRESO|ENTRADA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
@@ -95,7 +94,6 @@ def procesar_auditoria_vehiculos(df_input):
         df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
         df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
         
-        # Convierte todo y transforma los "--" en vacíos legibles para la matemática
         df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
         df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
         
@@ -119,6 +117,72 @@ def procesar_auditoria_vehiculos(df_input):
         
         return forzar_columnas_unicas(final_df), "OK"
     except Exception as e: return None, str(e)
+
+# ==============================================================================
+# 2. NUEVA LÓGICA: AUDITORÍA DE VEHÍCULOS (TIEMPOS SEMANALES)
+# ==============================================================================
+def procesar_auditoria_semanal(df_input, fecha_inicio, fecha_fin):
+    try:
+        df = df_input.copy()
+        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
+        
+        col_ingreso = next((c for c in df.columns if re.search(r'(?i)HORA.*INGRESO|HORA.*ENTRADA', str(c))), None)
+        if not col_ingreso:
+            col_ingreso = next((c for c in df.columns if re.search(r'(?i)INGRESO|ENTRADA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
+            
+        col_salida = next((c for c in df.columns if re.search(r'(?i)HORA.*SALIDA', str(c))), None)
+        if not col_salida:
+            col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
+        
+        if not (col_placa and col_ingreso and col_salida): 
+            return None, "Columnas de Hora o Placa no detectadas."
+            
+        df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
+        df['_P'] = df['_P'].astype(str).str.strip()
+        df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
+        
+        df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
+        df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
+        
+        df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
+        df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
+        
+        # 🚨 Extraer la fecha para agrupar por días
+        df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
+        df = df.dropna(subset=['Fecha'])
+        
+        # Filtrar por el rango de fechas seleccionado
+        df = df[(df['Fecha'] >= fecha_inicio) & (df['Fecha'] <= fecha_fin)]
+        if df.empty: return None, "No hay datos en el rango de fechas seleccionado."
+
+        # 1. Agrupar por Vehículo Y por Fecha (Para obtener el tiempo de CADA DÍA)
+        diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
+        
+        # Calcular los segundos trabajados en cada día
+        diario['segundos'] = (diario['U_E'] - diario['P_S']).dt.total_seconds()
+        diario.loc[diario['segundos'] < 0, 'segundos'] = 0
+        diario['segundos'] = diario['segundos'].fillna(0)
+
+        # 2. Agrupar todo por Vehículo (Para la Semana Completa)
+        semanal = diario.groupby('_P').agg(
+            Dias_Laborados=('Fecha', 'nunique'),
+            Total_Segundos=('segundos', 'sum')
+        ).reset_index()
+
+        def format_segs(secs):
+            if pd.isnull(secs) or secs <= 0: return "00:00:00"
+            h, r = divmod(int(secs), 3600); m, s = divmod(r, 60)
+            return f"{h:02d}:{m:02d}:{s:02d}"
+
+        semanal['Tiempo Total Semana'] = semanal['Total_Segundos'].apply(format_segs)
+        semanal['Promedio Diario'] = (semanal['Total_Segundos'] / semanal['Dias_Laborados']).apply(format_segs)
+
+        semanal = semanal.rename(columns={'_P': 'Vehículo / Placa', 'Dias_Laborados': 'Días Trabajados'})
+        final_df = semanal[['Vehículo / Placa', 'Días Trabajados', 'Tiempo Total Semana', 'Promedio Diario']].copy()
+        
+        return forzar_columnas_unicas(final_df), "OK"
+    except Exception as e: return None, str(e)
+
 
 # ==============================================================================
 # LÓGICA DE TELEMETRÍA (MATRIZ REPARADA) -> INTACTA
@@ -203,13 +267,13 @@ def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
     except Exception: return {}
 
 # ==============================================================================
-# GENERADORES DE PDF -> INTACTOS
+# GENERADORES DE PDF 
 # ==============================================================================
 def generar_pdf_auditoria_tiempos(df_resumen):
     pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(84, 98, 143)
-    pdf.cell(0, 10, safestr(f" Auditoria de Tiempos - {get_hn_time().strftime('%d/%m/%Y %I:%M %p')}"), border=1, ln=True, fill=True)
-    pdf.ln(5); pdf.seccion_titulo("Consolidado de Tiempos Reales")
+    pdf.cell(0, 10, safestr(f" Auditoria de Tiempos Diario - {get_hn_time().strftime('%d/%m/%Y %I:%M %p')}"), border=1, ln=True, fill=True)
+    pdf.ln(5); pdf.seccion_titulo("Consolidado Diario de Tiempos Reales")
     
     if not df_resumen.empty:
         pdf.set_fill_color(225, 225, 225); pdf.set_text_color(50, 50, 50); pdf.set_font("Helvetica", "B", 7)
@@ -221,6 +285,25 @@ def generar_pdf_auditoria_tiempos(df_resumen):
                 pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0, 0, 0)
                 if "Sin Salida" in str(item) or "Sin Ingreso" in str(item): pdf.set_fill_color(253, 230, 230); pdf.set_text_color(180, 0, 0)
                 pdf.cell(anchos[i], 5, safestr(str(item)[:45]), border=1, align="C" if i > 0 else "L", fill=True)
+            pdf.ln()
+    return finalizar_pdf(pdf)
+
+def generar_pdf_semanal_tiempos(df_resumen, f_inicio, f_fin):
+    pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
+    pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(84, 98, 143)
+    titulo = f" Auditoria de Tiempos SEMANAL ({f_inicio.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')})"
+    pdf.cell(0, 10, safestr(titulo), border=1, ln=True, fill=True)
+    pdf.ln(5); pdf.seccion_titulo("Consolidado Semanal de Tiempos en Calle")
+    
+    if not df_resumen.empty:
+        pdf.set_fill_color(225, 225, 225); pdf.set_text_color(50, 50, 50); pdf.set_font("Helvetica", "B", 8)
+        anchos = [95, 30, 35, 30]
+        for i, col in enumerate(df_resumen.columns): pdf.cell(anchos[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+        pdf.ln(); pdf.set_font("Helvetica", "", 8)
+        for _, fila in df_resumen.iterrows():
+            for i, item in enumerate(fila):
+                pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0, 0, 0)
+                pdf.cell(anchos[i], 5, safestr(str(item)[:50]), border=1, align="C" if i > 0 else "L", fill=True)
             pdf.ln()
     return finalizar_pdf(pdf)
 
@@ -311,7 +394,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
     # --- PESTAÑA 1: TIEMPOS ---
     with tab_tiempos:
         
-        # 🚨 BOTÓN DE REFRESCAR 🚨
         col_t1, col_t2 = st.columns([4, 1])
         with col_t2: 
             if st.button("🔄 Refrescar", key="ref_t"): 
@@ -319,11 +401,23 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     del st.session_state['df_gps_memoria']
                 st.rerun()
                 
+        # 🚨 NUEVO: SELECTOR DE TIPO DE REPORTE 🚨
+        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal"], horizontal=True)
+        
+        if tipo_reporte == "📅 Reporte Semanal":
+            st.info("💡 Asegúrate de cargar los datos de la Nube (historial) o subir un archivo que contenga varios días.")
+            col_f1, col_f2 = st.columns(2)
+            with col_f1: fecha_inicio = st.date_input("Fecha de Inicio", value=get_hn_time().date() - timedelta(days=7))
+            with col_f2: fecha_fin = st.date_input("Fecha de Fin", value=get_hn_time().date())
+        else:
+            fecha_inicio = None
+            fecha_fin = None
+
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
         if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, type="primary"):
             if conn is not None:
-                with st.spinner("📥 Descargando..."):
+                with st.spinner("📥 Descargando historial de la nube..."):
                     try:
                         df_descarga = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", ttl=0)
                         if not df_descarga.empty:
@@ -349,21 +443,33 @@ def mostrar_auditoria(es_movil=False, conn=None):
         if df_gps_crudo is None and 'df_gps_memoria' in st.session_state: 
             df_gps_crudo = st.session_state['df_gps_memoria']
 
+        # 🚨 PROCESAMIENTO SEGÚN EL REPORTE SELECCIONADO 🚨
         if df_gps_crudo is not None:
-            with st.spinner("⚙️ Procesando tiempos..."):
-                df_resumen_gps, msj = procesar_auditoria_vehiculos(df_gps_crudo)
-            if df_resumen_gps is not None:
-                st.success("✅ Análisis completado.")
-                st.dataframe(df_resumen_gps, use_container_width=True, hide_index=True)
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    st.download_button("🚀 Descargar Reporte (PDF)", generar_pdf_auditoria_tiempos(df_resumen_gps), f"Auditoria_Tiempos.pdf", "application/pdf", use_container_width=True, type="primary")
-            else: st.error(f"❌ Error: {msj}")
+            if tipo_reporte == "📊 Reporte Diario":
+                with st.spinner("⚙️ Procesando tiempos diarios..."):
+                    res_t, msg = procesar_auditoria_vehiculos(df_gps_crudo)
+                if res_t is not None:
+                    st.success("✅ Análisis Diario completado.")
+                    st.dataframe(res_t, use_container_width=True, hide_index=True)
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), f"Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary")
+                else: st.error(f"❌ Error: {msg}")
+                
+            elif tipo_reporte == "📅 Reporte Semanal":
+                with st.spinner("⚙️ Procesando consolidado semanal..."):
+                    res_sem, msg_sem = procesar_auditoria_semanal(df_gps_crudo, fecha_inicio, fecha_fin)
+                if res_sem is not None:
+                    st.success("✅ Análisis Semanal completado.")
+                    st.dataframe(res_sem, use_container_width=True, hide_index=True)
+                    col_s1, col_s2 = st.columns(2)
+                    with col_s1:
+                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_sem, fecha_inicio, fecha_fin), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
+                else: st.warning(f"⚠️ {msg_sem}")
 
     # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
         
-        # 🚨 BOTÓN DE REFRESCAR 🚨
         col_v1, col_v2 = st.columns([4, 1])
         with col_v2: 
             if st.button("🔄 Refrescar", key="ref_v"): st.rerun()
