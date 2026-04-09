@@ -73,7 +73,6 @@ html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
-# LÍNEA RECUPERADA: Patrón de búsqueda para las órdenes vivas
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
@@ -508,6 +507,11 @@ def main():
     ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
 
+    # 🚨 PASE VIP PARA ADMIN Y JEFE 🚨
+    # Evita que el sistema confunda una pantalla dividida en PC con un celular
+    if rol_usuario in ['admin', 'jefe']:
+        es_movil = False
+
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
     except Exception as e:
@@ -528,7 +532,6 @@ def main():
             else:
                 st.error("La conexión a la nube no está disponible.")
 
-        # 🚨 AQUÍ ESTÁ EL BOTÓN DE LOGOUT INTEGRADO 🚨
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
