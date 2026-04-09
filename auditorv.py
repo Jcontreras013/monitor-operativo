@@ -35,36 +35,51 @@ def forzar_columnas_unicas(df):
     return df
 
 # ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS
+# LECTOR DE ARCHIVOS 100% BLINDADO (REPARADO PARA EVITAR "No tables found")
 # ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
     df = None
     
+    # 1. Intentar como Excel binario antiguo
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
             uploaded_file.seek(0)
             df = pd.read_excel(uploaded_file, engine='xlrd')
-        except ImportError:
-            st.error("Falta librería xlrd para Excel antiguo.")
-    elif b'<table' in content.lower() or b'<html' in content.lower():
+            return forzar_columnas_unicas(df)
+        except Exception: pass
+        
+    # 2. Intentar como HTML (si tiene tags web)
+    if b'<table' in content.lower() or b'<html' in content.lower():
         try:
             dfs = pd.read_html(io.StringIO(content.decode('utf-8', errors='ignore')))
-            df = max(dfs, key=len)
+            if dfs: return forzar_columnas_unicas(max(dfs, key=len))
         except Exception:
-            dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
-            df = max(dfs, key=len)
-    else:
+            try:
+                dfs = pd.read_html(io.StringIO(content.decode('latin1', errors='ignore')))
+                if dfs: return forzar_columnas_unicas(max(dfs, key=len))
+            except Exception:
+                pass # SILENCIAR EL ERROR: Si no encuentra tablas, pasa al plan C
+                
+    # 3. Intentar como XLSX moderno
+    if filename.endswith('.xlsx'):
         uploaded_file.seek(0)
-        if filename.endswith('.xlsx'): 
+        try:
             df = pd.read_excel(uploaded_file, engine='openpyxl')
-        else:
-            try: 
-                df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
-            except UnicodeDecodeError:
-                uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
+            return forzar_columnas_unicas(df)
+        except Exception: pass
+        
+    # 4. Plan C: Intentar como CSV (texto plano, el formato real del GPS)
+    uploaded_file.seek(0)
+    try: 
+        df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
+    except UnicodeDecodeError:
+        uploaded_file.seek(0)
+        try:
+            df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
+        except Exception: pass
+    except Exception: pass
 
     return forzar_columnas_unicas(df)
 
@@ -91,8 +106,19 @@ def time_to_sec_robust(t_str):
 def procesar_auditoria_vehiculos(df_input):
     try:
         df = df_input.copy()
-        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         
+        # --- BUSCADOR INTELIGENTE DE ENCABEZADOS (Limpia metadata del GPS) ---
+        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
+        if not col_placa:
+            for i in range(min(15, len(df))):
+                row_str = " ".join(df.iloc[i].astype(str)).upper()
+                if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
+                    df.columns = df.iloc[i].astype(str).str.strip()
+                    df = df.iloc[i+1:].reset_index(drop=True)
+                    df = forzar_columnas_unicas(df)
+                    break
+                    
+        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         col_ingreso = next((c for c in df.columns if re.search(r'(?i)HORA.*INGRESO|HORA.*ENTRADA', str(c))), None)
         if not col_ingreso:
             col_ingreso = next((c for c in df.columns if re.search(r'(?i)INGRESO|ENTRADA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
@@ -117,8 +143,7 @@ def procesar_auditoria_vehiculos(df_input):
         resumen = df.groupby('_P').agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_tiempo(row):
-            ps = row['P_S']
-            ue = row['U_E']
+            ps = row['P_S']; ue = row['U_E']
             if pd.isnull(ps): return "Sin Salida"
             if pd.isnull(ue): return "Sin Ingreso"
             
@@ -132,9 +157,7 @@ def procesar_auditoria_vehiculos(df_input):
                 diff_secs = (ue - ps).total_seconds()
                 if diff_secs > 3600: diff_secs -= 3600
                 else: diff_secs = 0
-                    
-                h, r = divmod(int(diff_secs), 3600)
-                m, s = divmod(r, 60)
+                h, r = divmod(int(diff_secs), 3600); m, s = divmod(r, 60)
                 return f"{h:02d}:{m:02d}:{s:02d}"
             return "Revisar"
                 
@@ -149,13 +172,24 @@ def procesar_auditoria_vehiculos(df_input):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# 2. NUEVA LÓGICA: AUDITORÍA DE VEHÍCULOS (TIEMPOS SEMANALES AUTOMÁTICOS)
+# 2. AUDITORÍA SEMANAL AUTOMÁTICA
 # ==============================================================================
 def procesar_auditoria_semanal(df_input):
     try:
         df = df_input.copy()
-        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         
+        # --- BUSCADOR INTELIGENTE DE ENCABEZADOS (Limpia metadata del GPS) ---
+        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
+        if not col_placa:
+            for i in range(min(15, len(df))):
+                row_str = " ".join(df.iloc[i].astype(str)).upper()
+                if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
+                    df.columns = df.iloc[i].astype(str).str.strip()
+                    df = df.iloc[i+1:].reset_index(drop=True)
+                    df = forzar_columnas_unicas(df)
+                    break
+                    
+        col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         col_ingreso = next((c for c in df.columns if re.search(r'(?i)HORA.*INGRESO|HORA.*ENTRADA', str(c))), None)
         if not col_ingreso:
             col_ingreso = next((c for c in df.columns if re.search(r'(?i)INGRESO|ENTRADA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
@@ -164,8 +198,7 @@ def procesar_auditoria_semanal(df_input):
         if not col_salida:
             col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
         
-        if not (col_placa and col_ingreso and col_salida): 
-            return None, "Columnas de Hora o Placa no detectadas.", None, None
+        if not (col_placa and col_ingreso and col_salida): return None, "Columnas no detectadas.", None, None
             
         df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
         df['_P'] = df['_P'].astype(str).str.strip()
@@ -611,15 +644,16 @@ def mostrar_auditoria(es_movil=False, conn=None):
             df_base_local = None
             if archivo_act:
                 df_base_local = read_file_robust(archivo_act)
-                cols_upper = {c: str(c).upper() for c in df_base_local.columns}
-                col_liq = next((c for c, up in cols_upper.items() if 'LIQUIDADO' in up or 'CIERRE' in up), None)
-                col_ini = next((c for c, up in cols_upper.items() if 'INICIO' in up or 'ENTRADA' in up), None)
-                col_tec = next((c for c, up in cols_upper.items() if 'TECNICO' in up or 'TÉCNICO' in up or 'USER' in up), None)
-                col_est = next((c for c, up in cols_upper.items() if 'ESTADO' in up or 'STATUS' in up), None)
-                col_num = next((c for c, up in cols_upper.items() if 'NUM' in up or 'ORDEN' in up or 'ID' in up), None)
+                if df_base_local is not None:
+                    cols_upper = {c: str(c).upper() for c in df_base_local.columns}
+                    col_liq = next((c for c, up in cols_upper.items() if 'LIQUIDADO' in up or 'CIERRE' in up), None)
+                    col_ini = next((c for c, up in cols_upper.items() if 'INICIO' in up or 'ENTRADA' in up), None)
+                    col_tec = next((c for c, up in cols_upper.items() if 'TECNICO' in up or 'TÉCNICO' in up or 'USER' in up), None)
+                    col_est = next((c for c, up in cols_upper.items() if 'ESTADO' in up or 'STATUS' in up), None)
+                    col_num = next((c for c, up in cols_upper.items() if 'NUM' in up or 'ORDEN' in up or 'ID' in up), None)
 
-                if col_liq and col_ini and col_tec and col_est and col_num:
-                    df_base_local = df_base_local.rename(columns={col_liq: 'HORA_LIQ', col_ini: 'HORA_INI', col_tec: 'TECNICO', col_est: 'ESTADO', col_num: 'NUM'})
+                    if col_liq and col_ini and col_tec and col_est and col_num:
+                        df_base_local = df_base_local.rename(columns={col_liq: 'HORA_LIQ', col_ini: 'HORA_INI', col_tec: 'TECNICO', col_est: 'ESTADO', col_num: 'NUM'})
             elif 'df_base' in st.session_state and st.session_state.df_base is not None:
                 df_base_local = st.session_state.df_base
 
@@ -634,7 +668,20 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         dict_ralenti_secs = {}
                         for file_det in archivos_detallados:
                             df_temp = read_file_robust(file_det)
-                            if df_temp is not None: df_gps_list.append(df_temp)
+                            if df_temp is not None and not df_temp.empty:
+                                # LIMPIEZA DE METADATA (Por si el GPS pone títulos en las primeras filas)
+                                col_placa_temp = next((c for c in df_temp.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
+                                if not col_placa_temp:
+                                    for i in range(min(15, len(df_temp))):
+                                        row_str = " ".join(df_temp.iloc[i].astype(str)).upper()
+                                        if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
+                                            df_temp.columns = df_temp.iloc[i].astype(str).str.strip()
+                                            df_temp = df_temp.iloc[i+1:].reset_index(drop=True)
+                                            df_temp = forzar_columnas_unicas(df_temp)
+                                            break
+                                df_gps_list.append(df_temp)
+                                
+                            # Extraer motor encendido del texto puro
                             file_det.seek(0)
                             lineas = file_det.getvalue().decode('utf-8', errors='ignore').splitlines()
                             if len(lineas) < 5: 
@@ -656,9 +703,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 df_act['HORA_LIQ'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
                                 df_act['HORA_INI'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
                                 
-                                # 🚨 AQUÍ ESTÁ EL AJUSTE QUIRÚRGICO DE LAS FECHAS 🚨
-                                # En lugar de usar f_in y f_out del GPS (que pueden cortar los días), 
-                                # tomamos TODAS las fechas de liquidación del archivo de Actividades subido.
                                 df_act['Fecha_Ord'] = df_act['HORA_LIQ'].dt.date
                                 df_act = df_act.dropna(subset=['Fecha_Ord'])
                                 df_act = df_act[df_act['ESTADO'].astype(str).str.upper().str.contains('CERRADA', na=False)]
@@ -673,11 +717,9 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 res_gps['Seg_Calle'] = res_gps['Tiempo Total Semana'].apply(time_to_sec)
                                 res_gps['Motor_Encendido_Secs'] = res_gps['Vehículo / Placa'].map(dict_ralenti_secs).fillna(0)
                                 
-                                # 🚨 AQUÍ MEJORÉ EL MATCHER PARA QUE NO FALLE CON NOMBRES RAROS 🚨
                                 def finding_placa(tec):
                                     if pd.isnull(tec): return None
                                     pt = str(tec).upper().replace(',', '').replace('.', '').split()
-                                    # Si el nombre tiene menos de 2 partes (ej. solo dice "Juan"), buscar por una sola coincidencia
                                     required_matches = 2 if len(pt) >= 2 else 1
                                     
                                     for pl in res_gps['Vehículo / Placa']:
@@ -707,5 +749,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 else:
                                     st.warning("⚠️ No se encontraron técnicos que coincidan entre el archivo de Actividades y las placas del GPS.")
                             else:
-                                st.error("❌ No se encontraron datos válidos o fechas en el archivo GPS.")
+                                st.error(f"❌ Error al procesar datos del GPS: {msg_gps}")
+                        else:
+                            st.error("❌ No se detectaron datos válidos en los archivos GPS subidos.")
                     except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
