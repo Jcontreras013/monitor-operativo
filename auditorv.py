@@ -100,11 +100,29 @@ def procesar_auditoria_vehiculos(df_input):
         resumen = df.groupby('_P').agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_tiempo(row):
-            if pd.isnull(row['P_S']): return "Sin Salida"
-            if pd.isnull(row['U_E']): return "Sin Ingreso"
-            if row['U_E'] >= row['P_S']:
-                diff = row['U_E'] - row['P_S']
-                h, r = divmod(int(diff.total_seconds()), 3600); m, s = divmod(r, 60)
+            ps = row['P_S']
+            ue = row['U_E']
+            if pd.isnull(ps): return "Sin Salida"
+            if pd.isnull(ue): return "Sin Ingreso"
+            
+            # 🚨 LÍMITES DE HORARIO: 06:30 AM a 11:59 PM
+            limite_inf = ps.replace(hour=6, minute=30, second=0, microsecond=0)
+            limite_sup = ps.replace(hour=23, minute=59, second=59, microsecond=0)
+            
+            if ps < limite_inf: ps = limite_inf
+            if ue > limite_sup: ue = limite_sup
+            
+            if ue >= ps:
+                diff_secs = (ue - ps).total_seconds()
+                
+                # 🚨 DESCUENTO DE 1 HORA DE ALMUERZO (3600 segundos)
+                if diff_secs > 3600:
+                    diff_secs -= 3600
+                else:
+                    diff_secs = 0
+                    
+                h, r = divmod(int(diff_secs), 3600)
+                m, s = divmod(r, 60)
                 return f"{h:02d}:{m:02d}:{s:02d}"
             return "Revisar"
                 
@@ -119,9 +137,9 @@ def procesar_auditoria_vehiculos(df_input):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# 2. NUEVA LÓGICA: AUDITORÍA DE VEHÍCULOS (TIEMPOS SEMANALES)
+# 2. NUEVA LÓGICA: AUDITORÍA DE VEHÍCULOS (TIEMPOS SEMANALES AUTOMÁTICOS)
 # ==============================================================================
-def procesar_auditoria_semanal(df_input, fecha_inicio, fecha_fin):
+def procesar_auditoria_semanal(df_input):
     try:
         df = df_input.copy()
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
@@ -135,7 +153,7 @@ def procesar_auditoria_semanal(df_input, fecha_inicio, fecha_fin):
             col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
         
         if not (col_placa and col_ingreso and col_salida): 
-            return None, "Columnas de Hora o Placa no detectadas."
+            return None, "Columnas de Hora o Placa no detectadas.", None, None
             
         df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
         df['_P'] = df['_P'].astype(str).str.strip()
@@ -147,23 +165,41 @@ def procesar_auditoria_semanal(df_input, fecha_inicio, fecha_fin):
         df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
         df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
         
-        # 🚨 Extraer la fecha para agrupar por días
+        # Extraer la fecha para agrupar por días
         df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
         df = df.dropna(subset=['Fecha'])
         
-        # Filtrar por el rango de fechas seleccionado
-        df = df[(df['Fecha'] >= fecha_inicio) & (df['Fecha'] <= fecha_fin)]
-        if df.empty: return None, "No hay datos en el rango de fechas seleccionado."
+        if df.empty: return None, "No hay fechas válidas en el archivo.", None, None
+        
+        # 🚨 DETECCIÓN AUTOMÁTICA DE RANGO DE FECHAS 🚨
+        f_inicio = df['Fecha'].min()
+        f_fin = df['Fecha'].max()
 
-        # 1. Agrupar por Vehículo Y por Fecha (Para obtener el tiempo de CADA DÍA)
+        # Agrupar por Vehículo Y por Fecha (Para calcular cada día individual)
         diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
-        # Calcular los segundos trabajados en cada día
-        diario['segundos'] = (diario['U_E'] - diario['P_S']).dt.total_seconds()
-        diario.loc[diario['segundos'] < 0, 'segundos'] = 0
-        diario['segundos'] = diario['segundos'].fillna(0)
+        def calc_segs(row):
+            ps = row['P_S']
+            ue = row['U_E']
+            if pd.isnull(ps) or pd.isnull(ue): return 0
+            
+            # 🚨 LÍMITES DE HORARIO Y ALMUERZO POR CADA DÍA
+            limite_inf = ps.replace(hour=6, minute=30, second=0, microsecond=0)
+            limite_sup = ps.replace(hour=23, minute=59, second=59, microsecond=0)
+            
+            if ps < limite_inf: ps = limite_inf
+            if ue > limite_sup: ue = limite_sup
+            
+            if ue > ps:
+                diff = (ue - ps).total_seconds()
+                if diff > 3600:
+                    return diff - 3600 # Resta la hora de almuerzo
+                return 0
+            return 0
 
-        # 2. Agrupar todo por Vehículo (Para la Semana Completa)
+        diario['segundos'] = diario.apply(calc_segs, axis=1)
+        
+        # Agrupar el acumulado de la Semana
         semanal = diario.groupby('_P').agg(
             Dias_Laborados=('Fecha', 'nunique'),
             Total_Segundos=('segundos', 'sum')
@@ -180,8 +216,8 @@ def procesar_auditoria_semanal(df_input, fecha_inicio, fecha_fin):
         semanal = semanal.rename(columns={'_P': 'Vehículo / Placa', 'Dias_Laborados': 'Días Trabajados'})
         final_df = semanal[['Vehículo / Placa', 'Días Trabajados', 'Tiempo Total Semana', 'Promedio Diario']].copy()
         
-        return forzar_columnas_unicas(final_df), "OK"
-    except Exception as e: return None, str(e)
+        return forzar_columnas_unicas(final_df), "OK", f_inicio, f_fin
+    except Exception as e: return None, str(e), None, None
 
 
 # ==============================================================================
@@ -401,17 +437,10 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     del st.session_state['df_gps_memoria']
                 st.rerun()
                 
-        # 🚨 NUEVO: SELECTOR DE TIPO DE REPORTE 🚨
-        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal"], horizontal=True)
-        
-        if tipo_reporte == "📅 Reporte Semanal":
-            st.info("💡 Asegúrate de cargar los datos de la Nube (historial) o subir un archivo que contenga varios días.")
-            col_f1, col_f2 = st.columns(2)
-            with col_f1: fecha_inicio = st.date_input("Fecha de Inicio", value=get_hn_time().date() - timedelta(days=7))
-            with col_f2: fecha_fin = st.date_input("Fecha de Fin", value=get_hn_time().date())
-        else:
-            fecha_inicio = None
-            fecha_fin = None
+        # 🚨 SELECTOR DE TIPO DE REPORTE (SIN FECHAS MANUALES) 🚨
+        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático"], horizontal=True)
+        if tipo_reporte == "📅 Reporte Semanal Automático":
+            st.info("💡 El sistema detectará automáticamente los días en el archivo o historial de la Nube para generar el resumen de la semana.")
 
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
@@ -456,15 +485,15 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), f"Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary")
                 else: st.error(f"❌ Error: {msg}")
                 
-            elif tipo_reporte == "📅 Reporte Semanal":
-                with st.spinner("⚙️ Procesando consolidado semanal..."):
-                    res_sem, msg_sem = procesar_auditoria_semanal(df_gps_crudo, fecha_inicio, fecha_fin)
+            elif tipo_reporte == "📅 Reporte Semanal Automático":
+                with st.spinner("⚙️ Escaneando fechas y procesando consolidado semanal..."):
+                    res_sem, msg_sem, f_in, f_out = procesar_auditoria_semanal(df_gps_crudo)
                 if res_sem is not None:
-                    st.success("✅ Análisis Semanal completado.")
+                    st.success(f"✅ Análisis Semanal completado (Del {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}).")
                     st.dataframe(res_sem, use_container_width=True, hide_index=True)
                     col_s1, col_s2 = st.columns(2)
                     with col_s1:
-                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_sem, fecha_inicio, fecha_fin), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
+                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_sem, f_in, f_out), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
                 else: st.warning(f"⚠️ {msg_sem}")
 
     # --- PESTAÑA 2: TELEMETRÍA ---
