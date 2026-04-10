@@ -89,7 +89,6 @@ def parse_date_ultra_safe(val):
     
     str_val = str(val).strip()
     
-    # Solo descartar los que sean 0 explícitamente sin fecha
     if str_val in ["0", "0.0", "1899-12-30 00:00:00"]:
         return pd.NaT
 
@@ -238,7 +237,6 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
-                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -393,14 +391,14 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
-        # Colorizado de filas en la tabla del panel
+        # 🚨 SEMÁFORO DE DÍAS DE RETRASO (TABLA INFERIOR) 🚨
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
-            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: red; color: white' 
-            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: darkorange; color: white' 
-            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: yellow; color: black' 
-            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: green; color: black' 
+            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #d32f2f; color: white; font-weight: bold' 
+            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #f57c00; color: white; font-weight: bold' 
+            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #fbc02d; color: black; font-weight: bold' 
+            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: #388e3c; color: white; font-weight: bold' 
                 
         return estilos_fila
 
@@ -702,7 +700,6 @@ def main():
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
             
-        # 🚨 SE ELIMINÓ EL FILTRO >= 0 PARA PERMITIR ÓRDENES FUTURAS
         df_base_activa = df_base.copy()
         
         filtro_actividad = []
@@ -721,20 +718,22 @@ def main():
             filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
             filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
             
-        if nav_menu_diamante == "⚡ Monitor en Vivo":
-            if rol_usuario in ['admin', 'jefe']:
+        if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
+            if rol_usuario in ['admin', 'jefe'] and nav_menu_diamante == "⚡ Monitor en Vivo":
                 st.divider() 
+                st.header("🔍 Filtros en Vivo")
+                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                 
-            st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-            
-            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-            
-            check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
-            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
-            
+                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+                
+                check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
+                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            else:
+                check_criticos_diamante = False
+                tec_filtro_monitor = "Todos"
+
             df_monitor_filtrado = df_base_activa.copy()
             
             if len(filtro_actividad) > 0:
@@ -748,7 +747,6 @@ def main():
                 mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
                 mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP|FIBRA', na=False)
                 mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
-                
                 df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
                 
             if tec_filtro_monitor != "Todos":
@@ -773,10 +771,7 @@ def main():
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
         
-        # 🚨 FORZAMOS LA MATEMÁTICA EN TIEMPO REAL 🚨
         df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
-        
-        # Filtramos lo que sea menor a 0 días y esté VIVO
         mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
         df_reprog = df_base[mask_reprog].copy()
         
@@ -914,8 +909,8 @@ def main():
                 resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
                 
                 resumen_global_rep['Carga Total Asignada'] = resumen_global_rep['ASIGNADAS'] + resumen_global_rep['CERRADAS']
-                
                 resumen_global_rep.rename(columns={'ACTIVIDAD': 'Actividad Realizada', 'CERRADAS': 'Cerradas Hoy'}, inplace=True)
+                
                 resumen_global_rep = resumen_global_rep[['Actividad Realizada', 'Carga Total Asignada', 'Cerradas Hoy']].sort_values(by='Actividad Realizada').reset_index(drop=True)
                 
                 tot_p = resumen_global_rep['Carga Total Asignada'].sum()
@@ -983,13 +978,13 @@ def main():
 
         df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
 
+        # Días de Retraso se calculan para TODAS las vivas
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
         if 'TECNICO' in df_todas_pendientes_monitor.columns:
             mask_josue_kpi = df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
             df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
             
-        # Agrupamos las futuras en 0 para que no desaparezcan del KPI visual de pendientes
         df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO'] < 0, 'DIAS_RETRASO'] = 0
 
         df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(
@@ -1009,18 +1004,20 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-        vivas_count = len(df_todas_pendientes_monitor)
-        cerradas_hoy = len(df_cerradas_hoy_monitor)
-        
+        # 🚨 1. KPIs GRANDES: MUESTRAN SOLO LAS ÓRDENES CON TÉCNICO ASIGNADO 🚨
         mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-        tecs_activos = df_todas_pendientes_monitor[mask_tec_valido_mon]['TECNICO'].nunique()
-        offline_criticos = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
+        df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
+
+        vivas_count_asignadas = len(df_solo_asignadas_monitor)
+        cerradas_hoy = len(df_cerradas_hoy_monitor)
+        tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique()
+        offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
         html_kpis = f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">PENDIENTES ACTUALES</div>
-                <div class="kpi-val">{vivas_count}</div>
+                <div class="kpi-title">PENDIENTES ASIGNADAS</div>
+                <div class="kpi-val">{vivas_count_asignadas}</div>
             </div>
             <div class="kpi-card green">
                 <div class="kpi-title">CERRADAS HOY</div>
@@ -1032,18 +1029,19 @@ def main():
             </div>
             <div class="kpi-card red">
                 <div class="kpi-title">CAÍDAS (OFFLINE)</div>
-                <div class="kpi-val text-red">{offline_criticos}</div>
+                <div class="kpi-val text-red">{offline_criticos_asignadas}</div>
             </div>
         </div>
         """
         st.markdown(html_kpis, unsafe_allow_html=True)
 
-        with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=True):
+        # 🚨 2. EXPANDER: MUESTRA SOLO LAS ASIGNADAS Y EL TOTAL GENERAL ABAJO 🚨
+        with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ASIGNADAS)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
             
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
+                res_retraso_v = df_solo_asignadas_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_pendientes_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_pendientes_v*100):.0f}%" if sum_total_pendientes_v > 0 else "0%")
@@ -1059,54 +1057,54 @@ def main():
 
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 
+                # 🚨 3. TOTAL DE ÓRDENES DEBAJO DE LA TABLA 🚨
+                st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: #58a6ff;'>Total Órdenes: {sum_total_pendientes_v}</div>", unsafe_allow_html=True)
+                
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
-                act_tab_sop = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper()
+                act_tab_sop = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper()
                 res_sop_visual_v = {
-                    "FTTH / FIBRA": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
-                    "Navegación / Internet": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                    "ONT/ONU Offline": int((df_todas_pendientes_monitor['ES_OFFLINE'] == True).sum()), 
-                    "Niveles alterados": len(df_todas_pendientes_monitor[df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
-                    "Sin señal de TV": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
+                    "FTTH / FIBRA": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
+                    "Navegación / Internet": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
+                    "ONT/ONU Offline": int((df_solo_asignadas_monitor['ES_OFFLINE'] == True).sum()), 
+                    "Niveles alterados": len(df_solo_asignadas_monitor[df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
+                    "Sin señal de TV": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
                 }
                 st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-                st.metric("Exceden 2 Horas ⚠️", int((df_todas_pendientes_monitor['ALERTA_TIEMPO'] == True).sum()))
+                st.metric("Exceden 2 Horas ⚠️", int((df_solo_asignadas_monitor['ALERTA_TIEMPO'] == True).sum()))
 
             with col_tab_3:
                 st.caption("📦 Instalaciones")
-                txt_ins_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_ins_v = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper()
                 
                 res_ins_visual_v = {
-                    "Adición": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
-                    "Cambio / Migración": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
-                    "Recuperado": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("RECUP", na=False)])
+                    "Adición": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
+                    "Cambio / Migración": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
+                    "Recuperado": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("RECUP", na=False)])
                 }
                 mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
                 mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
-                res_ins_visual_v["Nueva"] = len(df_todas_pendientes_monitor[mask_base_ins & ~mask_excl_ins])
+                res_ins_visual_v["Nueva"] = len(df_solo_asignadas_monitor[mask_base_ins & ~mask_excl_ins])
                 
                 st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General INS: {sum(res_ins_visual_v.values())}**")
 
             with col_tab_4:
                 st.caption("⚙️ Otros")
-                txt_otr_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_otr_v = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper()
                 mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
-                res_otros_monitor = df_todas_pendientes_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                res_otros_monitor = df_solo_asignadas_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                 res_otros_monitor.columns = ['Otros', 'Cant']
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            df_solo_asignadas = df_todas_pendientes_monitor[mask_tec_valido_mon]
-            df_cerradas_hoy_segmento = df_cerradas_hoy_monitor.copy()
+            df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
+            df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
             
-            df_plex_asignadas = df_solo_asignadas[df_solo_asignadas['SEGMENTO'] == 'PLEX']
-            df_plex_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX']
-            
-            df_resi_asignadas = df_solo_asignadas[df_solo_asignadas['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'RESIDENCIAL']
 
             total_p = len(df_plex_asignadas) + len(df_plex_cerr)
             avance_plex = (len(df_plex_cerr) / total_p * 100) if total_p > 0 else 0
@@ -1114,8 +1112,8 @@ def main():
             total_r = len(df_resi_asignadas) + len(df_resi_cerr)
             avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
             
-            total_v = len(df_solo_asignadas) + len(df_cerradas_hoy_segmento)
-            avance_global = (len(df_cerradas_hoy_segmento) / total_v * 100) if total_v > 0 else 0
+            total_v = len(df_solo_asignadas_monitor) + len(df_cerradas_hoy_monitor)
+            avance_global = (len(df_cerradas_hoy_monitor) / total_v * 100) if total_v > 0 else 0
 
             def crear_velocimetro_circular(valor, titulo):
                 color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
@@ -1153,7 +1151,7 @@ def main():
             with col_global:
                 st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
                 if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_solo_asignadas, df_cerradas_hoy_segmento)
+                    mostrar_detalle_avance("GLOBAL", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
 
         st.divider()
         
@@ -1171,8 +1169,9 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
+        # 🚨 TABLA INFERIOR USA df_solo_asignadas_monitor 🚨
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_todas_pendientes_monitor
+            df_v_tabla_monitor = df_solo_asignadas_monitor
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
@@ -1182,16 +1181,18 @@ def main():
         
         with t_panel_v:
             if not df_v_tabla_monitor.empty:
-                df_estilo_v, _ = aplicar_estilos_df(df_v_tabla_monitor)
-                df_mostrar = df_estilo_v.drop(columns=['ES_OFFLINE'], errors='ignore')
+                df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                 
+                # Para evitar fallos al dropear, simplemente escondemos en column_config
                 evento_monitor_diam = st.dataframe(
-                    df_mostrar,
+                    df_estilo_v.style.apply(row_styler, axis=1),
                     column_config={
                         "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
                         "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                         "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
-                        "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large")
+                        "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
+                        "ES_OFFLINE": None,
+                        "MINUTOS_CALC": None
                     }, 
                     use_container_width=True, 
                     height=600, 
