@@ -89,18 +89,17 @@ def parse_date_ultra_safe(val):
     
     str_val = str(val).strip()
     
-    if str_val in ["0", "0.0", "00:00", "00:00:00", "12:00:00 AM", "1899-12-30 00:00:00"]:
+    # Solo descartar los que sean 0 explícitamente sin fecha
+    if str_val in ["0", "0.0", "1899-12-30 00:00:00"]:
         return pd.NaT
 
     hoy = pd.Timestamp(get_honduras_time()).normalize()
 
     try:
         if isinstance(val, dt_time):
-            if val.hour == 0 and val.minute == 0: return pd.NaT
             return pd.Timestamp.combine(hoy.date(), val)
 
         if isinstance(val, datetime):
-            # 🚨 SE ELIMINÓ LA CONDICIÓN QUE BORRABA LA FECHA SI ERA MEDIANOCHE
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
             return pd.Timestamp(val)
@@ -116,7 +115,6 @@ def parse_date_ultra_safe(val):
                 return pd.NaT
 
         if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
-            if str_val.startswith("00:00") or str_val == "0:00": return pd.NaT
             parsed_time = pd.to_datetime(str_val).time()
             return pd.Timestamp.combine(hoy.date(), parsed_time)
 
@@ -126,7 +124,6 @@ def parse_date_ultra_safe(val):
             parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
 
         if pd.notnull(parsed):
-            # 🚨 SE ELIMINÓ LA CONDICIÓN QUE BORRABA LA FECHA SI ERA MEDIANOCHE
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
@@ -134,6 +131,14 @@ def parse_date_ultra_safe(val):
         return pd.NaT
     except:
         return pd.NaT
+
+def procesar_fechas_seguro(df_input, columnas):
+    df = df_input.copy()
+    for col in columnas:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_date_ultra_safe)
+    return df
+
 # ==============================================================================
 # FUNCIÓN DE PROCESAMIENTO GERENCIAL
 # ==============================================================================
@@ -388,13 +393,14 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
+        # Colorizado de filas en la tabla del panel
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
             if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: red; color: white' 
             elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: darkorange; color: white' 
             elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: yellow; color: black' 
-            elif val_dias == 0: estilos_fila[idx_dias] = 'background-color: green; color: black' 
+            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: green; color: black' 
                 
         return estilos_fila
 
@@ -696,7 +702,7 @@ def main():
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
             
-        # 🚨 MODIFICADO: Incluye TODAS las ordenes para que cuadre el total real de 45
+        # 🚨 SE ELIMINÓ EL FILTRO >= 0 PARA PERMITIR ÓRDENES FUTURAS
         df_base_activa = df_base.copy()
         
         filtro_actividad = []
@@ -715,22 +721,20 @@ def main():
             filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
             filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
             
-        if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
-            if rol_usuario in ['admin', 'jefe'] and nav_menu_diamante == "⚡ Monitor en Vivo":
+        if nav_menu_diamante == "⚡ Monitor en Vivo":
+            if rol_usuario in ['admin', 'jefe']:
                 st.divider() 
-                st.header("🔍 Filtros en Vivo")
-                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                 
-                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                
-                check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
-                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
-            else:
-                check_criticos_diamante = False
-                tec_filtro_monitor = "Todos"
-
+            st.header("🔍 Filtros en Vivo")
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            
+            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+            
+            check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
+            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            
             df_monitor_filtrado = df_base_activa.copy()
             
             if len(filtro_actividad) > 0:
@@ -744,6 +748,7 @@ def main():
                 mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
                 mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP|FIBRA', na=False)
                 mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
+                
                 df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
                 
             if tec_filtro_monitor != "Todos":
@@ -764,7 +769,7 @@ def main():
         st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
         return
 
-if nav_menu_diamante == "📅 REPROGRAMADAS":
+    if nav_menu_diamante == "📅 REPROGRAMADAS":
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
         
@@ -894,7 +899,6 @@ if nav_menu_diamante == "📅 REPROGRAMADAS":
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # 🚨 LÓGICA ESPEJO: Usar df_monitor_filtrado para tener EXACTAMENTE la misma base que el monitor
             st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
             
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -909,7 +913,6 @@ if nav_menu_diamante == "📅 REPROGRAMADAS":
                 resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
                 resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
                 
-                # CARGA TOTAL ES VIVAS + CERRADAS HOY
                 resumen_global_rep['Carga Total Asignada'] = resumen_global_rep['ASIGNADAS'] + resumen_global_rep['CERRADAS']
                 
                 resumen_global_rep.rename(columns={'ACTIVIDAD': 'Actividad Realizada', 'CERRADAS': 'Cerradas Hoy'}, inplace=True)
@@ -975,72 +978,48 @@ if nav_menu_diamante == "📅 REPROGRAMADAS":
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
-        # Filtrar vivas (con y sin tecnico, incluyendo futuras)
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
+
+        df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+
+        df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
-        # Filtrar tecnicos validos para ruta y velocimetros
-        mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-        
-        # Cerradas hoy
-        df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
-        
-        vivas_count = len(df_todas_pendientes_monitor)
-        cerradas_hoy = len(df_cerradas_hoy_monitor)
-        tecs_activos = df_todas_pendientes_monitor[mask_tec_valido_mon]['TECNICO'].nunique()
-        offline_criticos = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
+        if 'TECNICO' in df_todas_pendientes_monitor.columns:
+            mask_josue_kpi = df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
+            df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
+            
+        # Agrupamos las futuras en 0 para que no desaparezcan del KPI visual de pendientes
+        df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO'] < 0, 'DIAS_RETRASO'] = 0
+
+        df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(
+            lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
+        )
 
         st.title("⚡ Monitor Operativo Maxcom")
 
         st.markdown("""
         <style>
-        .kpi-container {
-            display: flex;
-            justify-content: space-between;
-            gap: 15px;
-            margin-bottom: 20px;
-            margin-top: 10px;
-        }
-        .kpi-card {
-            background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%);
-            padding: 20px;
-            border-radius: 12px;
-            border-left: 5px solid #3B82F6; 
-            flex: 1;
-            text-align: center;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            border-top: 1px solid #2D2F39;
-            border-right: 1px solid #2D2F39;
-            border-bottom: 1px solid #2D2F39;
-        }
-        .kpi-card.green { border-left-color: #10B981; }
-        .kpi-card.orange { border-left-color: #F59E0B; }
-        .kpi-card.red { border-left-color: #EF4444; }
-        
-        .kpi-title {
-            color: #94A3B8;
-            font-size: 0.85rem;
-            font-weight: 600;
-            margin-bottom: 5px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .kpi-val {
-            color: #FFFFFF;
-            font-size: 2.2rem;
-            font-weight: 700;
-            margin: 0;
-            line-height: 1.2;
-        }
-        .kpi-val.text-green { color: #10B981; }
-        .kpi-val.text-red { color: #EF4444; }
+        .kpi-container { display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px; }
+        .kpi-card { background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39; }
+        .kpi-card.green { border-left-color: #10B981; } .kpi-card.orange { border-left-color: #F59E0B; } .kpi-card.red { border-left-color: #EF4444; }
+        .kpi-title { color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .kpi-val { color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2; }
+        .kpi-val.text-green { color: #10B981; } .kpi-val.text-red { color: #EF4444; }
         </style>
         """, unsafe_allow_html=True)
+
+        vivas_count = len(df_todas_pendientes_monitor)
+        cerradas_hoy = len(df_cerradas_hoy_monitor)
+        
+        mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+        tecs_activos = df_todas_pendientes_monitor[mask_tec_valido_mon]['TECNICO'].nunique()
+        offline_criticos = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
 
         html_kpis = f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">ÓRDENES ASIGNADAS</div>
+                <div class="kpi-title">PENDIENTES ACTUALES</div>
                 <div class="kpi-val">{vivas_count}</div>
             </div>
             <div class="kpi-card green">
@@ -1061,23 +1040,10 @@ if nav_menu_diamante == "📅 REPROGRAMADAS":
 
         with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
+            
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                
-                # Recalcular días de retraso agrupando los negativos (futuros) en "0 Dias" para que no se pierdan visualmente
-                df_todas_pendientes_monitor['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
-                
-                if 'TECNICO' in df_todas_pendientes_monitor.columns:
-                    mask_josue_kpi = df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
-                    df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO_REAL'] = 0
-                
-                df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO_REAL'] < 0, 'DIAS_RETRASO_REAL'] = 0
-                
-                df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO_REAL'].apply(
-                    lambda d: ">= 7 Dia" if d >= 7 else ("= 4 Dia" if d >= 4 else ("= 1 Dia" if d >= 1 else "= 0 Dia"))
-                )
-                
-                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 Dia","= 1 Dia","= 0 Dia"], fill_value=0).reset_index()
+                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_pendientes_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_pendientes_v*100):.0f}%" if sum_total_pendientes_v > 0 else "0%")
@@ -1086,8 +1052,8 @@ if nav_menu_diamante == "📅 REPROGRAMADAS":
                     v = row['Dias']
                     bg_color, font_color = '', 'white'
                     if v == ">= 7 Dia": bg_color = '#d32f2f'
-                    elif v == "= 4 Dia": bg_color = '#f57c00'
-                    elif v == "= 1 Dia": bg_color, font_color = '#fbc02d', 'black'
+                    elif v == "= 4 a 6 Dias": bg_color = '#f57c00'
+                    elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
                     elif v == "= 0 Dia": bg_color = '#388e3c'
                     return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
 
