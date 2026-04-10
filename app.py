@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -605,7 +604,6 @@ def main():
                             else:
                                 df_combined = df_new
                                 
-                            # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (CARGA) 🚨
                             if 'NUM' in df_combined.columns:
                                 temp_date_c = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
                                 df_combined['FECHA_SORT'] = pd.to_datetime(temp_date_c, errors='coerce')
@@ -632,7 +630,6 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (VISTA LOCAL) 🚨
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         temp_date_b = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
@@ -674,11 +671,7 @@ def main():
             texto = act + " " + com
             
             if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
-            
-            # 🚨 PRIORIDAD 1: INSTALACIONES
             if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
-            
-            # 🚨 PRIORIDAD 2: FALLAS
             if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
             if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
             if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
@@ -905,6 +898,7 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
+            # 🚨 1. ASEGURAMOS QUE LA LÓGICA EXISTA DENTRO DE ESTA PESTAÑA PARA EVITAR UNBOUNDLOCALERROR
             mask_tec_valido_rep = (
                 df_base['TECNICO'].notna() & 
                 (df_base['TECNICO'].astype(str).str.strip() != '') & 
@@ -912,23 +906,21 @@ def main():
             )
             df_base_valido_rep = df_base[mask_tec_valido_rep]
 
-            df_cierre_filtrado = df_base_valido_rep[(df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base_valido_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+            # Replicamos el filtro exacto del panel operativo para jalar las 46 órdenes
+            mask_hoy_rep = df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel
+            mask_asignadas_rep = df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            
+            df_panel_operativo_rep = df_base_valido_rep[mask_hoy_rep | mask_asignadas_rep].copy()
+            df_cierre_filtrado = df_panel_operativo_rep[(df_panel_operativo_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_panel_operativo_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
+
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
             
             st.markdown("### 📊 Indicadores de Avance Operativo")
             
-            # 🚨 MATEMÁTICA DEFINITIVA: "Lo asignado en el día" = Cerradas ese día + Pendientes arrastradas
-            mask_asignadas_dia = (
-                (df_base_valido_rep['FECHA_APE'].dt.date == fecha_cal_sel) | 
-                (df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) |
-                ((df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
-            )
-            df_asignadas_total_rep = df_base_valido_rep[mask_asignadas_dia]
-            
-            df_plex_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'PLEX']
+            df_plex_asignadas_rep = df_panel_operativo_rep[df_panel_operativo_rep['SEGMENTO'] == 'PLEX']
             df_plex_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'PLEX']
             
-            df_resi_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas_rep = df_panel_operativo_rep[df_panel_operativo_rep['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'RESIDENCIAL']
 
             total_p_rep = len(df_plex_asignadas_rep)
@@ -937,7 +929,7 @@ def main():
             total_r_rep = len(df_resi_asignadas_rep)
             avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
             
-            total_v_rep = len(df_asignadas_total_rep)
+            total_v_rep = len(df_panel_operativo_rep)
             avance_global_rep = (len(df_cierre_filtrado) / total_v_rep * 100) if total_v_rep > 0 else 0
 
             def crear_velocimetro_rep(valor, titulo):
@@ -1008,9 +1000,11 @@ def main():
 
             st.divider()
             
+            # 🚨 2. TABLA RESUMEN EXTRAÍDA EXACTAMENTE DEL PANEL OPERATIVO (LOS 46 EXACTOS)
             st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
-            p_rep = df_asignadas_total_rep.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS') if not df_asignadas_total_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'ASIGNADAS'])
-            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERRADAS'])
+            
+            p_rep = df_panel_operativo_rep.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
+            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
             
             resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
@@ -1195,7 +1189,18 @@ def main():
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_pendientes_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_pendientes_v*100):.0f}%" if sum_total_pendientes_v > 0 else "0%")
-                st.dataframe(res_retraso_v, hide_index=True, use_container_width=True)
+                
+                # 🚨 3. SOLUCIÓN FINAL A LOS COLORES DE KPI SIN APPLYMAP NI ERRORES
+                def aplicar_colores_seguros(s):
+                    return [
+                        'background-color: #d32f2f; color: white; font-weight: bold' if v == ">= 7 Dia" else
+                        'background-color: #f57c00; color: white; font-weight: bold' if v == "= 4 Dia" else
+                        'background-color: #fbc02d; color: black; font-weight: bold' if v == "= 1 Dia" else
+                        'background-color: #388e3c; color: white; font-weight: bold' if v == "= 0 Dia" else '' 
+                        for v in s
+                    ]
+                
+                st.dataframe(res_retraso_v.style.apply(aplicar_colores_seguros, subset=['Dias']), hide_index=True, use_container_width=True)
                 
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
