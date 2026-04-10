@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, time as dt_time
@@ -8,6 +9,7 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
+import streamlit.components.v1 as components
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -45,29 +47,51 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO Y BLOQUEO NUCLEAR DE RECARGA)
+# 📱 BLOQUEO NUCLEAR DE RECARGA (JAVASCRIPT + CSS PARA WEBVIEWS)
 # ==============================================================================
+components.html(
+    """
+    <script>
+    var lastY = 0;
+    document.addEventListener('touchstart', function(e) {
+        lastY = e.touches[0].clientY;
+    }, {passive: false});
+
+    document.addEventListener('touchmove', function(e) {
+        var top = document.documentElement.scrollTop || document.body.scrollTop;
+        var currentY = e.touches[0].clientY;
+        if (currentY > lastY && top <= 0) {
+            e.preventDefault(); 
+        }
+        lastY = currentY;
+    }, {passive: false});
+    </script>
+    """,
+    height=0,
+)
+
 estilo_app_nativa = """
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+header {visibility: hidden;}
 
-.block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-}
-
-/* 🚨 BLOQUEO NUCLEAR DEL PULL-TO-REFRESH (ANTI-RECARGA) 🚨 */
-:root {
-    overscroll-behavior: none !important;
-}
-
-html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
-    overscroll-behavior: none !important;
-    overscroll-behavior-y: none !important;
+html, body {
+    overscroll-behavior-y: contain !important; 
     overscroll-behavior-x: none !important;
+    margin: 0;
+    padding: 0;
+}
+
+[data-testid="stAppViewContainer"] > .main {
+    overscroll-behavior-y: contain !important; 
+}
+
+.main .block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 5rem !important; 
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
 }
 </style>
 """
@@ -237,7 +261,6 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
-                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -392,7 +415,6 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
-        # 🚨 SEMÁFORO DE DÍAS DE RETRASO (TABLA INFERIOR) 🚨
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
@@ -552,10 +574,39 @@ def main():
             if archivos_uploader_diamante:
                 for file_item in archivos_uploader_diamante:
                     f_name_lwr = file_item.name.lower()
-                    if "actividades" in f_name_lwr: file_act_ptr = file_item
-                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: file_disp_ptr = file_item
+                    if "actividades" in f_name_lwr: 
+                        file_act_ptr = file_item
+                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
+                        file_disp_ptr = file_item
+                        # 💾 GUARDAR CACHÉ EN DISCO PARA DESPUÉS DE LAS 5 PM
+                        try:
+                            with open("cache_fttx.tmp", "wb") as f:
+                                f.write(file_item.getvalue())
+                            with open("cache_fttx_name.txt", "w") as f:
+                                f.write(file_item.name)
+                        except:
+                            pass
+
+            # 🕒 LÓGICA DE MODO TARDE (DESPUÉS DE LAS 17:00)
+            ahora_hx = get_honduras_time()
+            if ahora_hx.hour >= 17 and file_act_ptr is not None and file_disp_ptr is None:
+                if os.path.exists("cache_fttx.tmp"):
+                    try:
+                        with open("cache_fttx.tmp", "rb") as f:
+                            file_disp_ptr = io.BytesIO(f.read())
+                        
+                        if os.path.exists("cache_fttx_name.txt"):
+                            with open("cache_fttx_name.txt", "r") as f:
+                                file_disp_ptr.name = f.read()
+                        else:
+                            file_disp_ptr.name = "FttxActiveDevice_cached.xlsx"
+                            
+                        st.info("🕒 **Modo Tarde (Post 5 PM):** Se cargó automáticamente el último archivo FTTX subido hoy.")
+                    except:
+                        pass
 
             btn_reprocesar = st.button("🔄 ACTUALIZAR TODO", use_container_width=True)
+            
         elif rol_usuario == 'jefe' and es_movil:
             st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
@@ -895,7 +946,6 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # --- 🚨 RESTAURACIÓN DE GRÁFICAS DE PORCENTAJE EN CIERRE DIARIO 🚨 ---
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
             
