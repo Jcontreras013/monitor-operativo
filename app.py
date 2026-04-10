@@ -8,6 +8,7 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
+import streamlit.components.v1 as components
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -45,50 +46,64 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (BLOQUEO NUCLEAR DE RECARGA "PULL-TO-REFRESH")
+# 📱 BLOQUEO NUCLEAR DE RECARGA (JAVASCRIPT + CSS PARA WEBVIEWS)
 # ==============================================================================
-# Este CSS está diseñado específicamente para matar el gesto de recarga en móviles
+# 1. Inyección de JavaScript para interceptar el gesto de "Pull-to-Refresh" en WebViews
+components.html(
+    """
+    <script>
+    var lastY = 0;
+    
+    // Capturamos la posición inicial del dedo al tocar la pantalla
+    document.addEventListener('touchstart', function(e) {
+        lastY = e.touches[0].clientY;
+    }, {passive: false});
+
+    // Detectamos el movimiento del dedo
+    document.addEventListener('touchmove', function(e) {
+        var top = document.documentElement.scrollTop || document.body.scrollTop;
+        var currentY = e.touches[0].clientY;
+        
+        // Si el usuario está deslizando hacia abajo (currentY > lastY)
+        // Y la página está hasta arriba (top <= 0)
+        if (currentY > lastY && top <= 0) {
+            e.preventDefault(); // Detenemos la acción por defecto (la recarga)
+        }
+        lastY = currentY;
+    }, {passive: false});
+    </script>
+    """,
+    height=0,
+)
+
+# 2. CSS de respaldo para navegadores móviles
 estilo_app_nativa = """
 <style>
-/* Ocultar elementos innecesarios de Streamlit */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
 
-/* Bloqueo agresivo de recarga por gesto (Pull-to-refresh) */
-/* Aplicamos esto a html, body y al contenedor raíz de la app */
+/* Bloqueo a nivel de contenedor de Streamlit */
 html, body, [data-testid="stAppViewContainer"], .main {
-    overscroll-behavior-y: none !important; /* Mata el pull-to-refresh vertical */
-    overscroll-behavior-x: none !important; /* Mata el swipe horizontal (si aplica) */
-    position: fixed !important; /* Fija la pantalla para que el navegador no controle el scroll */
-    overflow: hidden !important; /* Esconde el scroll nativo del navegador */
+    overscroll-behavior-y: contain !important; 
+    overscroll-behavior-x: none !important;
+    position: fixed !important; 
+    overflow: hidden !important; 
     width: 100vw !important;
     height: 100vh !important;
     margin: 0;
     padding: 0;
 }
 
-/* Permitir scroll SOLO dentro del contenedor de los bloques de Streamlit */
+/* Permitir scroll solo dentro de la app */
 .main .block-container {
-    overflow-y: auto !important; /* Aquí es donde permitimos el scroll real */
+    overflow-y: auto !important; 
     height: 100vh !important;
     padding-top: 1rem !important;
-    padding-bottom: 5rem !important; /* Espacio extra abajo para que no quede cortado en móviles */
+    padding-bottom: 5rem !important; 
     padding-left: 1rem !important;
     padding-right: 1rem !important;
-    -webkit-overflow-scrolling: touch !important; /* Desplazamiento suave en iOS/Safari */
-}
-
-/* Ajustes para que las tablas grandes no causen un scroll horizontal infinito a nivel de página */
-.stDataFrame {
-    width: 100% !important;
-    max-width: 100vw !important;
-    overflow-x: auto !important; /* El scroll horizontal ocurre dentro de la tabla, no en la app */
-}
-
-/* Ajuste para que las gráficas de Plotly se adapten al contenedor */
-.js-plotly-plot {
-    max-width: 100% !important;
+    -webkit-overflow-scrolling: touch !important; 
 }
 </style>
 """
@@ -916,7 +931,6 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # --- 🚨 RESTAURACIÓN DE GRÁFICAS DE PORCENTAJE EN CIERRE DIARIO 🚨 ---
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
             
