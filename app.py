@@ -73,7 +73,7 @@ html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
-# 🚨 EL PATRÓN DEFINITIVO: Incluye todo lo VIVO. Si tiene un técnico asignado, entra a su matemática.
+# PATRON ORIGINAL (No se toca para no romper la matriz de datos)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
@@ -330,11 +330,11 @@ def mostrar_comentario_cierre(fila):
         st.rerun()
 
 @st.dialog("Resumen de Operaciones")
-def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
+def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
     
-    if not pendientes_df.empty:
-        p = pendientes_df.groupby('ACTIVIDAD').size().reset_index(name='Asignadas')
+    if not asignadas_df.empty:
+        p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Asignadas')
     else:
         p = pd.DataFrame(columns=['ACTIVIDAD', 'Asignadas'])
 
@@ -362,7 +362,7 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
             hide_index=True,
             column_config={
                 "Tipo": st.column_config.TextColumn("TIPO"),
-                "Asignadas": st.column_config.NumberColumn("PENDIENTES", format="%d"),
+                "Asignadas": st.column_config.NumberColumn("ASIGNADAS", format="%d"),
                 "Cerradas": st.column_config.NumberColumn("CERRADAS", format="%d")
             }
         )
@@ -915,24 +915,28 @@ def main():
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
             
             st.markdown("### 📊 Indicadores de Avance Operativo")
-            vivas_rep = df_base_valido_rep[
-                (df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & 
-                (df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
-            ]
             
-            df_plex_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'PLEX']
+            # 🚨 MATEMÁTICA DEFINITIVA: "Lo asignado en el día" = Cerradas ese día + Pendientes arrastradas
+            mask_asignadas_dia = (
+                (df_base_valido_rep['FECHA_APE'].dt.date == fecha_cal_sel) | 
+                (df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) |
+                ((df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            )
+            df_asignadas_total_rep = df_base_valido_rep[mask_asignadas_dia]
+            
+            df_plex_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'PLEX']
             df_plex_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'PLEX']
             
-            df_resi_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'RESIDENCIAL']
 
-            total_p_rep = len(df_plex_pend_rep) + len(df_plex_cerr_rep)
+            total_p_rep = len(df_plex_asignadas_rep)
             avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
             
-            total_r_rep = len(df_resi_pend_rep) + len(df_resi_cerr_rep)
+            total_r_rep = len(df_resi_asignadas_rep)
             avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
             
-            total_v_rep = len(vivas_rep) + len(df_cierre_filtrado)
+            total_v_rep = len(df_asignadas_total_rep)
             avance_global_rep = (len(df_cierre_filtrado) / total_v_rep * 100) if total_v_rep > 0 else 0
 
             def crear_velocimetro_rep(valor, titulo):
@@ -1004,20 +1008,20 @@ def main():
             st.divider()
             
             st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
-            p_rep = vivas_rep.groupby('ACTIVIDAD').size().reset_index(name='PEND.') if not vivas_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'PEND.'])
-            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERR.') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERR.'])
+            p_rep = df_asignadas_total_rep.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS') if not df_asignadas_total_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'ASIGNADAS'])
+            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERRADAS'])
             
             resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
             if not resumen_global_rep.empty:
-                resumen_global_rep['PEND.'] = resumen_global_rep['PEND.'].astype(int)
-                resumen_global_rep['CERR.'] = resumen_global_rep['CERR.'].astype(int)
+                resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
+                resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
                 resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
                 resumen_global_rep = resumen_global_rep.sort_values(by='TIPO').reset_index(drop=True)
                 
-                tot_p = resumen_global_rep['PEND.'].sum()
-                tot_c = resumen_global_rep['CERR.'].sum()
-                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'PEND.': tot_p, 'CERR.': tot_c}])
+                tot_p = resumen_global_rep['ASIGNADAS'].sum()
+                tot_c = resumen_global_rep['CERRADAS'].sum()
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
                 resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 
                 st.dataframe(
@@ -1026,8 +1030,8 @@ def main():
                     hide_index=True,
                     column_config={
                         "TIPO": st.column_config.TextColumn("Actividad Realizada"),
-                        "PEND.": st.column_config.NumberColumn("Asignadas / Pendientes", format="%d"),
-                        "CERR.": st.column_config.NumberColumn("Cerradas Hoy", format="%d")
+                        "ASIGNADAS": st.column_config.NumberColumn("Carga Total Asignada", format="%d"),
+                        "CERRADAS": st.column_config.NumberColumn("Cerradas Hoy", format="%d")
                     }
                 )
             else:
@@ -1083,7 +1087,6 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
-        # ELIMINA CUALQUIER ORDEN QUE NO TENGA TÉCNICO ASIGNADO DE ESTA MATEMÁTICA
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
@@ -1093,14 +1096,9 @@ def main():
         df_monitor_valido = df_monitor_filtrado[mask_tec_valido]
 
         mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
-        
-        # 🚨 FILTRO RE-ESTRUCTURADO: Ahora SÍ toma las pendientes para saber cuántas se le asignaron
         mask_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
 
-        # Esta tabla contiene la carga de hoy (Las vivas + las cerradas de hoy)
         df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_asignadas].copy()
-        
-        # El tablero de KPIs se alimenta puramente de las que todavía tiene pendientes/en ruta
         df_tablero_kpi_monitor = df_monitor_valido[mask_asignadas].copy()
 
         df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
@@ -1169,7 +1167,7 @@ def main():
         html_kpis = f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">PENDIENTES ASIGNADAS</div>
+                <div class="kpi-title">ÓRDENES ASIGNADAS</div>
                 <div class="kpi-val">{vivas_count}</div>
             </div>
             <div class="kpi-card green">
@@ -1241,19 +1239,27 @@ def main():
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
             df_cerradas_hoy_segmento = df_monitor_valido[(df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_valido['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
             
-            df_plex_pend = df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'PLEX']
+            # 🚨 MATEMÁTICA DEFINITIVA EN EL MONITOR
+            mask_asignadas_hoy = (
+                (df_monitor_valido['FECHA_APE'].dt.date == hoy_date_valor) | 
+                (df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) |
+                ((df_monitor_valido['FECHA_APE'].dt.date <= hoy_date_valor) & df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            )
+            df_asignadas_hoy_full = df_monitor_valido[mask_asignadas_hoy]
+            
+            df_plex_asignadas = df_asignadas_hoy_full[df_asignadas_hoy_full['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX']
             
-            df_resi_pend = df_tablero_kpi_monitor[df_tablero_kpi_monitor['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas = df_asignadas_hoy_full[df_asignadas_hoy_full['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL']
 
-            total_p = len(df_plex_pend) + len(df_plex_cerr)
+            total_p = len(df_plex_asignadas)
             avance_plex = (len(df_plex_cerr) / total_p * 100) if total_p > 0 else 0
             
-            total_r = len(df_resi_pend) + len(df_resi_cerr)
+            total_r = len(df_resi_asignadas)
             avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
             
-            total_v = vivas_count + cerradas_hoy
+            total_v = len(df_asignadas_hoy_full)
             avance_global = (cerradas_hoy / total_v * 100) if total_v > 0 else 0
 
             def crear_velocimetro_circular(valor, titulo):
@@ -1280,19 +1286,19 @@ def main():
             with col_g1:
                 st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, key="pie_resi")
                 if st.button("🔍 Ver Resumen Residencial", use_container_width=True, key="btn_resi"):
-                    mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
+                    mostrar_detalle_avance("RESIDENCIAL", df_resi_asignadas, df_resi_cerr)
                     
             with col_g2:
                 st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, key="pie_plex")
                 if st.button("🔍 Ver Resumen PLEX", use_container_width=True, key="btn_plex"):
-                    mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
+                    mostrar_detalle_avance("PLEX", df_plex_asignadas, df_plex_cerr)
                 
             espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
             
             with col_global:
                 st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
                 if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_tablero_kpi_monitor, df_cerradas_hoy_segmento)
+                    mostrar_detalle_avance("GLOBAL", df_asignadas_hoy_full, df_cerradas_hoy_segmento)
 
         st.divider()
         
