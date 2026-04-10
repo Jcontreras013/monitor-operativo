@@ -73,7 +73,7 @@ html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
-# PATRON ORIGINAL (No se toca para no romper la matriz de datos)
+# PATRON ORIGINAL DE ORDENES VIVAS
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
@@ -242,7 +242,6 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
-                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -604,7 +603,6 @@ def main():
                             else:
                                 df_combined = df_new
                                 
-                            # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (CARGA) 🚨
                             if 'NUM' in df_combined.columns:
                                 temp_date_c = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
                                 df_combined['FECHA_SORT'] = pd.to_datetime(temp_date_c, errors='coerce')
@@ -631,7 +629,6 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (VISTA LOCAL) 🚨
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         temp_date_b = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
@@ -673,11 +670,7 @@ def main():
             texto = act + " " + com
             
             if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
-            
-            # 🚨 PRIORIDAD 1: INSTALACIONES
             if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
-            
-            # 🚨 PRIORIDAD 2: FALLAS
             if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
             if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
             if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
@@ -896,7 +889,6 @@ def main():
                                     type="primary",
                                     use_container_width=True
                                 )
-                                
                     except Exception as e:
                         st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
         
@@ -904,39 +896,37 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            mask_tec_valido_rep = (
-                df_base['TECNICO'].notna() & 
-                (df_base['TECNICO'].astype(str).str.strip() != '') & 
-                (~df_base['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            )
-            df_base_valido_rep = df_base[mask_tec_valido_rep]
-
-            df_cierre_filtrado = df_base_valido_rep[(df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base_valido_rep['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
-            st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
+            # --- 🚨 CÁLCULOS 100% INDEPENDIENTES PARA ESTA PESTAÑA ---
             
+            # 1. CERRADAS DEL DÍA
+            df_cierre_filtrado = df_base[(df_base['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+            
+            # 2. VIVAS TOTALES (Para la tabla espejo de 46 órdenes)
+            mask_vivas_totales = (df_base['FECHA_APE'].dt.date <= fecha_cal_sel) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            df_vivas_totales = df_base[mask_vivas_totales].copy()
+            
+            # 3. SOLO ASIGNADAS (Para que el velocímetro gire correctamente)
+            # Deben tener un técnico válido asignado y NO estar en status cerrado
+            mask_tec_valido_rep = df_vivas_totales['TECNICO'].notna() & (df_vivas_totales['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_totales['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            df_solo_asignadas = df_vivas_totales[mask_tec_valido_rep].copy()
+            
+            st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cierre_filtrado))
             st.markdown("### 📊 Indicadores de Avance Operativo")
             
-            # 🚨 MATEMÁTICA DEFINITIVA: "Lo asignado en el día" = Cerradas ese día + Pendientes arrastradas
-            mask_asignadas_dia = (
-                (df_base_valido_rep['FECHA_APE'].dt.date == fecha_cal_sel) | 
-                (df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) |
-                ((df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
-            )
-            df_asignadas_total_rep = df_base_valido_rep[mask_asignadas_dia]
-            
-            df_plex_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'PLEX']
+            # --- VELOCÍMETROS (SOLO ASIGNADAS VS CERRADAS) ---
+            df_plex_asignadas_rep = df_solo_asignadas[df_solo_asignadas['SEGMENTO'] == 'PLEX']
             df_plex_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'PLEX']
             
-            df_resi_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas_rep = df_solo_asignadas[df_solo_asignadas['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'RESIDENCIAL']
 
-            total_p_rep = len(df_plex_asignadas_rep)
+            total_p_rep = len(df_plex_asignadas_rep) + len(df_plex_cerr_rep)
             avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
             
-            total_r_rep = len(df_resi_asignadas_rep)
+            total_r_rep = len(df_resi_asignadas_rep) + len(df_resi_cerr_rep)
             avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
             
-            total_v_rep = len(df_asignadas_total_rep)
+            total_v_rep = len(df_solo_asignadas) + len(df_cierre_filtrado)
             avance_global_rep = (len(df_cierre_filtrado) / total_v_rep * 100) if total_v_rep > 0 else 0
 
             def crear_velocimetro_rep(valor, titulo):
@@ -1007,30 +997,40 @@ def main():
 
             st.divider()
             
+            # --- 🚨 ESPEJO: TABLA DE CARGA TOTAL DE LA EMPRESA (LAS 46 ÓRDENES) ---
             st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
-            p_rep = df_asignadas_total_rep.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS') if not df_asignadas_total_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'ASIGNADAS'])
-            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERRADAS'])
+            
+            # Usamos df_vivas_totales para que aparezca todo (asignado o no)
+            p_rep = df_vivas_totales.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
+            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
             
             resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
             if not resumen_global_rep.empty:
                 resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
                 resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
+                
+                # La Carga Total es la suma de lo que queda vivo + lo que ya se cerró
+                resumen_global_rep['Carga Total Asignada'] = resumen_global_rep['ASIGNADAS'] + resumen_global_rep['CERRADAS']
+                
                 resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
                 resumen_global_rep = resumen_global_rep.sort_values(by='TIPO').reset_index(drop=True)
                 
-                tot_p = resumen_global_rep['ASIGNADAS'].sum()
+                tot_p = resumen_global_rep['Carga Total Asignada'].sum()
                 tot_c = resumen_global_rep['CERRADAS'].sum()
-                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
-                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'Carga Total Asignada': tot_p, 'CERRADAS': tot_c}])
+                
+                # Limpiamos para mostrar solo las columnas correctas
+                resumen_mostrar = resumen_global_rep[['TIPO', 'Carga Total Asignada', 'CERRADAS']]
+                resumen_mostrar = pd.concat([resumen_mostrar, fila_tot], ignore_index=True)
                 
                 st.dataframe(
-                    resumen_global_rep,
+                    resumen_mostrar,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "TIPO": st.column_config.TextColumn("Actividad Realizada"),
-                        "ASIGNADAS": st.column_config.NumberColumn("Carga Total Asignada", format="%d"),
+                        "Carga Total Asignada": st.column_config.NumberColumn("Carga Total Asignada", format="%d"),
                         "CERRADAS": st.column_config.NumberColumn("Cerradas Hoy", format="%d")
                     }
                 )
@@ -1087,29 +1087,27 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
-        mask_tec_valido = (
-            df_monitor_filtrado['TECNICO'].notna() & 
-            (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
-            (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-        )
+        # 1. CERRADAS HOY
+        df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+
+        # 2. TODAS LAS VIVAS (Para la tabla del expander de carga actual)
+        mask_vivas_monitor = (df_monitor_filtrado['FECHA_APE'].dt.date <= hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+        df_todas_vivas_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
+
+        # 3. SOLO ASIGNADAS (Para los velocímetros y técnicos en ruta)
+        mask_tec_valido_mon = df_todas_vivas_monitor['TECNICO'].notna() & (df_todas_vivas_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_vivas_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+        df_solo_asignadas_monitor = df_todas_vivas_monitor[mask_tec_valido_mon].copy()
+
+        # Calcular los días de retraso para todas las vivas
+        df_todas_vivas_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_todas_vivas_monitor['FECHA_APE'].dt.normalize()).dt.days
+        df_todas_vivas_monitor['DIAS_RETRASO'] = df_todas_vivas_monitor['DIAS_RETRASO'].fillna(0).astype(int)
         
-        df_monitor_valido = df_monitor_filtrado[mask_tec_valido]
+        if 'TECNICO' in df_todas_vivas_monitor.columns:
+            mask_josue_kpi = df_todas_vivas_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
+            df_todas_vivas_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
 
-        mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
-        mask_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-
-        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_asignadas].copy()
-        df_tablero_kpi_monitor = df_monitor_valido[mask_asignadas].copy()
-
-        df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
-        df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
-        
-        if 'TECNICO' in df_tablero_kpi_monitor.columns:
-            mask_josue_kpi = df_tablero_kpi_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
-            df_tablero_kpi_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
-
-        df_tablero_kpi_monitor['CatD'] = df_tablero_kpi_monitor['DIAS_RETRASO'].apply(
-            lambda d: ">= 7 Dia" if d >= 7 else (f"= {int(d)} Dia" if d > 0 else "= 0 Dia")
+        df_todas_vivas_monitor['CatD'] = df_todas_vivas_monitor['DIAS_RETRASO'].apply(
+            lambda d: ">= 7 Dia" if d >= 7 else ("= 4 Dia" if d >= 4 else ("= 1 Dia" if d >= 1 else "= 0 Dia"))
         )
 
         st.title("⚡ Monitor Operativo Maxcom")
@@ -1159,15 +1157,15 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-        vivas_count = len(df_tablero_kpi_monitor)
-        cerradas_hoy = len(df_monitor_valido[(df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_valido['ESTADO'].str.contains('CERRADA', na=False, case=False))])
-        tecs_activos = df_tablero_kpi_monitor['TECNICO'].nunique()
-        offline_criticos = int((df_tablero_kpi_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_tablero_kpi_monitor))) == True).sum())
+        vivas_count = len(df_todas_vivas_monitor) # Todas las pendientes
+        cerradas_hoy = len(df_cerradas_hoy_monitor)
+        tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() # Solo tecnicos validos
+        offline_criticos = int((df_todas_vivas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_vivas_monitor))) == True).sum())
 
         html_kpis = f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">ÓRDENES ASIGNADAS</div>
+                <div class="kpi-title">PENDIENTES ACTUALES</div>
                 <div class="kpi-val">{vivas_count}</div>
             </div>
             <div class="kpi-card green">
@@ -1186,81 +1184,85 @@ def main():
         """
         st.markdown(html_kpis, unsafe_allow_html=True)
 
-        with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ÓRDENES ASIGNADAS)", expanded=True):
+        with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
+            
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                res_retraso_v = df_tablero_kpi_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 Dia","= 1 Dia","= 0 Dia"], fill_value=0).reset_index()
+                res_retraso_v = df_todas_vivas_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 Dia","= 1 Dia","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_pendientes_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_pendientes_v*100):.0f}%" if sum_total_pendientes_v > 0 else "0%")
-                st.dataframe(res_retraso_v, hide_index=True, use_container_width=True)
+                
+                # 🚨 FUNCIÓN SEGURA PARA COLORES 🚨
+                def style_dias_apply(row):
+                    v = row['Dias']
+                    bg_color = ''
+                    font_color = 'white'
+                    if v == ">= 7 Dia": bg_color = '#d32f2f'
+                    elif v == "= 4 Dia": bg_color = '#f57c00'
+                    elif v == "= 1 Dia": bg_color, font_color = '#fbc02d', 'black'
+                    elif v == "= 0 Dia": bg_color = '#388e3c'
+                    return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
+
+                st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
-                act_tab_sop = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper()
+                act_tab_sop = df_todas_vivas_monitor['ACTIVIDAD'].astype(str).str.upper()
                 res_sop_visual_v = {
-                    "FTTH / FIBRA": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
-                    "Navegación / Internet": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                    "ONT/ONU Offline": int((df_tablero_kpi_monitor['ES_OFFLINE'] == True).sum()), 
-                    "Niveles alterados": len(df_tablero_kpi_monitor[df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
-                    "Sin señal de TV": len(df_tablero_kpi_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
+                    "FTTH / FIBRA": len(df_todas_vivas_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
+                    "Navegación / Internet": len(df_todas_vivas_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
+                    "ONT/ONU Offline": int((df_todas_vivas_monitor['ES_OFFLINE'] == True).sum()), 
+                    "Niveles alterados": len(df_todas_vivas_monitor[df_todas_vivas_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
+                    "Sin señal de TV": len(df_todas_vivas_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
                 }
                 st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-                st.metric("Exceden 2 Horas ⚠️", int((df_tablero_kpi_monitor['ALERTA_TIEMPO'] == True).sum()))
+                st.metric("Exceden 2 Horas ⚠️", int((df_todas_vivas_monitor['ALERTA_TIEMPO'] == True).sum()))
 
             with col_tab_3:
                 st.caption("📦 Instalaciones")
-                txt_ins_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_ins_v = df_todas_vivas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_vivas_monitor['COMENTARIO'].astype(str).str.upper()
                 
                 res_ins_visual_v = {
-                    "Adición": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
-                    "Cambio / Migración": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
-                    "Recuperado": len(df_tablero_kpi_monitor[txt_ins_v.str.contains("RECUP", na=False)])
+                    "Adición": len(df_todas_vivas_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
+                    "Cambio / Migración": len(df_todas_vivas_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
+                    "Recuperado": len(df_todas_vivas_monitor[txt_ins_v.str.contains("RECUP", na=False)])
                 }
                 mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
                 mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
-                res_ins_visual_v["Nueva"] = len(df_tablero_kpi_monitor[mask_base_ins & ~mask_excl_ins])
+                res_ins_visual_v["Nueva"] = len(df_todas_vivas_monitor[mask_base_ins & ~mask_excl_ins])
                 
                 st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General INS: {sum(res_ins_visual_v.values())}**")
 
             with col_tab_4:
                 st.caption("⚙️ Otros")
-                txt_otr_v = df_tablero_kpi_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_tablero_kpi_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_otr_v = df_todas_vivas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_vivas_monitor['COMENTARIO'].astype(str).str.upper()
                 mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
-                res_otros_monitor = df_tablero_kpi_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                res_otros_monitor = df_todas_vivas_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                 res_otros_monitor.columns = ['Otros', 'Cant']
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-        # --- EXPANDER DE SEGMENTOS Y AVANCE ---
+        # --- 🚨 VELOCÍMETROS SOLO CON ASIGNADAS ---
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            df_cerradas_hoy_segmento = df_monitor_valido[(df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_valido['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
             
-            # 🚨 MATEMÁTICA DEFINITIVA EN EL MONITOR
-            mask_asignadas_hoy = (
-                (df_monitor_valido['FECHA_APE'].dt.date == hoy_date_valor) | 
-                (df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) |
-                ((df_monitor_valido['FECHA_APE'].dt.date <= hoy_date_valor) & df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
-            )
-            df_asignadas_hoy_full = df_monitor_valido[mask_asignadas_hoy]
+            df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
+            df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
             
-            df_plex_asignadas = df_asignadas_hoy_full[df_asignadas_hoy_full['SEGMENTO'] == 'PLEX']
-            df_plex_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX']
-            
-            df_resi_asignadas = df_asignadas_hoy_full[df_asignadas_hoy_full['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'RESIDENCIAL']
 
-            total_p = len(df_plex_asignadas)
+            total_p = len(df_plex_asignadas) + len(df_plex_cerr)
             avance_plex = (len(df_plex_cerr) / total_p * 100) if total_p > 0 else 0
             
-            total_r = len(df_resi_asignadas)
+            total_r = len(df_resi_asignadas) + len(df_resi_cerr)
             avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
             
-            total_v = len(df_asignadas_hoy_full)
-            avance_global = (cerradas_hoy / total_v * 100) if total_v > 0 else 0
+            total_v = len(df_solo_asignadas_monitor) + len(df_cerradas_hoy_monitor)
+            avance_global = (len(df_cerradas_hoy_monitor) / total_v * 100) if total_v > 0 else 0
 
             def crear_velocimetro_circular(valor, titulo):
                 color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
@@ -1298,7 +1300,7 @@ def main():
             with col_global:
                 st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
                 if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_asignadas_hoy_full, df_cerradas_hoy_segmento)
+                    mostrar_detalle_avance("GLOBAL", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
 
         st.divider()
         
@@ -1307,7 +1309,7 @@ def main():
             
         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
         
-        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+        if col_bt1_v.button("⏳ PENDIENTES ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
         if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
@@ -1317,11 +1319,11 @@ def main():
         status_final_btn = st.session_state.st_btn_v_active
 
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_tablero_kpi_monitor
+            df_v_tabla_monitor = df_todas_vivas_monitor
         elif status_final_btn == "C_HOY": 
-            df_v_tabla_monitor = df_monitor_vivas_full[(df_monitor_vivas_full['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
+            df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
-            df_v_tabla_monitor = df_monitor_vivas_full[(df_monitor_vivas_full['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False))]
+            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False))]
 
         t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL DE CONTROL OPERATIVO", "📊 ANALISIS Y GANTT", "📈 ANALÍTICA"])
         
