@@ -8,7 +8,6 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
-import streamlit.components.v1 as components
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -46,60 +45,19 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 BLOQUEO NUCLEAR DE RECARGA (JAVASCRIPT + CSS PARA WEBVIEWS)
+# 📱 ESTILOS BASE APP NATIVA (Limpio)
 # ==============================================================================
-# 1. Inyección de JavaScript para interceptar el gesto de "Pull-to-Refresh"
-components.html(
-    """
-    <script>
-    var lastY = 0;
-    
-    document.addEventListener('touchstart', function(e) {
-        lastY = e.touches[0].clientY;
-    }, {passive: false});
-
-    document.addEventListener('touchmove', function(e) {
-        var top = document.documentElement.scrollTop || document.body.scrollTop;
-        var currentY = e.touches[0].clientY;
-        
-        if (currentY > lastY && top <= 0) {
-            e.preventDefault(); 
-        }
-        lastY = currentY;
-    }, {passive: false});
-    </script>
-    """,
-    height=0,
-)
-
-# 2. CSS de respaldo (MODIFICADO PARA NO OCULTAR EL SIDEBAR)
 estilo_app_nativa = """
 <style>
-/* Ocultamos el menú superior derecho y el footer de Streamlit, PERO NO EL SIDEBAR */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
 
-/* Bloqueo a nivel de contenedor principal */
-/* Eliminamos el 'position: fixed' agresivo del root para que el Sidebar pueda renderizarse */
-html, body {
-    overscroll-behavior-y: contain !important; 
-    overscroll-behavior-x: none !important;
-    margin: 0;
-    padding: 0;
-}
-
-/* El contenedor principal de la vista (excluyendo el sidebar) */
-[data-testid="stAppViewContainer"] > .main {
-    overscroll-behavior-y: contain !important; 
-}
-
-/* Permitir scroll solo dentro del área de contenido principal */
-.main .block-container {
+.block-container {
     padding-top: 1rem !important;
-    padding-bottom: 5rem !important; 
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
+    padding-bottom: 1rem !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
 }
 </style>
 """
@@ -381,7 +339,7 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df):
         total_p = resumen['Asignadas'].sum()
         total_c = resumen['Cerradas'].sum()
         fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Asignadas': total_p, 'Cerradas': total_c}])
-        resumen = pd.concat([resumen, fila_total], ignore_index=True)
+        resumen = pd.concat([resumen, পুন, fila_total], ignore_index=True)
 
         st.dataframe(
             resumen,
