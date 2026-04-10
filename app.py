@@ -48,26 +48,22 @@ st.set_page_config(
 # ==============================================================================
 # 📱 BLOQUEO NUCLEAR DE RECARGA (JAVASCRIPT + CSS PARA WEBVIEWS)
 # ==============================================================================
-# 1. Inyección de JavaScript para interceptar el gesto de "Pull-to-Refresh" en WebViews
+# 1. Inyección de JavaScript para interceptar el gesto de "Pull-to-Refresh"
 components.html(
     """
     <script>
     var lastY = 0;
     
-    // Capturamos la posición inicial del dedo al tocar la pantalla
     document.addEventListener('touchstart', function(e) {
         lastY = e.touches[0].clientY;
     }, {passive: false});
 
-    // Detectamos el movimiento del dedo
     document.addEventListener('touchmove', function(e) {
         var top = document.documentElement.scrollTop || document.body.scrollTop;
         var currentY = e.touches[0].clientY;
         
-        // Si el usuario está deslizando hacia abajo (currentY > lastY)
-        // Y la página está hasta arriba (top <= 0)
         if (currentY > lastY && top <= 0) {
-            e.preventDefault(); // Detenemos la acción por defecto (la recarga)
+            e.preventDefault(); 
         }
         lastY = currentY;
     }, {passive: false});
@@ -76,34 +72,34 @@ components.html(
     height=0,
 )
 
-# 2. CSS de respaldo para navegadores móviles
+# 2. CSS de respaldo (MODIFICADO PARA NO OCULTAR EL SIDEBAR)
 estilo_app_nativa = """
 <style>
+/* Ocultamos el menú superior derecho y el footer de Streamlit, PERO NO EL SIDEBAR */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
 
-/* Bloqueo a nivel de contenedor de Streamlit */
-html, body, [data-testid="stAppViewContainer"], .main {
+/* Bloqueo a nivel de contenedor principal */
+/* Eliminamos el 'position: fixed' agresivo del root para que el Sidebar pueda renderizarse */
+html, body {
     overscroll-behavior-y: contain !important; 
     overscroll-behavior-x: none !important;
-    position: fixed !important; 
-    overflow: hidden !important; 
-    width: 100vw !important;
-    height: 100vh !important;
     margin: 0;
     padding: 0;
 }
 
-/* Permitir scroll solo dentro de la app */
+/* El contenedor principal de la vista (excluyendo el sidebar) */
+[data-testid="stAppViewContainer"] > .main {
+    overscroll-behavior-y: contain !important; 
+}
+
+/* Permitir scroll solo dentro del área de contenido principal */
 .main .block-container {
-    overflow-y: auto !important; 
-    height: 100vh !important;
     padding-top: 1rem !important;
     padding-bottom: 5rem !important; 
     padding-left: 1rem !important;
     padding-right: 1rem !important;
-    -webkit-overflow-scrolling: touch !important; 
 }
 </style>
 """
