@@ -895,8 +895,7 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
-            
+            # --- 🚨 RESTAURACIÓN DE GRÁFICAS DE PORCENTAJE EN CIERRE DIARIO 🚨 ---
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
             
@@ -905,6 +904,80 @@ def main():
             df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
             df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
 
+            st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
+            st.markdown("### 📊 Indicadores de Avance Operativo")
+            
+            df_plex_asignadas_rep = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == 'PLEX']
+            df_plex_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'PLEX']
+            
+            df_resi_asignadas_rep = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'RESIDENCIAL']
+
+            total_p_rep = len(df_plex_asignadas_rep) + len(df_plex_cerr_rep)
+            avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
+            
+            total_r_rep = len(df_resi_asignadas_rep) + len(df_resi_cerr_rep)
+            avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
+            
+            total_v_rep = len(df_asignadas_espejo) + len(df_cerradas_espejo)
+            avance_global_rep = (len(df_cerradas_espejo) / total_v_rep * 100) if total_v_rep > 0 else 0
+
+            def crear_velocimetro_rep(valor, titulo):
+                color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
+                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
+                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
+                return fig
+
+            col_gr1, col_gr2, col_gr3 = st.columns(3)
+            with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_resi_rep, "🏠 Residencial"), use_container_width=True)
+            with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_plex_rep, "🏢 PLEX"), use_container_width=True)
+            with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_global_rep, "🌍 Global"), use_container_width=True)
+            
+            st.divider()
+
+            if not df_cerradas_espejo.empty:
+                st.markdown("### 📊 Desglose de Producción por Categoría")
+                cs_col, ci_col, cp_col, co_col = st.columns(4)
+                with cs_col:
+                    st.write("**SOP**")
+                    df_sop = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_sop, hide_index=True, use_container_width=True)
+                    st.write(f"**Total SOP: {df_sop['Cant'].sum()}**")
+                with ci_col:
+                    st.write("**Instalaciones**")
+                    txt_ins_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
+                    mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                    df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
+                    if not df_ins_cierre.empty:
+                        def clasificar_ins_cierre(row):
+                            txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
+                            if re.search('ADIC', txt): return 'Adición'
+                            if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
+                            if re.search('RECUP', txt): return 'Recuperado'
+                            return 'Nueva'
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
+                        df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
+                        df_ins_grouped.columns = ['Instalaciones', 'Cant']
+                        st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
+                        st.write(f"**Total INS: {df_ins_grouped['Cant'].sum()}**")
+                    else: st.write("Sin datos")
+                with cp_col:
+                    st.write("**Plex**")
+                    df_plex = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('PLEX|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_plex, hide_index=True, use_container_width=True)
+                    st.write(f"**Total PLEX: {df_plex['Cant'].sum()}**")
+                with co_col:
+                    st.write("**Otros**")
+                    txt_otr_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
+                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|PEXTERNO|SPLITTEROPT|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                    df_otros = df_cerradas_espejo[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    st.dataframe(df_otros, hide_index=True, use_container_width=True)
+                    st.write(f"**Total Otros: {df_otros['Cant'].sum()}**")
+
+            st.divider()
+            
+            st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
+            
             p_rep = df_asignadas_espejo.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
             c_rep = df_cerradas_espejo.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
             
