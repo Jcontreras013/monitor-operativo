@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import os
@@ -1007,13 +1008,9 @@ def main():
 
             st.divider()
             
-# --- BUSCA ESTA PARTE EN TU APP.PY (DENTRO DE TAB DIARIO) ---
-
             st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
-            
-            # Usamos 'df_tablero_kpi_monitor' que es exactamente lo que se ve en los KPIs
-            p_rep = df_tablero_kpi_monitor.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
-            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
+            p_rep = df_asignadas_total_rep.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS') if not df_asignadas_total_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'ASIGNADAS'])
+            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERRADAS'])
             
             resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
@@ -1021,21 +1018,26 @@ def main():
                 resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
                 resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
                 resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
-                
-                # ORDENAMIENTO ALFABÉTICO PARA MEJOR LECTURA
                 resumen_global_rep = resumen_global_rep.sort_values(by='TIPO').reset_index(drop=True)
                 
-                # Cálculo del Total General
                 tot_p = resumen_global_rep['ASIGNADAS'].sum()
                 tot_c = resumen_global_rep['CERRADAS'].sum()
                 fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
                 resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 
-                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    resumen_global_rep,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "TIPO": st.column_config.TextColumn("Actividad Realizada"),
+                        "ASIGNADAS": st.column_config.NumberColumn("Carga Total Asignada", format="%d"),
+                        "CERRADAS": st.column_config.NumberColumn("Cerradas Hoy", format="%d")
+                    }
+                )
             else:
-                st.info("No hay datos para mostrar el resumen consolidado.")
+                st.info("No hay datos de operaciones consolidadas para esta fecha.")
 
-            
             st.markdown("### ⏱️ Tiempos de Atención Promedio")
             if not df_cierre_filtrado.empty:
                 df_pivot_diario = df_cierre_filtrado.groupby(['TECNICO', 'ACTIVIDAD']).agg(
