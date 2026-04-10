@@ -900,8 +900,13 @@ def main():
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
             
-            p_rep = df_monitor_filtrado[mask_vivas_espejo].groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
-            c_rep = df_monitor_filtrado[mask_cerradas_espejo].groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
+            df_vivas_espejo = df_monitor_filtrado[mask_vivas_espejo].copy()
+            mask_tec_valido_esp = df_vivas_espejo['TECNICO'].notna() & (df_vivas_espejo['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_espejo['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
+            df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
+
+            p_rep = df_asignadas_espejo.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
+            c_rep = df_cerradas_espejo.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
             
             resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
@@ -909,24 +914,30 @@ def main():
                 resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
                 resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
                 
-                resumen_global_rep['Carga Total Asignada'] = resumen_global_rep['ASIGNADAS'] + resumen_global_rep['CERRADAS']
-                resumen_global_rep.rename(columns={'ACTIVIDAD': 'Actividad Realizada', 'CERRADAS': 'Cerradas Hoy'}, inplace=True)
+                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
+                resumen_global_rep = resumen_global_rep[['TIPO', 'ASIGNADAS', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
                 
-                resumen_global_rep = resumen_global_rep[['Actividad Realizada', 'Carga Total Asignada', 'Cerradas Hoy']].sort_values(by='Actividad Realizada').reset_index(drop=True)
-                
-                tot_p = resumen_global_rep['Carga Total Asignada'].sum()
-                tot_c = resumen_global_rep['Cerradas Hoy'].sum()
-                fila_tot = pd.DataFrame([{'Actividad Realizada': 'TOTAL GENERAL', 'Carga Total Asignada': tot_p, 'Cerradas Hoy': tot_c}])
+                tot_p = resumen_global_rep['ASIGNADAS'].sum()
+                tot_c = resumen_global_rep['CERRADAS'].sum()
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
                 resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 
-                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    resumen_global_rep, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "TIPO": st.column_config.TextColumn("TIPO"),
+                        "ASIGNADAS": st.column_config.NumberColumn("ASIGNADAS", format="%d"),
+                        "CERRADAS": st.column_config.NumberColumn("CERRADAS", format="%d")
+                    }
+                )
             else:
                 st.info("No hay datos de operaciones consolidadas para esta fecha.")
 
             st.markdown("### ⏱️ Tiempos de Atención Promedio")
-            df_cierre_filtrado = df_monitor_filtrado[mask_cerradas_espejo].copy()
-            if not df_cierre_filtrado.empty:
-                df_pivot_diario = df_cierre_filtrado.groupby(['TECNICO', 'ACTIVIDAD']).agg(
+            if not df_cerradas_espejo.empty:
+                df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(
                     Órdenes=('NUM', 'count'),
                     Prom_Duracion_Min=('MINUTOS_CALC', 'mean')
                 ).round(1)
@@ -939,7 +950,7 @@ def main():
             
             st.divider()
             with st.expander("Ver Lista Detallada"):
-                st.dataframe(df_cierre_filtrado[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
+                st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
         with tab_semanal:
             st.subheader("Rendimiento y Tiempos Semanales")
@@ -1004,7 +1015,6 @@ def main():
         </style>
         """, unsafe_allow_html=True)
 
-        # 🚨 1. KPIs GRANDES: MUESTRAN SOLO LAS ÓRDENES CON TÉCNICO ASIGNADO 🚨
         mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
         df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
 
@@ -1035,7 +1045,6 @@ def main():
         """
         st.markdown(html_kpis, unsafe_allow_html=True)
 
-        # 🚨 2. EXPANDER: MUESTRA SOLO LAS ASIGNADAS Y EL TOTAL GENERAL ABAJO 🚨
         with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ASIGNADAS)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
             
@@ -1043,8 +1052,8 @@ def main():
                 st.caption("📅 Resumen de Retraso")
                 res_retraso_v = df_solo_asignadas_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
-                sum_total_pendientes_v = res_retraso_v['Cant'].sum()
-                res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_pendientes_v*100):.0f}%" if sum_total_pendientes_v > 0 else "0%")
+                sum_total_asignadas_v = res_retraso_v['Cant'].sum()
+                res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
                 
                 def style_dias_apply(row):
                     v = row['Dias']
@@ -1056,8 +1065,6 @@ def main():
                     return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
 
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                
-                # 🚨 3. TOTAL DE ÓRDENES DEBAJO DE LA TABLA 🚨
                 st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
                 
             with col_tab_2:
@@ -1169,7 +1176,6 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
-        # 🚨 TABLA INFERIOR USA df_solo_asignadas_monitor 🚨
         if status_final_btn == "PENDIENTE": 
             df_v_tabla_monitor = df_solo_asignadas_monitor
         elif status_final_btn == "C_HOY": 
