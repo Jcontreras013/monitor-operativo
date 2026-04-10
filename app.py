@@ -73,9 +73,8 @@ html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
-# PATRONES DE ESTADO
+# PATRON ORIGINAL (No se toca para no romper la matriz de datos)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-PATRON_SOLO_ASIGNADAS_STR = 'INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
@@ -243,6 +242,7 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
+                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -334,29 +334,38 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
     
     if not asignadas_df.empty:
-        p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Carga Total Asignada')
+        p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Asignadas')
     else:
-        p = pd.DataFrame(columns=['ACTIVIDAD', 'Carga Total Asignada'])
+        p = pd.DataFrame(columns=['ACTIVIDAD', 'Asignadas'])
 
     if not cerradas_df.empty:
-        c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas Hoy')
+        c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
     else:
-        c = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas Hoy'])
+        c = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas'])
 
     resumen = pd.merge(p, c, on='ACTIVIDAD', how='outer').fillna(0)
 
     if not resumen.empty:
-        resumen['Carga Total Asignada'] = resumen['Carga Total Asignada'].astype(int)
-        resumen['Cerradas Hoy'] = resumen['Cerradas Hoy'].astype(int)
-        resumen.rename(columns={'ACTIVIDAD': 'Actividad Realizada'}, inplace=True)
-        resumen = resumen.sort_values(by='Actividad Realizada').reset_index(drop=True)
+        resumen['Asignadas'] = resumen['Asignadas'].astype(int)
+        resumen['Cerradas'] = resumen['Cerradas'].astype(int)
+        resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
+        resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
 
-        total_p = resumen['Carga Total Asignada'].sum()
-        total_c = resumen['Cerradas Hoy'].sum()
-        fila_total = pd.DataFrame([{'Actividad Realizada': 'TOTAL GENERAL', 'Carga Total Asignada': total_p, 'Cerradas Hoy': total_c}])
+        total_p = resumen['Asignadas'].sum()
+        total_c = resumen['Cerradas'].sum()
+        fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Asignadas': total_p, 'Cerradas': total_c}])
         resumen = pd.concat([resumen, fila_total], ignore_index=True)
 
-        st.dataframe(resumen, use_container_width=True, hide_index=True)
+        st.dataframe(
+            resumen,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Tipo": st.column_config.TextColumn("TIPO"),
+                "Asignadas": st.column_config.NumberColumn("ASIGNADAS", format="%d"),
+                "Cerradas": st.column_config.NumberColumn("CERRADAS", format="%d")
+            }
+        )
     else:
         st.info("No hay datos de operaciones para este segmento.")
 
@@ -595,6 +604,7 @@ def main():
                             else:
                                 df_combined = df_new
                                 
+                            # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (CARGA) 🚨
                             if 'NUM' in df_combined.columns:
                                 temp_date_c = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
                                 df_combined['FECHA_SORT'] = pd.to_datetime(temp_date_c, errors='coerce')
@@ -621,6 +631,7 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
+    # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (VISTA LOCAL) 🚨
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         temp_date_b = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
@@ -662,7 +673,11 @@ def main():
             texto = act + " " + com
             
             if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
+            
+            # 🚨 PRIORIDAD 1: INSTALACIONES
             if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
+            
+            # 🚨 PRIORIDAD 2: FALLAS
             if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
             if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
             if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
@@ -765,6 +780,7 @@ def main():
     if nav_menu_diamante == "📅 REPROGRAMADAS":
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
+        
         mask_reprog = (df_base['DIAS_RETRASO'] < 0)
         df_reprog = df_base[mask_reprog].copy()
         
@@ -773,6 +789,7 @@ def main():
         if not df_reprog.empty:
             cols_visibles = ['DIAS_RETRASO', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO']
             cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
+            
             st.dataframe(
                 df_reprog[cols_finales].style.set_properties(
                     **{'background-color': '#1a2a3a', 'color': '#58a6ff', 'font-weight': 'bold'}, 
@@ -879,6 +896,7 @@ def main():
                                     type="primary",
                                     use_container_width=True
                                 )
+                                
                     except Exception as e:
                         st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
         
@@ -898,26 +916,27 @@ def main():
             
             st.markdown("### 📊 Indicadores de Avance Operativo")
             
-            # 🚨 AQUÍ EL TOTAL DE LA CARGA (ASIGNADAS + PENDIENTES TOTALES DE LA EMPRESA)
-            mask_totales_dia = (
-                (df_base['FECHA_APE'].dt.date <= fecha_cal_sel) & 
-                (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            # 🚨 MATEMÁTICA DEFINITIVA: "Lo asignado en el día" = Cerradas ese día + Pendientes arrastradas
+            mask_asignadas_dia = (
+                (df_base_valido_rep['FECHA_APE'].dt.date == fecha_cal_sel) | 
+                (df_base_valido_rep['HORA_LIQ'].dt.date == fecha_cal_sel) |
+                ((df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
             )
-            df_vivas_totales_hoy = df_base[mask_totales_dia]
+            df_asignadas_total_rep = df_base_valido_rep[mask_asignadas_dia]
             
-            df_plex_pend_rep = df_vivas_totales_hoy[df_vivas_totales_hoy['SEGMENTO'] == 'PLEX']
+            df_plex_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'PLEX']
             df_plex_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'PLEX']
             
-            df_resi_pend_rep = df_vivas_totales_hoy[df_vivas_totales_hoy['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas_rep = df_asignadas_total_rep[df_asignadas_total_rep['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr_rep = df_cierre_filtrado[df_cierre_filtrado['SEGMENTO'] == 'RESIDENCIAL']
 
-            total_p_rep = len(df_plex_pend_rep) + len(df_plex_cerr_rep)
+            total_p_rep = len(df_plex_asignadas_rep)
             avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
             
-            total_r_rep = len(df_resi_pend_rep) + len(df_resi_cerr_rep)
+            total_r_rep = len(df_resi_asignadas_rep)
             avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
             
-            total_v_rep = len(df_vivas_totales_hoy) + len(df_cierre_filtrado)
+            total_v_rep = len(df_asignadas_total_rep)
             avance_global_rep = (len(df_cierre_filtrado) / total_v_rep * 100) if total_v_rep > 0 else 0
 
             def crear_velocimetro_rep(valor, titulo):
@@ -988,27 +1007,33 @@ def main():
 
             st.divider()
             
-            # 🚨 AQUÍ EL CONSOLIDADO TOTAL SIN ERRORES DE COLUMNA EN BLANCO
             st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
-            
-            p_rep = df_vivas_totales_hoy.groupby('ACTIVIDAD').size().reset_index(name='Carga Total Asignada')
-            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='Cerradas Hoy')
+            p_rep = df_asignadas_total_rep.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS') if not df_asignadas_total_rep.empty else pd.DataFrame(columns=['ACTIVIDAD', 'ASIGNADAS'])
+            c_rep = df_cierre_filtrado.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS') if not df_cierre_filtrado.empty else pd.DataFrame(columns=['ACTIVIDAD', 'CERRADAS'])
             
             resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
             if not resumen_global_rep.empty:
-                resumen_global_rep['Carga Total Asignada'] = resumen_global_rep['Carga Total Asignada'].astype(int)
-                resumen_global_rep['Cerradas Hoy'] = resumen_global_rep['Cerradas Hoy'].astype(int)
-                resumen_global_rep.rename(columns={'ACTIVIDAD': 'Actividad Realizada'}, inplace=True)
-                resumen_global_rep = resumen_global_rep.sort_values(by='Actividad Realizada').reset_index(drop=True)
+                resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
+                resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
+                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
+                resumen_global_rep = resumen_global_rep.sort_values(by='TIPO').reset_index(drop=True)
                 
-                tot_p = resumen_global_rep['Carga Total Asignada'].sum()
-                tot_c = resumen_global_rep['Cerradas Hoy'].sum()
-                fila_tot = pd.DataFrame([{'Actividad Realizada': 'TOTAL GENERAL', 'Carga Total Asignada': tot_p, 'Cerradas Hoy': tot_c}])
+                tot_p = resumen_global_rep['ASIGNADAS'].sum()
+                tot_c = resumen_global_rep['CERRADAS'].sum()
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
                 resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 
-                # Se renderiza de forma sencilla y estable
-                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    resumen_global_rep,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "TIPO": st.column_config.TextColumn("Actividad Realizada"),
+                        "ASIGNADAS": st.column_config.NumberColumn("Carga Total Asignada", format="%d"),
+                        "CERRADAS": st.column_config.NumberColumn("Cerradas Hoy", format="%d")
+                    }
+                )
             else:
                 st.info("No hay datos de operaciones consolidadas para esta fecha.")
 
@@ -1062,7 +1087,6 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
-        # 1. TABLAS DE ARRIBA: EXCLUSIVAS DE LOS TÉCNICOS (SOLO ASIGNADAS)
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
@@ -1070,11 +1094,12 @@ def main():
         )
         
         df_monitor_valido = df_monitor_filtrado[mask_tec_valido]
-        mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
-        mask_solo_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
 
-        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_solo_asignadas].copy()
-        df_tablero_kpi_monitor = df_monitor_valido[mask_solo_asignadas].copy()
+        mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
+        mask_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+
+        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_asignadas].copy()
+        df_tablero_kpi_monitor = df_monitor_valido[mask_asignadas].copy()
 
         df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
         df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
@@ -1083,9 +1108,8 @@ def main():
             mask_josue_kpi = df_tablero_kpi_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
             df_tablero_kpi_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
 
-        # RANGOS EXACTOS PARA LOS DÍAS
         df_tablero_kpi_monitor['CatD'] = df_tablero_kpi_monitor['DIAS_RETRASO'].apply(
-            lambda d: ">= 7 Dia" if d >= 7 else ("= 4 Dia" if d >= 4 else ("= 1 Dia" if d >= 1 else "= 0 Dia"))
+            lambda d: ">= 7 Dia" if d >= 7 else (f"= {int(d)} Dia" if d > 0 else "= 0 Dia")
         )
 
         st.title("⚡ Monitor Operativo Maxcom")
@@ -1143,7 +1167,7 @@ def main():
         html_kpis = f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">PENDIENTES ASIGNADAS</div>
+                <div class="kpi-title">ÓRDENES ASIGNADAS</div>
                 <div class="kpi-val">{vivas_count}</div>
             </div>
             <div class="kpi-card green">
@@ -1164,23 +1188,13 @@ def main():
 
         with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ÓRDENES ASIGNADAS)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
-            
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
                 res_retraso_v = df_tablero_kpi_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 Dia","= 1 Dia","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_pendientes_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_pendientes_v*100):.0f}%" if sum_total_pendientes_v > 0 else "0%")
-                
-                # 🚨 COLORES DE RETRASO RESTAURADOS (Usando applymap para versión 1.5.3) 🚨
-                def highlight_dias(val):
-                    if val == ">= 7 Dia": return 'background-color: #d32f2f; color: white; font-weight: bold'
-                    if val == "= 4 Dia": return 'background-color: #f57c00; color: white; font-weight: bold'
-                    if val == "= 1 Dia": return 'background-color: #fbc02d; color: black; font-weight: bold'
-                    if val == "= 0 Dia": return 'background-color: #388e3c; color: white; font-weight: bold'
-                    return ''
-                    
-                st.dataframe(res_retraso_v.style.applymap(highlight_dias, subset=['Dias']), hide_index=True, use_container_width=True)
+                st.dataframe(res_retraso_v, hide_index=True, use_container_width=True)
                 
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
@@ -1221,28 +1235,32 @@ def main():
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-        # 🚨 TABLA 2: CONSOLIDADO POR SEGMENTO Y AVANCE (INCLUYE TOTAL DE LA EMPRESA, INCLUSO SIN ASIGNAR)
+        # --- EXPANDER DE SEGMENTOS Y AVANCE ---
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
+            df_cerradas_hoy_segmento = df_monitor_valido[(df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_valido['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
             
-            mask_todas_vivas = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-            df_todas_vivas_monitor = df_monitor_filtrado[mask_todas_vivas]
+            # 🚨 MATEMÁTICA DEFINITIVA EN EL MONITOR
+            mask_asignadas_hoy = (
+                (df_monitor_valido['FECHA_APE'].dt.date == hoy_date_valor) | 
+                (df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor) |
+                ((df_monitor_valido['FECHA_APE'].dt.date <= hoy_date_valor) & df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            )
+            df_asignadas_hoy_full = df_monitor_valido[mask_asignadas_hoy]
             
-            df_cerradas_hoy_segmento = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
-            
-            df_plex_pend = df_todas_vivas_monitor[df_todas_vivas_monitor['SEGMENTO'] == 'PLEX']
+            df_plex_asignadas = df_asignadas_hoy_full[df_asignadas_hoy_full['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'PLEX']
             
-            df_resi_pend = df_todas_vivas_monitor[df_todas_vivas_monitor['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas = df_asignadas_hoy_full[df_asignadas_hoy_full['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr = df_cerradas_hoy_segmento[df_cerradas_hoy_segmento['SEGMENTO'] == 'RESIDENCIAL']
 
-            total_p = len(df_plex_pend) + len(df_plex_cerr)
+            total_p = len(df_plex_asignadas)
             avance_plex = (len(df_plex_cerr) / total_p * 100) if total_p > 0 else 0
             
-            total_r = len(df_resi_pend) + len(df_resi_cerr)
+            total_r = len(df_resi_asignadas)
             avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
             
-            total_v = len(df_todas_vivas_monitor) + len(df_cerradas_hoy_segmento)
-            avance_global = (len(df_cerradas_hoy_segmento) / total_v * 100) if total_v > 0 else 0
+            total_v = len(df_asignadas_hoy_full)
+            avance_global = (cerradas_hoy / total_v * 100) if total_v > 0 else 0
 
             def crear_velocimetro_circular(valor, titulo):
                 color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
@@ -1268,19 +1286,19 @@ def main():
             with col_g1:
                 st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, key="pie_resi")
                 if st.button("🔍 Ver Resumen Residencial", use_container_width=True, key="btn_resi"):
-                    mostrar_detalle_avance("RESIDENCIAL", df_resi_pend, df_resi_cerr)
+                    mostrar_detalle_avance("RESIDENCIAL", df_resi_asignadas, df_resi_cerr)
                     
             with col_g2:
                 st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, key="pie_plex")
                 if st.button("🔍 Ver Resumen PLEX", use_container_width=True, key="btn_plex"):
-                    mostrar_detalle_avance("PLEX", df_plex_pend, df_plex_cerr)
+                    mostrar_detalle_avance("PLEX", df_plex_asignadas, df_plex_cerr)
                 
             espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
             
             with col_global:
                 st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
                 if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_todas_vivas_monitor, df_cerradas_hoy_segmento)
+                    mostrar_detalle_avance("GLOBAL", df_asignadas_hoy_full, df_cerradas_hoy_segmento)
 
         st.divider()
         
