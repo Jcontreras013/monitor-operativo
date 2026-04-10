@@ -237,6 +237,7 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
+                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -978,7 +979,6 @@ def main():
 
         df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
 
-        # Días de Retraso se calculan para TODAS las vivas
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
         if 'TECNICO' in df_todas_pendientes_monitor.columns:
@@ -1058,7 +1058,7 @@ def main():
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 
                 # 🚨 3. TOTAL DE ÓRDENES DEBAJO DE LA TABLA 🚨
-                st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: #58a6ff;'>Total Órdenes: {sum_total_pendientes_v}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
                 
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
@@ -1183,7 +1183,6 @@ def main():
             if not df_v_tabla_monitor.empty:
                 df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                 
-                # Para evitar fallos al dropear, simplemente escondemos en column_config
                 evento_monitor_diam = st.dataframe(
                     df_estilo_v.style.apply(row_styler, axis=1),
                     column_config={
