@@ -100,7 +100,7 @@ def parse_date_ultra_safe(val):
             return pd.Timestamp.combine(hoy.date(), val)
 
         if isinstance(val, datetime):
-            if val.hour == 0 and val.minute == 0 and val.second == 0: return pd.NaT
+            # 🚨 SE ELIMINÓ LA CONDICIÓN QUE BORRABA LA FECHA SI ERA MEDIANOCHE
             if val.year <= 1970:
                 return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
             return pd.Timestamp(val)
@@ -109,7 +109,6 @@ def parse_date_ultra_safe(val):
             if val == 0 or val == 0.0: return pd.NaT
             if val > 10000:
                 dt = pd.to_datetime(val, unit='D', origin='1899-12-30')
-                if dt.hour == 0 and dt.minute == 0: return pd.NaT
                 return dt
             elif 0 < val < 1:
                 return hoy + pd.to_timedelta(val, unit='D')
@@ -127,7 +126,7 @@ def parse_date_ultra_safe(val):
             parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
 
         if pd.notnull(parsed):
-            if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0: return pd.NaT
+            # 🚨 SE ELIMINÓ LA CONDICIÓN QUE BORRABA LA FECHA SI ERA MEDIANOCHE
             if parsed.year <= 1970:
                 return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
@@ -135,14 +134,6 @@ def parse_date_ultra_safe(val):
         return pd.NaT
     except:
         return pd.NaT
-
-def procesar_fechas_seguro(df_input, columnas):
-    df = df_input.copy()
-    for col in columnas:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_date_ultra_safe)
-    return df
-
 # ==============================================================================
 # FUNCIÓN DE PROCESAMIENTO GERENCIAL
 # ==============================================================================
@@ -773,12 +764,14 @@ def main():
         st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
         return
 
-    if nav_menu_diamante == "📅 REPROGRAMADAS":
+if nav_menu_diamante == "📅 REPROGRAMADAS":
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         st.caption("Visor exclusivo de órdenes agendadas para el futuro (Días negativos).")
         
-        # RECALCULO FORZADO para no perder la del 12 de abril
+        # 🚨 FORZAMOS LA MATEMÁTICA EN TIEMPO REAL 🚨
         df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
+        
+        # Filtramos lo que sea menor a 0 días y esté VIVO
         mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
         df_reprog = df_base[mask_reprog].copy()
         
