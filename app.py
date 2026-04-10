@@ -73,11 +73,8 @@ html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
-# Patrón para retener datos globales (Incluye PENDIENTE para no perder data)
+# 🚨 EL PATRÓN DEFINITIVO: Incluye todo lo VIVO. Si tiene un técnico asignado, entra a su matemática.
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-
-# 🚨 NUEVO PATRÓN ESTRICTO PARA EL JEFE (EXCLUYE 'PENDIENTE') PARA KPIS Y GRÁFICOS
-PATRON_SOLO_ASIGNADAS_STR = 'INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
@@ -365,7 +362,7 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
             hide_index=True,
             column_config={
                 "Tipo": st.column_config.TextColumn("TIPO"),
-                "Asignadas": st.column_config.NumberColumn("ASIGNADAS", format="%d"),
+                "Asignadas": st.column_config.NumberColumn("PENDIENTES", format="%d"),
                 "Cerradas": st.column_config.NumberColumn("CERRADAS", format="%d")
             }
         )
@@ -737,7 +734,7 @@ def main():
                 st.divider() 
                 
             st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             
             mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
@@ -820,7 +817,7 @@ def main():
         with tab_dinamico:
             st.subheader("📄 Reporte Dinámico en Vivo")
             col_f1, col_f2 = st.columns(2)
-            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
+            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             total_off_rep = int((df_base['ES_OFFLINE'] == True & m_viva_rep).sum())
             
             with col_f1: check_criticos_rep = st.toggle(f"Filtrar solo Críticas ({total_off_rep})", key="tgg_rep")
@@ -920,7 +917,7 @@ def main():
             st.markdown("### 📊 Indicadores de Avance Operativo")
             vivas_rep = df_base_valido_rep[
                 (df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & 
-                (df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False))
+                (df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
             ]
             
             df_plex_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'PLEX']
@@ -1086,6 +1083,7 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
+        # ELIMINA CUALQUIER ORDEN QUE NO TENGA TÉCNICO ASIGNADO DE ESTA MATEMÁTICA
         mask_tec_valido = (
             df_monitor_filtrado['TECNICO'].notna() & 
             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') & 
@@ -1096,15 +1094,14 @@ def main():
 
         mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
         
-        # 🚨 FILTRO ESTRICTO: Solo las asignadas (Sin PENDIENTE) para las gráficas
-        mask_solo_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
+        # 🚨 FILTRO RE-ESTRUCTURADO: Ahora SÍ toma las pendientes para saber cuántas se le asignaron
+        mask_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
 
-        # La vista general de la tabla sí puede incluir pendientes si lo desea, pero las KPI no.
-        # df_monitor_vivas_full es la tabla inferior, mantendremos las asignadas reales
-        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_solo_asignadas].copy()
+        # Esta tabla contiene la carga de hoy (Las vivas + las cerradas de hoy)
+        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_asignadas].copy()
         
-        # El tablero de KPIs se alimenta puramente de las asignadas reales
-        df_tablero_kpi_monitor = df_monitor_valido[mask_solo_asignadas].copy()
+        # El tablero de KPIs se alimenta puramente de las que todavía tiene pendientes/en ruta
+        df_tablero_kpi_monitor = df_monitor_valido[mask_asignadas].copy()
 
         df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
         df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
@@ -1172,7 +1169,7 @@ def main():
         html_kpis = f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">TOTAL ASIGNADAS</div>
+                <div class="kpi-title">PENDIENTES ASIGNADAS</div>
                 <div class="kpi-val">{vivas_count}</div>
             </div>
             <div class="kpi-card green">
