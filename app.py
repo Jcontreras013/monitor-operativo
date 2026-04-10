@@ -73,7 +73,11 @@ html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
 """
 st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
+# Patrón para retener datos globales (Incluye PENDIENTE para no perder data)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+
+# 🚨 NUEVO PATRÓN ESTRICTO PARA EL JEFE (EXCLUYE 'PENDIENTE') PARA KPIS Y GRÁFICOS
+PATRON_SOLO_ASIGNADAS_STR = 'INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
@@ -333,9 +337,9 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     st.subheader(f"📊 Desglose: {segmento}")
     
     if not pendientes_df.empty:
-        p = pendientes_df.groupby('ACTIVIDAD').size().reset_index(name='Pendiente')
+        p = pendientes_df.groupby('ACTIVIDAD').size().reset_index(name='Asignadas')
     else:
-        p = pd.DataFrame(columns=['ACTIVIDAD', 'Pendiente'])
+        p = pd.DataFrame(columns=['ACTIVIDAD', 'Asignadas'])
 
     if not cerradas_df.empty:
         c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
@@ -345,14 +349,14 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
     resumen = pd.merge(p, c, on='ACTIVIDAD', how='outer').fillna(0)
 
     if not resumen.empty:
-        resumen['Pendiente'] = resumen['Pendiente'].astype(int)
+        resumen['Asignadas'] = resumen['Asignadas'].astype(int)
         resumen['Cerradas'] = resumen['Cerradas'].astype(int)
         resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
         resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
 
-        total_p = resumen['Pendiente'].sum()
+        total_p = resumen['Asignadas'].sum()
         total_c = resumen['Cerradas'].sum()
-        fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Pendiente': total_p, 'Cerradas': total_c}])
+        fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Asignadas': total_p, 'Cerradas': total_c}])
         resumen = pd.concat([resumen, fila_total], ignore_index=True)
 
         st.dataframe(
@@ -361,8 +365,8 @@ def mostrar_detalle_avance(segmento, pendientes_df, cerradas_df):
             hide_index=True,
             column_config={
                 "Tipo": st.column_config.TextColumn("TIPO"),
-                "Pendiente": st.column_config.NumberColumn("PEND.", format="%d"),
-                "Cerradas": st.column_config.NumberColumn("CERR.", format="%d")
+                "Asignadas": st.column_config.NumberColumn("ASIGNADAS", format="%d"),
+                "Cerradas": st.column_config.NumberColumn("CERRADAS", format="%d")
             }
         )
     else:
@@ -507,8 +511,6 @@ def main():
     ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
 
-    # 🚨 PASE VIP PARA ADMIN Y JEFE 🚨
-    # Evita que el sistema confunda una pantalla dividida en PC con un celular
     if rol_usuario in ['admin', 'jefe']:
         es_movil = False
 
@@ -735,7 +737,7 @@ def main():
                 st.divider() 
                 
             st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
             
             mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
@@ -818,7 +820,7 @@ def main():
         with tab_dinamico:
             st.subheader("📄 Reporte Dinámico en Vivo")
             col_f1, col_f2 = st.columns(2)
-            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
             total_off_rep = int((df_base['ES_OFFLINE'] == True & m_viva_rep).sum())
             
             with col_f1: check_criticos_rep = st.toggle(f"Filtrar solo Críticas ({total_off_rep})", key="tgg_rep")
@@ -918,7 +920,7 @@ def main():
             st.markdown("### 📊 Indicadores de Avance Operativo")
             vivas_rep = df_base_valido_rep[
                 (df_base_valido_rep['FECHA_APE'].dt.date <= fecha_cal_sel) & 
-                (df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+                (df_base_valido_rep['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False))
             ]
             
             df_plex_pend_rep = vivas_rep[vivas_rep['SEGMENTO'] == 'PLEX']
@@ -1093,10 +1095,16 @@ def main():
         df_monitor_valido = df_monitor_filtrado[mask_tec_valido]
 
         mask_hoy = df_monitor_valido['HORA_LIQ'].dt.date == hoy_date_valor
-        mask_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+        
+        # 🚨 FILTRO ESTRICTO: Solo las asignadas (Sin PENDIENTE) para las gráficas
+        mask_solo_asignadas = df_monitor_valido['ESTADO'].astype(str).str.contains(PATRON_SOLO_ASIGNADAS_STR, na=False, case=False)
 
-        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_asignadas].copy()
-        df_tablero_kpi_monitor = df_monitor_valido[mask_asignadas].copy()
+        # La vista general de la tabla sí puede incluir pendientes si lo desea, pero las KPI no.
+        # df_monitor_vivas_full es la tabla inferior, mantendremos las asignadas reales
+        df_monitor_vivas_full = df_monitor_valido[mask_hoy | mask_solo_asignadas].copy()
+        
+        # El tablero de KPIs se alimenta puramente de las asignadas reales
+        df_tablero_kpi_monitor = df_monitor_valido[mask_solo_asignadas].copy()
 
         df_tablero_kpi_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - df_tablero_kpi_monitor['FECHA_APE'].dt.normalize()).dt.days
         df_tablero_kpi_monitor['DIAS_RETRASO'] = df_tablero_kpi_monitor['DIAS_RETRASO'].fillna(0).astype(int)
@@ -1296,7 +1304,7 @@ def main():
             
         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
         
-        if col_bt1_v.button("⏳ ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
         if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
