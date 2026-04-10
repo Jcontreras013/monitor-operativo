@@ -45,29 +45,50 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 MODO APP NATIVA (CSS SEGURO Y BLOQUEO NUCLEAR DE RECARGA)
+# 📱 MODO APP NATIVA (BLOQUEO NUCLEAR DE RECARGA "PULL-TO-REFRESH")
 # ==============================================================================
+# Este CSS está diseñado específicamente para matar el gesto de recarga en móviles
 estilo_app_nativa = """
 <style>
+/* Ocultar elementos innecesarios de Streamlit */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+header {visibility: hidden;}
 
-.block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
+/* Bloqueo agresivo de recarga por gesto (Pull-to-refresh) */
+/* Aplicamos esto a html, body y al contenedor raíz de la app */
+html, body, [data-testid="stAppViewContainer"], .main {
+    overscroll-behavior-y: none !important; /* Mata el pull-to-refresh vertical */
+    overscroll-behavior-x: none !important; /* Mata el swipe horizontal (si aplica) */
+    position: fixed !important; /* Fija la pantalla para que el navegador no controle el scroll */
+    overflow: hidden !important; /* Esconde el scroll nativo del navegador */
+    width: 100vw !important;
+    height: 100vh !important;
+    margin: 0;
+    padding: 0;
 }
 
-/* 🚨 BLOQUEO NUCLEAR DEL PULL-TO-REFRESH (ANTI-RECARGA) 🚨 */
-:root {
-    overscroll-behavior: none !important;
+/* Permitir scroll SOLO dentro del contenedor de los bloques de Streamlit */
+.main .block-container {
+    overflow-y: auto !important; /* Aquí es donde permitimos el scroll real */
+    height: 100vh !important;
+    padding-top: 1rem !important;
+    padding-bottom: 5rem !important; /* Espacio extra abajo para que no quede cortado en móviles */
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    -webkit-overflow-scrolling: touch !important; /* Desplazamiento suave en iOS/Safari */
 }
 
-html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
-    overscroll-behavior: none !important;
-    overscroll-behavior-y: none !important;
-    overscroll-behavior-x: none !important;
+/* Ajustes para que las tablas grandes no causen un scroll horizontal infinito a nivel de página */
+.stDataFrame {
+    width: 100% !important;
+    max-width: 100vw !important;
+    overflow-x: auto !important; /* El scroll horizontal ocurre dentro de la tabla, no en la app */
+}
+
+/* Ajuste para que las gráficas de Plotly se adapten al contenedor */
+.js-plotly-plot {
+    max-width: 100% !important;
 }
 </style>
 """
