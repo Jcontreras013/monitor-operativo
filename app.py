@@ -45,25 +45,6 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# ==============================================================================
-# 📱 ESTILOS BASE APP NATIVA (Limpio - SIN BLOQUEOS AGRESIVOS)
-# ==============================================================================
-estilo_app_nativa = """
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-
-.block-container {
-    padding-top: 1rem !important;
-    padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-}
-</style>
-"""
-st.markdown(estilo_app_nativa, unsafe_allow_html=True)
-
 # PATRON ORIGINAL (No se toca para no romper la matriz de datos)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 
@@ -658,6 +639,7 @@ def main():
         
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
         df_invalidos = df_base[df_base['NUM'] == 'N/D']
+        df_base = pd.concat([df_validos, df_invalidos])
         df_base = pd.concat([df_validos, df_invalidos])
         df_base = df_base.drop(columns=['FECHA_SORT'], errors='ignore')
 
@@ -1272,7 +1254,7 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
-        # 🚨 AQUÍ EL CAMBIO SOLICITADO: El Panel Muestra el Universo Total (Asignadas + No Asignadas) 🚨
+        # 🚨 CAMBIO AQUÍ: Mostrar TODO el universo pendiente 🚨
         if status_final_btn == "PENDIENTE": 
             df_v_tabla_monitor = df_todas_pendientes_monitor
         elif status_final_btn == "C_HOY": 
