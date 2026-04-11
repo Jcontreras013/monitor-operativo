@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
+from streamlit_js_eval import streamlit_js_eval  # <-- LÍNEA RESTAURADA
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -208,6 +209,7 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
+                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -362,6 +364,7 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
+        # 🚨 SEMÁFORO DE DÍAS DE RETRASO (TABLA INFERIOR) 🚨
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
@@ -526,6 +529,7 @@ def main():
                         file_act_ptr = file_item
                     elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
                         file_disp_ptr = file_item
+                        # 💾 GUARDAR CACHÉ EN DISCO
                         try:
                             with open("cache_fttx.tmp", "wb") as f:
                                 f.write(file_item.getvalue())
@@ -534,11 +538,11 @@ def main():
                         except:
                             pass
 
+            # 🕒 LÓGICA DE MODO TARDE, FIN DE SEMANA, O USUARIO ANDRÉS
             ahora_hx = get_honduras_time()
             es_horario_tarde = ahora_hx.hour >= 17
             es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
             
-            # 🚨 REGLA ESPECIAL PARA ANDRÉS: Siempre usa caché si no sube FTTX
             condicion_usar_cache = es_horario_tarde or es_fin_de_semana or es_usuario_andres
             
             if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
@@ -552,7 +556,7 @@ def main():
                                 file_disp_ptr.name = f.read()
                         else:
                             file_disp_ptr.name = "FttxActiveDevice_cached.xlsx"
-                        
+                            
                         if es_usuario_andres:
                             st.info("👋 **Hola Andrés:** Sistema cargó tu archivo FTTX automáticamente.")
                         else:
