@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -44,25 +43,6 @@ st.set_page_config(
     page_icon="⚡",
     initial_sidebar_state="expanded" 
 )
-
-# ==============================================================================
-# 📱 ESTILOS BASE APP NATIVA (Limpio - SIN BLOQUEOS AGRESIVOS)
-# ==============================================================================
-estilo_app_nativa = """
-<style>
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-
-.block-container {
-    padding-top: 1rem !important;
-    padding-bottom: 1rem !important;
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-}
-</style>
-"""
-st.markdown(estilo_app_nativa, unsafe_allow_html=True)
 
 # PATRON ORIGINAL (No se toca para no romper la matriz de datos)
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
@@ -228,7 +208,6 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
-                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -383,7 +362,6 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
-        # 🚨 SEMÁFORO DE DÍAS DE RETRASO (TABLA INFERIOR) 🚨
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
@@ -491,6 +469,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 # ==============================================================================
 def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
+    es_usuario_andres = (str(rol_usuario).strip().lower() == 'andres')
     
     ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
@@ -522,7 +501,7 @@ def main():
         mostrar_boton_logout()
 
         mostrar_cargador = False
-        if rol_usuario == 'admin':
+        if rol_usuario == 'admin' or es_usuario_andres:
             mostrar_cargador = True
         elif rol_usuario == 'jefe' and not es_movil:
             mostrar_cargador = True
@@ -547,7 +526,6 @@ def main():
                         file_act_ptr = file_item
                     elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
                         file_disp_ptr = file_item
-                        # 💾 GUARDAR CACHÉ EN DISCO
                         try:
                             with open("cache_fttx.tmp", "wb") as f:
                                 f.write(file_item.getvalue())
@@ -556,13 +534,14 @@ def main():
                         except:
                             pass
 
-            # 🕒 LÓGICA DE MODO TARDE O FIN DE SEMANA
             ahora_hx = get_honduras_time()
-            
             es_horario_tarde = ahora_hx.hour >= 17
             es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
             
-            if (es_horario_tarde or es_fin_de_semana) and file_act_ptr is not None and file_disp_ptr is None:
+            # 🚨 REGLA ESPECIAL PARA ANDRÉS: Siempre usa caché si no sube FTTX
+            condicion_usar_cache = es_horario_tarde or es_fin_de_semana or es_usuario_andres
+            
+            if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
                 if os.path.exists("cache_fttx.tmp"):
                     try:
                         with open("cache_fttx.tmp", "rb") as f:
@@ -573,8 +552,11 @@ def main():
                                 file_disp_ptr.name = f.read()
                         else:
                             file_disp_ptr.name = "FttxActiveDevice_cached.xlsx"
-                            
-                        st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
+                        
+                        if es_usuario_andres:
+                            st.info("👋 **Hola Andrés:** Sistema cargó tu archivo FTTX automáticamente.")
+                        else:
+                            st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
                     except:
                         pass
 
@@ -1100,17 +1082,6 @@ def main():
 
         st.title("⚡ Monitor Operativo Maxcom")
 
-        st.markdown("""
-        <style>
-        .kpi-container { display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px; }
-        .kpi-card { background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39; }
-        .kpi-card.green { border-left-color: #10B981; } .kpi-card.orange { border-left-color: #F59E0B; } .kpi-card.red { border-left-color: #EF4444; }
-        .kpi-title { color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .kpi-val { color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2; }
-        .kpi-val.text-green { color: #10B981; } .kpi-val.text-red { color: #EF4444; }
-        </style>
-        """, unsafe_allow_html=True)
-
         mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
         df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
 
@@ -1120,33 +1091,33 @@ def main():
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
         html_kpis = f"""
-        <div class="kpi-container">
-            <div class="kpi-card">
-                <div class="kpi-title">PENDIENTES ASIGNADAS</div>
-                <div class="kpi-val">{vivas_count_asignadas}</div>
+        <div style="display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px;">
+            <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">PENDIENTES ASIGNADAS</div>
+                <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{vivas_count_asignadas}</div>
             </div>
-            <div class="kpi-card green">
-                <div class="kpi-title">CERRADAS HOY</div>
-                <div class="kpi-val text-green">{cerradas_hoy}</div>
+            <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #10B981; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CERRADAS HOY</div>
+                <div style="color: #10B981; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{cerradas_hoy}</div>
             </div>
-            <div class="kpi-card orange">
-                <div class="kpi-title">TÉCNICOS EN RUTA</div>
-                <div class="kpi-val">{tecs_activos}</div>
+            <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TÉCNICOS EN RUTA</div>
+                <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{tecs_activos}</div>
             </div>
-            <div class="kpi-card red">
-                <div class="kpi-title">CAÍDAS (OFFLINE)</div>
-                <div class="kpi-val text-red">{offline_criticos_asignadas}</div>
+            <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #EF4444; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
+                <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
             </div>
         </div>
         """
         st.markdown(html_kpis, unsafe_allow_html=True)
 
-        with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ASIGNADAS)", expanded=True):
+        with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
             
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                res_retraso_v = df_solo_asignadas_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
+                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_asignadas_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
@@ -1165,48 +1136,48 @@ def main():
                 
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
-                act_tab_sop = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper()
+                act_tab_sop = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper()
                 res_sop_visual_v = {
-                    "FTTH / FIBRA": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
-                    "Navegación / Internet": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                    "ONT/ONU Offline": int((df_solo_asignadas_monitor['ES_OFFLINE'] == True).sum()), 
-                    "Niveles alterados": len(df_solo_asignadas_monitor[df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
-                    "Sin señal de TV": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
+                    "FTTH / FIBRA": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
+                    "Navegación / Internet": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
+                    "ONT/ONU Offline": int((df_todas_pendientes_monitor['ES_OFFLINE'] == True).sum()), 
+                    "Niveles alterados": len(df_todas_pendientes_monitor[df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
+                    "Sin señal de TV": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
                 }
                 st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-                st.metric("Exceden 2 Horas ⚠️", int((df_solo_asignadas_monitor['ALERTA_TIEMPO'] == True).sum()))
+                st.metric("Exceden 2 Horas ⚠️", int((df_todas_pendientes_monitor['ALERTA_TIEMPO'] == True).sum()))
 
             with col_tab_3:
                 st.caption("📦 Instalaciones")
-                txt_ins_v = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_ins_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
                 
                 res_ins_visual_v = {
-                    "Adición": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
-                    "Cambio / Migración": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
-                    "Recuperado": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("RECUP", na=False)])
+                    "Adición": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
+                    "Cambio / Migración": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
+                    "Recuperado": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("RECUP", na=False)])
                 }
                 mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
                 mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
-                res_ins_visual_v["Nueva"] = len(df_solo_asignadas_monitor[mask_base_ins & ~mask_excl_ins])
+                res_ins_visual_v["Nueva"] = len(df_todas_pendientes_monitor[mask_base_ins & ~mask_excl_ins])
                 
                 st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General INS: {sum(res_ins_visual_v.values())}**")
 
             with col_tab_4:
                 st.caption("⚙️ Otros")
-                txt_otr_v = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_otr_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
                 mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
-                res_otros_monitor = df_solo_asignadas_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                res_otros_monitor = df_todas_pendientes_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                 res_otros_monitor.columns = ['Otros', 'Cant']
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
+            df_plex_asignadas = df_todas_pendientes_monitor[df_todas_pendientes_monitor['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
             
-            df_resi_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas = df_todas_pendientes_monitor[df_todas_pendientes_monitor['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'RESIDENCIAL']
 
             total_p = len(df_plex_asignadas) + len(df_plex_cerr)
@@ -1215,7 +1186,7 @@ def main():
             total_r = len(df_resi_asignadas) + len(df_resi_cerr)
             avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
             
-            total_v = len(df_solo_asignadas_monitor) + len(df_cerradas_hoy_monitor)
+            total_v = len(df_todas_pendientes_monitor) + len(df_cerradas_hoy_monitor)
             avance_global = (len(df_cerradas_hoy_monitor) / total_v * 100) if total_v > 0 else 0
 
             def crear_velocimetro_circular(valor, titulo):
@@ -1254,7 +1225,7 @@ def main():
             with col_global:
                 st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
                 if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
+                    mostrar_detalle_avance("GLOBAL", df_todas_pendientes_monitor, df_cerradas_hoy_monitor)
 
         st.divider()
         
@@ -1263,7 +1234,7 @@ def main():
             
         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
         
-        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+        if col_bt1_v.button("⏳ TODAS LAS PENDIENTES", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
         if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
@@ -1272,9 +1243,8 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
-        # 🚨 CAMBIO REVERTIDO A COMO ESTABA: El panel ahora usa SOLAMENTE LAS ASIGNADAS 🚨
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_solo_asignadas_monitor
+            df_v_tabla_monitor = df_todas_pendientes_monitor
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
