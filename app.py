@@ -45,19 +45,29 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 📱 ESTILOS BASE APP NATIVA (Limpio)
+# 📱 MODO APP NATIVA (CSS SEGURO Y BLOQUEO NUCLEAR DE RECARGA)
 # ==============================================================================
 estilo_app_nativa = """
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
 
 .block-container {
-    padding-top: 1rem !important;
+    padding-top: 2rem !important;
     padding-bottom: 1rem !important;
     padding-left: 0.5rem !important;
     padding-right: 0.5rem !important;
+}
+
+/* 🚨 BLOQUEO NUCLEAR DEL PULL-TO-REFRESH (ANTI-RECARGA) 🚨 */
+:root {
+    overscroll-behavior: none !important;
+}
+
+html, body, #root, .stApp, [data-testid="stAppViewContainer"], .main {
+    overscroll-behavior: none !important;
+    overscroll-behavior-y: none !important;
+    overscroll-behavior-x: none !important;
 }
 </style>
 """
@@ -339,7 +349,7 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df):
         total_p = resumen['Asignadas'].sum()
         total_c = resumen['Cerradas'].sum()
         fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Asignadas': total_p, 'Cerradas': total_c}])
-        resumen = pd.concat([resumen, পুন, fila_total], ignore_index=True)
+        resumen = pd.concat([resumen, fila_total], ignore_index=True)
 
         st.dataframe(
             resumen,
@@ -885,6 +895,7 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
+            # --- 🚨 RESTAURACIÓN DE GRÁFICAS DE PORCENTAJE EN CIERRE DIARIO 🚨 ---
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
             
