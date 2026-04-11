@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
+from streamlit_js_eval import streamlit_js_eval
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -362,7 +363,6 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
-        # 🚨 SEMÁFORO DE DÍAS DE RETRASO (TABLA INFERIOR) 🚨
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
@@ -390,12 +390,19 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
-        df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos)
+        # Reconstruir BytesIO si viene en formato bytes crudos (por el caché de Streamlit)
+        if isinstance(file_dispos, bytes):
+            file_dispos_obj = io.BytesIO(file_dispos)
+            file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
+        else:
+            file_dispos_obj = file_dispos
+
+        df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
         
         df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
         
@@ -472,7 +479,11 @@ def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_usuario_andres = (str(rol_usuario).strip().lower() == 'andres')
     
-    es_movil = False
+    ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
+    es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
+
+    if rol_usuario in ['admin', 'jefe']:
+        es_movil = False
 
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -523,6 +534,7 @@ def main():
                         file_act_ptr = file_item
                     elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
                         file_disp_ptr = file_item
+                        # 💾 GUARDAR CACHÉ EN DISCO
                         try:
                             with open("cache_fttx.tmp", "wb") as f:
                                 f.write(file_item.getvalue())
@@ -531,6 +543,7 @@ def main():
                         except:
                             pass
 
+            # 🕒 LÓGICA DE MODO TARDE, FIN DE SEMANA, O USUARIO ANDRÉS
             ahora_hx = get_honduras_time()
             es_horario_tarde = ahora_hx.hour >= 17
             es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
@@ -540,15 +553,10 @@ def main():
             if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
                 if os.path.exists("cache_fttx.tmp"):
                     try:
+                        # LEEMOS EN BYTES PARA QUE EL CACHÉ DE STREAMLIT NO FALLE
                         with open("cache_fttx.tmp", "rb") as f:
-                            file_disp_ptr = io.BytesIO(f.read())
-                        
-                        if os.path.exists("cache_fttx_name.txt"):
-                            with open("cache_fttx_name.txt", "r") as f:
-                                file_disp_ptr.name = f.read()
-                        else:
-                            file_disp_ptr.name = "FttxActiveDevice_cached.xlsx"
-                        
+                            file_disp_ptr = f.read()
+                            
                         if es_usuario_andres:
                             st.info("👋 **Hola Andrés:** Sistema cargó tu archivo FTTX automáticamente.")
                         else:
@@ -1169,7 +1177,6 @@ def main():
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-        # 🚨 REGLA DIAMANTE APLICADA: Esta sección ahora usa SOLO ASIGNADAS 🚨
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
             df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
@@ -1231,7 +1238,7 @@ def main():
             
         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
         
-        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+        if col_bt1_v.button("⏳ TODAS LAS PENDIENTES", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
         if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
@@ -1240,9 +1247,8 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
-        # 🚨 REGLA DE ORO INTACTA: Aquí en el panel muestra SOLO ASIGNADAS 🚨
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_solo_asignadas_monitor
+            df_v_tabla_monitor = df_todas_pendientes_monitor
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
