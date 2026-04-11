@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval  # <-- LÍNEA RESTAURADA
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -474,11 +473,7 @@ def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_usuario_andres = (str(rol_usuario).strip().lower() == 'andres')
     
-    ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
-    es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
-
-    if rol_usuario in ['admin', 'jefe']:
-        es_movil = False
+    es_movil = False
 
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -1238,7 +1233,7 @@ def main():
             
         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
         
-        if col_bt1_v.button("⏳ TODAS LAS PENDIENTES", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
         if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
@@ -1247,8 +1242,9 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
+        # 🚨 CAMBIO REVERTIDO A COMO ESTABA: El panel ahora usa SOLAMENTE LAS ASIGNADAS 🚨
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_todas_pendientes_monitor
+            df_v_tabla_monitor = df_solo_asignadas_monitor
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
