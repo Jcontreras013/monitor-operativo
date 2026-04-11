@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, time as dt_time
@@ -552,10 +553,43 @@ def main():
             if archivos_uploader_diamante:
                 for file_item in archivos_uploader_diamante:
                     f_name_lwr = file_item.name.lower()
-                    if "actividades" in f_name_lwr: file_act_ptr = file_item
-                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: file_disp_ptr = file_item
+                    if "actividades" in f_name_lwr: 
+                        file_act_ptr = file_item
+                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
+                        file_disp_ptr = file_item
+                        # 💾 GUARDAR CACHÉ EN DISCO
+                        try:
+                            with open("cache_fttx.tmp", "wb") as f:
+                                f.write(file_item.getvalue())
+                            with open("cache_fttx_name.txt", "w") as f:
+                                f.write(file_item.name)
+                        except:
+                            pass
+
+            # 🕒 LÓGICA DE MODO TARDE O FIN DE SEMANA
+            ahora_hx = get_honduras_time()
+            
+            es_horario_tarde = ahora_hx.hour >= 17
+            es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
+            
+            if (es_horario_tarde or es_fin_de_semana) and file_act_ptr is not None and file_disp_ptr is None:
+                if os.path.exists("cache_fttx.tmp"):
+                    try:
+                        with open("cache_fttx.tmp", "rb") as f:
+                            file_disp_ptr = io.BytesIO(f.read())
+                        
+                        if os.path.exists("cache_fttx_name.txt"):
+                            with open("cache_fttx_name.txt", "r") as f:
+                                file_disp_ptr.name = f.read()
+                        else:
+                            file_disp_ptr.name = "FttxActiveDevice_cached.xlsx"
+                            
+                        st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
+                    except:
+                        pass
 
             btn_reprocesar = st.button("🔄 ACTUALIZAR TODO", use_container_width=True)
+            
         elif rol_usuario == 'jefe' and es_movil:
             st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
@@ -895,7 +929,6 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # --- 🚨 RESTAURACIÓN DE GRÁFICAS DE PORCENTAJE EN CIERRE DIARIO 🚨 ---
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
             
