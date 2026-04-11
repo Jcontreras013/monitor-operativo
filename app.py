@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
+from streamlit_js_eval import streamlit_js_eval
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -473,7 +474,11 @@ def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_usuario_andres = (str(rol_usuario).strip().lower() == 'andres')
     
-    es_movil = False
+    ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
+    es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
+
+    if rol_usuario in ['admin', 'jefe']:
+        es_movil = False
 
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -1111,12 +1116,13 @@ def main():
         """
         st.markdown(html_kpis, unsafe_allow_html=True)
 
-        with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=True):
+        # 🚨 TABLERO: SOLO ASIGNADAS (Inamovible) 🚨
+        with st.expander("📊 TABLERO DE CARGA ACTUAL (SOLO ASIGNADAS)", expanded=True):
             col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
             
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
+                res_retraso_v = df_solo_asignadas_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_asignadas_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
@@ -1131,52 +1137,53 @@ def main():
                     return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
 
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_solo_asignadas_monitor)}</div>", unsafe_allow_html=True)
                 
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
-                act_tab_sop = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper()
+                act_tab_sop = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper()
                 res_sop_visual_v = {
-                    "FTTH / FIBRA": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
-                    "Navegación / Internet": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                    "ONT/ONU Offline": int((df_todas_pendientes_monitor['ES_OFFLINE'] == True).sum()), 
-                    "Niveles alterados": len(df_todas_pendientes_monitor[df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
-                    "Sin señal de TV": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
+                    "FTTH / FIBRA": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
+                    "Navegación / Internet": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
+                    "ONT/ONU Offline": int((df_solo_asignadas_monitor['ES_OFFLINE'] == True).sum()), 
+                    "Niveles alterados": len(df_solo_asignadas_monitor[df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
+                    "Sin señal de TV": len(df_solo_asignadas_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
                 }
                 st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-                st.metric("Exceden 2 Horas ⚠️", int((df_todas_pendientes_monitor['ALERTA_TIEMPO'] == True).sum()))
+                st.metric("Exceden 2 Horas ⚠️", int((df_solo_asignadas_monitor['ALERTA_TIEMPO'] == True).sum()))
 
             with col_tab_3:
                 st.caption("📦 Instalaciones")
-                txt_ins_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_ins_v = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper()
                 
                 res_ins_visual_v = {
-                    "Adición": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
-                    "Cambio / Migración": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
-                    "Recuperado": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("RECUP", na=False)])
+                    "Adición": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
+                    "Cambio / Migración": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
+                    "Recuperado": len(df_solo_asignadas_monitor[txt_ins_v.str.contains("RECUP", na=False)])
                 }
                 mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
                 mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
-                res_ins_visual_v["Nueva"] = len(df_todas_pendientes_monitor[mask_base_ins & ~mask_excl_ins])
+                res_ins_visual_v["Nueva"] = len(df_solo_asignadas_monitor[mask_base_ins & ~mask_excl_ins])
                 
                 st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
                 st.write(f"**Total General INS: {sum(res_ins_visual_v.values())}**")
 
             with col_tab_4:
                 st.caption("⚙️ Otros")
-                txt_otr_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
+                txt_otr_v = df_solo_asignadas_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_solo_asignadas_monitor['COMENTARIO'].astype(str).str.upper()
                 mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
-                res_otros_monitor = df_todas_pendientes_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                res_otros_monitor = df_solo_asignadas_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                 res_otros_monitor.columns = ['Otros', 'Cant']
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
+        # 🚨 CAMBIO AQUÍ: CONSOLIDADO USA SOLO ASIGNADAS 🚨
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            df_plex_asignadas = df_todas_pendientes_monitor[df_todas_pendientes_monitor['SEGMENTO'] == 'PLEX']
+            df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
             
-            df_resi_asignadas = df_todas_pendientes_monitor[df_todas_pendientes_monitor['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'RESIDENCIAL']
             df_resi_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'RESIDENCIAL']
 
             total_p = len(df_plex_asignadas) + len(df_plex_cerr)
@@ -1185,7 +1192,7 @@ def main():
             total_r = len(df_resi_asignadas) + len(df_resi_cerr)
             avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
             
-            total_v = len(df_todas_pendientes_monitor) + len(df_cerradas_hoy_monitor)
+            total_v = len(df_solo_asignadas_monitor) + len(df_cerradas_hoy_monitor)
             avance_global = (len(df_cerradas_hoy_monitor) / total_v * 100) if total_v > 0 else 0
 
             def crear_velocimetro_circular(valor, titulo):
@@ -1224,7 +1231,7 @@ def main():
             with col_global:
                 st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
                 if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_todas_pendientes_monitor, df_cerradas_hoy_monitor)
+                    mostrar_detalle_avance("GLOBAL", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
 
         st.divider()
         
@@ -1242,7 +1249,7 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
-        # 🚨 CAMBIO REVERTIDO A COMO ESTABA: El panel ahora usa SOLAMENTE LAS ASIGNADAS 🚨
+        # Panel inferior: Solo Asignadas (Inamovible)
         if status_final_btn == "PENDIENTE": 
             df_v_tabla_monitor = df_solo_asignadas_monitor
         elif status_final_btn == "C_HOY": 
