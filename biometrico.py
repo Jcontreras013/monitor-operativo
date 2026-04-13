@@ -45,20 +45,41 @@ def procesar_marcas(df_marcas, df_areas):
     # 5. Formato innegociable HH:mm:ss sin fecha
     df_final['Time'] = df_final['Datetime'].dt.strftime('%H:%M:%S')
 
+    # 6. PIVOTAR LA TABLA (Formato Horizontal estilo Excel)
+    df_pivot = df_final.pivot(index=['ID', 'Full Name', 'Date', 'Area'], columns='Evento', values='Time').reset_index()
+    
+    # Definir el orden lógico de las columnas de izquierda a derecha
+    orden_columnas = ['ID', 'Full Name', 'Date']
+    eventos_logicos = ['Entrada', 'Salida Almuerzo', 'Entrada Almuerzo', 'Break', 'Salida']
+    
+    # Agregar solo las columnas de eventos que existan en los datos procesados
+    for evento in eventos_logicos:
+        if evento in df_pivot.columns:
+            orden_columnas.append(evento)
+            
+    df_pivot = df_pivot[orden_columnas]
+    
+    # Renombrar para que se vea estético en la pantalla
+    df_pivot = df_pivot.rename(columns={'Full Name': 'Nombre Completo', 'Date': 'Fecha'})
+
+    # 7. Renderizar en Streamlit
     st.write("---")
-    st.write("### 2️⃣ Resultados Depurados por Departamento")
+    st.write("### 2️⃣ Reporte de Asistencia Formateado")
     
     # Crear pestañas automáticas según las áreas detectadas
-    areas_presentes = [a for a in df_final['Area'].unique() if str(a).strip() != ""]
+    areas_presentes = [a for a in df_pivot['Area'].unique() if str(a).strip() != ""]
     
     if areas_presentes:
         tabs = st.tabs(areas_presentes)
         for i, area in enumerate(areas_presentes):
             with tabs[i]:
-                df_area = df_final[df_final['Area'] == area].reset_index(drop=True)
-                st.dataframe(df_area[['Full Name', 'Time', 'Evento']], use_container_width=True)
+                # Filtramos por área, quitamos columnas redundantes (ID y Area)
+                df_area = df_pivot[df_pivot['Area'] == area].drop(columns=['Area', 'ID'])
+                
+                # Rellenar espacios vacíos con guiones y mostrar la tabla sin números de índice
+                st.dataframe(df_area.fillna("-"), use_container_width=True, hide_index=True)
     else:
-        st.dataframe(df_final[['Full Name', 'Time', 'Evento']], use_container_width=True)
+        st.dataframe(df_pivot.drop(columns=['Area', 'ID']).fillna("-"), use_container_width=True, hide_index=True)
 
 
 def vista_biometrico():
