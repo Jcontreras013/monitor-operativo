@@ -20,7 +20,6 @@ try:
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
-# 🚨 IMPORTACIÓN MÓDULO BIOMÉTRICO 🚨
 try:
     import biometrico
 except ImportError:
@@ -496,10 +495,53 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets. Verifica tus secretos.")
         conn = None
 
-    # 🚨 REGLA APLICADA: CREAMOS LOS CONTENEDORES PARA ORDENAR LA BARRA LATERAL 🚨
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
-    
+
+    if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
+        # 🚨 Lógica de recarga trasladada aquí para que actúe sin depender del sidebar 🚨
+        pass # Se maneja más abajo
+
+    # 🚨 MENÚ Y FILTROS EN LA PARTE SUPERIOR DEL SIDEBAR 🚨
+    with sidebar_top:
+        if rol_usuario in ['admin', 'jefe']:
+            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
+        else:
+            nav_menu_diamante = "⚡ Monitor en Vivo"
+            
+        if nav_menu_diamante == "⚡ Monitor en Vivo":
+            st.divider()
+            st.markdown("### 🎛️ Filtros Múltiples")
+            
+            # Necesitamos inicializar estas variables aunque df_base_activa se llene después
+            filtro_actividad = []
+            filtro_estado = []
+            filtro_motivo = []
+            check_criticos_diamante = False
+            tec_filtro_monitor = "Todos"
+            
+            if 'df_base' in st.session_state and st.session_state.df_base is not None:
+                df_base_activa_temp = st.session_state.df_base.copy()
+                lista_actividades = sorted(df_base_activa_temp['ACTIVIDAD'].dropna().unique().tolist())
+                lista_estados = sorted(df_base_activa_temp['ESTADO'].dropna().unique().tolist())
+                lista_motivos = sorted(df_base_activa_temp['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa_temp.columns else []
+                
+                filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+                filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+                filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+                
+                st.divider() 
+                st.markdown("### 🔍 Filtros en Vivo")
+                if rol_usuario in ['admin', 'jefe']:
+                    m_viva_count = df_base_activa_temp['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                    mascara_offline_segura = df_base_activa_temp['ES_OFFLINE'] == True
+                    total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+                    
+                    check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
+                    lista_tecs_monitor = ["Todos"] + sorted(df_base_activa_temp['TECNICO'].dropna().unique().tolist())
+                    tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+
+    # 🚨 CARGA DE ARCHIVOS Y CERRAR SESIÓN EN LA PARTE INFERIOR DEL SIDEBAR 🚨
     with sidebar_bottom:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
@@ -719,42 +761,6 @@ def main():
 
     df_base_activa = df_base.copy()
     
-    filtro_actividad = []
-    filtro_estado = []
-    filtro_motivo = []
-    check_criticos_diamante = False
-    tec_filtro_monitor = "Todos"
-
-    # 🚨 REGLA APLICADA: MENÚ Y FILTROS AL PRINCIPIO (ARRIBA) DE LA BARRA LATERAL 🚨
-    with sidebar_top:
-        if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
-        else:
-            nav_menu_diamante = "⚡ Monitor en Vivo"
-            
-        if nav_menu_diamante == "⚡ Monitor en Vivo":
-            st.divider()
-            st.markdown("### 🎛️ Filtros Múltiples")
-            
-            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
-            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
-            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
-            
-            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
-            
-            st.divider() 
-            st.markdown("### 🔍 Filtros en Vivo")
-            if rol_usuario in ['admin', 'jefe']:
-                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                
-                check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
-                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
-
     if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
         
@@ -1041,6 +1047,32 @@ def main():
                     Prom_Duracion_Min=('MINUTOS_CALC', 'mean')
                 ).round(1)
                 st.dataframe(df_pivot_diario, use_container_width=True)
+
+            # 🚨 INICIO DE NUEVA TABLA: PRIMERA ORDEN DEL DÍA 🚨
+            st.markdown("### 🌅 Primera Orden del Día por Técnico")
+            df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
+            df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI'])
+            
+            mask_fecha_ini = df_universo_diario['HORA_INI'].dt.date == fecha_cal_sel
+            df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI').drop_duplicates(subset=['TECNICO'], keep='first')
+            
+            if not df_primera.empty:
+                df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']].copy()
+                df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI'].dt.strftime('%H:%M:%S')
+                st.dataframe(
+                    df_primera_mostrar.sort_values(by='HORA_INI'), 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "TECNICO": st.column_config.TextColumn("Técnico"),
+                        "HORA_INI": st.column_config.TextColumn("Hora de Inicio"),
+                        "COLONIA": st.column_config.TextColumn("Colonia"),
+                        "NUM": st.column_config.TextColumn("N° Orden")
+                    }
+                )
+            else:
+                st.info("No hay registros de inicio de órdenes para esta fecha.")
+            # 🚨 FIN DE NUEVA TABLA 🚨
 
             st.markdown("### 📥 Exportación")
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
