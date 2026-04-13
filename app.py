@@ -390,7 +390,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
@@ -490,14 +490,13 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets. Verifica tus secretos.")
         conn = None
 
-    # 🚨 LÍNEA RESTAURADA: Barra Lateral Completa 🚨
-    with st.sidebar:
-        if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
-        else:
-            nav_menu_diamante = "⚡ Monitor en Vivo"
-            
+    sidebar_top = st.sidebar.container()
+    sidebar_bottom = st.sidebar.container()
+    
+    with sidebar_bottom:
+        st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
+
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None:
@@ -566,7 +565,18 @@ def main():
         elif rol_usuario == 'jefe' and es_movil:
             st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
+    # 🚨 LÓGICA DE ANDRÉS: Si sube solo reporte y no hay caché de FTTX, genera uno falso 🚨
     if 'df_base' not in st.session_state or btn_reprocesar:
+        if es_usuario_andres and file_act_ptr is not None and file_disp_ptr is None:
+            # Crear un archivo Excel en memoria vacío para que el depurador no falle
+            df_vacio = pd.DataFrame(columns=['ID', 'STATUS'])
+            b_io = io.BytesIO()
+            df_vacio.to_excel(b_io, index=False)
+            b_io.seek(0)
+            file_disp_ptr = b_io
+            file_disp_ptr.name = "dummy_fttx.xlsx"
+            st.info("⚠️ Procesando sin FTTX (las fallas Offline no se detectarán automáticamente).")
+
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
                 st.title("⚡ Monitor Operativo Maxcom PRO")
@@ -707,35 +717,39 @@ def main():
     filtro_actividad = []
     filtro_estado = []
     filtro_motivo = []
+    check_criticos_diamante = False
+    tec_filtro_monitor = "Todos"
     
-    if nav_menu_diamante == "⚡ Monitor en Vivo":
-        st.divider()
-        st.markdown("### 🎛️ Filtros Múltiples")
-        
-        lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
-        lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
-        lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
-        
-        filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-        filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-        filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
-        
-    if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
-        if rol_usuario in ['admin', 'jefe'] and nav_menu_diamante == "⚡ Monitor en Vivo":
-            st.divider() 
-            st.header("🔍 Filtros en Vivo")
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-            
-            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-            
-            check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
-            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+    # 🚨 FILTROS MOVidos AL SIDEBAR (BARRA LATERAL) COMO LO SOLICITASTE 🚨
+    with st.sidebar:
+        if rol_usuario in ['admin', 'jefe']:
+            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
         else:
-            check_criticos_diamante = False
-            tec_filtro_monitor = "Todos"
+            nav_menu_diamante = "⚡ Monitor en Vivo"
+            
+        if nav_menu_diamante == "⚡ Monitor en Vivo":
+            st.divider()
+            st.markdown("### 🎛️ Filtros en Vivo")
+            
+            if rol_usuario in ['admin', 'jefe']:
+                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+                
+                check_criticos_diamante = st.toggle(f"🚨 Solo Críticas ({total_off_count_viva})")
+                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            
+            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
+            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
+            
+            st.markdown("#### 🛠️ Filtros Múltiples")
+            filtro_actividad = st.multiselect("Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+            filtro_estado = st.multiselect("Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            filtro_motivo = st.multiselect("Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
 
+    if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
         
         if len(filtro_actividad) > 0:
