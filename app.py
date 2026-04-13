@@ -20,6 +20,7 @@ try:
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
+# 🚨 IMPORTACIÓN MÓDULO BIOMÉTRICO 🚨
 try:
     import biometrico
 except ImportError:
@@ -395,7 +396,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
@@ -499,10 +500,8 @@ def main():
     sidebar_bottom = st.sidebar.container()
 
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
-        # 🚨 Lógica de recarga trasladada aquí para que actúe sin depender del sidebar 🚨
-        pass # Se maneja más abajo
+        pass 
 
-    # 🚨 MENÚ Y FILTROS EN LA PARTE SUPERIOR DEL SIDEBAR 🚨
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
@@ -513,7 +512,6 @@ def main():
             st.divider()
             st.markdown("### 🎛️ Filtros Múltiples")
             
-            # Necesitamos inicializar estas variables aunque df_base_activa se llene después
             filtro_actividad = []
             filtro_estado = []
             filtro_motivo = []
@@ -541,7 +539,6 @@ def main():
                     lista_tecs_monitor = ["Todos"] + sorted(df_base_activa_temp['TECNICO'].dropna().unique().tolist())
                     tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
 
-    # 🚨 CARGA DE ARCHIVOS Y CERRAR SESIÓN EN LA PARTE INFERIOR DEL SIDEBAR 🚨
     with sidebar_bottom:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
@@ -1050,28 +1047,42 @@ def main():
 
             # 🚨 INICIO DE NUEVA TABLA: PRIMERA ORDEN DEL DÍA 🚨
             st.markdown("### 🌅 Primera Orden del Día por Técnico")
+            
             df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
-            df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI'])
             
-            mask_fecha_ini = df_universo_diario['HORA_INI'].dt.date == fecha_cal_sel
-            df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI').drop_duplicates(subset=['TECNICO'], keep='first')
-            
-            if not df_primera.empty:
-                df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']].copy()
-                df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI'].dt.strftime('%H:%M:%S')
-                st.dataframe(
-                    df_primera_mostrar.sort_values(by='HORA_INI'), 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "TECNICO": st.column_config.TextColumn("Técnico"),
-                        "HORA_INI": st.column_config.TextColumn("Hora de Inicio"),
-                        "COLONIA": st.column_config.TextColumn("Colonia"),
-                        "NUM": st.column_config.TextColumn("N° Orden")
-                    }
-                )
+            if 'HORA_INI' in df_universo_diario.columns:
+                df_universo_diario['HORA_INI_DT'] = pd.to_datetime(df_universo_diario['HORA_INI'], errors='coerce')
+                df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI_DT'])
+                
+                mask_fecha_ini = df_universo_diario['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cal_sel).date()
+                df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+                
+                if not df_primera.empty:
+                    df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
+                    
+                    df_primera_mostrar = df_primera_mostrar.sort_values(by='HORA_INI_DT')
+                    
+                    # 🚨 REGLA APLICADA: Mostrar la hora limpia HH:mm:ss sin fecha 🚨
+                    df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
+                    df_primera_mostrar = df_primera_mostrar.drop(columns=['HORA_INI_DT'])
+                    
+                    df_primera_mostrar = df_primera_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
+                    
+                    st.dataframe(
+                        df_primera_mostrar, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "TECNICO": st.column_config.TextColumn("Técnico"),
+                            "HORA_INI": st.column_config.TextColumn("Hora de Inicio"),
+                            "COLONIA": st.column_config.TextColumn("Colonia"),
+                            "NUM": st.column_config.TextColumn("N° Orden")
+                        }
+                    )
+                else:
+                    st.info("No hay registros de inicio de órdenes para esta fecha.")
             else:
-                st.info("No hay registros de inicio de órdenes para esta fecha.")
+                 st.info("No hay registros de inicio de órdenes para esta fecha.")
             # 🚨 FIN DE NUEVA TABLA 🚨
 
             st.markdown("### 📥 Exportación")
