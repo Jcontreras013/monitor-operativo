@@ -93,45 +93,60 @@ def vista_biometrico():
     st.title("⏱️ Módulo de Depuración Biométrica")
     st.markdown("Sube tu archivo `Transaction.csv`. Asigna el área a cada empleado en la tabla y presiona procesar.")
     
+    # Botón de emergencia para resetear la memoria por si se trabó con el error anterior
+    if st.button("🔄 Reiniciar Memoria de Áreas (Clic si tienes errores)"):
+        if 'mapeo_areas' in st.session_state:
+            del st.session_state['mapeo_areas']
+        st.success("Memoria reiniciada correctamente. Ya puedes subir el archivo.")
+
     archivo = st.file_uploader("📥 Cargar Transaction.csv", type=['csv'])
     
     if archivo:
         try:
-            # === LECTURA 100% SEGURA EN MEMORIA (Evita el KeyError) ===
-            content = archivo.getvalue().decode('utf-8', errors='replace')
+            # 1. utf-8-sig ELIMINA caracteres basura de Windows/ZKTeco (BOM)
+            content = archivo.getvalue().decode('utf-8-sig', errors='replace')
             lineas = content.splitlines()
             
-            # Buscar dónde empiezan realmente los datos
+            # 2. Búsqueda ultra-flexible de encabezados
             inicio_datos = -1
             for i, linea in enumerate(lineas):
-                if "ID" in linea and "Full Name" in linea:
+                # Pasamos a mayúsculas para evitar problemas de "id" vs "ID"
+                if "ID" in linea.upper() and "FULL NAME" in linea.upper():
                     inicio_datos = i
                     break
                     
             if inicio_datos == -1:
-                st.error("❌ El archivo no es válido o no tiene las columnas 'Full Name' e 'ID'.")
+                st.error("❌ El archivo no contiene las columnas necesarias (ID y Full Name).")
+                st.write("Primeras líneas leídas del archivo:", lineas[:5])
                 return
                 
-            # Extraer solo desde la línea correcta y convertir a DataFrame
+            # 3. Leer el CSV permitiendo separadores dinámicos (, o ;)
             csv_valido = "\n".join(lineas[inicio_datos:])
-            df_marcas = pd.read_csv(io.StringIO(csv_valido))
+            df_marcas = pd.read_csv(io.StringIO(csv_valido), sep=None, engine='python')
             
-            # Limpieza extrema de nombres de columnas (Quita espacios fantasmas)
+            # 4. Limpieza agresiva de columnas (quita espacios invisibles y saltos de línea)
             df_marcas.columns = [str(col).strip() for col in df_marcas.columns]
             
-            # Verificación de diagnóstico: si vuelve a fallar te dirá exactamente qué vio el sistema
+            # 5. Renombrar dinámicamente si el archivo lo escribió con minúsculas u otros formatos
+            for col in df_marcas.columns:
+                if col.upper() == 'ID':
+                    df_marcas.rename(columns={col: 'ID'}, inplace=True)
+                elif col.upper() == 'FULL NAME':
+                    df_marcas.rename(columns={col: 'Full Name'}, inplace=True)
+
+            # Comprobación de diagnóstico
             if 'ID' not in df_marcas.columns:
-                st.error(f"❌ Las columnas detectadas son: {df_marcas.columns.tolist()}. No se encontró 'ID'.")
+                st.error("❌ Sigo sin encontrar la columna 'ID'.")
+                st.write("Las columnas exactas que la app detectó son:", df_marcas.columns.tolist())
                 return
                 
             df_marcas['ID'] = df_marcas['ID'].astype(str).str.strip()
             df_marcas['Full Name'] = df_marcas['Full Name'].astype(str).str.strip()
             
-            # Lista única de empleados
+            # 6. Lógica de Memoria de Empleados
             empleados_unicos = df_marcas[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
-            empleados_unicos['Area'] = "ADMINISTRACION" # Valor por defecto
+            empleados_unicos['Area'] = "ADMINISTRACION" 
             
-            # Restaurar áreas si ya se habían editado en la sesión para evitar perder tu trabajo
             if 'mapeo_areas' in st.session_state:
                 empleados_previos = st.session_state['mapeo_areas']
                 if 'ID' in empleados_previos.columns and 'Area' in empleados_previos.columns:
