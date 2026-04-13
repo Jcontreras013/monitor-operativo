@@ -1,19 +1,32 @@
 import pandas as pd
 import streamlit as st
+import io
 
 def procesar_marcas(df_marcas, df_areas):
-    # 1. Unir las marcas con las áreas asignadas en la pantalla
+    # Aseguramos que ambas tablas tengan ID como texto limpio para evitar errores de cruce
+    df_marcas['ID'] = df_marcas['ID'].astype(str).str.strip()
+    df_areas['ID'] = df_areas['ID'].astype(str).str.strip()
+    
     df_completo = pd.merge(df_marcas, df_areas, on=['ID', 'Full Name'], how='left')
 
-    # 2. Formatear y ordenar cronológicamente
-    df_completo['Datetime'] = pd.to_datetime(df_completo['Date'] + ' ' + df_completo['Time'], format='%d/%m/%Y %H:%M', errors='coerce')
+    # Validar que existan las columnas de tiempo
+    if 'Date' not in df_completo.columns or 'Time' not in df_completo.columns:
+        st.error(f"Faltan columnas de fecha/hora. Columnas actuales: {df_completo.columns.tolist()}")
+        return
+
+    # Formatear y ordenar cronológicamente
+    df_completo['Datetime'] = pd.to_datetime(df_completo['Date'].astype(str).str.strip() + ' ' + df_completo['Time'].astype(str).str.strip(), format='%d/%m/%Y %H:%M', errors='coerce')
     df_completo = df_completo.dropna(subset=['Datetime']).sort_values(['ID', 'Datetime'])
 
-    # 3. Eliminar marcas dobles por error humano (menos de 15 min de diferencia)
+    if df_completo.empty:
+        st.warning("No hay registros válidos después de procesar las fechas y horas.")
+        return
+
+    # Eliminar marcas dobles por error humano (menos de 15 min de diferencia)
     df_completo['Time_Diff'] = df_completo.groupby(['ID', 'Date'])['Datetime'].diff()
     df_limpio = df_completo[(df_completo['Time_Diff'].isna()) | (df_completo['Time_Diff'] > pd.Timedelta(minutes=15))].copy()
 
-    # 4. Función de Inferencia Lógica según el Área
+    # Función de Inferencia Lógica según el Área
     def etiquetar_marcas(grupo):
         area = str(grupo['Area'].iloc[0]).strip().upper() if pd.notna(grupo['Area'].iloc[0]) else "ADMINISTRACION"
         n = len(grupo)
@@ -42,44 +55,38 @@ def procesar_marcas(df_marcas, df_areas):
     df_final = df_limpio.groupby(['ID', 'Date'], group_keys=False).apply(etiquetar_marcas)
     df_final = df_final[df_final['Evento'] != '']
 
-    # 5. Formato innegociable HH:mm:ss sin fecha
+    # Formato innegociable HH:mm:ss
     df_final['Time'] = df_final['Datetime'].dt.strftime('%H:%M:%S')
 
-    # 6. PIVOTAR LA TABLA (Formato Horizontal estilo Excel)
+    # PIVOTAR LA TABLA (Formato Horizontal)
     df_pivot = df_final.pivot(index=['ID', 'Full Name', 'Date', 'Area'], columns='Evento', values='Time').reset_index()
     
     # Definir el orden lógico de las columnas de izquierda a derecha
     orden_columnas = ['ID', 'Full Name', 'Date']
     eventos_logicos = ['Entrada', 'Salida Almuerzo', 'Entrada Almuerzo', 'Break', 'Salida']
     
-    # Agregar solo las columnas de eventos que existan en los datos procesados
     for evento in eventos_logicos:
         if evento in df_pivot.columns:
             orden_columnas.append(evento)
             
     df_pivot = df_pivot[orden_columnas]
-    
-    # Renombrar para que se vea estético en la pantalla
     df_pivot = df_pivot.rename(columns={'Full Name': 'Nombre Completo', 'Date': 'Fecha'})
 
-    # 7. Renderizar en Streamlit
+    # Renderizar en Streamlit
     st.write("---")
     st.write("### 2️⃣ Reporte de Asistencia Formateado")
     
-    # Crear pestañas automáticas según las áreas detectadas
     areas_presentes = [a for a in df_pivot['Area'].unique() if str(a).strip() != ""]
     
     if areas_presentes:
         tabs = st.tabs(areas_presentes)
         for i, area in enumerate(areas_presentes):
             with tabs[i]:
-                # Filtramos por área, quitamos columnas redundantes (ID y Area)
-                df_area = df_pivot[df_pivot['Area'] == area].drop(columns=['Area', 'ID'])
-                
-                # Rellenar espacios vacíos con guiones y mostrar la tabla sin números de índice
+                # El errors='ignore' protege contra fallos si la columna no existe
+                df_area = df_pivot[df_pivot['Area'] == area].drop(columns=['Area', 'ID'], errors='ignore')
                 st.dataframe(df_area.fillna("-"), use_container_width=True, hide_index=True)
     else:
-        st.dataframe(df_pivot.drop(columns=['Area', 'ID']).fillna("-"), use_container_width=True, hide_index=True)
+        st.dataframe(df_pivot.drop(columns=['Area', 'ID'], errors='ignore').fillna("-"), use_container_width=True, hide_index=True)
 
 
 def vista_biometrico():
@@ -90,49 +97,52 @@ def vista_biometrico():
     
     if archivo:
         try:
-            # 1. BÚSQUEDA DINÁMICA DE LOS ENCABEZADOS (A prueba de fallos)
-            content = archivo.getvalue().decode('utf-8', errors='ignore')
+            # === LECTURA 100% SEGURA EN MEMORIA (Evita el KeyError) ===
+            content = archivo.getvalue().decode('utf-8', errors='replace')
             lineas = content.splitlines()
             
-            inicio_datos = 0
+            # Buscar dónde empiezan realmente los datos
+            inicio_datos = -1
             for i, linea in enumerate(lineas):
-                # Busca automáticamente la fila que contiene las columnas clave
                 if "ID" in linea and "Full Name" in linea:
                     inicio_datos = i
                     break
+                    
+            if inicio_datos == -1:
+                st.error("❌ El archivo no es válido o no tiene las columnas 'Full Name' e 'ID'.")
+                return
+                
+            # Extraer solo desde la línea correcta y convertir a DataFrame
+            csv_valido = "\n".join(lineas[inicio_datos:])
+            df_marcas = pd.read_csv(io.StringIO(csv_valido))
             
-            # Regresamos el puntero al inicio para que pandas lo lea desde la línea correcta
-            archivo.seek(0)
-            df_marcas = pd.read_csv(archivo, skiprows=inicio_datos)
+            # Limpieza extrema de nombres de columnas (Quita espacios fantasmas)
+            df_marcas.columns = [str(col).strip() for col in df_marcas.columns]
             
-            # 2. Limpiar espacios invisibles en las columnas (ej: " ID " a "ID")
-            df_marcas.columns = df_marcas.columns.str.strip()
-            
-            # Asegurarnos de que la columna ID exista y sea texto limpio
+            # Verificación de diagnóstico: si vuelve a fallar te dirá exactamente qué vio el sistema
             if 'ID' not in df_marcas.columns:
-                st.error("El archivo no tiene una columna llamada 'ID'. Verifica que sea el export original.")
+                st.error(f"❌ Las columnas detectadas son: {df_marcas.columns.tolist()}. No se encontró 'ID'.")
                 return
                 
             df_marcas['ID'] = df_marcas['ID'].astype(str).str.strip()
+            df_marcas['Full Name'] = df_marcas['Full Name'].astype(str).str.strip()
             
-            # Extraer lista única de empleados
+            # Lista única de empleados
             empleados_unicos = df_marcas[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
+            empleados_unicos['Area'] = "ADMINISTRACION" # Valor por defecto
             
-            # Guardar en la memoria temporal de la app (Mejorado para guardar tus cambios si subes otro reporte)
-            if 'mapeo_areas' not in st.session_state:
-                empleados_unicos['Area'] = "ADMINISTRACION" # Asignación por defecto
-                st.session_state['mapeo_areas'] = empleados_unicos
-            else:
-                # Mezclar empleados nuevos con los que ya tenías clasificados
+            # Restaurar áreas si ya se habían editado en la sesión para evitar perder tu trabajo
+            if 'mapeo_areas' in st.session_state:
                 empleados_previos = st.session_state['mapeo_areas']
-                combinado = pd.merge(empleados_unicos, empleados_previos[['ID', 'Area']], on='ID', how='left')
-                combinado['Area'] = combinado['Area'].fillna("ADMINISTRACION")
-                st.session_state['mapeo_areas'] = combinado
+                if 'ID' in empleados_previos.columns and 'Area' in empleados_previos.columns:
+                    dict_areas = dict(zip(empleados_previos['ID'], empleados_previos['Area']))
+                    empleados_unicos['Area'] = empleados_unicos['ID'].map(dict_areas).fillna("ADMINISTRACION")
+                    
+            st.session_state['mapeo_areas'] = empleados_unicos
                 
             st.write("### 1️⃣ Asignación Rápida de Áreas")
             st.info("Selecciona el área correspondiente. Puedes cambiarla dando doble clic en la columna 'Area'.")
             
-            # Editor interactivo de Streamlit (st.data_editor)
             areas_editadas = st.data_editor(
                 st.session_state['mapeo_areas'],
                 column_config={
@@ -142,16 +152,15 @@ def vista_biometrico():
                         required=True
                     )
                 },
-                disabled=["ID", "Full Name"], # Proteger nombre e ID
+                disabled=["ID", "Full Name"], 
                 hide_index=True,
                 use_container_width=True
             )
             
             st.session_state['mapeo_areas'] = areas_editadas
 
-            # Botón de ejecución
             if st.button("🚀 Generar Reporte Depurado", type="primary"):
                 procesar_marcas(df_marcas, areas_editadas)
                 
         except Exception as e:
-            st.error(f"❌ Error procesando el archivo. Detalle técnico: {e}")
+            st.error(f"❌ Error crítico procesando el archivo. Detalle: {e}")
