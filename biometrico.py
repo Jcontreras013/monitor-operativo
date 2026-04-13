@@ -1,16 +1,11 @@
 import pandas as pd
 import streamlit as st
 
-def procesar_biometrico(df_marcas, df_areas):
-    st.subheader("📊 Reporte Biométrico Inteligente")
-    
-    # 1. Unir con las áreas (Aseguramos que los ID sean texto para evitar errores)
-    df_marcas['ID'] = df_marcas['ID'].astype(str)
-    df_areas['ID'] = df_areas['ID'].astype(str)
-    df_completo = pd.merge(df_marcas, df_areas[['ID', 'Area']], on='ID', how='left')
+def procesar_marcas(df_marcas, df_areas):
+    # 1. Unir las marcas con las áreas asignadas en la pantalla
+    df_completo = pd.merge(df_marcas, df_areas, on=['ID', 'Full Name'], how='left')
 
-    # 2. Formatear Fecha y Hora para ordenar cronológicamente
-    # Usamos errors='coerce' por si alguna fila viene vacía
+    # 2. Formatear y ordenar cronológicamente
     df_completo['Datetime'] = pd.to_datetime(df_completo['Date'] + ' ' + df_completo['Time'], format='%d/%m/%Y %H:%M', errors='coerce')
     df_completo = df_completo.dropna(subset=['Datetime']).sort_values(['ID', 'Datetime'])
 
@@ -20,12 +15,11 @@ def procesar_biometrico(df_marcas, df_areas):
 
     # 4. Función de Inferencia Lógica según el Área
     def etiquetar_marcas(grupo):
-        # Asegurarnos de no fallar si no hay área definida
-        area = str(grupo['Area'].iloc[0]).strip().upper() if pd.notna(grupo['Area'].iloc[0]) else ""
+        area = str(grupo['Area'].iloc[0]).strip().upper() if pd.notna(grupo['Area'].iloc[0]) else "ADMINISTRACION"
         n = len(grupo)
         etiquetas = [''] * n
         
-        # Aplicamos tus reglas estrictas de eventos
+        # Reglas de eventos por área
         if area == "AREA TECNICA":
             if n >= 1: etiquetas[0] = "Entrada"
             if n >= 2: etiquetas[-1] = "Salida"
@@ -40,54 +34,76 @@ def procesar_biometrico(df_marcas, df_areas):
             if n >= 3: etiquetas[2] = "Entrada Almuerzo"
             if n >= 4: etiquetas[3] = "Break"
             if n >= 5: etiquetas[-1] = "Salida"
-        else:
-            # Comportamiento por defecto si el ID no tiene área
-            if n >= 1: etiquetas[0] = "Entrada"
-            if n >= 2: etiquetas[-1] = "Salida"
             
         grupo['Evento'] = etiquetas
         return grupo
 
-    # Aplicar la lógica de etiquetas día por día, empleado por empleado
+    # Aplicar las etiquetas y limpiar registros sobrantes
     df_final = df_limpio.groupby(['ID', 'Date'], group_keys=False).apply(etiquetar_marcas)
-    
-    # Limpiar lo que no es un evento principal (ej. una 6ta marca accidental)
     df_final = df_final[df_final['Evento'] != '']
 
-    # 5. Formato innegociable HH:mm:ss
+    # 5. Formato innegociable HH:mm:ss sin fecha
     df_final['Time'] = df_final['Datetime'].dt.strftime('%H:%M:%S')
 
-    # 6. Mostrar Pestañas por Departamento
-    st.write("### Resultados por Departamento")
-    areas_presentes = [a for a in df_final['Area'].dropna().unique() if str(a).strip() != ""]
+    st.write("---")
+    st.write("### 2️⃣ Resultados Depurados por Departamento")
     
-    if not areas_presentes:
-        st.warning("⚠️ No se detectaron áreas. Mostrando todos los registros generales.")
-        st.dataframe(df_final[['Full Name', 'Date', 'Time', 'Evento']], use_container_width=True)
-        return
+    # Crear pestañas automáticas según las áreas detectadas
+    areas_presentes = [a for a in df_final['Area'].unique() if str(a).strip() != ""]
+    
+    if areas_presentes:
+        tabs = st.tabs(areas_presentes)
+        for i, area in enumerate(areas_presentes):
+            with tabs[i]:
+                df_area = df_final[df_final['Area'] == area].reset_index(drop=True)
+                st.dataframe(df_area[['Full Name', 'Time', 'Evento']], use_container_width=True)
+    else:
+        st.dataframe(df_final[['Full Name', 'Time', 'Evento']], use_container_width=True)
 
-    tabs = st.tabs(areas_presentes)
-    
-    for i, area in enumerate(areas_presentes):
-        with tabs[i]:
-            df_area = df_final[df_final['Area'] == area].reset_index(drop=True)
-            st.dataframe(df_area[['Full Name', 'Date', 'Time', 'Evento']], use_container_width=True)
 
 def vista_biometrico():
-    st.title("⏱️ Módulo de Depuración Biométrica Inteligente")
-    st.markdown("Carga el archivo ZKTeco y tu plantilla de áreas. El sistema limpiará marcas dobles y asignará las entradas, almuerzos y salidas de forma autónoma.")
+    st.title("⏱️ Módulo de Depuración Biométrica")
+    st.markdown("Sube tu archivo `Transaction.csv`. Asigna el área a cada empleado en la tabla y presiona procesar.")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        arch_biometrico = st.file_uploader("1️⃣ Cargar Transaction.csv", type=['csv'])
-    with col2:
-        arch_areas = st.file_uploader("2️⃣ Cargar Plantilla_Areas.xlsx", type=['xlsx'])
-        
-    if arch_biometrico and arch_areas:
+    archivo = st.file_uploader("📥 Cargar Transaction.csv", type=['csv'])
+    
+    if archivo:
         try:
-            # Saltamos las primeras 4 filas basura del ZKTeco
-            df_marcas = pd.read_csv(arch_biometrico, skiprows=4)
-            df_areas = pd.read_excel(arch_areas)
-            procesar_biometrico(df_marcas, df_areas)
+            # Leer el archivo saltando las 4 filas de encabezado del reloj
+            df_marcas = pd.read_csv(archivo, skiprows=4)
+            df_marcas['ID'] = df_marcas['ID'].astype(str)
+            
+            # Extraer lista única de empleados
+            empleados_unicos = df_marcas[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
+            
+            # Guardar en la memoria temporal de la app para que no tengas que clasificar cada vez
+            if 'mapeo_areas' not in st.session_state:
+                empleados_unicos['Area'] = "ADMINISTRACION" # Asignación por defecto
+                st.session_state['mapeo_areas'] = empleados_unicos
+                
+            st.write("### 1️⃣ Asignación Rápida de Áreas")
+            st.info("Selecciona el área correspondiente. Puedes cambiarla dando doble clic en la columna 'Area'.")
+            
+            # Editor interactivo de Streamlit (st.data_editor)
+            areas_editadas = st.data_editor(
+                st.session_state['mapeo_areas'],
+                column_config={
+                    "Area": st.column_config.SelectboxColumn(
+                        "Área del Empleado",
+                        options=["AREA TECNICA", "SAC", "ADMINISTRACION"],
+                        required=True
+                    )
+                },
+                disabled=["ID", "Full Name"], # Proteger nombre e ID para no borrarlos por accidente
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            st.session_state['mapeo_areas'] = areas_editadas
+
+            # Botón de ejecución
+            if st.button("🚀 Generar Reporte Depurado", type="primary"):
+                procesar_marcas(df_marcas, areas_editadas)
+                
         except Exception as e:
-            st.error(f"❌ Error procesando los archivos: {e}")
+            st.error(f"❌ Error leyendo el archivo: Verifica que sea el Transaction.csv original. Detalle: {e}")
