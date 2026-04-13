@@ -20,7 +20,7 @@ try:
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
-# 🚨 NUEVA IMPORTACIÓN: Módulo Biométrico 🚨
+# 🚨 IMPORTACIÓN MÓDULO BIOMÉTRICO 🚨
 try:
     import biometrico
 except ImportError:
@@ -396,7 +396,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
@@ -496,6 +496,7 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets. Verifica tus secretos.")
         conn = None
 
+    # 🚨 REGLA APLICADA: CREAMOS LOS CONTENEDORES PARA ORDENAR LA BARRA LATERAL 🚨
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
     
@@ -556,7 +557,6 @@ def main():
             if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
                 if os.path.exists("cache_fttx.tmp"):
                     try:
-                        # LEEMOS EN BYTES PARA QUE EL CACHÉ DE STREAMLIT NO FALLE
                         with open("cache_fttx.tmp", "rb") as f:
                             file_disp_ptr = f.read()
                             
@@ -725,14 +725,15 @@ def main():
     check_criticos_diamante = False
     tec_filtro_monitor = "Todos"
 
-    with sidebar_bottom:
-        st.divider()
+    # 🚨 REGLA APLICADA: MENÚ Y FILTROS AL PRINCIPIO (ARRIBA) DE LA BARRA LATERAL 🚨
+    with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.sidebar.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
+            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
             
         if nav_menu_diamante == "⚡ Monitor en Vivo":
+            st.divider()
             st.markdown("### 🎛️ Filtros Múltiples")
             
             lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
@@ -822,7 +823,6 @@ def main():
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         
-        # 🚨 PESTAÑA DEL BIOMÉTRICO INCLUIDA 🚨
         tab_dinamico, tab_diario, tab_semanal, tab_mensual, tab_gerencial, tab_biometrico = st.tabs([
             "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"
         ])
