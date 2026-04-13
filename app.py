@@ -209,6 +209,7 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
+                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -320,7 +321,7 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df):
         total_p = resumen['Asignadas'].sum()
         total_c = resumen['Cerradas'].sum()
         fila_total = pd.DataFrame([{'Tipo': 'TOTAL GENERAL', 'Asignadas': total_p, 'Cerradas': total_c}])
-        resumen = pd.concat([resumen, fila_total], ignore_index=True)
+        resumen = pd.concat([resumen, ignore_index=True)
 
         st.dataframe(
             resumen,
@@ -363,6 +364,7 @@ def aplicar_estilos_df(df_original_para_estilo):
             if 'HORA_INI' in fila_v.index:
                 estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
         
+        # 🚨 SEMÁFORO DE DÍAS DE RETRASO (TABLA INFERIOR) 🚨
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
@@ -390,11 +392,12 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
+        # Reconstruir BytesIO si viene en formato bytes crudos (por el caché de Streamlit)
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
             file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
@@ -550,6 +553,7 @@ def main():
             if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
                 if os.path.exists("cache_fttx.tmp"):
                     try:
+                        # LEEMOS EN BYTES PARA QUE EL CACHÉ DE STREAMLIT NO FALLE
                         with open("cache_fttx.tmp", "rb") as f:
                             file_disp_ptr = f.read()
                             
@@ -750,6 +754,7 @@ def main():
             if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns:
                 df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
             
+            # 🚨 CAMBIO APLICADO: Filtro crítico ahora ignora técnico asignado si es offline 🚨
             if check_criticos_diamante:
                 mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
                 mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
@@ -1134,7 +1139,6 @@ def main():
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
 
-            # 🚨 REGLA DIAMANTE: CLASIFICACIÓN MUTUAMENTE EXCLUYENTE PARA CUADRAR EXACTO 🚨
             g_tab_list = []
             sub_tab_list = []
             for idx, r in df_todas_pendientes_monitor.iterrows():
@@ -1266,8 +1270,13 @@ def main():
 
         status_final_btn = st.session_state.st_btn_v_active
 
+        # 🚨 MODIFICACIÓN: Si el filtro de críticas está activo, muestra las críticas (asignadas o no).
+        # Si no está activo, respeta la Regla de Diamante (solo asignadas).
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_solo_asignadas_monitor
+            if check_criticos_diamante:
+                df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+            else:
+                df_v_tabla_monitor = df_solo_asignadas_monitor
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
