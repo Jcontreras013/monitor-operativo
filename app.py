@@ -209,7 +209,6 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
-                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -396,7 +395,6 @@ def aplicar_estilos_df(df_original_para_estilo):
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
-        # Reconstruir BytesIO si viene en formato bytes crudos (por el caché de Streamlit)
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
             file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
@@ -1136,6 +1134,7 @@ def main():
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
                 
+            # 🚨 CAMBIO APLICADO: AHORA ESTAS TABLAS LEEN EL UNIVERSO TOTAL (df_todas_pendientes_monitor) 🚨
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
                 act_tab_sop = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper()
@@ -1175,7 +1174,6 @@ def main():
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
-        # 🚨 REGLA DE DIAMANTE APLICADA: CONSOLIDADO USA SOLO ASIGNADAS 🚨
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
             df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
