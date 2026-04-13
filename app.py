@@ -1133,46 +1133,68 @@ def main():
 
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
+
+            # 🚨 REGLA DIAMANTE: CLASIFICACIÓN MUTUAMENTE EXCLUYENTE PARA CUADRAR EXACTO 🚨
+            g_tab_list = []
+            sub_tab_list = []
+            for idx, r in df_todas_pendientes_monitor.iterrows():
+                act = str(r.get('ACTIVIDAD', '')).upper()
+                com = str(r.get('COMENTARIO', '')).upper()
+                txt = act + " " + com
+                is_off = r.get('ES_OFFLINE', False)
                 
-            # 🚨 CAMBIO APLICADO: AHORA ESTAS TABLAS LEEN EL UNIVERSO TOTAL (df_todas_pendientes_monitor) 🚨
+                if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
+                    g_tab_list.append("OTROS")
+                    sub_tab_list.append(act if act != "" else "N/A")
+                elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
+                    g_tab_list.append("INS")
+                    if re.search("ADIC", txt): sub_tab_list.append("Adición")
+                    elif re.search("CAMBIO|MIGRACI", txt): sub_tab_list.append("Cambio / Migración")
+                    elif re.search("RECUP", txt): sub_tab_list.append("Recuperado")
+                    else: sub_tab_list.append("Nueva")
+                else:
+                    g_tab_list.append("SOP")
+                    if is_off: sub_tab_list.append("ONT/ONU Offline")
+                    elif re.search("NIVEL|DB", com): sub_tab_list.append("Niveles alterados")
+                    elif re.search("FIBRA|FTTH", act): sub_tab_list.append("FTTH / FIBRA")
+                    elif re.search("NAV|INTERNET", act): sub_tab_list.append("Navegación / Internet")
+                    elif re.search("TV|CABLE", act): sub_tab_list.append("Sin señal de TV")
+                    else: sub_tab_list.append("SOP General")
+                    
+            df_tablero = df_todas_pendientes_monitor.copy()
+            df_tablero['G_TAB'] = g_tab_list
+            df_tablero['SUB_TAB'] = sub_tab_list
+                
             with col_tab_2:
                 st.caption("🛠️ SOP / Mantenimiento")
-                act_tab_sop = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper()
-                res_sop_visual_v = {
-                    "FTTH / FIBRA": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("FIBRA|FTTH", na=False)]),
-                    "Navegación / Internet": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("NAV|INTERNET", na=False)]),
-                    "ONT/ONU Offline": int((df_todas_pendientes_monitor['ES_OFFLINE'] == True).sum()), 
-                    "Niveles alterados": len(df_todas_pendientes_monitor[df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper().str.contains("NIVEL|DB", na=False)]),
-                    "Sin señal de TV": len(df_todas_pendientes_monitor[act_tab_sop.str.contains("TV|CABLE", na=False)])
-                }
-                st.dataframe(pd.DataFrame(list(res_sop_visual_v.items()), columns=['SOP', 'Cant']), hide_index=True, use_container_width=True)
-                st.write(f"**Total General SOP: {sum(res_sop_visual_v.values())}**")
-                st.metric("Exceden 2 Horas ⚠️", int((df_todas_pendientes_monitor['ALERTA_TIEMPO'] == True).sum()))
+                df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
+                res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
+                res_sop.columns = ['SOP', 'Cant']
+                st.dataframe(res_sop, hide_index=True, use_container_width=True)
+                st.write(f"**Total General SOP: {df_sop.shape[0]}**")
+                st.metric("Exceden 2 Horas ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
 
             with col_tab_3:
                 st.caption("📦 Instalaciones")
-                txt_ins_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
+                df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
+                res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
+                res_ins.columns = ['Instalaciones', 'Cant']
                 
-                res_ins_visual_v = {
-                    "Adición": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("ADIC", na=False)]),
-                    "Cambio / Migración": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("CAMBIO|MIGRACI", na=False)]),
-                    "Recuperado": len(df_todas_pendientes_monitor[txt_ins_v.str.contains("RECUP", na=False)])
-                }
-                mask_base_ins = txt_ins_v.str.contains("INS|NUEVA", na=False)
-                mask_excl_ins = txt_ins_v.str.contains("ADIC|CAMBIO|MIGRACI|RECUP", na=False)
-                res_ins_visual_v["Nueva"] = len(df_todas_pendientes_monitor[mask_base_ins & ~mask_excl_ins])
-                
-                st.dataframe(pd.DataFrame(list(res_ins_visual_v.items()), columns=['Instalaciones', 'Cant']), hide_index=True, use_container_width=True)
-                st.write(f"**Total General INS: {sum(res_ins_visual_v.values())}**")
+                cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
+                for c in cats_ins:
+                    if c not in res_ins['Instalaciones'].values:
+                        res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
+                        
+                st.dataframe(res_ins, hide_index=True, use_container_width=True)
+                st.write(f"**Total General INS: {df_ins.shape[0]}**")
 
             with col_tab_4:
                 st.caption("⚙️ Otros")
-                txt_otr_v = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.upper() + " " + df_todas_pendientes_monitor['COMENTARIO'].astype(str).str.upper()
-                mask_otros_monitor = ~txt_otr_v.str.contains("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", na=False)
-                res_otros_monitor = df_todas_pendientes_monitor[mask_otros_monitor]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
-                res_otros_monitor.columns = ['Otros', 'Cant']
-                st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
-                st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
+                df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
+                res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
+                res_otr.columns = ['Otros', 'Cant']
+                st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
+                st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
             df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
