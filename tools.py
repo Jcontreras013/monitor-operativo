@@ -6,6 +6,7 @@ import unicodedata
 import tempfile
 import os
 import numpy as np
+from weasyprint import HTML
 
 def safestr(texto):
     """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
@@ -942,3 +943,169 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         pdf.ln(8)
         
     return finalizar_pdf(pdf)
+
+def generar_pdf_primera_orden(df_base, fecha_cierre):
+    """
+    Genera un PDF gerencial con la primera orden del día de cada técnico.
+    """
+    try:
+        # 1. Preparar el DataFrame
+        patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+        mask_vivas = df_base['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
+        mask_cerradas = (pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cierre) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+        
+        df_universo = pd.concat([df_base[mask_vivas], df_base[mask_cerradas]]).drop_duplicates(subset=['NUM'])
+        
+        # 2. Filtrar y ordenar la "Primera Orden" por técnico
+        if 'HORA_INI' in df_universo.columns:
+            df_universo['HORA_INI_DT'] = pd.to_datetime(df_universo['HORA_INI'], errors='coerce')
+            df_universo = df_universo.dropna(subset=['HORA_INI_DT'])
+            
+            mask_fecha_ini = df_universo['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cierre).date()
+            df_primera = df_universo[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+            df_primera = df_primera.sort_values(by='HORA_INI_DT')
+        else:
+            return None # Si no hay datos, no genera nada
+
+        # 3. Construir la tabla HTML
+        filas_html = ""
+        for _, row in df_primera.iterrows():
+            tec = str(row.get('TECNICO', 'N/D')).strip()
+            hora = row['HORA_INI_DT'].strftime('%H:%M:%S') # Hora limpia
+            colonia = str(row.get('COLONIA', 'N/D')).strip()
+            num = str(row.get('NUM', 'N/D')).strip()
+            
+            filas_html += f"""
+            <tr>
+                <td>{tec}</td>
+                <td>{hora}</td>
+                <td>{colonia}</td>
+                <td>{num}</td>
+            </tr>
+            """
+
+        # 4. Estilos y Estructura CSS (Diseño Corporativo)
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <title>Reporte Primera Orden - MaxCom</title>
+            <style>
+                @page {{
+                    size: A4;
+                    margin: 15mm 20mm;
+                    background-color: #F8FAFC;
+                }}
+                body {{
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                    color: #1E293B;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #F8FAFC;
+                }}
+                .header-banner {{
+                    background-color: #0F172A;
+                    color: #FFFFFF;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin-bottom: 30px;
+                }}
+                .header-banner h1 {{
+                    margin: 0;
+                    font-size: 22pt;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                }}
+                .header-banner p {{
+                    margin: 5px 0 0 0;
+                    font-size: 11pt;
+                    color: #94A3B8;
+                }}
+                .accent-line {{
+                    height: 4px;
+                    background-color: #3B82F6;
+                    width: 60px;
+                    margin-top: 10px;
+                    border-radius: 2px;
+                }}
+                h2 {{
+                    color: #0F172A;
+                    font-size: 16pt;
+                    border-bottom: 2px solid #E2E8F0;
+                    padding-bottom: 8px;
+                    margin-bottom: 20px;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    background-color: #FFFFFF;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                }}
+                th {{
+                    background-color: #F1F5F9;
+                    color: #334155;
+                    font-weight: bold;
+                    font-size: 11pt;
+                    text-align: left;
+                    padding: 12px 15px;
+                    border-bottom: 2px solid #E2E8F0;
+                }}
+                td {{
+                    padding: 12px 15px;
+                    font-size: 10pt;
+                    border-bottom: 1px solid #F1F5F9;
+                    color: #475569;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #F8FAFC;
+                }}
+                .footer {{
+                    margin-top: 40px;
+                    text-align: center;
+                    font-size: 9pt;
+                    color: #64748B;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="header-banner">
+                <h1>Control Operativo</h1>
+                <div class="accent-line"></div>
+                <p>Auditoria de Inicio de Jornada - {fecha_cierre.strftime('%d/%m/%Y')}</p>
+            </div>
+            
+            <h2>Registro: Primera Orden del Dia por Tecnico</h2>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tecnico Asignado</th>
+                        <th>Hora de Inicio</th>
+                        <th>Colonia / Ubicacion</th>
+                        <th>N Orden</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filas_html}
+                </tbody>
+            </table>
+            
+            <div class="footer">
+                <p>Generado automaticamente por el Monitor Operativo MaxCom PRO.</p>
+                <p>Centro de Reportes • Control de Calidad Interno</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        # 5. Generar PDF
+        pdf_bytes = HTML(string=html_content).write_pdf()
+        return pdf_bytes
+
+    except Exception as e:
+        print(f"Error al generar PDF de Primera Orden: {e}")
+        return None
