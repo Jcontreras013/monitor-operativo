@@ -209,6 +209,7 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = pd.to_numeric(df_nube[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
+                # 🚨 ORDENAMIENTO CRÍTICO BLINDADO (NUBE) 🚨
                 if 'NUM' in df_nube.columns:
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
@@ -534,7 +535,6 @@ def main():
                         file_act_ptr = file_item
                     elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
                         file_disp_ptr = file_item
-                        # 💾 GUARDAR CACHÉ EN DISCO
                         try:
                             with open("cache_fttx.tmp", "wb") as f:
                                 f.write(file_item.getvalue())
@@ -543,7 +543,6 @@ def main():
                         except:
                             pass
 
-            # 🕒 LÓGICA DE MODO TARDE, FIN DE SEMANA, O USUARIO ANDRÉS
             ahora_hx = get_honduras_time()
             es_horario_tarde = ahora_hx.hour >= 17
             es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
@@ -553,7 +552,6 @@ def main():
             if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
                 if os.path.exists("cache_fttx.tmp"):
                     try:
-                        # LEEMOS EN BYTES PARA QUE EL CACHÉ DE STREAMLIT NO FALLE
                         with open("cache_fttx.tmp", "rb") as f:
                             file_disp_ptr = f.read()
                             
@@ -1177,6 +1175,7 @@ def main():
                 st.dataframe(res_otros_monitor.head(8), hide_index=True, use_container_width=True)
                 st.write(f"**Total Otros: {res_otros_monitor['Cant'].sum()}**")
 
+        # 🚨 REGLA DE DIAMANTE APLICADA: CONSOLIDADO USA SOLO ASIGNADAS 🚨
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
             df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
@@ -1238,7 +1237,7 @@ def main():
             
         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
         
-        if col_bt1_v.button("⏳ TODAS LAS PENDIENTES", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
         if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
@@ -1248,7 +1247,7 @@ def main():
         status_final_btn = st.session_state.st_btn_v_active
 
         if status_final_btn == "PENDIENTE": 
-            df_v_tabla_monitor = df_todas_pendientes_monitor
+            df_v_tabla_monitor = df_solo_asignadas_monitor
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
