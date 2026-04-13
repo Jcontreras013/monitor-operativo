@@ -20,6 +20,12 @@ try:
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
+# 🚨 NUEVA IMPORTACIÓN: Módulo Biométrico 🚨
+try:
+    import biometrico
+except ImportError:
+    st.error("⚠️ Falta el archivo 'biometrico.py'. Asegúrate de crearlo en la misma carpeta para ver el reporte Biométrico.")
+
 try:
     from tools import (
         COLUMNS_MAPPING, 
@@ -550,6 +556,7 @@ def main():
             if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None:
                 if os.path.exists("cache_fttx.tmp"):
                     try:
+                        # LEEMOS EN BYTES PARA QUE EL CACHÉ DE STREAMLIT NO FALLE
                         with open("cache_fttx.tmp", "rb") as f:
                             file_disp_ptr = f.read()
                             
@@ -565,10 +572,8 @@ def main():
         elif rol_usuario == 'jefe' and es_movil:
             st.caption("📱 _Modo Móvil: Usa el botón de arriba para actualizar._")
 
-    # 🚨 LÓGICA DE ANDRÉS: Si sube solo reporte y no hay caché de FTTX, genera uno falso 🚨
     if 'df_base' not in st.session_state or btn_reprocesar:
         if es_usuario_andres and file_act_ptr is not None and file_disp_ptr is None:
-            # Crear un archivo Excel en memoria vacío para que el depurador no falle
             df_vacio = pd.DataFrame(columns=['ID', 'STATUS'])
             b_io = io.BytesIO()
             df_vacio.to_excel(b_io, index=False)
@@ -719,35 +724,35 @@ def main():
     filtro_motivo = []
     check_criticos_diamante = False
     tec_filtro_monitor = "Todos"
-    
-    # 🚨 FILTROS MOVidos AL SIDEBAR (BARRA LATERAL) COMO LO SOLICITASTE 🚨
-    with st.sidebar:
+
+    with sidebar_bottom:
+        st.divider()
         if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
+            nav_menu_diamante = st.sidebar.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
         else:
             nav_menu_diamante = "⚡ Monitor en Vivo"
             
         if nav_menu_diamante == "⚡ Monitor en Vivo":
-            st.divider()
-            st.markdown("### 🎛️ Filtros en Vivo")
-            
-            if rol_usuario in ['admin', 'jefe']:
-                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                
-                check_criticos_diamante = st.toggle(f"🚨 Solo Críticas ({total_off_count_viva})")
-                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            st.markdown("### 🎛️ Filtros Múltiples")
             
             lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
             lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
             lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
             
-            st.markdown("#### 🛠️ Filtros Múltiples")
-            filtro_actividad = st.multiselect("Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-            filtro_estado = st.multiselect("Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-            filtro_motivo = st.multiselect("Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+            
+            st.divider() 
+            st.markdown("### 🔍 Filtros en Vivo")
+            if rol_usuario in ['admin', 'jefe']:
+                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+                
+                check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
+                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
 
     if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
@@ -817,9 +822,16 @@ def main():
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         
-        tab_dinamico, tab_diario, tab_semanal, tab_mensual, tab_gerencial = st.tabs([
-            "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual", "💼 Gerencial (Trimestral)"
+        # 🚨 PESTAÑA DEL BIOMÉTRICO INCLUIDA 🚨
+        tab_dinamico, tab_diario, tab_semanal, tab_mensual, tab_gerencial, tab_biometrico = st.tabs([
+            "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"
         ])
+
+        with tab_biometrico:
+            try:
+                biometrico.vista_biometrico()
+            except Exception as e:
+                st.error(f"Error al cargar la vista del biométrico: {e}")
 
         with tab_dinamico:
             st.subheader("📄 Reporte Dinámico en Vivo")
