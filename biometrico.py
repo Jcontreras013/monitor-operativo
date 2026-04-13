@@ -3,30 +3,18 @@ import streamlit as st
 import io
 
 def procesar_marcas(df_marcas, df_areas):
-    # Aseguramos que ambas tablas tengan ID como texto limpio para evitar errores de cruce
-    df_marcas['ID'] = df_marcas['ID'].astype(str).str.strip()
-    df_areas['ID'] = df_areas['ID'].astype(str).str.strip()
-    
+    # 1. Unir las marcas con las áreas asignadas en la pantalla
     df_completo = pd.merge(df_marcas, df_areas, on=['ID', 'Full Name'], how='left')
 
-    # Validar que existan las columnas de tiempo
-    if 'Date' not in df_completo.columns or 'Time' not in df_completo.columns:
-        st.error(f"Faltan columnas de fecha/hora. Columnas actuales: {df_completo.columns.tolist()}")
-        return
-
-    # Formatear y ordenar cronológicamente
-    df_completo['Datetime'] = pd.to_datetime(df_completo['Date'].astype(str).str.strip() + ' ' + df_completo['Time'].astype(str).str.strip(), format='%d/%m/%Y %H:%M', errors='coerce')
+    # 2. Formatear y ordenar cronológicamente
+    df_completo['Datetime'] = pd.to_datetime(df_completo['Date'] + ' ' + df_completo['Time'], format='%d/%m/%Y %H:%M', errors='coerce')
     df_completo = df_completo.dropna(subset=['Datetime']).sort_values(['ID', 'Datetime'])
 
-    if df_completo.empty:
-        st.warning("No hay registros válidos después de procesar las fechas y horas.")
-        return
-
-    # Eliminar marcas dobles por error humano (menos de 15 min de diferencia)
+    # 3. Eliminar marcas dobles por error humano (menos de 15 min de diferencia)
     df_completo['Time_Diff'] = df_completo.groupby(['ID', 'Date'])['Datetime'].diff()
     df_limpio = df_completo[(df_completo['Time_Diff'].isna()) | (df_completo['Time_Diff'] > pd.Timedelta(minutes=15))].copy()
 
-    # Función de Inferencia Lógica según el Área
+    # 4. Función de Inferencia Lógica según el Área
     def etiquetar_marcas(grupo):
         area = str(grupo['Area'].iloc[0]).strip().upper() if pd.notna(grupo['Area'].iloc[0]) else "ADMINISTRACION"
         n = len(grupo)
@@ -55,13 +43,15 @@ def procesar_marcas(df_marcas, df_areas):
     df_final = df_limpio.groupby(['ID', 'Date'], group_keys=False).apply(etiquetar_marcas)
     df_final = df_final[df_final['Evento'] != '']
 
-    # Formato innegociable HH:mm:ss
+    # 5. Formato innegociable HH:mm:ss sin fecha
     df_final['Time'] = df_final['Datetime'].dt.strftime('%H:%M:%S')
 
-    # PIVOTAR LA TABLA (Formato Horizontal)
+    # ---------------------------------------------------------
+    # LA ÚNICA ADICIÓN: PIVOTAR LA TABLA (Formato Horizontal)
+    # ---------------------------------------------------------
     df_pivot = df_final.pivot(index=['ID', 'Full Name', 'Date', 'Area'], columns='Evento', values='Time').reset_index()
     
-    # Definir el orden lógico de las columnas de izquierda a derecha
+    # Definir el orden lógico de las columnas
     orden_columnas = ['ID', 'Full Name', 'Date']
     eventos_logicos = ['Entrada', 'Salida Almuerzo', 'Entrada Almuerzo', 'Break', 'Salida']
     
@@ -71,29 +61,30 @@ def procesar_marcas(df_marcas, df_areas):
             
     df_pivot = df_pivot[orden_columnas]
     df_pivot = df_pivot.rename(columns={'Full Name': 'Nombre Completo', 'Date': 'Fecha'})
+    # ---------------------------------------------------------
 
-    # Renderizar en Streamlit
     st.write("---")
     st.write("### 2️⃣ Reporte de Asistencia Formateado")
     
+    # Crear pestañas automáticas según las áreas detectadas
     areas_presentes = [a for a in df_pivot['Area'].unique() if str(a).strip() != ""]
     
     if areas_presentes:
         tabs = st.tabs(areas_presentes)
         for i, area in enumerate(areas_presentes):
             with tabs[i]:
-                # El errors='ignore' protege contra fallos si la columna no existe
-                df_area = df_pivot[df_pivot['Area'] == area].drop(columns=['Area', 'ID'], errors='ignore')
+                # Filtramos por área, quitamos columnas redundantes y mostramos
+                df_area = df_pivot[df_pivot['Area'] == area].drop(columns=['Area', 'ID'])
                 st.dataframe(df_area.fillna("-"), use_container_width=True, hide_index=True)
     else:
-        st.dataframe(df_pivot.drop(columns=['Area', 'ID'], errors='ignore').fillna("-"), use_container_width=True, hide_index=True)
+        st.dataframe(df_pivot.drop(columns=['Area', 'ID']).fillna("-"), use_container_width=True, hide_index=True)
 
 
 def vista_biometrico():
     st.title("⏱️ Módulo de Depuración Biométrica")
     st.markdown("Sube tu archivo `Transaction.csv`. Asigna el área a cada empleado en la tabla y presiona procesar.")
     
-    # Botón de emergencia para resetear la memoria por si cambiaste un empleado de área por error
+    # Única protección extra añadida: Botón de reset por si te equivocas asignando un área
     if st.button("🔄 Reiniciar Asignación de Áreas"):
         if 'mapeo_areas' in st.session_state:
             del st.session_state['mapeo_areas']
@@ -103,53 +94,37 @@ def vista_biometrico():
     
     if archivo:
         try:
-            # 1. Lectura a prueba de balas (utf-8-sig elimina el carácter BOM invisible que genera el error 'ID')
-            content = archivo.getvalue().decode('utf-8-sig', errors='replace')
+            # 1. Leemos el archivo con io.StringIO y utf-8-sig para eliminar cualquier error de "ID" invisible desde la raíz
+            content = archivo.getvalue().decode('utf-8-sig', errors='ignore')
             lineas = content.splitlines()
             
-            # 2. Buscar la línea exacta donde están "ID" y "Full Name"
-            inicio_datos = -1
+            # Buscar dónde empiezan realmente los datos saltando la basura de arriba
+            inicio_datos = 0
             for i, linea in enumerate(lineas):
-                if "ID" in linea.upper() and "FULL NAME" in linea.upper():
+                if "ID" in linea and "Full Name" in linea:
                     inicio_datos = i
                     break
                     
-            if inicio_datos == -1:
-                st.error("❌ El archivo no contiene las columnas necesarias (ID y Full Name).")
-                return
-                
-            # 3. Leer el CSV desde la fila correcta
             csv_valido = "\n".join(lineas[inicio_datos:])
-            # Forzamos separador por comas estándar para evitar confusiones
-            df_marcas = pd.read_csv(io.StringIO(csv_valido), sep=',', skipinitialspace=True, on_bad_lines='skip')
+            df_marcas = pd.read_csv(io.StringIO(csv_valido))
             
-            # 4. Limpieza de nombres de columnas
+            # Limpiamos los nombres de columnas por si vienen con espacios
             df_marcas.columns = [str(col).strip() for col in df_marcas.columns]
             
-            # Comprobación rápida para evitar cuelgues
-            if 'ID' not in df_marcas.columns or 'Full Name' not in df_marcas.columns:
-                st.error("❌ Ocurrió un error leyendo las columnas.")
-                st.write("Detectadas:", df_marcas.columns.tolist())
-                return
-                
-            df_marcas['ID'] = df_marcas['ID'].astype(str).str.strip()
-            df_marcas['Full Name'] = df_marcas['Full Name'].astype(str).str.strip()
+            df_marcas['ID'] = df_marcas['ID'].astype(str)
             
-            # 5. Lógica de Memoria de Empleados en Pantalla
+            # Extraer lista única de empleados
             empleados_unicos = df_marcas[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
-            empleados_unicos['Area'] = "ADMINISTRACION" 
             
-            if 'mapeo_areas' in st.session_state:
-                empleados_previos = st.session_state['mapeo_areas']
-                if 'ID' in empleados_previos.columns and 'Area' in empleados_previos.columns:
-                    dict_areas = dict(zip(empleados_previos['ID'], empleados_previos['Area']))
-                    empleados_unicos['Area'] = empleados_unicos['ID'].map(dict_areas).fillna("ADMINISTRACION")
-                    
-            st.session_state['mapeo_areas'] = empleados_unicos
+            # Guardar en la memoria temporal de la app para que no tengas que clasificar cada vez
+            if 'mapeo_areas' not in st.session_state:
+                empleados_unicos['Area'] = "ADMINISTRACION" # Asignación por defecto
+                st.session_state['mapeo_areas'] = empleados_unicos
                 
             st.write("### 1️⃣ Asignación Rápida de Áreas")
             st.info("Selecciona el área correspondiente. Puedes cambiarla dando doble clic en la columna 'Area'.")
             
+            # Editor interactivo de Streamlit (st.data_editor)
             areas_editadas = st.data_editor(
                 st.session_state['mapeo_areas'],
                 column_config={
@@ -159,15 +134,16 @@ def vista_biometrico():
                         required=True
                     )
                 },
-                disabled=["ID", "Full Name"], 
+                disabled=["ID", "Full Name"], # Proteger nombre e ID para no borrarlos por accidente
                 hide_index=True,
                 use_container_width=True
             )
             
             st.session_state['mapeo_areas'] = areas_editadas
 
+            # Botón de ejecución
             if st.button("🚀 Generar Reporte Depurado", type="primary"):
                 procesar_marcas(df_marcas, areas_editadas)
                 
         except Exception as e:
-            st.error(f"❌ Error crítico procesando el archivo. Detalle: {e}")
+            st.error(f"❌ Error leyendo el archivo. Detalle: {e}")
