@@ -490,13 +490,14 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets. Verifica tus secretos.")
         conn = None
 
-    sidebar_top = st.sidebar.container()
-    sidebar_bottom = st.sidebar.container()
-    
-    with sidebar_bottom:
-        st.markdown("<br><br>", unsafe_allow_html=True)
+    # 🚨 LÍNEA RESTAURADA: Barra Lateral Completa 🚨
+    with st.sidebar:
+        if rol_usuario in ['admin', 'jefe']:
+            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
+        else:
+            nav_menu_diamante = "⚡ Monitor en Vivo"
+            
         st.divider()
-
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None:
@@ -701,65 +702,59 @@ def main():
     ahora_local = get_honduras_time()
     hoy_date_valor = ahora_local.date()
 
-    with sidebar_top:
-        if rol_usuario in ['admin', 'jefe']:
-            nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
+    df_base_activa = df_base.copy()
+    
+    filtro_actividad = []
+    filtro_estado = []
+    filtro_motivo = []
+    
+    if nav_menu_diamante == "⚡ Monitor en Vivo":
+        st.divider()
+        st.markdown("### 🎛️ Filtros Múltiples")
+        
+        lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
+        lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+        lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
+        
+        filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+        filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+        filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+        
+    if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
+        if rol_usuario in ['admin', 'jefe'] and nav_menu_diamante == "⚡ Monitor en Vivo":
+            st.divider() 
+            st.header("🔍 Filtros en Vivo")
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            
+            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+            
+            check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
+            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
         else:
-            nav_menu_diamante = "⚡ Monitor en Vivo"
-            
-        df_base_activa = df_base.copy()
-        
-        filtro_actividad = []
-        filtro_estado = []
-        filtro_motivo = []
-        
-        if nav_menu_diamante == "⚡ Monitor en Vivo":
-            st.divider()
-            st.markdown("### 🎛️ Filtros Múltiples")
-            
-            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
-            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
-            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
-            
-            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
-            
-        if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
-            if rol_usuario in ['admin', 'jefe'] and nav_menu_diamante == "⚡ Monitor en Vivo":
-                st.divider() 
-                st.header("🔍 Filtros en Vivo")
-                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                
-                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                
-                check_criticos_diamante = st.toggle(f"Ver solo Órdenes Críticas ({total_off_count_viva})")
-                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
-            else:
-                check_criticos_diamante = False
-                tec_filtro_monitor = "Todos"
+            check_criticos_diamante = False
+            tec_filtro_monitor = "Todos"
 
-            df_monitor_filtrado = df_base_activa.copy()
+        df_monitor_filtrado = df_base_activa.copy()
+        
+        if len(filtro_actividad) > 0:
+            df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
+        if len(filtro_estado) > 0:
+            df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
+        if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns:
+            df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
+        
+        if check_criticos_diamante:
+            mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
+            mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
+            mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
+            df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
             
-            if len(filtro_actividad) > 0:
-                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
-            if len(filtro_estado) > 0:
-                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
-            if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns:
-                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
-            
-            if check_criticos_diamante:
-                mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
-                mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
-                mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
-                df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
-                
-            if tec_filtro_monitor != "Todos":
-                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
-        else:
-            df_monitor_filtrado = df_base_activa.copy()
+        if tec_filtro_monitor != "Todos":
+            df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
+    else:
+        df_monitor_filtrado = df_base_activa.copy()
 
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         try:
@@ -1142,7 +1137,6 @@ def main():
                 txt = act + " " + com
                 is_off = r.get('ES_OFFLINE', False)
                 
-                # Clasificación mutuamente excluyente
                 if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
                     g_tab_list.append("OTROS")
                     sub_tab_list.append(act if act != "" else "N/A")
