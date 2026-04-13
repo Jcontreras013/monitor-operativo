@@ -502,6 +502,13 @@ def main():
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
         pass 
 
+    # 🚨 INICIALIZACIÓN SEGURA DE VARIABLES (A PRUEBA DE CRASH) 🚨
+    filtro_actividad = []
+    filtro_estado = []
+    filtro_motivo = []
+    check_criticos_diamante = False
+    tec_filtro_monitor = "Todos"
+    
     with sidebar_top:
         if rol_usuario in ['admin', 'jefe']:
             nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
@@ -511,12 +518,6 @@ def main():
         if nav_menu_diamante == "⚡ Monitor en Vivo":
             st.divider()
             st.markdown("### 🎛️ Filtros Múltiples")
-            
-            filtro_actividad = []
-            filtro_estado = []
-            filtro_motivo = []
-            check_criticos_diamante = False
-            tec_filtro_monitor = "Todos"
             
             if 'df_base' in st.session_state and st.session_state.df_base is not None:
                 df_base_activa_temp = st.session_state.df_base.copy()
@@ -757,7 +758,7 @@ def main():
     hoy_date_valor = ahora_local.date()
 
     df_base_activa = df_base.copy()
-    
+
     if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
         
@@ -1045,7 +1046,6 @@ def main():
                 ).round(1)
                 st.dataframe(df_pivot_diario, use_container_width=True)
 
-            # 🚨 INICIO DE NUEVA TABLA: PRIMERA ORDEN DEL DÍA 🚨
             st.markdown("### 🌅 Primera Orden del Día por Técnico")
             
             df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
@@ -1062,7 +1062,6 @@ def main():
                     
                     df_primera_mostrar = df_primera_mostrar.sort_values(by='HORA_INI_DT')
                     
-                    # 🚨 REGLA APLICADA: Mostrar la hora limpia HH:mm:ss sin fecha 🚨
                     df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
                     df_primera_mostrar = df_primera_mostrar.drop(columns=['HORA_INI_DT'])
                     
@@ -1083,7 +1082,6 @@ def main():
                     st.info("No hay registros de inicio de órdenes para esta fecha.")
             else:
                  st.info("No hay registros de inicio de órdenes para esta fecha.")
-            # 🚨 FIN DE NUEVA TABLA 🚨
 
             st.markdown("### 📥 Exportación")
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
