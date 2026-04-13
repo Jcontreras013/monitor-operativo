@@ -91,7 +91,7 @@ def procesar_marcas(df_marcas, df_areas):
 
 def vista_biometrico():
     st.title("⏱️ Módulo de Depuración Biométrica")
-    st.markdown("Sube tu archivo `Transaction.csv`. Asigna el área a cada empleado en la tabla y presiona procesar.")
+    st.markdown("Sube tu archivo. Asigna el área a cada empleado en la tabla y presiona procesar.")
     
     # Botón de emergencia para resetear la memoria por si se trabó con el error anterior
     if st.button("🔄 Reiniciar Memoria de Áreas (Clic si tienes errores)"):
@@ -99,7 +99,7 @@ def vista_biometrico():
             del st.session_state['mapeo_areas']
         st.success("Memoria reiniciada correctamente. Ya puedes subir el archivo.")
 
-    archivo = st.file_uploader("📥 Cargar Transaction.csv", type=['csv'])
+    archivo = st.file_uploader("📥 Cargar Reporte Biométrico", type=['csv'])
     
     if archivo:
         try:
@@ -107,37 +107,49 @@ def vista_biometrico():
             content = archivo.getvalue().decode('utf-8-sig', errors='replace')
             lineas = content.splitlines()
             
-            # 2. Búsqueda ultra-flexible de encabezados
+            # 2. Búsqueda ultra-flexible de encabezados (Soporta Inglés y Español)
             inicio_datos = -1
             for i, linea in enumerate(lineas):
-                # Pasamos a mayúsculas para evitar problemas de "id" vs "ID"
-                if "ID" in linea.upper() and "FULL NAME" in linea.upper():
+                linea_up = linea.upper()
+                if ("ID" in linea_up and "FULL NAME" in linea_up) or \
+                   ("NO." in linea_up and "NOMBRE" in linea_up) or \
+                   ("DEPARTAMENTO" in linea_up and "NOMBRE" in linea_up):
                     inicio_datos = i
                     break
                     
             if inicio_datos == -1:
-                st.error("❌ El archivo no contiene las columnas necesarias (ID y Full Name).")
-                st.write("Primeras líneas leídas del archivo:", lineas[:5])
-                return
+                # Si no encuentra encabezado basura, asumimos que arranca en la fila 0
+                inicio_datos = 0
                 
             # 3. Leer el CSV permitiendo separadores dinámicos (, o ;)
             csv_valido = "\n".join(lineas[inicio_datos:])
             df_marcas = pd.read_csv(io.StringIO(csv_valido), sep=None, engine='python')
             
-            # 4. Limpieza agresiva de columnas (quita espacios invisibles y saltos de línea)
+            # 4. Limpieza agresiva de columnas (quita espacios invisibles)
             df_marcas.columns = [str(col).strip() for col in df_marcas.columns]
             
-            # 5. Renombrar dinámicamente si el archivo lo escribió con minúsculas u otros formatos
-            for col in df_marcas.columns:
-                if col.upper() == 'ID':
+            # 5. TRADUCTOR DINÁMICO: Convierte el formato en español al estándar que usa tu lógica
+            columnas_actuales = list(df_marcas.columns)
+            for col in columnas_actuales:
+                col_up = col.upper()
+                if col_up in ['ID', 'NO.', 'NO', 'NÚMERO']:
                     df_marcas.rename(columns={col: 'ID'}, inplace=True)
-                elif col.upper() == 'FULL NAME':
+                elif col_up in ['FULL NAME', 'NOMBRE', 'NOMBRES']:
                     df_marcas.rename(columns={col: 'Full Name'}, inplace=True)
+                elif col_up in ['DATE', 'FECHA']:
+                    df_marcas.rename(columns={col: 'Date'}, inplace=True)
+                elif col_up in ['TIME', 'HORA']:
+                    df_marcas.rename(columns={col: 'Time'}, inplace=True)
+                elif col_up in ['FECHA/HORA', 'FECHA Y HORA']:
+                    # Separar la columna combinada en Date y Time
+                    dt_temp = pd.to_datetime(df_marcas[col], errors='coerce')
+                    df_marcas['Date'] = dt_temp.dt.strftime('%d/%m/%Y')
+                    df_marcas['Time'] = dt_temp.dt.strftime('%H:%M:%S')
 
             # Comprobación de diagnóstico
-            if 'ID' not in df_marcas.columns:
-                st.error("❌ Sigo sin encontrar la columna 'ID'.")
-                st.write("Las columnas exactas que la app detectó son:", df_marcas.columns.tolist())
+            if 'ID' not in df_marcas.columns or 'Full Name' not in df_marcas.columns:
+                st.error("❌ Aún con el traductor, no encuentro las columnas clave.")
+                st.write("Las columnas exactas detectadas son:", df_marcas.columns.tolist())
                 return
                 
             df_marcas['ID'] = df_marcas['ID'].astype(str).str.strip()
