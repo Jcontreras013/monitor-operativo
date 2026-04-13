@@ -502,7 +502,6 @@ def main():
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
         pass 
 
-    # 🚨 INICIALIZACIÓN SEGURA DE VARIABLES (A PRUEBA DE CRASH) 🚨
     filtro_actividad = []
     filtro_estado = []
     filtro_motivo = []
@@ -758,7 +757,7 @@ def main():
     hoy_date_valor = ahora_local.date()
 
     df_base_activa = df_base.copy()
-
+    
     if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
         
@@ -1078,6 +1077,17 @@ def main():
                             "NUM": st.column_config.TextColumn("N° Orden")
                         }
                     )
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    col_btn1, col_btn2 = st.columns([1, 2])
+                    with col_btn1:
+                        if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
+                            try:
+                                pdf_primera = generar_pdf_primera_orden(df_base, fecha_cal_sel)
+                                if pdf_primera:
+                                    st.download_button("📥 Descargar PDF (Inicio Jornada)", data=pdf_primera, file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                            except Exception as e:
+                                st.error(f"Error generando PDF: {e}")
                 else:
                     st.info("No hay registros de inicio de órdenes para esta fecha.")
             else:
