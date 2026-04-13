@@ -246,7 +246,7 @@ def procesar_auditoria_semanal(df_input):
 
 
 # ==============================================================================
-# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA)
+# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA CON FECHAS EN LUGAR DE DÍAS)
 # ==============================================================================
 def procesar_matriz_telemetria(df_raw):
     try:
@@ -259,7 +259,30 @@ def procesar_matriz_telemetria(df_raw):
         df = df_raw.iloc[header_idx + 1:].copy()
         raw_columns = df_raw.iloc[header_idx].astype(str).str.strip().tolist()
         
-        clean_columns = [f"Dia_{i-1}" if i > 1 else f"Info_{i}" if col.lower() in ['nan', ''] else col for i, col in enumerate(raw_columns)]
+        # Extracción Inteligente de Fechas y Días
+        clean_columns = []
+        for i, col in enumerate(raw_columns):
+            col_str = str(col).strip()
+            if col_str.lower() in ['nan', '', 'none']:
+                clean_columns.append(f"Info_{i}")
+            elif i == 0:
+                clean_columns.append(col_str if col_str else "Placa")
+            elif i == 1:
+                clean_columns.append(col_str if col_str else "Opcion")
+            elif 'TOTAL' in col_str.upper():
+                clean_columns.append(col_str)
+            else:
+                try:
+                    fecha_obj = pd.to_datetime(col_str, errors='coerce')
+                    if pd.notna(fecha_obj):
+                        dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+                        nombre_dia = dias_semana[fecha_obj.weekday()]
+                        clean_columns.append(f"{nombre_dia} {fecha_obj.strftime('%d/%m')}")
+                    else:
+                        clean_columns.append(col_str if col_str else f"Dia_{i-1}")
+                except:
+                    clean_columns.append(col_str if col_str else f"Dia_{i-1}")
+        
         df.columns = clean_columns
         
         df = forzar_columnas_unicas(df)
@@ -399,7 +422,8 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
             elif col == 'Promedio Vel. (km/h)': w = w_prom
             elif str(col).upper() == 'TOTAL': w = w_total
             else: w = w_dia
-            pdf.cell(w, 6, safestr(str(col).replace('Dia_', '')[:20]), border=1, align="C", fill=True)
+            # Aquí ya no quitamos 'Dia_' para que respete el nuevo formato de fechas
+            pdf.cell(w, 6, safestr(str(col)[:20]), border=1, align="C", fill=True)
         pdf.ln()
         
         pdf.set_font("Helvetica", "", font_size)
