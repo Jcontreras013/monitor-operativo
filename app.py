@@ -390,7 +390,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
@@ -424,7 +424,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
                 m_diff_val = (ahora_momento_ts - row_check['HORA_INI']).total_seconds() / 60
                 act_v = str(row_check.get('ACTIVIDAD', '')).upper()
                 
-                if any(p in act_v for p in ['PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI']):
+                if any(p in act_v for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']):
                     return False
                 if 'SOPFIBRA' not in act_v:
                     return False
@@ -440,7 +440,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
             act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
             
-            if any(p in act_v_name for p in ['PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI']): 
+            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']): 
                 return False
             if 'SOPFIBRA' not in act_v_name: 
                 return False
@@ -916,7 +916,7 @@ def main():
             df_plex_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'PLEX']
             
             df_resi_asignadas_rep = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_cerr_rep = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'RESIDENCIAL'] if fecha_cal_sel == hoy_date_valor else df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'RESIDENCIAL']
 
             total_p_rep = len(df_plex_asignadas_rep) + len(df_plex_cerr_rep)
             avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
@@ -997,8 +997,8 @@ def main():
                 
                 tot_p = resumen_global_rep['ASIGNADAS'].sum()
                 tot_c = resumen_global_rep['CERRADAS'].sum()
-                fila_total = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
-                resumen_global_rep = pd.concat([resumen_global_rep, fila_total], ignore_index=True)
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
+                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 
                 st.dataframe(
                     resumen_global_rep, 
@@ -1042,16 +1042,19 @@ def main():
 
         with tab_mensual:
             st.subheader("Visión Macro Gerencial")
-            col_anio = st.columns(1)[0]
-            anio_sel = col_anio.number_input("Año:", min_value=2024, max_value=2030, value=2026)
+            col_mes, col_anio = st.columns(2)
+            meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+            with col_mes: mes_sel = st.selectbox("Mes:", meses, index=hoy_date_valor.month - 1)
+            with col_anio: anio_sel = st.number_input("Año:", min_value=2024, max_value=2030, value=2026)
             
             st.markdown("### 🏢 Comparativa Segmento")
             fig_pie_mensual = px.pie(df_base, names='SEGMENTO', hole=.4, template="plotly_dark")
             st.plotly_chart(fig_pie_mensual, use_container_width=True)
             
             if st.button("🚀 GENERAR PDF MENSUAL", use_container_width=True, type="primary"):
-                pdf_men_bytes = generar_pdf_mensual(df_base, hoy_date_valor.month, anio_sel)
-                st.download_button("📥 Descargar PDF Mensual", data=pdf_men_bytes, file_name=f"Mensual_{hoy_date_valor.month}_{anio_sel}.pdf", mime="application/pdf")
+                mes_num = meses.index(mes_sel) + 1
+                pdf_men_bytes = generar_pdf_mensual(df_base, mes_num, anio_sel)
+                st.download_button("📥 Descargar PDF Mensual", data=pdf_men_bytes, file_name=f"Mensual_{mes_sel}_{anio_sel}.pdf", mime="application/pdf")
             
         return
 
@@ -1139,6 +1142,7 @@ def main():
                 txt = act + " " + com
                 is_off = r.get('ES_OFFLINE', False)
                 
+                # Clasificación mutuamente excluyente
                 if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
                     g_tab_list.append("OTROS")
                     sub_tab_list.append(act if act != "" else "N/A")
@@ -1270,7 +1274,6 @@ def main():
         elif status_final_btn == "C_HOY": 
             df_v_tabla_monitor = df_cerradas_hoy_monitor
         else: 
-            # 🚨 REGLA: ANULADAS SOLO DE HOY 🚨
             df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
 
         t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL DE CONTROL OPERATIVO", "📊 ANALISIS Y GANTT", "📈 ANALÍTICA"])
