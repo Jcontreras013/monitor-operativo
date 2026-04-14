@@ -9,6 +9,7 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -410,14 +411,21 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
-@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
+# 🚨 SOLUCIÓN CACHÉ: Evita el FileNotFoundError ignorando el objeto de archivo al hacer el hash
+@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60, hash_funcs={io.BytesIO: lambda _: None, UploadedFile: lambda _: None, bytes: lambda _: None})
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
             file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
+        elif hasattr(file_dispos, 'read'):
+            file_dispos.seek(0)
+            file_dispos_obj = file_dispos
         else:
             file_dispos_obj = file_dispos
+
+        if hasattr(file_activ, 'read'):
+            file_activ.seek(0)
 
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
         
@@ -634,6 +642,7 @@ def main():
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         
+        # 🚨 LÓGICA DE NUBE: CUALQUIERA QUE SUBA ACTIVIDADES ACTUALIZA LA BASE 🚨
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
                 try:
@@ -677,7 +686,8 @@ def main():
                 st.session_state.df_base = res_p_diamante
                 st.session_state.df_hist = res_h_diamante
                 
-                if conn is not None and es_admin:
+                # 🚨 AHORA TODOS LOS ROLES ACTUALIZAN LA BASE PRINCIPAL (Sheet1) 🚨
+                if conn is not None:
                     with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
                         try:
                             df_new = res_p_diamante.copy()
@@ -714,6 +724,7 @@ def main():
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             
+                            # 🚨 EL ARCHIVO FTTX SOLO LO ACTUALIZA EL ADMIN 🚨
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
                                     if hasattr(file_disp_ptr, 'read'):
