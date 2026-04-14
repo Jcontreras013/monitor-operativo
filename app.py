@@ -411,7 +411,6 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
-# 🚨 SOLUCIÓN CACHÉ: Evita el FileNotFoundError ignorando el objeto de archivo al hacer el hash
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60, hash_funcs={io.BytesIO: lambda _: None, UploadedFile: lambda _: None, bytes: lambda _: None})
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
@@ -508,6 +507,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
+    es_usuario_andres = (str(rol_usuario).strip().lower() == 'andres')
     
     ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
@@ -581,6 +581,8 @@ def main():
         mostrar_cargador = False
         if rol_usuario in ['admin', 'jefe'] and not es_movil:
             mostrar_cargador = True
+        elif es_usuario_andres:
+            mostrar_cargador = True
 
         file_act_ptr = None
         file_disp_ptr = None
@@ -642,7 +644,6 @@ def main():
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         
-        # 🚨 LÓGICA DE NUBE: CUALQUIERA QUE SUBA ACTIVIDADES ACTUALIZA LA BASE 🚨
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
                 try:
@@ -686,7 +687,6 @@ def main():
                 st.session_state.df_base = res_p_diamante
                 st.session_state.df_hist = res_h_diamante
                 
-                # 🚨 AHORA TODOS LOS ROLES ACTUALIZAN LA BASE PRINCIPAL (Sheet1) 🚨
                 if conn is not None:
                     with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
                         try:
@@ -724,7 +724,6 @@ def main():
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             
-                            # 🚨 EL ARCHIVO FTTX SOLO LO ACTUALIZA EL ADMIN 🚨
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
                                     if hasattr(file_disp_ptr, 'read'):
@@ -1310,6 +1309,11 @@ def main():
                 st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
+            # Creamos una cuadrícula de 6 columnas para los 6 velocímetros
+            st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Control de Gestión Operativa (Carga Total vs Mora de Días Anteriores)</h4><br>", unsafe_allow_html=True)
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            
+            # --- LÓGICA DE DATOS: CARGA TOTAL (Nuevas + Antiguas) ---
             df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
             df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
             
@@ -1325,8 +1329,36 @@ def main():
             total_v = len(df_solo_asignadas_monitor) + len(df_cerradas_hoy_monitor)
             avance_global = (len(df_cerradas_hoy_monitor) / total_v * 100) if total_v > 0 else 0
 
-            def crear_velocimetro_circular(valor, titulo):
-                color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
+            # --- LÓGICA DE DATOS: GESTIÓN DE MORA (Antiguas) ---
+            # Órdenes asignadas y pendientes que vienen de días anteriores (Retraso > 0)
+            df_antiguas_pendientes = df_solo_asignadas_monitor[df_solo_asignadas_monitor['DIAS_RETRASO'] > 0]
+            # Órdenes cerradas hoy que venían de días anteriores (Apertura antes de hoy)
+            df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
+            df_antiguas_cerradas = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['FECHA_APE_DT'].dt.date < hoy_date_valor]
+            
+            # Segmentamos las antiguas (Mora)
+            df_plex_antiguas_pend = df_antiguas_pendientes[df_antiguas_pendientes['SEGMENTO'] == 'PLEX']
+            df_plex_antiguas_cerr = df_antiguas_cerradas[df_antiguas_cerradas['SEGMENTO'] == 'PLEX']
+            df_resi_antiguas_pend = df_antiguas_pendientes[df_antiguas_pendientes['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_antiguas_cerr = df_antiguas_cerradas[df_antiguas_cerradas['SEGMENTO'] == 'RESIDENCIAL']
+
+            tot_antiguas_plex = len(df_plex_antiguas_pend) + len(df_plex_antiguas_cerr)
+            av_antiguas_plex = (len(df_plex_antiguas_cerr) / tot_antiguas_plex * 100) if tot_antiguas_plex > 0 else 0
+            
+            tot_antiguas_resi = len(df_resi_antiguas_pend) + len(df_resi_antiguas_cerr)
+            av_antiguas_resi = (len(df_resi_antiguas_cerr) / tot_antiguas_resi * 100) if tot_antiguas_resi > 0 else 0
+            
+            tot_antiguas_global = len(df_antiguas_pendientes) + len(df_antiguas_cerradas)
+            av_antiguas_global = (len(df_antiguas_cerradas) / tot_antiguas_global * 100) if tot_antiguas_global > 0 else 0
+
+            # FUNCIÓN PARA CREAR VELOCÍMETRO CIRCULAR (Simplificada para 6 columnas)
+            def crear_velocimetro_6cols(valor, titulo, es_mora=False):
+                # Si es Mora (antiguas), colores más exigentes. Si es avance normal, igual.
+                if es_mora:
+                    color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981")
+                else:
+                    color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
+                
                 fig = go.Figure(go.Pie(
                     values=[valor, max(0, 100 - valor)],
                     labels=['Completado', 'Pendiente'],
@@ -1338,30 +1370,52 @@ def main():
                     sort=False
                 ))
                 fig.update_layout(
-                    showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}},
-                    annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")]
+                    showlegend=False, 
+                    height=140, # Altura reducida para que entren 6 bien
+                    margin=dict(l=10, r=10, t=30, b=10), 
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 13}},
+                    annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=22, font_color=color_v, showarrow=False, font_weight="bold")]
                 )
                 return fig
 
-            col_g1, col_g2 = st.columns(2)
+            # --- DIBUJAR LAS 6 COLUMNAS ---
             
-            with col_g1:
-                st.plotly_chart(crear_velocimetro_circular(avance_resi, "🏠 Avance Residencial"), use_container_width=True, key="pie_resi")
-                if st.button("🔍 Ver Resumen Residencial", use_container_width=True, key="btn_resi"):
-                    mostrar_detalle_avance("RESIDENCIAL", df_resi_asignadas, df_resi_cerr)
-                    
-            with col_g2:
-                st.plotly_chart(crear_velocimetro_circular(avance_plex, "🏢 Avance PLEX"), use_container_width=True, key="pie_plex")
-                if st.button("🔍 Ver Resumen PLEX", use_container_width=True, key="btn_plex"):
-                    mostrar_detalle_avance("PLEX", df_plex_asignadas, df_plex_cerr)
-                
-            espacio_izq, col_global, espacio_der = st.columns([1, 1.5, 1])
-            
-            with col_global:
-                st.plotly_chart(crear_velocimetro_circular(avance_global, "🌍 Avance Global"), use_container_width=True, key="pie_global")
-                if st.button("🔍 Ver Resumen Global", use_container_width=True, key="btn_global"):
-                    mostrar_detalle_avance("GLOBAL", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
+            # 1. Total Residencial (Carga Total)
+            with col1:
+                st.plotly_chart(crear_velocimetro_6cols(avance_resi, "🏠 Total Residencial"), use_container_width=True, key="p1")
+                if st.button("🔍 Ver", use_container_width=True, key="b1"):
+                    mostrar_detalle_avance("RESIDENCIAL (TOTAL)", df_resi_asignadas, df_resi_cerr)
+
+            # 2. Total PLEX (Carga Total)
+            with col2:
+                st.plotly_chart(crear_velocimetro_6cols(avance_plex, "🏢 Total PLEX"), use_container_width=True, key="p2")
+                if st.button("🔍 Ver", use_container_width=True, key="b2"):
+                    mostrar_detalle_avance("PLEX (TOTAL)", df_plex_asignadas, df_plex_cerr)
+
+            # 3. Avance Global (Carga Total)
+            with col3:
+                st.plotly_chart(crear_velocimetro_6cols(avance_global, "🌍 Avance Global"), use_container_width=True, key="p3")
+                if st.button("🔍 Ver Global", use_container_width=True, key="b3"):
+                    mostrar_detalle_avance("GLOBAL (TOTAL)", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
+
+            # 4. Mora Residencial (Días Anteriores)
+            with col4:
+                st.plotly_chart(crear_velocimetro_6cols(av_antiguas_resi, "🏠 Mora Resi", es_mora=True), use_container_width=True, key="p4")
+                if st.button("🔍 Mora", use_container_width=True, key="b4"):
+                    mostrar_detalle_avance("MORA RESIDENCIAL", df_resi_antiguas_pend, df_resi_antiguas_cerr)
+
+            # 5. Mora PLEX (Días Anteriores)
+            with col5:
+                st.plotly_chart(crear_velocimetro_6cols(av_antiguas_plex, "🏢 Mora PLEX", es_mora=True), use_container_width=True, key="p5")
+                if st.button("🔍 Mora", use_container_width=True, key="b5"):
+                    mostrar_detalle_avance("MORA PLEX", df_plex_antiguas_pend, df_plex_antiguas_cerr)
+
+            # 6. Liquidación de Mora Global (Días Anteriores)
+            with col6:
+                st.plotly_chart(crear_velocimetro_6cols(av_antiguas_global, "🌍 Mora Global", es_mora=True), use_container_width=True, key="p6")
+                if st.button("🔍 Mora Global", use_container_width=True, key="b6"):
+                    mostrar_detalle_avance("MORA GLOBAL", df_antiguas_pendientes, df_antiguas_cerradas)
 
         st.divider()
         
