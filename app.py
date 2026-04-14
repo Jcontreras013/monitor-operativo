@@ -22,7 +22,7 @@ except ImportError:
 
 # 🚨 IMPORTACIÓN MÓDULO DE REPORTES (NUEVO) 🚨
 try:
-    from reportes import renderizar_centro_reportes
+    from reportes import reportes
 except ImportError:
     st.error("⚠️ Falta el archivo 'reportes.py'. Asegúrate de crearlo en la misma carpeta para ver el Centro de Reportes.")
 
