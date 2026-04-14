@@ -4,7 +4,6 @@ import plotly.express as px
 from datetime import timedelta, datetime
 import re
 
-# Importamos las herramientas necesarias desde tools.py
 from tools import (
     logica_generar_pdf,
     generar_tablas_gerenciales,
@@ -45,7 +44,10 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
             
         if st.button("📄 GENERAR REPORTE DINÁMICO (PDF)", use_container_width=True, type="primary"):
             pdf_bytes_rendimiento = logica_generar_pdf(df_dinamico_filtrado)
-            st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf", mime="application/pdf")
+            if pdf_bytes_rendimiento:
+                st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf", mime="application/pdf")
+            else:
+                st.error("Error generando PDF.")
 
     with tab_gerencial:
         st.subheader("📊 Reporte Gerencial Unificado")
@@ -105,14 +107,17 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
                     if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
                         with st.spinner("Dibujando secciones por técnico..."):
                             pdf_bytes = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
-                            st.download_button(
-                                label="📥 Descargar Reporte PDF",
-                                data=pdf_bytes,
-                                file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf",
-                                mime="application/pdf",
-                                type="primary",
-                                use_container_width=True
-                            )
+                            if pdf_bytes:
+                                st.download_button(
+                                    label="📥 Descargar Reporte PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                    mime="application/pdf",
+                                    type="primary",
+                                    use_container_width=True
+                                )
+                            else:
+                                st.error("Error generando PDF.")
                 except Exception as e:
                     st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
     
@@ -120,8 +125,6 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
         st.subheader("📦 Archivo de Cierre de Jornada")
         fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
         
-        # Como df_monitor_filtrado viene de app.py, lo usamos directo si no es None. 
-        # Si es None (por la lógica de las pestañas), usamos df_base.
         df_uso = df_monitor_filtrado if df_monitor_filtrado is not None else df_base
         
         mask_vivas_espejo = df_uso['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -283,6 +286,8 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
                             pdf_primera = generar_pdf_primera_orden(df_base, fecha_cal_sel)
                             if pdf_primera:
                                 st.download_button("📥 Descargar PDF (Inicio Jornada)", data=pdf_primera, file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                            else:
+                                st.error("No se pudo generar el documento PDF.")
                         except Exception as e:
                             st.error(f"Error generando PDF: {e}")
             else:
@@ -293,7 +298,10 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
         st.markdown("### 📥 Exportación")
         if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
             pdf_bytes_archivo_diario = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
-            st.download_button("📥 Descargar Archivo (PDF)", data=pdf_bytes_archivo_diario, file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf")
+            if pdf_bytes_archivo_diario:
+                st.download_button("📥 Descargar Archivo (PDF)", data=pdf_bytes_archivo_diario, file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf")
+            else:
+                st.error("Error generando PDF de Cierre Diario.")
         
         st.divider()
         with st.expander("Ver Lista Detallada"):
@@ -307,7 +315,10 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
             
             if st.button("🚀 GENERAR PDF SEMANAL", use_container_width=True, type="primary"):
                 pdf_sem_bytes = generar_pdf_semanal(df_base, rango_fecha[0], rango_fecha[1])
-                st.download_button("📥 Descargar PDF Semanal", data=pdf_sem_bytes, file_name=f"Semanal_{rango_fecha[0]}_al_{rango_fecha[1]}.pdf", mime="application/pdf")
+                if pdf_sem_bytes:
+                    st.download_button("📥 Descargar PDF Semanal", data=pdf_sem_bytes, file_name=f"Semanal_{rango_fecha[0]}_al_{rango_fecha[1]}.pdf", mime="application/pdf")
+                else:
+                    st.error("Error generando PDF Semanal.")
 
     with tab_mensual:
         st.subheader("Visión Macro Gerencial")
@@ -323,4 +334,7 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
         if st.button("🚀 GENERAR PDF MENSUAL", use_container_width=True, type="primary"):
             mes_num = meses.index(mes_sel) + 1
             pdf_men_bytes = generar_pdf_mensual(df_base, mes_num, anio_sel)
-            st.download_button("📥 Descargar PDF Mensual", data=pdf_men_bytes, file_name=f"Mensual_{mes_sel}_{anio_sel}.pdf", mime="application/pdf")
+            if pdf_men_bytes:
+                st.download_button("📥 Descargar PDF Mensual", data=pdf_men_bytes, file_name=f"Mensual_{mes_sel}_{anio_sel}.pdf", mime="application/pdf")
+            else:
+                st.error("Error generando PDF Mensual.")
