@@ -37,7 +37,7 @@ try:
         generar_pdf_semanal,
         generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
-        generar_pdf_primera_orden # 🚨 AQUÍ ESTÁ LA LÍNEA QUE FALTABA 🚨
+        generar_pdf_primera_orden # 🚨 FUNCIÓN IMPORTADA AQUÍ 🚨
     )
 except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
@@ -397,7 +397,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
