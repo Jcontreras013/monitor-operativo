@@ -77,13 +77,13 @@ class ReporteGenerencialPDF(FPDF):
         w = anchos if anchos else 190 / numcols
         aligns = alineaciones if (alineaciones and len(alineaciones) == numcols) else ["C"] * numcols
         for i, col in enumerate(df.columns):
-            widthcell = w if isinstance(w, (int, float)) else w[i]
+            widthcell = w[i] if isinstance(w, list) else w
             self.cell(widthcell, 6, safestr(str(col).upper()), border=1, align="C", fill=True)
         self.ln()
         self.set_font("Helvetica", "", 7)
         for _, fila in df.iterrows():
             for i, item in enumerate(fila):
-                widthcell = w if isinstance(w, (int, float)) else w[i]
+                widthcell = w[i] if isinstance(w, list) else w
                 valstr = str(item)[:40]
                 valclean = safestr(valstr)
                 fillr, fillg, fillb = 255, 255, 255
@@ -118,13 +118,13 @@ class ReporteGenerencialPDF(FPDF):
         w = anchos if anchos else 190 / numcols
         aligns = alineaciones if (alineaciones and len(alineaciones) == numcols) else ["C"] * numcols
         for i, col in enumerate(df.columns):
-            widthcell = w if isinstance(w, (int, float)) else w[i]
+            widthcell = w[i] if isinstance(w, list) else w
             self.cell(widthcell, 6, safestr(str(col).upper()), border=1, align="C", fill=True)
         self.ln()
         self.set_font("Helvetica", "", 7)
         for _, fila in df.iterrows():
             for i, item in enumerate(fila):
-                widthcell = w if isinstance(w, (int, float)) else w[i]
+                widthcell = w[i] if isinstance(w, list) else w
                 valstr = str(item)[:40]
                 self.cell(widthcell, 5, safestr(valstr), border=1, align=aligns[i], fill=False)
             self.ln()
@@ -401,10 +401,8 @@ def calcular_aporte_meta(row):
     
     if 'PEXTERNO' in act:
         return 100.0  
-    # Si la orden es una instalación, pero el texto dice que es adición o migración:
     elif re.search('ADIC|CAMBIO|MIGRACI|RECUP', txt):
         return 12.5   
-    # Si es una instalación pura:
     elif re.search('INS|NUEVA|PLEX|SPLITTEROPT', act):
         return 25.0   
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
@@ -413,7 +411,7 @@ def calcular_aporte_meta(row):
         return 12.5   
 
 # ==============================================================================
-# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO)
+# 6. FUNCIONES PARA GENERAR PDF 
 # ==============================================================================
 def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     df_sem = df_base[
@@ -588,14 +586,10 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 6, "Sin datos de productividad para hoy.", ln=True)
 
-    # ==============================================================================
-    # 🌟 NUEVA PÁGINA 2: INDICADORES DE AVANCE OPERATIVO (DONUTS)
-    # ==============================================================================
     if not dfc.empty:
         pdf.add_page()
         pdf.seccion_titulo("Indicadores de Avance Operativo (Completado vs Pendiente)")
         
-        # Filtrar técnicos inválidos para la lectura global
         mask_tec = (
             dfbase['TECNICO'].notna() & 
             (dfbase['TECNICO'].astype(str).str.strip() != '') & 
@@ -606,23 +600,19 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         PATRON_VIVA = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
         df_vivas = dfv[dfv['ESTADO'].astype(str).str.contains(PATRON_VIVA, na=False, case=False)]
         
-        # Residencial
         resi_pend = len(df_vivas[df_vivas['SEGMENTO'] == 'RESIDENCIAL'])
         resi_cerr = len(dfc[dfc['SEGMENTO'] == 'RESIDENCIAL'])
         t_resi = resi_pend + resi_cerr
         pct_resi = (resi_cerr / t_resi * 100) if t_resi > 0 else 0
         
-        # Plex
         plex_pend = len(df_vivas[df_vivas['SEGMENTO'] == 'PLEX'])
         plex_cerr = len(dfc[dfc['SEGMENTO'] == 'PLEX'])
         t_plex = plex_pend + plex_cerr
         pct_plex = (plex_cerr / t_plex * 100) if t_plex > 0 else 0
         
-        # Global
         t_global = len(df_vivas) + len(dfc)
         pct_global = (len(dfc) / t_global * 100) if t_global > 0 else 0
 
-        # Dibujar e inyectar las 3 donas
         path_resi = _generar_dona_png(pct_resi, "Residencial")
         path_plex = _generar_dona_png(pct_plex, "PLEX")
         path_global = _generar_dona_png(pct_global, "Global")
@@ -632,15 +622,13 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         if path_plex: pdf.image(path_plex, x=80, y=current_y, w=50)
         if path_global: pdf.image(path_global, x=140, y=current_y, w=50)
         
-        pdf.ln(60) # Mover el cursor debajo de las imágenes
+        pdf.ln(60) 
         
-        # Eliminar las imágenes temporales
         for path in [path_resi, path_plex, path_global]:
             if path:
                 try: os.remove(path)
                 except: pass
         
-        # Continúa el reporte normal
         pdf.add_page()
         pdf.seccion_titulo("Tiempos de Atencion (Antiguedad de Ordenes Liquidadas)")
         pdf.ln(2)
@@ -837,7 +825,6 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # --- ENCABEZADO DEL REPORTE ---
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, safestr("REPORTE GERENCIAL: RENDIMIENTO Y JORNADA DE TECNICOS"), border=0, ln=True, align="C")
@@ -852,25 +839,21 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         pdf.cell(0, 10, "No hay datos suficientes para generar el reporte.", ln=True)
         return finalizar_pdf(pdf)
 
-    # Extraemos la lista de todos los técnicos únicos (limpiando nulos)
     lista_tecnicos = resumen_jornada['TECNICO'].dropna().unique()
     
-    # --- CICLO: UN BLOQUE POR CADA TÉCNICO ---
     for tecnico in lista_tecnicos:
         if pdf.get_y() > 220:
             pdf.add_page()
             
         pdf.set_font("Helvetica", "B", 10)
-        pdf.set_fill_color(230, 240, 255) # Azul clarito
+        pdf.set_fill_color(230, 240, 255) 
         pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 8, safestr(f"   TECNICO: {tecnico}"), border=1, ln=True, fill=True)
         
-        # Filtrar datos
         df_jor = resumen_jornada[resumen_jornada['TECNICO'] == tecnico]
         df_prod = tabla_produccion[tabla_produccion['TECNICO'] == tecnico]
         df_efi = tabla_eficiencia[tabla_eficiencia['TECNICO'] == tecnico]
         
-        # Resumen de Jornada
         pdf.set_font("Helvetica", "B", 8)
         pdf.cell(0, 6, "   RESUMEN DE JORNADA LABORAL", ln=True)
         
@@ -885,7 +868,6 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         pdf.cell(50, 5, safestr(f"Dia mas largo: {max_horas:.2f} hrs"), border=0, ln=True)
         pdf.ln(2)
         
-        # Tabla de Producción y Eficiencia
         pdf.set_font("Helvetica", "B", 8)
         pdf.cell(0, 6, "   DESGLOSE DE ACTIVIDAD Y TIEMPOS", ln=True)
         
@@ -937,3 +919,52 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         pdf.ln(8)
         
     return finalizar_pdf(pdf)
+
+def generar_pdf_primera_orden(df_base, fecha_cierre):
+    try:
+        patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+        mask_vivas = df_base['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
+        mask_cerradas = (pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cierre) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+        
+        df_universo = pd.concat([df_base[mask_vivas], df_base[mask_cerradas]]).drop_duplicates(subset=['NUM'])
+        
+        if 'HORA_INI' in df_universo.columns:
+            df_universo['HORA_INI_DT'] = pd.to_datetime(df_universo['HORA_INI'], errors='coerce')
+            df_universo = df_universo.dropna(subset=['HORA_INI_DT'])
+            
+            mask_fecha_ini = df_universo['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cierre).date()
+            df_primera = df_universo[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+            df_primera = df_primera.sort_values(by='HORA_INI_DT')
+        else:
+            return None 
+
+        pdf = ReporteGenerencialPDF()
+        pdf.alias_nb_pages()
+        pdf.add_page()
+        
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(84, 98, 143)
+        pdf.set_draw_color(220, 220, 220)
+        pdf.set_fill_color(252, 252, 252)
+        pdf.cell(0, 10, safestr(f" Auditoria de Inicio de Jornada: {fecha_cierre.strftime('%d/%m/%Y')}"), border=1, ln=True, fill=True)
+        pdf.ln(5)
+        
+        pdf.seccion_titulo("Registro: Primera Orden del Dia por Tecnico")
+        
+        if not df_primera.empty:
+            df_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
+            df_mostrar['HORA_INI'] = df_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
+            df_mostrar = df_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
+            df_mostrar.columns = ['Técnico Asignado', 'Hora de Inicio', 'Colonia / Ubicación', 'N° Orden']
+            
+            pdf.dibujar_tabla(df_mostrar, anchos=[60, 30, 70, 30], alineaciones=["L", "C", "L", "C"])
+        else:
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 6, "No hay registros de inicio de ordenes para esta fecha.", ln=True)
+
+        return finalizar_pdf(pdf)
+
+    except Exception as e:
+        print(f"Error interno generando PDF de Primera Orden: {e}")
+        return None
