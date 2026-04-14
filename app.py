@@ -9,6 +9,9 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
+import tempfile
+from fpdf import FPDF
+import unicodedata
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -36,8 +39,8 @@ try:
         generar_pdf_cierre_diario,
         generar_pdf_semanal,
         generar_pdf_mensual,
-        generar_pdf_trimestral_detallado,
-        generar_pdf_primera_orden # 🚨 FUNCIÓN IMPORTADA AQUÍ 🚨
+        generar_pdf_trimestral_detallado
+        # Nota: Ya no importamos generar_pdf_primera_orden desde tools.py
     )
 except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
@@ -265,6 +268,109 @@ def sincronizar_datos_nube(conn):
                 st.warning("La base de datos en la nube está vacía.")
     except Exception as e:
         st.error(f"Error al conectar con la nube: {e}")
+
+# ==============================================================================
+# LÓGICA DE PDF INTEGRADA (NUEVA)
+# ==============================================================================
+def safestr(texto):
+    if pd.isna(texto):
+        return ""
+    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+
+class PDFPrimeraOrden(FPDF):
+    def header(self):
+        if os.path.exists('logo.png'):
+            self.image('logo.png', 10, 6, 35)
+        self.set_x(50) 
+        self.set_text_color(0, 0, 0)
+        self.set_font("Helvetica", "", 7)
+        self.cell(80, 5, safestr("Reporte Operativo Consolidado"), ln=False, align="L")
+        self.cell(0, 5, safestr("Maxcom PRO - Modulo Gerencial"), ln=True, align="R")
+        self.set_draw_color(200, 200, 200)
+        y_line = max(self.get_y(), 18) 
+        self.line(10, y_line, 200, y_line)
+        self.set_y(y_line + 5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_text_color(150, 150, 150)
+        self.set_font("Helvetica", "", 7)
+        self.cell(0, 10, f"{self.page_no()} / {{nb}}", align="R")
+
+def generar_pdf_primera_orden(df_base, fecha_cierre):
+    try:
+        patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+        mask_vivas = df_base['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
+        mask_cerradas = (pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cierre) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+        
+        df_universo = pd.concat([df_base[mask_vivas], df_base[mask_cerradas]]).drop_duplicates(subset=['NUM'])
+        
+        if 'HORA_INI' in df_universo.columns:
+            df_universo['HORA_INI_DT'] = pd.to_datetime(df_universo['HORA_INI'], errors='coerce')
+            df_universo = df_universo.dropna(subset=['HORA_INI_DT'])
+            mask_fecha_ini = df_universo['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cierre).date()
+            df_primera = df_universo[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+            df_primera = df_primera.sort_values(by='HORA_INI_DT')
+        else:
+            return None
+
+        pdf = PDFPrimeraOrden()
+        pdf.alias_nb_pages()
+        pdf.add_page()
+        
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(84, 98, 143)
+        pdf.set_draw_color(220, 220, 220)
+        pdf.set_fill_color(252, 252, 252)
+        pdf.cell(0, 10, safestr(f" Auditoria de Inicio de Jornada: {fecha_cierre.strftime('%d/%m/%Y')}"), border=1, ln=True, fill=True)
+        pdf.ln(5)
+        
+        pdf.set_text_color(84, 98, 143)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, safestr("Registro: Primera Orden del Dia por Tecnico"), ln=True, align="L")
+        pdf.ln(1)
+        
+        if not df_primera.empty:
+            df_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
+            df_mostrar['HORA_INI'] = df_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
+            df_mostrar = df_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
+            df_mostrar.columns = ['Técnico Asignado', 'Hora de Inicio', 'Colonia / Ubicación', 'N° Orden']
+            
+            # Dibujar la tabla
+            pdf.set_fill_color(225, 225, 225)
+            pdf.set_text_color(50, 50, 50)
+            pdf.set_draw_color(230, 230, 230)
+            pdf.set_font("Helvetica", "B", 7)
+            anchos = [60, 30, 70, 30]
+            alineaciones = ["L", "C", "L", "C"]
+            
+            for i, col in enumerate(df_mostrar.columns):
+                pdf.cell(anchos[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
+            pdf.ln()
+            
+            pdf.set_font("Helvetica", "", 7)
+            for _, fila in df_mostrar.iterrows():
+                for i, item in enumerate(fila):
+                    valstr = str(item)[:40]
+                    pdf.cell(anchos[i], 5, safestr(valstr), border=1, align=alineaciones[i], fill=False)
+                pdf.ln()
+        else:
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 6, "No hay registros de inicio de ordenes para esta fecha.", ln=True)
+
+        fd, tmppath = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        try:
+            pdf.output(tmppath)
+            with open(tmppath, "rb") as f: return f.read()
+        finally:
+            try: os.remove(tmppath)
+            except: pass
+
+    except Exception as e:
+        print(f"Error interno generando PDF de Primera Orden: {e}")
+        return None
 
 # ==============================================================================
 # VENTANAS EMERGENTES (MODALES)
