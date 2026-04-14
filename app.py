@@ -36,7 +36,8 @@ try:
         generar_pdf_cierre_diario,
         generar_pdf_semanal,
         generar_pdf_mensual,
-        generar_pdf_trimestral_detallado
+        generar_pdf_trimestral_detallado,
+        generar_pdf_primera_orden # 🚨 AQUÍ ESTÁ LA LÍNEA QUE FALTABA 🚨
     )
 except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
@@ -396,7 +397,7 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 # ==============================================================================
-# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL (CORREGIDO ERROR BYTES)
+# FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
 @st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
@@ -757,7 +758,7 @@ def main():
     hoy_date_valor = ahora_local.date()
 
     df_base_activa = df_base.copy()
-    
+
     if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
         
