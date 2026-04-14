@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import timedelta
+from datetime import timedelta, datetime
+import re
+
+# Importamos las herramientas necesarias desde tools.py
 from tools import (
     logica_generar_pdf,
     generar_tablas_gerenciales,
@@ -56,7 +59,6 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
                     if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
                     else: df_raw = pd.read_excel(archivo_gerencial)
                     
-                    # Importar procesar_dataframe_base localmente para evitar dependencias circulares si es necesario
                     from tools import procesar_dataframe_base
                     df_limpio = procesar_dataframe_base(df_raw)
                     tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
@@ -118,13 +120,17 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
         st.subheader("📦 Archivo de Cierre de Jornada")
         fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
         
-        mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-        mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+        # Como df_monitor_filtrado viene de app.py, lo usamos directo si no es None. 
+        # Si es None (por la lógica de las pestañas), usamos df_base.
+        df_uso = df_monitor_filtrado if df_monitor_filtrado is not None else df_base
         
-        df_vivas_espejo = df_monitor_filtrado[mask_vivas_espejo].copy()
+        mask_vivas_espejo = df_uso['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+        mask_cerradas_espejo = (df_uso['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_uso['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+        
+        df_vivas_espejo = df_uso[mask_vivas_espejo].copy()
         mask_tec_valido_esp = df_vivas_espejo['TECNICO'].notna() & (df_vivas_espejo['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_espejo['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
         df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
-        df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
+        df_cerradas_espejo = df_uso[mask_cerradas_espejo].copy()
 
         st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
         st.markdown("### 📊 Indicadores de Avance Operativo")
@@ -160,7 +166,6 @@ def renderizar_centro_reportes(df_base, df_monitor_filtrado, hoy_date_valor, PAT
 
         if not df_cerradas_espejo.empty:
             st.markdown("### 📊 Desglose de Producción por Categoría")
-            import re
             cs_col, ci_col, cp_col, co_col = st.columns(4)
             with cs_col:
                 st.write("**SOP**")
