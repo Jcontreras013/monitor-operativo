@@ -9,6 +9,7 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -410,14 +411,21 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
-@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
+# 🚨 SOLUCIÓN CACHÉ: Evita el FileNotFoundError ignorando el objeto de archivo al hacer el hash
+@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60, hash_funcs={io.BytesIO: lambda _: None, UploadedFile: lambda _: None, bytes: lambda _: None})
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
             file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
+        elif hasattr(file_dispos, 'read'):
+            file_dispos.seek(0)
+            file_dispos_obj = file_dispos
         else:
             file_dispos_obj = file_dispos
+
+        if hasattr(file_activ, 'read'):
+            file_activ.seek(0)
 
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
         
@@ -499,7 +507,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 # ==============================================================================
 def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
-    es_admin = (str(rol_usuario).strip().lower() == 'admin') # Para saber si eres tú
+    es_admin = (str(rol_usuario).strip().lower() == 'admin')
     
     ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
@@ -580,16 +588,17 @@ def main():
         
         if mostrar_cargador:
             st.divider()
-            st.markdown("### 📥 Carga de Archivos Crudos")
+            st.markdown("### 📥 Carga de Archivos")
             
-            # 🚨 AQUÍ ESTÁ LA NUEVA LÓGICA DE CARGA 🚨
+            # 🚨 SOLO EL ADMIN VE Y SUBE AMBOS ARCHIVOS 🚨
             if es_admin:
-                st.caption("Eres Admin: Sube los dos archivos.")
+                st.caption("Eres Admin: Sube los dos archivos (Actividades y FTTX).")
                 archivos_uploader_diamante = st.file_uploader(
                     "Sube rep_actividades y FttxActiveDevice", 
                     type=["xlsx", "csv"], 
                     accept_multiple_files=True
                 )
+                
                 if archivos_uploader_diamante:
                     for file_item in archivos_uploader_diamante:
                         f_name_lwr = file_item.name.lower()
@@ -603,7 +612,7 @@ def main():
                             except:
                                 pass
             else:
-                # Cualquier usuario que NO sea admin (Jefe, etc.)
+                # Los demás roles solo suben actividades
                 st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
                 archivo_unico = st.file_uploader(
                     "Sube únicamente el rep_actividades", 
@@ -613,6 +622,21 @@ def main():
                 if archivo_unico:
                     file_act_ptr = archivo_unico
 
+            ahora_hx = get_honduras_time()
+            es_horario_tarde = ahora_hx.hour >= 17
+            es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
+            
+            condicion_usar_cache = es_horario_tarde or es_fin_de_semana
+            
+            if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
+                if os.path.exists("cache_fttx.tmp"):
+                    try:
+                        with open("cache_fttx.tmp", "rb") as f:
+                            file_disp_ptr = f.read()
+                        st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
+                    except:
+                        pass
+
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
             
         elif rol_usuario == 'jefe' and es_movil:
@@ -620,7 +644,7 @@ def main():
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         
-        # 🚨 SI NO ES ADMIN Y FALTA EL FTTX, LO BAJAMOS DE LA NUBE 🚨
+        # 🚨 LÓGICA PARA JEFES: SI FALTA FTTX LO DESCARGA DE LA NUBE 🚨
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
                 try:
@@ -664,7 +688,6 @@ def main():
                 st.session_state.df_base = res_p_diamante
                 st.session_state.df_hist = res_h_diamante
                 
-                # 🚨 SOLO EL ADMIN SINCRONIZA LA NUBE AL SUBIR ARCHIVOS MANUALES 🚨
                 if conn is not None and es_admin:
                     with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
                         try:
@@ -702,20 +725,19 @@ def main():
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             
-                            # También guardamos en FTTX la base de dispositivos actual si la subiste
-                            if file_disp_ptr is not None:
+                            # 🚨 ACTUALIZA LA NUBE CON EL FTTX NUEVO SI EL ADMIN LO SUBIÓ 🚨
+                            if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
-                                    # Leemos el file_disp_ptr que subiste
-                                    if hasattr(file_disp_ptr, 'name'):
-                                        if file_disp_ptr.name.lower().endswith('.csv'):
-                                            df_fttx_to_upload = pd.read_csv(file_disp_ptr, sep=None, engine='python')
-                                        else:
-                                            df_fttx_to_upload = pd.read_excel(file_disp_ptr, engine='openpyxl')
-                                        # Lo mandamos a la pestaña FTTX
-                                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_to_upload)
-                                        st.success("✅ Base de vehículos (FTTX) actualizada en la nube.")
+                                    if hasattr(file_disp_ptr, 'read'):
+                                        file_disp_ptr.seek(0)
+                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'):
+                                        df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
+                                    else:
+                                        df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
+                                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
+                                    st.success("✅ Base de vehículos (FTTX) actualizada en la nube.")
                                 except Exception as e_fttx:
-                                    st.warning(f"No se pudo actualizar FTTX en la nube: {e_fttx}")
+                                    st.warning(f"⚠️ No se pudo actualizar FTTX en la nube: {e_fttx}")
 
                             st.success("✅ Datos sincronizados y unidos al histórico correctamente sin duplicados.")
                         except Exception as e:
