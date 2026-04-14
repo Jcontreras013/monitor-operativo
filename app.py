@@ -9,7 +9,6 @@ import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -411,21 +410,14 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # FUNCIÓN MAESTRA DE CARGA Y DEPURACIÓN LOCAL
 # ==============================================================================
-# 🚨 SOLUCIÓN CACHÉ: Evita el FileNotFoundError ignorando el objeto de archivo al hacer el hash
-@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60, hash_funcs={io.BytesIO: lambda _: None, UploadedFile: lambda _: None, bytes: lambda _: None})
+@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60)
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
             file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
-        elif hasattr(file_dispos, 'read'):
-            file_dispos.seek(0)
-            file_dispos_obj = file_dispos
         else:
             file_dispos_obj = file_dispos
-
-        if hasattr(file_activ, 'read'):
-            file_activ.seek(0)
 
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
         
@@ -590,7 +582,6 @@ def main():
             st.divider()
             st.markdown("### 📥 Carga de Archivos")
             
-            # 🚨 SOLO EL ADMIN VE Y SUBE AMBOS ARCHIVOS 🚨
             if es_admin:
                 st.caption("Eres Admin: Sube los dos archivos (Actividades y FTTX).")
                 archivos_uploader_diamante = st.file_uploader(
@@ -612,7 +603,6 @@ def main():
                             except:
                                 pass
             else:
-                # Los demás roles solo suben actividades
                 st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
                 archivo_unico = st.file_uploader(
                     "Sube únicamente el rep_actividades", 
@@ -644,7 +634,6 @@ def main():
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         
-        # 🚨 LÓGICA PARA JEFES: SI FALTA FTTX LO DESCARGA DE LA NUBE 🚨
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
                 try:
@@ -725,7 +714,6 @@ def main():
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             
-                            # 🚨 ACTUALIZA LA NUBE CON EL FTTX NUEVO SI EL ADMIN LO SUBIÓ 🚨
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
                                     if hasattr(file_disp_ptr, 'read'):
@@ -894,8 +882,8 @@ def main():
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         
-        tab_dinamico, tab_diario, tab_semanal, tab_mensual, tab_gerencial, tab_biometrico = st.tabs([
-            "⚡ Reporte Dinámico", "📦 Cierre Diario", "🗓️ Analítico Semanal", "🏢 Macro Mensual", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"
+        tab_diario, tab_gerencial, tab_biometrico = st.tabs([
+            "📦 Cierre Diario", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"
         ])
 
         with tab_biometrico:
@@ -903,27 +891,6 @@ def main():
                 biometrico.vista_biometrico()
             except Exception as e:
                 st.error(f"Error al cargar la vista del biométrico: {e}")
-
-        with tab_dinamico:
-            st.subheader("📄 Reporte Dinámico en Vivo")
-            col_f1, col_f2 = st.columns(2)
-            m_viva_rep = df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-            total_off_rep = int((df_base['ES_OFFLINE'] == True & m_viva_rep).sum())
-            
-            with col_f1:
-                check_criticos_rep = st.toggle(f"Filtrar solo Críticas ({total_off_rep})", key="tgg_rep")
-            with col_f2:
-                tec_filtro_rep = st.selectbox("Filtrar por Técnico:", ["Todos"] + sorted(df_base['TECNICO'].dropna().unique().tolist()), key="sel_tec_rep")
-                
-            df_dinamico_filtrado = df_base.copy()
-            if check_criticos_rep:
-                df_dinamico_filtrado = df_dinamico_filtrado[df_dinamico_filtrado['ES_OFFLINE'] | df_dinamico_filtrado['ALERTA_TIEMPO']]
-            if tec_filtro_rep != "Todos":
-                df_dinamico_filtrado = df_dinamico_filtrado[df_dinamico_filtrado['TECNICO'] == tec_filtro_rep]
-                
-            if st.button("📄 GENERAR REPORTE DINÁMICO (PDF)", use_container_width=True, type="primary"):
-                pdf_bytes_rendimiento = logica_generar_pdf(df_dinamico_filtrado)
-                st.download_button("📥 Descargar PDF Dinámico", data=pdf_bytes_rendimiento, file_name=f"Reporte_Dinamico_{hoy_date_valor}.pdf", mime="application/pdf")
 
         with tab_gerencial:
             st.subheader("📊 Reporte Gerencial Unificado")
@@ -1177,34 +1144,6 @@ def main():
             st.divider()
             with st.expander("Ver Lista Detallada"):
                 st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
-
-        with tab_semanal:
-            st.subheader("Rendimiento y Tiempos Semanales")
-            rango_fecha = st.date_input("Rango de evaluación:", value=(hoy_date_valor - timedelta(days=7), hoy_date_valor), key="date_semanal")
-            if len(rango_fecha) == 2:
-                df_sem = df_base[(df_base['HORA_LIQ'].dt.date >= rango_fecha[0]) & (df_base['HORA_LIQ'].dt.date <= rango_fecha[1]) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))]
-                
-                if st.button("🚀 GENERAR PDF SEMANAL", use_container_width=True, type="primary"):
-                    pdf_sem_bytes = generar_pdf_semanal(df_base, rango_fecha[0], rango_fecha[1])
-                    st.download_button("📥 Descargar PDF Semanal", data=pdf_sem_bytes, file_name=f"Semanal_{rango_fecha[0]}_al_{rango_fecha[1]}.pdf", mime="application/pdf")
-
-        with tab_mensual:
-            st.subheader("Visión Macro Gerencial")
-            col_mes, col_anio = st.columns(2)
-            meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-            with col_mes:
-                mes_sel = st.selectbox("Mes:", meses, index=hoy_date_valor.month - 1)
-            with col_anio:
-                anio_sel = st.number_input("Año:", min_value=2024, max_value=2030, value=2026)
-            
-            st.markdown("### 🏢 Comparativa Segmento")
-            fig_pie_mensual = px.pie(df_base, names='SEGMENTO', hole=.4, template="plotly_dark")
-            st.plotly_chart(fig_pie_mensual, use_container_width=True)
-            
-            if st.button("🚀 GENERAR PDF MENSUAL", use_container_width=True, type="primary"):
-                mes_num = meses.index(mes_sel) + 1
-                pdf_men_bytes = generar_pdf_mensual(df_base, mes_num, anio_sel)
-                st.download_button("📥 Descargar PDF Mensual", data=pdf_men_bytes, file_name=f"Mensual_{mes_sel}_{anio_sel}.pdf", mime="application/pdf")
             
         return
 
