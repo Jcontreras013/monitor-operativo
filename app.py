@@ -694,27 +694,35 @@ def main():
                     with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
                         try:
                             df_new = res_p_diamante.copy()
+                            # 1. Limpieza extrema del NUM nuevo
                             if 'NUM' in df_new.columns:
-                                df_new['NUM'] = pd.to_numeric(df_new['NUM'], errors='coerce').fillna(0).astype(int).astype(str)
-                                df_new['NUM'] = df_new['NUM'].replace('0', 'N/D')
+                                df_new['NUM'] = df_new['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                df_new.loc[df_new['NUM'] == 'nan', 'NUM'] = 'N/D'
                             
                             df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                             
                             if not df_cloud.empty:
                                 df_cloud.columns = df_cloud.columns.str.upper().str.strip()
+                                # 2. Limpieza extrema del NUM de la nube
                                 if 'NUM' in df_cloud.columns:
-                                    df_cloud['NUM'] = pd.to_numeric(df_cloud['NUM'], errors='coerce').fillna(0).astype(int).astype(str)
-                                    df_cloud['NUM'] = df_cloud['NUM'].replace('0', 'N/D')
+                                    df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                    df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
                                 
+                                # 3. CONCATENAMOS
                                 df_combined = pd.concat([df_cloud, df_new])
                             else:
                                 df_combined = df_new
                                 
+                            # 4. ELIMINACIÓN AGRESIVA DE DUPLICADOS
                             if 'NUM' in df_combined.columns:
+                                # Le damos prioridad a las filas que NO tienen "HORA_LIQ" vacía (las más actualizadas)
                                 temp_date_c = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
                                 df_combined['FECHA_SORT'] = pd.to_datetime(temp_date_c, errors='coerce')
-                                df_combined = df_combined.sort_values(by='FECHA_SORT', na_position='first')
                                 
+                                # Ordenamos para que los registros más recientes (o cerrados) queden de último
+                                df_combined = df_combined.sort_values(by=['FECHA_SORT', 'ESTADO'], na_position='first')
+                                
+                                # Si hay NUM repetidos, nos quedamos ESTRICTAMENTE con el último
                                 df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                                 df_nd = df_combined[df_combined['NUM'] == 'N/D']
                                 df_combined = pd.concat([df_valid_num, df_nd])
