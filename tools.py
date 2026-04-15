@@ -945,7 +945,7 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
 
 def generar_pdf_primera_orden(df_base, fecha_cierre):
     """
-    Genera un PDF gerencial con la primera orden del día de cada técnico.
+    Genera un PDF con la primera orden del día de cada técnico usando FPDF.
     """
     try:
         # 1. Preparar el DataFrame
@@ -966,144 +966,31 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
         else:
             return None # Si no hay datos, no genera nada
 
-        # 3. Construir la tabla HTML
-        filas_html = ""
-        for _, row in df_primera.iterrows():
-            tec = str(row.get('TECNICO', 'N/D')).strip()
-            hora = row['HORA_INI_DT'].strftime('%H:%M:%S') # Hora limpia
-            colonia = str(row.get('COLONIA', 'N/D')).strip()
-            num = str(row.get('NUM', 'N/D')).strip()
-            
-            filas_html += f"""
-            <tr>
-                <td>{tec}</td>
-                <td>{hora}</td>
-                <td>{colonia}</td>
-                <td>{num}</td>
-            </tr>
-            """
+        # 3. Crear PDF usando la clase FPDF existente
+        pdf = ReporteGenerencialPDF()
+        pdf.alias_nb_pages()
+        pdf.add_page()
+        
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 10, safestr(f"REPORTE: PRIMERA ORDEN DEL DIA ({fecha_cierre})"), border=0, ln=True, align="C")
+        pdf.ln(5)
 
-        # 4. Estilos y Estructura CSS (Diseño Corporativo)
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <title>Reporte Primera Orden - MaxCom</title>
-            <style>
-                @page {{
-                    size: A4;
-                    margin: 15mm 20mm;
-                    background-color: #F8FAFC;
-                }}
-                body {{
-                    font-family: 'Segoe UI', Arial, sans-serif;
-                    color: #1E293B;
-                    margin: 0;
-                    padding: 0;
-                    background-color: #F8FAFC;
-                }}
-                .header-banner {{
-                    background-color: #0F172A;
-                    color: #FFFFFF;
-                    padding: 20px;
-                    border-radius: 8px;
-                    margin-bottom: 30px;
-                }}
-                .header-banner h1 {{
-                    margin: 0;
-                    font-size: 22pt;
-                    font-weight: 700;
-                    text-transform: uppercase;
-                    letter-spacing: 1px;
-                }}
-                .header-banner p {{
-                    margin: 5px 0 0 0;
-                    font-size: 11pt;
-                    color: #94A3B8;
-                }}
-                .accent-line {{
-                    height: 4px;
-                    background-color: #3B82F6;
-                    width: 60px;
-                    margin-top: 10px;
-                    border-radius: 2px;
-                }}
-                h2 {{
-                    color: #0F172A;
-                    font-size: 16pt;
-                    border-bottom: 2px solid #E2E8F0;
-                    padding-bottom: 8px;
-                    margin-bottom: 20px;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    background-color: #FFFFFF;
-                    border-radius: 8px;
-                    overflow: hidden;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                }}
-                th {{
-                    background-color: #F1F5F9;
-                    color: #334155;
-                    font-weight: bold;
-                    font-size: 11pt;
-                    text-align: left;
-                    padding: 12px 15px;
-                    border-bottom: 2px solid #E2E8F0;
-                }}
-                td {{
-                    padding: 12px 15px;
-                    font-size: 10pt;
-                    border-bottom: 1px solid #F1F5F9;
-                    color: #475569;
-                }}
-                tr:nth-child(even) {{
-                    background-color: #F8FAFC;
-                }}
-                .footer {{
-                    margin-top: 40px;
-                    text-align: center;
-                    font-size: 9pt;
-                    color: #64748B;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="header-banner">
-                <h1>Control Operativo</h1>
-                <div class="accent-line"></div>
-                <p>Auditoria de Inicio de Jornada - {fecha_cierre.strftime('%d/%m/%Y')}</p>
-            </div>
+        if not df_primera.empty:
+            df_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
+            df_mostrar['HORA_INI'] = df_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
+            df_mostrar = df_mostrar.drop(columns=['HORA_INI_DT'])
+            df_mostrar = df_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
             
-            <h2>Registro: Primera Orden del Dia por Tecnico</h2>
-            
-            <table>
-                <thead>
-                    <tr>
-                        <th>Tecnico Asignado</th>
-                        <th>Hora de Inicio</th>
-                        <th>Colonia / Ubicacion</th>
-                        <th>N Orden</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {filas_html}
-                </tbody>
-            </table>
-            
-            <div class="footer">
-                <p>Generado automaticamente por el Monitor Operativo MaxCom PRO.</p>
-                <p>Centro de Reportes • Control de Calidad Interno</p>
-            </div>
-        </body>
-        </html>
-        """
+            # Dibujar la tabla
+            pdf.dibujar_tabla(df_mostrar, anchos=[70, 30, 60, 30], alineaciones=["L", "C", "L", "C"])
+        else:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 10, "No hay registros de primera orden para esta fecha.", ln=True, align="C")
 
-        # 5. Generar PDF
-        pdf_bytes = HTML(string=html_content).write_pdf()
-        return pdf_bytes
+        # 4. Retornar el PDF
+        return finalizar_pdf(pdf)
 
     except Exception as e:
         print(f"Error al generar PDF de Primera Orden: {e}")
