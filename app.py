@@ -530,7 +530,7 @@ def main():
     filtro_estado = []
     filtro_motivo = []
     check_criticos_diamante = False
-    check_no_asignadas = False # Inicializado por defecto
+    check_no_asignadas = False 
     tec_filtro_monitor = "Todos"
     
     with sidebar_top:
@@ -560,7 +560,6 @@ def main():
                     mascara_offline_segura = df_base_activa_temp['ES_OFFLINE'] == True
                     total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
                     
-                    # --- Lógica de No Asignadas ---
                     mascara_no_asignadas = (df_base_activa_temp['TECNICO'].isna()) | (df_base_activa_temp['TECNICO'].astype(str).str.strip() == '') | (df_base_activa_temp['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
                     total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
                     
@@ -843,11 +842,6 @@ def main():
             mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
             mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
             df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
-            
-        # --- FILTRO NO ASIGNADAS ---
-        if st.session_state.get('rol_actual') in ['admin', 'jefe'] and check_no_asignadas:
-            mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
             
         if tec_filtro_monitor != "Todos":
             df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
@@ -1191,11 +1185,15 @@ def main():
         st.title("⚡ Monitor Operativo Maxcom")
 
         mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-        df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
+        
+        if check_no_asignadas:
+            df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy()
+        else:
+            df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
 
         vivas_count_asignadas = len(df_solo_asignadas_monitor)
         cerradas_hoy = len(df_cerradas_hoy_monitor)
-        tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique()
+        tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
         html_kpis = f"""
