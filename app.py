@@ -974,15 +974,17 @@ def main():
                         
                         if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
                             with st.spinner("Dibujando secciones por técnico..."):
-                                pdf_bytes = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
-                                st.download_button(
-                                    label="📥 Descargar Reporte PDF",
-                                    data=pdf_bytes,
-                                    file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf",
-                                    mime="application/pdf",
-                                    type="primary",
-                                    use_container_width=True
-                                )
+                                st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
+                        
+                        if 'pdf_gerencial' in st.session_state:
+                            st.download_button(
+                                label="📥 Descargar Reporte PDF",
+                                data=st.session_state['pdf_gerencial'],
+                                file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf",
+                                mime="application/pdf",
+                                type="primary",
+                                use_container_width=True
+                            )
                     except Exception as e:
                         st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
         
@@ -1148,13 +1150,13 @@ def main():
                     with col_btn1:
                         if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
                             try:
-                                pdf_primera = generar_pdf_primera_orden(df_base, fecha_cal_sel)
-                                if pdf_primera:
-                                    st.download_button("📥 Descargar PDF (Inicio Jornada)", data=pdf_primera, file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-                                else:
-                                    st.error("No se pudo generar el documento PDF.")
+                                with st.spinner("Generando PDF..."):
+                                    st.session_state['pdf_primera'] = generar_pdf_primera_orden(df_base, fecha_cal_sel)
                             except Exception as e:
                                 st.error(f"Error generando PDF: {e}")
+                        
+                        if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']:
+                            st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                 else:
                     st.info("No hay registros de inicio de órdenes para esta fecha.")
             else:
@@ -1162,8 +1164,11 @@ def main():
 
             st.markdown("### 📥 Exportación")
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
-                pdf_bytes_archivo_diario = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
-                st.download_button("📥 Descargar Archivo (PDF)", data=pdf_bytes_archivo_diario, file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf")
+                with st.spinner("Preparando archivo de cierre..."):
+                    st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
+            
+            if 'pdf_cierre' in st.session_state:
+                st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
             
             st.divider()
             with st.expander("Ver Lista Detallada"):
