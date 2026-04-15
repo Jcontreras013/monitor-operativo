@@ -693,40 +693,39 @@ def main():
                 if conn is not None:
                     with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
                         try:
+                            # 1. Preparamos la NUEVA carga (La verdad absoluta de las Vivas de hoy)
                             df_new = res_p_diamante.copy()
-                            # 1. Limpieza extrema del NUM nuevo
                             if 'NUM' in df_new.columns:
                                 df_new['NUM'] = df_new['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_new.loc[df_new['NUM'] == 'nan', 'NUM'] = 'N/D'
                             
+                            # 2. Leemos la Nube
                             df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                             
                             if not df_cloud.empty:
                                 df_cloud.columns = df_cloud.columns.str.upper().str.strip()
-                                # 2. Limpieza extrema del NUM de la nube
                                 if 'NUM' in df_cloud.columns:
                                     df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                     df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
                                 
-                                # 3. CONCATENAMOS
-                                df_combined = pd.concat([df_cloud, df_new])
+                                # 3. LÓGICA DE ESPEJO: Separar el historial muerto de la basura viva
+                                mask_cerradas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains('CERRADA|ANULADA', na=False)
+                                df_historial_puro = df_cloud[mask_cerradas_nube].copy()
+                                
+                                # 4. Unimos el historial puro con tu archivo nuevo crudo (que trae las vivas reales)
+                                df_combined = pd.concat([df_historial_puro, df_new])
                             else:
                                 df_combined = df_new
                                 
-                            # 4. ELIMINACIÓN AGRESIVA DE DUPLICADOS
+                            # 5. Limpieza final de seguridad por si una "viva" nueva ya estaba en el historial como cerrada
                             if 'NUM' in df_combined.columns:
-                                # Le damos prioridad a las filas que NO tienen "HORA_LIQ" vacía (las más actualizadas)
-                                temp_date_c = df_combined.get('HORA_LIQ', df_combined.get('FECHA_APE', pd.NaT))
-                                df_combined['FECHA_SORT'] = pd.to_datetime(temp_date_c, errors='coerce')
+                                df_combined['TIENE_LIQ'] = df_combined.get('HORA_LIQ').notna()
+                                df_combined = df_combined.sort_values(by=['TIENE_LIQ'], ascending=True)
                                 
-                                # Ordenamos para que los registros más recientes (o cerrados) queden de último
-                                df_combined = df_combined.sort_values(by=['FECHA_SORT', 'ESTADO'], na_position='first')
-                                
-                                # Si hay NUM repetidos, nos quedamos ESTRICTAMENTE con el último
                                 df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                                 df_nd = df_combined[df_combined['NUM'] == 'N/D']
                                 df_combined = pd.concat([df_valid_num, df_nd])
-                                df_combined = df_combined.drop(columns=['FECHA_SORT'], errors='ignore')
+                                df_combined = df_combined.drop(columns=['TIENE_LIQ'], errors='ignore')
 
                             df_to_upload = df_combined.copy()
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
@@ -748,7 +747,7 @@ def main():
                                 except Exception as e_fttx:
                                     st.warning(f"⚠️ No se pudo actualizar FTTX en la nube: {e_fttx}")
 
-                            st.success("✅ Datos sincronizados y unidos al histórico correctamente sin duplicados.")
+                            st.success("✅ Datos sincronizados en modo Espejo y unidos al histórico correctamente.")
                         except Exception as e:
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
                 else:
@@ -850,6 +849,10 @@ def main():
             mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
             mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
             df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
+            
+        if st.session_state.get('rol_actual') in ['admin', 'jefe'] and check_no_asignadas:
+            mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
             
         if tec_filtro_monitor != "Todos":
             df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
@@ -1375,13 +1378,11 @@ def main():
 
             # FUNCIÓN PARA CREAR VELOCÍMETRO CIRCULAR
             def crear_velocimetro_6cols(valor, titulo, es_mora=False, total_ordenes=0):
-                # Si es Mora, los colores son más exigentes para motivar a cerrarlas
                 if es_mora:
                     color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981")
                 else:
                     color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
                 
-                # Si no hay órdenes en esa categoría, mostramos gris
                 if total_ordenes == 0:
                     color_v = "#4B5563"
                     
@@ -1410,40 +1411,33 @@ def main():
 
             # --- DIBUJAR LAS 6 COLUMNAS ---
             
-            # 1. Total Residencial (Carga Total)
             with col1:
                 st.plotly_chart(crear_velocimetro_6cols(avance_resi, "🏠 Total Residencial", total_ordenes=total_r), use_container_width=True, key="p1")
                 if st.button("🔍 Ver", use_container_width=True, key="b1"):
                     mostrar_detalle_avance("RESIDENCIAL (TOTAL)", df_resi_asignadas, df_resi_cerr)
 
-            # 2. Total PLEX (Carga Total)
             with col2:
                 st.plotly_chart(crear_velocimetro_6cols(avance_plex, "🏢 Total PLEX", total_ordenes=total_p), use_container_width=True, key="p2")
                 if st.button("🔍 Ver", use_container_width=True, key="b2"):
                     mostrar_detalle_avance("PLEX (TOTAL)", df_plex_asignadas, df_plex_cerr)
 
-            # 3. Avance Global (Carga Total)
             with col3:
                 st.plotly_chart(crear_velocimetro_6cols(avance_global, "🌍 Avance Global", total_ordenes=total_v), use_container_width=True, key="p3")
                 if st.button("🔍 Ver Global", use_container_width=True, key="b3"):
                     mostrar_detalle_avance("GLOBAL (TOTAL)", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
             
-            # --- SEPARADOR VISUAL ---
             st.markdown("<div style='border-top: 1px solid #333; margin: 15px 0;'></div>", unsafe_allow_html=True)
 
-            # 4. Mora Residencial (Carga Inicial)
             with col4:
                 st.plotly_chart(crear_velocimetro_6cols(av_mora_resi, "🏠 Mora Resi", es_mora=True, total_ordenes=tot_mora_resi), use_container_width=True, key="p4")
                 if st.button("🔍 Ver Mora", use_container_width=True, key="b4"):
                     mostrar_detalle_avance("MORA RESIDENCIAL", df_resi_mora_pend, df_resi_mora_cerr)
 
-            # 5. Mora PLEX (Carga Inicial)
             with col5:
                 st.plotly_chart(crear_velocimetro_6cols(av_mora_plex, "🏢 Mora PLEX", es_mora=True, total_ordenes=tot_mora_plex), use_container_width=True, key="p5")
                 if st.button("🔍 Ver Mora", use_container_width=True, key="b5"):
                     mostrar_detalle_avance("MORA PLEX", df_plex_mora_pend, df_plex_mora_cerr)
 
-            # 6. Liquidación de Mora Global (Carga Inicial)
             with col6:
                 st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=tot_mora_global), use_container_width=True, key="p6")
                 if st.button("🔍 Mora Global", use_container_width=True, key="b6"):
