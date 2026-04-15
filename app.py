@@ -708,11 +708,12 @@ def main():
                                     df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                     df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
                                 
-                                # 3. LÓGICA DE ESPEJO: Separar el historial muerto de la basura viva
-                                mask_cerradas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains('CERRADA|ANULADA', na=False)
-                                df_historial_puro = df_cloud[mask_cerradas_nube].copy()
+                                # 3. LÓGICA DE ESPEJO ABSOLUTO INVERSO
+                                PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                                mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
+                                df_historial_puro = df_cloud[~mask_vivas_nube].copy()
                                 
-                                # 4. Unimos el historial puro con tu archivo nuevo crudo (que trae las vivas reales)
+                                # 4. Unimos el historial puro con tu archivo nuevo crudo (que trae las vivas reales de hoy)
                                 df_combined = pd.concat([df_historial_puro, df_new])
                             else:
                                 df_combined = df_new
@@ -747,7 +748,7 @@ def main():
                                 except Exception as e_fttx:
                                     st.warning(f"⚠️ No se pudo actualizar FTTX en la nube: {e_fttx}")
 
-                            st.success("✅ Datos sincronizados en modo Espejo y unidos al histórico correctamente.")
+                            st.success("✅ Datos sincronizados en modo Espejo Inverso y unidos al histórico correctamente.")
                         except Exception as e:
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
                 else:
