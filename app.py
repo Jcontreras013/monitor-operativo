@@ -334,7 +334,6 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
             m = pd.DataFrame(columns=['ACTIVIDAD', 'Inicio (Mora)'])
         resumen = pd.merge(m, resumen, on='ACTIVIDAD', how='outer').fillna(0)
     else:
-        # Modo izquierda (Carga Total)
         resumen.rename(columns={'Pendientes (Hoy)': 'Asignadas'}, inplace=True)
 
     if not resumen.empty:
@@ -354,15 +353,15 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
         
         resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
 
-        # Configuración de visualización
+        # Configuración de visualización con columnas más estrechas
         col_config = {"Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium")}
         if 'Inicio (Mora)' in resumen.columns:
-            col_config["Inicio (Mora)"] = st.column_config.NumberColumn("INICIO (MORA)", format="%d")
-            col_config["Pendientes (Hoy)"] = st.column_config.NumberColumn("PENDIENTES", format="%d")
+            col_config["Inicio (Mora)"] = st.column_config.NumberColumn("INICIO (MORA)", format="%d", width="small")
+            col_config["Pendientes (Hoy)"] = st.column_config.NumberColumn("PENDIENTES", format="%d", width="small")
         else:
-            col_config["Asignadas"] = st.column_config.NumberColumn("ASIGNADAS (Total)", format="%d")
+            col_config["Asignadas"] = st.column_config.NumberColumn("ASIGNADAS (Total)", format="%d", width="small")
             
-        col_config["Cerradas"] = st.column_config.NumberColumn("CERRADAS", format="%d")
+        col_config["Cerradas"] = st.column_config.NumberColumn("CERRADAS", format="%d", width="small")
 
         st.dataframe(
             resumen,
@@ -1027,33 +1026,44 @@ def main():
             df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
 
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
-            st.markdown("### 📊 Indicadores de Avance Operativo")
+            st.markdown("### 📊 Indicadores de Avance Operativo (Mora)")
             
-            df_plex_asignadas_rep = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == 'PLEX']
-            df_plex_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'PLEX']
+            # --- Lógica de Avance (Mora Estricta) ---
+            df_asignadas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_asignadas_espejo['FECHA_APE'], errors='coerce')
+            df_cerradas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_espejo['FECHA_APE'], errors='coerce')
             
-            df_resi_asignadas_rep = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == 'RESIDENCIAL']
-
-            total_p_rep = len(df_plex_asignadas_rep) + len(df_plex_cerr_rep)
-            avance_plex_rep = (len(df_plex_cerr_rep) / total_p_rep * 100) if total_p_rep > 0 else 0
+            df_mora_pend_rep = df_asignadas_espejo[df_asignadas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+            df_mora_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+            df_inicio_mora_rep = pd.concat([df_mora_pend_rep, df_mora_cerr_rep]).drop_duplicates(subset=['NUM'])
             
-            total_r_rep = len(df_resi_asignadas_rep) + len(df_resi_cerr_rep)
-            avance_resi_rep = (len(df_resi_cerr_rep) / total_r_rep * 100) if total_r_rep > 0 else 0
+            df_plex_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'PLEX']
+            df_plex_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'PLEX']
+            df_plex_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'PLEX']
             
-            total_v_rep = len(df_asignadas_espejo) + len(df_cerradas_espejo)
-            avance_global_rep = (len(df_cerradas_espejo) / total_v_rep * 100) if total_v_rep > 0 else 0
-
-            def crear_velocimetro_rep(valor, titulo):
-                color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
-                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
-                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
+            df_resi_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'RESIDENCIAL']
+            
+            tot_mora_plex_rep = len(df_plex_m_inicio_rep)
+            avance_mora_plex_rep = (len(df_plex_m_cerr_rep) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
+            
+            tot_mora_resi_rep = len(df_resi_m_inicio_rep)
+            avance_mora_resi_rep = (len(df_resi_m_cerr_rep) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
+            
+            tot_mora_global_rep = len(df_inicio_mora_rep)
+            avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
+            
+            def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
+                color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
+                if total_ordenes == 0: color_v = "#4B5563"
+                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
+                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
                 return fig
 
             col_gr1, col_gr2, col_gr3 = st.columns(3)
-            with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_resi_rep, "🏠 Residencial"), use_container_width=True)
-            with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_plex_rep, "🏢 PLEX"), use_container_width=True)
-            with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_global_rep, "🌍 Global"), use_container_width=True)
+            with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+            with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+            with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             
             st.divider()
 
@@ -1098,23 +1108,27 @@ def main():
 
             st.divider()
             
-            st.markdown("### 📈 Resumen Consolidado: Carga Asignada vs Cierres")
+            st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
             
-            p_rep = df_asignadas_espejo.groupby('ACTIVIDAD').size().reset_index(name='ASIGNADAS')
-            c_rep = df_cerradas_espejo.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
+            m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
+            p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
+            c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
             
-            resumen_global_rep = pd.merge(p_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
             
             if not resumen_global_rep.empty:
-                resumen_global_rep['ASIGNADAS'] = resumen_global_rep['ASIGNADAS'].astype(int)
+                resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
+                resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
                 resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
                 
                 resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
-                resumen_global_rep = resumen_global_rep[['TIPO', 'ASIGNADAS', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
+                resumen_global_rep = resumen_global_rep[['TIPO', 'INICIO (MORA)', 'PENDIENTES', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
                 
-                tot_p = resumen_global_rep['ASIGNADAS'].sum()
+                tot_m = resumen_global_rep['INICIO (MORA)'].sum()
+                tot_p = resumen_global_rep['PENDIENTES'].sum()
                 tot_c = resumen_global_rep['CERRADAS'].sum()
-                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'ASIGNADAS': tot_p, 'CERRADAS': tot_c}])
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'INICIO (MORA)': tot_m, 'PENDIENTES': tot_p, 'CERRADAS': tot_c}])
                 resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 
                 st.dataframe(
@@ -1122,13 +1136,14 @@ def main():
                     use_container_width=True, 
                     hide_index=True,
                     column_config={
-                        "TIPO": st.column_config.TextColumn("TIPO"),
-                        "ASIGNADAS": st.column_config.NumberColumn("ASIGNADAS", format="%d"),
+                        "TIPO": st.column_config.TextColumn("TIPO DE ORDEN"),
+                        "INICIO (MORA)": st.column_config.NumberColumn("INICIO (MORA)", format="%d"),
+                        "PENDIENTES": st.column_config.NumberColumn("PENDIENTES", format="%d"),
                         "CERRADAS": st.column_config.NumberColumn("CERRADAS", format="%d")
                     }
                 )
             else:
-                st.info("No hay datos de operaciones consolidadas para esta fecha.")
+                st.info("No hay datos de mora consolidada para esta fecha.")
 
             st.markdown("### ⏱️ Tiempos de Atención Promedio")
             if not df_cerradas_espejo.empty:
@@ -1358,29 +1373,11 @@ def main():
                 st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Control de Gestión Operativa (Carga Total vs Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
-            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Control de Gestión Operativa (Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
+            col1, col2, col3 = st.columns(3)
             
             # =====================================================================
-            # --- LÓGICA IZQUIERDA: CARGA TOTAL (El día completo: Mora + Nuevas) ---
-            # =====================================================================
-            df_plex_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'PLEX']
-            df_plex_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'PLEX']
-            
-            df_resi_asignadas = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == 'RESIDENCIAL']
-
-            total_p = len(df_plex_asignadas) + len(df_plex_cerr)
-            avance_plex = (len(df_plex_cerr) / total_p * 100) if total_p > 0 else 0
-            
-            total_r = len(df_resi_asignadas) + len(df_resi_cerr)
-            avance_resi = (len(df_resi_cerr) / total_r * 100) if total_r > 0 else 0
-            
-            total_v = len(df_solo_asignadas_monitor) + len(df_cerradas_hoy_monitor)
-            avance_global = (len(df_cerradas_hoy_monitor) / total_v * 100) if total_v > 0 else 0
-
-            # =====================================================================
-            # --- LÓGICA DERECHA: EFECTIVIDAD DE MORA (Solo órdenes de ayer o antes) ---
+            # --- LÓGICA: EFECTIVIDAD DE MORA (Solo órdenes de ayer o antes) ---
             # =====================================================================
             
             # 1. PENDIENTES DE MORA ACTUAL: Órdenes vivas que se crearon ayer o antes (DIAS_RETRASO > 0)
@@ -1445,37 +1442,20 @@ def main():
                 )
                 return fig
 
-            # --- DIBUJAR LAS 6 COLUMNAS ---
+            # --- DIBUJAR LAS 3 COLUMNAS DE MORA ---
             
             with col1:
-                st.plotly_chart(crear_velocimetro_6cols(avance_resi, "🏠 Total Residencial", total_ordenes=total_r), use_container_width=True, key="p1")
-                if st.button("🔍 Ver", use_container_width=True, key="b1"):
-                    mostrar_detalle_avance("RESIDENCIAL (TOTAL)", df_resi_asignadas, df_resi_cerr)
-
-            with col2:
-                st.plotly_chart(crear_velocimetro_6cols(avance_plex, "🏢 Total PLEX", total_ordenes=total_p), use_container_width=True, key="p2")
-                if st.button("🔍 Ver", use_container_width=True, key="b2"):
-                    mostrar_detalle_avance("PLEX (TOTAL)", df_plex_asignadas, df_plex_cerr)
-
-            with col3:
-                st.plotly_chart(crear_velocimetro_6cols(avance_global, "🌍 Avance Global", total_ordenes=total_v), use_container_width=True, key="p3")
-                if st.button("🔍 Ver Global", use_container_width=True, key="b3"):
-                    mostrar_detalle_avance("GLOBAL (TOTAL)", df_solo_asignadas_monitor, df_cerradas_hoy_monitor)
-            
-            st.markdown("<div style='border-top: 1px solid #333; margin: 15px 0;'></div>", unsafe_allow_html=True)
-
-            with col4:
-                st.plotly_chart(crear_velocimetro_6cols(av_mora_resi, "🏠 Mora Resi", es_mora=True, total_ordenes=len(df_resi_m_inicio)), use_container_width=True, key="p4")
+                st.plotly_chart(crear_velocimetro_6cols(av_mora_resi, "🏠 Mora Resi", es_mora=True, total_ordenes=tot_mora_resi), use_container_width=True, key="p4")
                 if st.button("🔍 Ver Mora", use_container_width=True, key="b4"):
                     mostrar_detalle_avance("MORA RESIDENCIAL", df_resi_m_pend, df_resi_m_cerr, df_resi_m_inicio)
 
-            with col5:
-                st.plotly_chart(crear_velocimetro_6cols(av_mora_plex, "🏢 Mora PLEX", es_mora=True, total_ordenes=len(df_plex_m_inicio)), use_container_width=True, key="p5")
+            with col2:
+                st.plotly_chart(crear_velocimetro_6cols(av_mora_plex, "🏢 Mora PLEX", es_mora=True, total_ordenes=tot_mora_plex), use_container_width=True, key="p5")
                 if st.button("🔍 Ver Mora", use_container_width=True, key="b5"):
                     mostrar_detalle_avance("MORA PLEX", df_plex_m_pend, df_plex_m_cerr, df_plex_m_inicio)
 
-            with col6:
-                st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=len(df_inicio_mora_total)), use_container_width=True, key="p6")
+            with col3:
+                st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=tot_mora_global), use_container_width=True, key="p6")
                 if st.button("🔍 Mora Global", use_container_width=True, key="b6"):
                     mostrar_detalle_avance("MORA GLOBAL", df_mora_pendiente_actual, df_mora_cerrada_hoy, df_inicio_mora_total)
 
