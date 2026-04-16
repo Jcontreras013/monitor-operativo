@@ -995,3 +995,88 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
     except Exception as e:
         print(f"Error al generar PDF de Primera Orden: {e}")
         return None
+
+# ==============================================================================
+# FUNCIÓN PARA GENERAR PDF DE PENDIENTES GENERALES (DISPATCH)
+# ==============================================================================
+def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
+    """
+    Genera un documento PDF estilo gerencial para el equipo de Dispatch
+    con el resumen exacto de las órdenes pendientes para el día siguiente.
+    """
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # --- ENCABEZADO DEL REPORTE ---
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE DE PENDIENTES GENERALES (DISPATCH)"), border=0, ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {hoy_str}"), ln=True, align="C")
+    pdf.ln(10)
+    
+    # --- SECCIÓN: RESUMEN DE CARGA ---
+    pdf.seccion_titulo("RESUMEN DE CARGA PARA EL SIGUIENTE TURNO")
+    
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(60, 8, "Clasificacion", border=1, fill=True)
+    pdf.cell(40, 8, "Asignadas (Ruta)", border=1, align="C", fill=True)
+    pdf.cell(40, 8, "Sin Asignar", border=1, align="C", fill=True)
+    pdf.cell(40, 8, "Total General", border=1, align="C", fill=True)
+    pdf.ln()
+    
+    for _, row in df_totales.iterrows():
+        if row['Categoría'] == 'TOTAL PENDIENTES':
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_fill_color(220, 230, 245)
+            fill = True
+        else:
+            pdf.set_font("Helvetica", "", 9)
+            fill = False
+            
+        pdf.cell(60, 7, safestr(row['Categoría']), border=1, fill=fill)
+        pdf.cell(40, 7, str(row['Asignadas (En Ruta)']), border=1, align="C", fill=fill)
+        pdf.cell(40, 7, str(row['Nuevas (Sin Asignar)']), border=1, align="C", fill=fill)
+        pdf.cell(40, 7, str(row['TOTAL GENERAL']), border=1, align="C", fill=fill)
+        pdf.ln()
+
+    pdf.ln(10)
+    
+    # --- SECCIÓN: DESGLOSE DE NUEVAS SIN ASIGNAR ---
+    # Mostramos a detalle cuáles son las órdenes que nadie ha tomado aún para darles prioridad
+    mask_sin_tec = (df_detalle['TECNICO'].isna()) | (df_detalle['TECNICO'].astype(str).str.strip() == '') | (df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+    df_nuevas_det = df_detalle[mask_sin_tec].copy()
+    
+    if not df_nuevas_det.empty:
+        pdf.seccion_titulo("LISTADO PRIORITARIO: ORDENES NUEVAS (SIN ASIGNAR)")
+        
+        pdf.set_fill_color(255, 235, 235) # Rojo muy suave para resaltar prioridad
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(20, 6, "Orden", border=1, align="C", fill=True)
+        pdf.cell(30, 6, "Cliente", border=1, align="C", fill=True)
+        pdf.cell(60, 6, "Actividad", border=1, align="C", fill=True)
+        pdf.cell(70, 6, "Colonia", border=1, align="C", fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(0, 0, 0)
+        
+        for _, row in df_nuevas_det.iterrows():
+            pdf.cell(20, 5, safestr(str(row['NUM'])), border=1, align="C")
+            pdf.cell(30, 5, safestr(str(row['CLIENTE'])), border=1, align="C")
+            pdf.cell(60, 5, safestr(str(row['ACTIVIDAD']))[:35], border=1, align="L")
+            pdf.cell(70, 5, safestr(str(row['COLONIA']))[:40], border=1, align="L")
+            pdf.ln()
+    else:
+        pdf.seccion_titulo("LISTADO PRIORITARIO: ORDENES NUEVAS (SIN ASIGNAR)")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(0, 100, 0)
+        pdf.cell(0, 6, "Excelente. Todas las ordenes se encuentran asignadas a tecnicos.", ln=True)
+
+    return finalizar_pdf(pdf)
