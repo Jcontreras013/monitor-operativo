@@ -10,6 +10,7 @@ from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+from fpdf import FPDF # Importado para el PDF de Pendientes
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -312,13 +313,11 @@ def mostrar_comentario_cierre(fila):
 def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=None):
     st.subheader(f"📊 Desglose: {segmento}")
     
-    # 1. Agrupar Pendientes Actuales
     if not asignadas_df.empty:
         p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Pendientes (Hoy)')
     else:
         p = pd.DataFrame(columns=['ACTIVIDAD', 'Pendientes (Hoy)'])
 
-    # 2. Agrupar Cerradas Hoy
     if not cerradas_df.empty:
         c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
     else:
@@ -326,7 +325,6 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
 
     resumen = pd.merge(p, c, on='ACTIVIDAD', how='outer').fillna(0)
 
-    # 3. Lógica para la 4ta Columna: INICIO (MORA)
     if inicio_mora_df is not None:
         if not inicio_mora_df.empty:
             m = inicio_mora_df.groupby('ACTIVIDAD').size().reset_index(name='Inicio (Mora)')
@@ -337,7 +335,6 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
         resumen.rename(columns={'Pendientes (Hoy)': 'Asignadas'}, inplace=True)
 
     if not resumen.empty:
-        # Limpieza de tipos de datos
         for col in resumen.columns:
             if col != 'ACTIVIDAD':
                 resumen[col] = resumen[col].astype(int)
@@ -345,7 +342,6 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
         resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
         resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
 
-        # Totales
         fila_total = {'Tipo': 'TOTAL GENERAL'}
         for col in resumen.columns:
             if col != 'Tipo':
@@ -353,7 +349,6 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
         
         resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
 
-        # Configuración de visualización con columnas más estrechas
         col_config = {"Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium")}
         if 'Inicio (Mora)' in resumen.columns:
             col_config["Inicio (Mora)"] = st.column_config.NumberColumn("INICIO (MORA)", format="%d", width="small")
@@ -524,6 +519,72 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     except Exception as e:
         st.error(f"❌ Error fatal en el motor de depuración: {e}")
         return None, None
+
+# ==============================================================================
+# FUNCIÓN PARA GENERAR PDF DE PENDIENTES GENERALES
+# ==============================================================================
+def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
+    import tempfile
+    import unicodedata
+    
+    def safestr_local(texto):
+        if pd.isna(texto): return ""
+        return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Encabezado
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, "REPORTE DE PENDIENTES GENERALES (DISPATCH)", ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, f"Generado el: {hoy_str}", ln=True, align="C")
+    pdf.ln(10)
+    
+    # Resumen (Tabla)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(84, 98, 143)
+    pdf.cell(0, 8, "RESUMEN DE CARGA PARA MAÑANA", ln=True)
+    
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(60, 8, "Clasificacion", border=1, fill=True)
+    pdf.cell(40, 8, "Asignadas", border=1, align="C", fill=True)
+    pdf.cell(40, 8, "Sin Asignar", border=1, align="C", fill=True)
+    pdf.cell(40, 8, "Total", border=1, align="C", fill=True)
+    pdf.ln()
+    
+    pdf.set_font("Helvetica", "", 9)
+    for _, row in df_totales.iterrows():
+        if row['Categoría'] == 'TOTAL PENDIENTES':
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_fill_color(220, 230, 245)
+            fill = True
+        else:
+            pdf.set_font("Helvetica", "", 9)
+            fill = False
+            
+        pdf.cell(60, 7, safestr_local(row['Categoría']), border=1, fill=fill)
+        pdf.cell(40, 7, str(row['Asignadas (En Ruta)']), border=1, align="C", fill=fill)
+        pdf.cell(40, 7, str(row['Nuevas (Sin Asignar)']), border=1, align="C", fill=fill)
+        pdf.cell(40, 7, str(row['TOTAL GENERAL']), border=1, align="C", fill=fill)
+        pdf.ln()
+
+    # Si es necesario agregar detalle de cuentas, se puede hacer aquí en futuras versiones
+    # Por ahora, el PDF lleva el resumen gerencial que necesitan
+    
+    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        pdf.output(tmppath)
+        with open(tmppath, "rb") as f: return f.read()
+    finally:
+        try: os.remove(tmppath)
+        except: pass
 
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
@@ -931,9 +992,160 @@ def main():
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         
-        tab_diario, tab_gerencial, tab_biometrico = st.tabs([
-            "📦 Cierre Diario", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"
+        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico = st.tabs([
+            "📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"
         ])
+
+        with tab_pendientes:
+            st.subheader("📋 Resumen de Pendientes Generales (Para Dispatch)")
+            st.caption("Esta vista muestra el consolidado exacto de las órdenes vivas con las que iniciará la operación el día de mañana.")
+            
+            # 1. Extraer TODAS las vivas actuales
+            df_todas_vivas = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
+            
+            if not df_todas_vivas.empty:
+                # 2. Separar Asignadas de No Asignadas
+                mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                
+                df_asig = df_todas_vivas[~mask_sin_tec].copy()
+                df_no_asig = df_todas_vivas[mask_sin_tec].copy()
+                
+                # 3. Función de clasificación exacta
+                def clasificar_dispatch(row):
+                    act = str(row.get('ACTIVIDAD', '')).upper()
+                    com = str(row.get('COMENTARIO', '')).upper()
+                    txt = act + " " + com
+                    
+                    if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
+                        return "INSTALACIONES"
+                    elif re.search("SOP|FALLA|MANT", act):
+                        return "MANTENIMIENTOS"
+                    elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt):
+                        return "PLEX"
+                    else:
+                        return "OTRAS"
+                        
+                # 4. Construir DataFrames de resumen
+                if not df_asig.empty:
+                    df_asig['CATEGORIA'] = df_asig.apply(clasificar_dispatch, axis=1)
+                    res_a = df_asig['CATEGORIA'].value_counts().reset_index()
+                    res_a.columns = ['Categoría', 'Asignadas (En Ruta)']
+                else:
+                    res_a = pd.DataFrame(columns=['Categoría', 'Asignadas (En Ruta)'])
+                    
+                if not df_no_asig.empty:
+                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificar_dispatch, axis=1)
+                    res_n = df_no_asig['CATEGORIA'].value_counts().reset_index()
+                    res_n.columns = ['Categoría', 'Nuevas (Sin Asignar)']
+                else:
+                    res_n = pd.DataFrame(columns=['Categoría', 'Nuevas (Sin Asignar)'])
+                    
+                # 5. Unir y formatear
+                df_dispatch = pd.merge(res_a, res_n, on='Categoría', how='outer').fillna(0)
+                df_dispatch['Asignadas (En Ruta)'] = df_dispatch['Asignadas (En Ruta)'].astype(int)
+                df_dispatch['Nuevas (Sin Asignar)'] = df_dispatch['Nuevas (Sin Asignar)'].astype(int)
+                df_dispatch['TOTAL GENERAL'] = df_dispatch['Asignadas (En Ruta)'] + df_dispatch['Nuevas (Sin Asignar)']
+                
+                # Fila de totales
+                tot_a = df_dispatch['Asignadas (En Ruta)'].sum()
+                tot_n = df_dispatch['Nuevas (Sin Asignar)'].sum()
+                tot_g = df_dispatch['TOTAL GENERAL'].sum()
+                
+                df_totales = pd.DataFrame([{
+                    'Categoría': 'TOTAL PENDIENTES', 
+                    'Asignadas (En Ruta)': tot_a, 
+                    'Nuevas (Sin Asignar)': tot_n, 
+                    'TOTAL GENERAL': tot_g
+                }])
+                
+                df_dispatch_final = pd.concat([df_dispatch, df_totales], ignore_index=True)
+                
+                # 6. Mostrar KPI Superiores (Tarjetas de métricas)
+                st.markdown("<br>", unsafe_allow_html=True)
+                col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+                
+                with col_kpi1:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #3B82F6; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);">
+                        <div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold; text-transform: uppercase;">ASIGNADAS (EN RUTA)</div>
+                        <div style="color: #FFFFFF; font-size: 2rem; font-weight: bold; line-height: 1;">{tot_a}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                with col_kpi2:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);">
+                        <div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold; text-transform: uppercase;">NUEVAS (SIN ASIGNAR)</div>
+                        <div style="color: #FFFFFF; font-size: 2rem; font-weight: bold; line-height: 1;">{tot_n}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                with col_kpi3:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #10B981; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);">
+                        <div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold; text-transform: uppercase;">TOTAL ÓRDENES PENDIENTES</div>
+                        <div style="color: #FFFFFF; font-size: 2rem; font-weight: bold; line-height: 1;">{tot_g}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("<br><br>", unsafe_allow_html=True)
+                
+                # 7. Tabla Detallada y Botones de Exportación
+                col_d1, col_d2 = st.columns([2, 1])
+                
+                with col_d1:
+                    def highlight_total(row):
+                        return ['background-color: #2D3748; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
+                    
+                    st.dataframe(
+                        df_dispatch_final.style.apply(highlight_total, axis=1),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Categoría": st.column_config.TextColumn("CLASIFICACIÓN"),
+                            "Asignadas (En Ruta)": st.column_config.NumberColumn("🚗 ASIGNADAS", format="%d"),
+                            "Nuevas (Sin Asignar)": st.column_config.NumberColumn("📥 SIN ASIGNAR", format="%d"),
+                            "TOTAL GENERAL": st.column_config.NumberColumn("📦 TOTAL", format="%d")
+                        }
+                    )
+                    
+                with col_d2:
+                    st.info("Genera los reportes para enviar al departamento de Dispatch.")
+                    
+                    # Botón para descargar el Excel del Dispatch
+                    buffer = io.BytesIO()
+                    df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
+                    cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
+                    df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
+                    
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
+                    
+                    st.download_button(
+                        label="📥 Exportar Resumen a EXCEL",
+                        data=buffer.getvalue(),
+                        file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    
+                    # Botón para generar PDF de Pendientes
+                    if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary"):
+                        with st.spinner("Generando PDF..."):
+                            st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
+                    
+                    if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None:
+                        st.download_button(
+                            label="📥 Descargar PDF Generado",
+                            data=st.session_state['pdf_dispatch'],
+                            file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+            else:
+                st.success("🎉 No hay órdenes pendientes registradas. ¡Operación limpia!")
+
 
         with tab_biometrico:
             try:
