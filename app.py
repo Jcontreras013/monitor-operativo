@@ -39,7 +39,8 @@ try:
         generar_pdf_semanal,
         generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
-        generar_pdf_primera_orden
+        generar_pdf_primera_orden,
+        generar_pdf_pendientes_dispatch
     )
 except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
@@ -521,72 +522,6 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         return None, None
 
 # ==============================================================================
-# FUNCIÓN PARA GENERAR PDF DE PENDIENTES GENERALES
-# ==============================================================================
-def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
-    import tempfile
-    import unicodedata
-    
-    def safestr_local(texto):
-        if pd.isna(texto): return ""
-        return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
-
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Encabezado
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, "REPORTE DE PENDIENTES GENERALES (DISPATCH)", ln=True, align="C")
-    
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, f"Generado el: {hoy_str}", ln=True, align="C")
-    pdf.ln(10)
-    
-    # Resumen (Tabla)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(84, 98, 143)
-    pdf.cell(0, 8, "RESUMEN DE CARGA PARA MAÑANA", ln=True)
-    
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(60, 8, "Clasificacion", border=1, fill=True)
-    pdf.cell(40, 8, "Asignadas", border=1, align="C", fill=True)
-    pdf.cell(40, 8, "Sin Asignar", border=1, align="C", fill=True)
-    pdf.cell(40, 8, "Total", border=1, align="C", fill=True)
-    pdf.ln()
-    
-    pdf.set_font("Helvetica", "", 9)
-    for _, row in df_totales.iterrows():
-        if row['Categoría'] == 'TOTAL PENDIENTES':
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_fill_color(220, 230, 245)
-            fill = True
-        else:
-            pdf.set_font("Helvetica", "", 9)
-            fill = False
-            
-        pdf.cell(60, 7, safestr_local(row['Categoría']), border=1, fill=fill)
-        pdf.cell(40, 7, str(row['Asignadas (En Ruta)']), border=1, align="C", fill=fill)
-        pdf.cell(40, 7, str(row['Nuevas (Sin Asignar)']), border=1, align="C", fill=fill)
-        pdf.cell(40, 7, str(row['TOTAL GENERAL']), border=1, align="C", fill=fill)
-        pdf.ln()
-
-    # Si es necesario agregar detalle de cuentas, se puede hacer aquí en futuras versiones
-    # Por ahora, el PDF lleva el resumen gerencial que necesitan
-    
-    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    try:
-        pdf.output(tmppath)
-        with open(tmppath, "rb") as f: return f.read()
-    finally:
-        try: os.remove(tmppath)
-        except: pass
-
-# ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
@@ -1010,20 +945,21 @@ def main():
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
-                # 3. Función de clasificación exacta
+                # 3. Función de clasificación exacta (Igual a tablas de Excel)
                 def clasificar_dispatch(row):
-                    act = str(row.get('ACTIVIDAD', '')).upper()
-                    com = str(row.get('COMENTARIO', '')).upper()
-                    txt = act + " " + com
+                    act_original = str(row.get('ACTIVIDAD', '')).strip().upper()
                     
-                    if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
+                    # --- 1. OTROS ---
+                    if re.search(r"PLEXISCA|PEXTERNO|SPLITTEROPT|NOINSTALADO|TRASLADOEXTFIBRA|TVADICIONAL", act_original):
+                        return "OTROS"
+                        
+                    # --- 2. INSTALACIONES ---
+                    elif re.search(r"ADIC|CAMBIO|NUEVA", act_original):
                         return "INSTALACIONES"
-                    elif re.search("SOP|FALLA|MANT", act):
-                        return "MANTENIMIENTOS"
-                    elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt):
-                        return "PLEX"
+                        
+                    # --- 3. SOP / MANTENIMIENTO ---
                     else:
-                        return "OTRAS"
+                        return "MANTENIMIENTOS"
                         
                 # 4. Construir DataFrames de resumen
                 if not df_asig.empty:
