@@ -1071,12 +1071,65 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
             pdf.cell(20, 5, safestr(str(row['NUM'])), border=1, align="C")
             pdf.cell(30, 5, safestr(str(row['CLIENTE'])), border=1, align="C")
             pdf.cell(60, 5, safestr(str(row['ACTIVIDAD']))[:35], border=1, align="L")
-            pdf.cell(70, 5, safestr(str(row['COLONIA']))[:40], border=1, align="L")
+            pdf.cell(70, 5, safestr(str(row.get('COLONIA', '')))[:40], border=1, align="L")
             pdf.ln()
     else:
         pdf.seccion_titulo("LISTADO PRIORITARIO: ORDENES NUEVAS (SIN ASIGNAR)")
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(0, 100, 0)
         pdf.cell(0, 6, "Excelente. Todas las ordenes se encuentran asignadas a tecnicos.", ln=True)
+
+    # --- SECCIÓN: LA TABLA GRANDE (TODAS LAS ASIGNADAS) ---
+    mask_con_tec = df_detalle['TECNICO'].notna() & (df_detalle['TECNICO'].astype(str).str.strip() != '') & (~df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+    df_asignadas_det = df_detalle[mask_con_tec].copy()
+
+    if not df_asignadas_det.empty:
+        pdf.add_page() # Saltamos a una hoja nueva para la tabla grande
+        pdf.seccion_titulo("LISTADO GENERAL DETALLADO: ORDENES EN RUTA (ASIGNADAS)")
+        
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 7)
+        
+        # Dibujamos los encabezados
+        pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
+        pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
+        pdf.cell(45, 6, "Actividad", border=1, align="C", fill=True)
+        pdf.cell(50, 6, "Colonia", border=1, align="C", fill=True)
+        pdf.cell(40, 6, "Tecnico", border=1, align="C", fill=True)
+        pdf.cell(20, 6, "Dias", border=1, align="C", fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 6)
+        pdf.set_text_color(0, 0, 0)
+        
+        # Ordenamos por técnico para que sea fácil de leer por bloques
+        df_asignadas_det = df_asignadas_det.sort_values(by='TECNICO')
+        
+        for _, row in df_asignadas_det.iterrows():
+            # Si la tabla llega al final de la hoja, creamos una nueva y repetimos el encabezado
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                pdf.set_font("Helvetica", "B", 7)
+                pdf.set_fill_color(240, 240, 240)
+                pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
+                pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
+                pdf.cell(45, 6, "Actividad", border=1, align="C", fill=True)
+                pdf.cell(50, 6, "Colonia", border=1, align="C", fill=True)
+                pdf.cell(40, 6, "Tecnico", border=1, align="C", fill=True)
+                pdf.cell(20, 6, "Dias", border=1, align="C", fill=True)
+                pdf.ln()
+                pdf.set_font("Helvetica", "", 6)
+            
+            dias_retraso = str(row.get('DIAS_RETRASO', '0'))
+            
+            # Dibujamos cada fila (cortando textos muy largos para que no deformen la tabla)
+            pdf.cell(15, 5, safestr(str(row.get('NUM', ''))), border=1, align="C")
+            pdf.cell(20, 5, safestr(str(row.get('CLIENTE', ''))), border=1, align="C")
+            pdf.cell(45, 5, safestr(str(row.get('ACTIVIDAD', '')))[:30], border=1, align="L")
+            pdf.cell(50, 5, safestr(str(row.get('COLONIA', '')))[:35], border=1, align="L")
+            pdf.cell(40, 5, safestr(str(row.get('TECNICO', '')))[:25], border=1, align="L")
+            pdf.cell(20, 5, safestr(dias_retraso), border=1, align="C")
+            pdf.ln()
 
     return finalizar_pdf(pdf)
