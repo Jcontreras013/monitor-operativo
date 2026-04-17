@@ -1447,8 +1447,9 @@ def main():
             
         df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO'] < 0, 'DIAS_RETRASO'] = 0
 
+        # ETIQUETAS EXACTAS PARA CUADRAR CON EXCEL
         df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(
-            lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
+            lambda d: ">= 7 Dias" if d >= 7 else (">= 4 Dias" if d >= 4 else (">= 1 Dias" if d >= 1 else ">= 0 Dias"))
         )
 
         st.title("⚡ Monitor Operativo Maxcom")
@@ -1492,7 +1493,7 @@ def main():
             
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
+                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dias",">= 4 Dias",">= 1 Dias",">= 0 Dias"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_asignadas_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
@@ -1500,54 +1501,58 @@ def main():
                 def style_dias_apply(row):
                     v = row['Dias']
                     bg_color, font_color = '', 'white'
-                    if v == ">= 7 Dia":
+                    if v == ">= 7 Dias":
                         bg_color = '#d32f2f'
-                    elif v == "= 4 a 6 Dias":
+                    elif v == ">= 4 Dias":
                         bg_color = '#f57c00'
-                    elif v == "= 1 a 3 Dias":
+                    elif v == ">= 1 Dias":
                         bg_color, font_color = '#fbc02d', 'black'
-                    elif v == "= 0 Dia":
+                    elif v == ">= 0 Dias":
                         bg_color = '#388e3c'
                     return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
 
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
 
+            # CÓDIGO CORREGIDO PARA AGRUPACIÓN ESTRICTA (Igual a tablas de Excel)
             g_tab_list = []
             sub_tab_list = []
             for idx, r in df_todas_pendientes_monitor.iterrows():
-                act = str(r.get('ACTIVIDAD', '')).upper()
-                com = str(r.get('COMENTARIO', '')).upper()
-                txt = act + " " + com
+                act_original = str(r.get('ACTIVIDAD', '')).strip().upper()
                 is_off = r.get('ES_OFFLINE', False)
                 
-                if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
+                # --- 1. OTROS ---
+                if re.search(r"PLEXISCA|PEXTERNO|SPLITTEROPT|NOINSTALADO|TRASLADOEXTFIBRA|TVADICIONAL", act_original):
                     g_tab_list.append("OTROS")
-                    sub_tab_list.append(act if act != "" else "N/A")
-                elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
+                    if "PLEXISCA" in act_original: sub_tab_list.append("PLEXISCA")
+                    elif "PEXTERNO" in act_original: sub_tab_list.append("PEXTERNO")
+                    elif "SPLITTEROPT" in act_original: sub_tab_list.append("SPLITTEROPT")
+                    elif "NOINSTALADO" in act_original: sub_tab_list.append("NOINSTALADO")
+                    elif "TRASLADO" in act_original: sub_tab_list.append("TRASLADOEXTFIBRA")
+                    elif "TV" in act_original: sub_tab_list.append("TVADICIONAL")
+                    else: sub_tab_list.append(act_original if act_original != "" else "(en blanco)")
+                    
+                # --- 2. INSTALACIONES ---
+                elif re.search(r"ADIC|CAMBIO|NUEVA", act_original):
                     g_tab_list.append("INS")
-                    if re.search("ADIC", txt):
+                    if "ADIC" in act_original:
                         sub_tab_list.append("Adición")
-                    elif re.search("CAMBIO|MIGRACI", txt):
-                        sub_tab_list.append("Cambio / Migración")
-                    elif re.search("RECUP", txt):
-                        sub_tab_list.append("Recuperado")
+                    elif "CAMBIO" in act_original:
+                        sub_tab_list.append("Cambio de Medio")
                     else:
                         sub_tab_list.append("Nueva")
+                        
+                # --- 3. SOP / MANTENIMIENTO ---
                 else:
                     g_tab_list.append("SOP")
                     if is_off:
                         sub_tab_list.append("ONT/ONU Offline")
-                    elif re.search("NIVEL|DB", com):
-                        sub_tab_list.append("Niveles alterados")
-                    elif re.search("FIBRA|FTTH", act):
+                    elif "FTTH" in act_original or "FIBRA" in act_original:
                         sub_tab_list.append("FTTH / FIBRA")
-                    elif re.search("NAV|INTERNET", act):
-                        sub_tab_list.append("Navegación / Internet")
-                    elif re.search("TV|CABLE", act):
-                        sub_tab_list.append("Sin señal de TV")
+                    elif "MANTENIMIENTO" in act_original or "SOP" in act_original:
+                        sub_tab_list.append("Mantenimiento")
                     else:
-                        sub_tab_list.append("SOP General")
+                        sub_tab_list.append(act_original.title() if act_original else "SOP General")
                     
             df_tablero = df_todas_pendientes_monitor.copy()
             df_tablero['G_TAB'] = g_tab_list
@@ -1568,7 +1573,7 @@ def main():
                 res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
                 res_ins.columns = ['Instalaciones', 'Cant']
                 
-                cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
+                cats_ins = ['Nueva', 'Adición', 'Cambio de Medio']
                 for c in cats_ins:
                     if c not in res_ins['Instalaciones'].values:
                         res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
