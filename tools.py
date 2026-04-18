@@ -43,20 +43,17 @@ COLUMNAS_VITALES_SISTEMA = [
 # ==============================================================================
 class ReporteGenerencialPDF(FPDF):
     def header(self):
-        # 1. Insertar el logo si el archivo 'logo.png' existe en la misma carpeta
         if os.path.exists('logo.png'):
-            self.image('logo.png', 10, 6, 35) # Posición X=10, Y=6, Ancho=35mm
+            self.image('logo.png', 10, 6, 35) 
         
-        # 2. Mover el texto a la derecha para que no choque con el logo
         self.set_x(50) 
         self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "", 7)
         self.cell(80, 5, safestr("Reporte Operativo Consolidado"), ln=False, align="L")
         self.cell(0, 5, safestr("Maxcom PRO - Modulo Gerencial"), ln=True, align="R")
         
-        # 3. Dibujar la línea divisoria debajo del logo
         self.set_draw_color(200, 200, 200)
-        y_line = max(self.get_y(), 18) # Asegura que la línea baje lo suficiente
+        y_line = max(self.get_y(), 18) 
         self.line(10, y_line, 200, y_line)
         self.set_y(y_line + 5)
 
@@ -310,10 +307,6 @@ class ReporteGenerencialPDF(FPDF):
             self.set_font("Helvetica", "", 7)
         self.ln(6)
 
-
-# ==============================================================================
-# 3. MOTOR DE GENERACIÓN DE GRÁFICOS
-# ==============================================================================
 def generar_graficos_temporales(dfbase):
     paths = {}
     try:
@@ -375,7 +368,6 @@ def generar_graficos_temporales(dfbase):
         return {}
 
 def _generar_dona_png(pct, titulo):
-    """Función de apoyo para dibujar los anillos de avance en el PDF."""
     try:
         import matplotlib
         matplotlib.use('Agg')
@@ -393,23 +385,15 @@ def _generar_dona_png(pct, titulo):
     except:
         return None
 
-# ==============================================================================
-# LÓGICA DE VALORIZACIÓN DE METAS (GAMIFICACIÓN INTELIGENTE)
-# ==============================================================================
 def calcular_aporte_meta(row):
-    """
-    Asigna un % de logro leyendo la ACTIVIDAD y el COMENTARIO.
-    """
     act = str(row.get('ACTIVIDAD', '')).upper()
     com = str(row.get('COMENTARIO', '')).upper()
     txt = act + " " + com
     
     if 'PEXTERNO' in act:
         return 100.0  
-    # Si la orden es una instalación, pero el texto dice que es adición o migración:
     elif re.search('ADIC|CAMBIO|MIGRACI|RECUP', txt):
         return 12.5   
-    # Si es una instalación pura:
     elif re.search('INS|NUEVA|PLEX|SPLITTEROPT', act):
         return 25.0   
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act):
@@ -417,9 +401,6 @@ def calcular_aporte_meta(row):
     else:
         return 12.5   
 
-# ==============================================================================
-# 6. FUNCIONES PARA GENERAR PDF (SEMANAL, MENSUAL Y CIERRE DIARIO)
-# ==============================================================================
 def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     df_sem = df_base[
         (df_base['HORA_LIQ'].dt.date >= fecha_inicio) & 
@@ -593,14 +574,10 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 6, "Sin datos de productividad para hoy.", ln=True)
 
-    # ==============================================================================
-    # 🌟 NUEVA PÁGINA 2: INDICADORES DE AVANCE OPERATIVO (DONUTS)
-    # ==============================================================================
     if not dfc.empty:
         pdf.add_page()
         pdf.seccion_titulo("Indicadores de Avance Operativo (Completado vs Pendiente)")
         
-        # Filtrar técnicos inválidos para la lectura global
         mask_tec = (
             dfbase['TECNICO'].notna() & 
             (dfbase['TECNICO'].astype(str).str.strip() != '') & 
@@ -611,23 +588,19 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         PATRON_VIVA = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
         df_vivas = dfv[dfv['ESTADO'].astype(str).str.contains(PATRON_VIVA, na=False, case=False)]
         
-        # Residencial
         resi_pend = len(df_vivas[df_vivas['SEGMENTO'] == 'RESIDENCIAL'])
         resi_cerr = len(dfc[dfc['SEGMENTO'] == 'RESIDENCIAL'])
         t_resi = resi_pend + resi_cerr
         pct_resi = (resi_cerr / t_resi * 100) if t_resi > 0 else 0
         
-        # Plex
         plex_pend = len(df_vivas[df_vivas['SEGMENTO'] == 'PLEX'])
         plex_cerr = len(dfc[dfc['SEGMENTO'] == 'PLEX'])
         t_plex = plex_pend + plex_cerr
         pct_plex = (plex_cerr / t_plex * 100) if t_plex > 0 else 0
         
-        # Global
         t_global = len(df_vivas) + len(dfc)
         pct_global = (len(dfc) / t_global * 100) if t_global > 0 else 0
 
-        # Dibujar e inyectar las 3 donas
         path_resi = _generar_dona_png(pct_resi, "Residencial")
         path_plex = _generar_dona_png(pct_plex, "PLEX")
         path_global = _generar_dona_png(pct_global, "Global")
@@ -637,15 +610,13 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         if path_plex: pdf.image(path_plex, x=80, y=current_y, w=50)
         if path_global: pdf.image(path_global, x=140, y=current_y, w=50)
         
-        pdf.ln(60) # Mover el cursor debajo de las imágenes
+        pdf.ln(60) 
         
-        # Eliminar las imágenes temporales
         for path in [path_resi, path_plex, path_global]:
             if path:
                 try: os.remove(path)
                 except: pass
         
-        # Continúa el reporte normal
         pdf.add_page()
         pdf.seccion_titulo("Tiempos de Atencion (Antiguedad de Ordenes Liquidadas)")
         pdf.ln(2)
@@ -842,7 +813,6 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # --- ENCABEZADO DEL REPORTE ---
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, safestr("REPORTE GERENCIAL: RENDIMIENTO Y JORNADA DE TECNICOS"), border=0, ln=True, align="C")
@@ -857,25 +827,21 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         pdf.cell(0, 10, "No hay datos suficientes para generar el reporte.", ln=True)
         return finalizar_pdf(pdf)
 
-    # Extraemos la lista de todos los técnicos únicos (limpiando nulos)
     lista_tecnicos = resumen_jornada['TECNICO'].dropna().unique()
     
-    # --- CICLO: UN BLOQUE POR CADA TÉCNICO ---
     for tecnico in lista_tecnicos:
         if pdf.get_y() > 220:
             pdf.add_page()
             
         pdf.set_font("Helvetica", "B", 10)
-        pdf.set_fill_color(230, 240, 255) # Azul clarito
+        pdf.set_fill_color(230, 240, 255)
         pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 8, safestr(f"   TECNICO: {tecnico}"), border=1, ln=True, fill=True)
         
-        # Filtrar datos
         df_jor = resumen_jornada[resumen_jornada['TECNICO'] == tecnico]
         df_prod = tabla_produccion[tabla_produccion['TECNICO'] == tecnico]
         df_efi = tabla_eficiencia[tabla_eficiencia['TECNICO'] == tecnico]
         
-        # Resumen de Jornada
         pdf.set_font("Helvetica", "B", 8)
         pdf.cell(0, 6, "   RESUMEN DE JORNADA LABORAL", ln=True)
         
@@ -890,7 +856,6 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         pdf.cell(50, 5, safestr(f"Dia mas largo: {max_horas:.2f} hrs"), border=0, ln=True)
         pdf.ln(2)
         
-        # Tabla de Producción y Eficiencia
         pdf.set_font("Helvetica", "B", 8)
         pdf.cell(0, 6, "   DESGLOSE DE ACTIVIDAD Y TIEMPOS", ln=True)
         
@@ -944,18 +909,13 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
     return finalizar_pdf(pdf)
 
 def generar_pdf_primera_orden(df_base, fecha_cierre):
-    """
-    Genera un PDF con la primera orden del día de cada técnico usando FPDF.
-    """
     try:
-        # 1. Preparar el DataFrame
         patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
         mask_vivas = df_base['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
         mask_cerradas = (pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cierre) & (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
         
         df_universo = pd.concat([df_base[mask_vivas], df_base[mask_cerradas]]).drop_duplicates(subset=['NUM'])
         
-        # 2. Filtrar y ordenar la "Primera Orden" por técnico
         if 'HORA_INI' in df_universo.columns:
             df_universo['HORA_INI_DT'] = pd.to_datetime(df_universo['HORA_INI'], errors='coerce')
             df_universo = df_universo.dropna(subset=['HORA_INI_DT'])
@@ -964,9 +924,8 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
             df_primera = df_universo[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
             df_primera = df_primera.sort_values(by='HORA_INI_DT')
         else:
-            return None # Si no hay datos, no genera nada
+            return None 
 
-        # 3. Crear PDF usando la clase FPDF existente
         pdf = ReporteGenerencialPDF()
         pdf.alias_nb_pages()
         pdf.add_page()
@@ -982,14 +941,12 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
             df_mostrar = df_mostrar.drop(columns=['HORA_INI_DT'])
             df_mostrar = df_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
             
-            # Dibujar la tabla
             pdf.dibujar_tabla(df_mostrar, anchos=[70, 30, 60, 30], alineaciones=["L", "C", "L", "C"])
         else:
             pdf.set_font("Helvetica", "", 10)
             pdf.set_text_color(0, 0, 0)
             pdf.cell(0, 10, "No hay registros de primera orden para esta fecha.", ln=True, align="C")
 
-        # 4. Retornar el PDF
         return finalizar_pdf(pdf)
 
     except Exception as e:
@@ -1000,10 +957,6 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
 # FUNCIÓN PARA GENERAR PDF DE PENDIENTES GENERALES (DISPATCH)
 # ==============================================================================
 def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
-    """
-    Genera un documento PDF estilo gerencial para el equipo de Dispatch
-    con el resumen exacto de las órdenes pendientes para el día siguiente.
-    """
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -1021,25 +974,64 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
     # --- SECCIÓN: RESUMEN DE CARGA ---
     pdf.seccion_titulo("RESUMEN DE CARGA PARA EL SIGUIENTE TURNO")
     
+    # RECALCULAR RESUMEN POR ACTIVIDAD EXACTA
+    mask_sin_tec = (df_detalle['TECNICO'].isna()) | (df_detalle['TECNICO'].astype(str).str.strip() == '') | (df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+    
+    df_asig = df_detalle[~mask_sin_tec].copy()
+    df_no_asig = df_detalle[mask_sin_tec].copy()
+    
+    if not df_asig.empty:
+        df_asig['ACTIVIDAD_NORM'] = df_asig['ACTIVIDAD'].astype(str).str.strip().str.upper()
+        res_a = df_asig['ACTIVIDAD_NORM'].value_counts().reset_index()
+        res_a.columns = ['Actividad', 'Asignadas (En Ruta)']
+    else:
+        res_a = pd.DataFrame(columns=['Actividad', 'Asignadas (En Ruta)'])
+        
+    if not df_no_asig.empty:
+        df_no_asig['ACTIVIDAD_NORM'] = df_no_asig['ACTIVIDAD'].astype(str).str.strip().str.upper()
+        res_n = df_no_asig['ACTIVIDAD_NORM'].value_counts().reset_index()
+        res_n.columns = ['Actividad', 'Nuevas (Sin Asignar)']
+    else:
+        res_n = pd.DataFrame(columns=['Actividad', 'Nuevas (Sin Asignar)'])
+        
+    df_resumen_act = pd.merge(res_a, res_n, on='Actividad', how='outer').fillna(0)
+    
+    df_resumen_act['Asignadas (En Ruta)'] = df_resumen_act['Asignadas (En Ruta)'].astype(int)
+    df_resumen_act['Nuevas (Sin Asignar)'] = df_resumen_act['Nuevas (Sin Asignar)'].astype(int)
+    df_resumen_act['TOTAL GENERAL'] = df_resumen_act['Asignadas (En Ruta)'] + df_resumen_act['Nuevas (Sin Asignar)']
+    df_resumen_act = df_resumen_act.sort_values(by='TOTAL GENERAL', ascending=False)
+    
+    tot_a = df_resumen_act['Asignadas (En Ruta)'].sum()
+    tot_n = df_resumen_act['Nuevas (Sin Asignar)'].sum()
+    tot_g = df_resumen_act['TOTAL GENERAL'].sum()
+    
+    df_tot_row = pd.DataFrame([{
+        'Actividad': 'TOTAL PENDIENTES', 
+        'Asignadas (En Ruta)': tot_a, 
+        'Nuevas (Sin Asignar)': tot_n, 
+        'TOTAL GENERAL': tot_g
+    }])
+    df_resumen_act = pd.concat([df_resumen_act, df_tot_row], ignore_index=True)
+
     pdf.set_fill_color(240, 240, 240)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(60, 8, "Clasificacion", border=1, fill=True)
+    pdf.cell(60, 8, "Actividad", border=1, fill=True)
     pdf.cell(40, 8, "Asignadas (Ruta)", border=1, align="C", fill=True)
     pdf.cell(40, 8, "Sin Asignar", border=1, align="C", fill=True)
     pdf.cell(40, 8, "Total General", border=1, align="C", fill=True)
     pdf.ln()
     
-    for _, row in df_totales.iterrows():
-        if row['Categoría'] == 'TOTAL PENDIENTES':
+    for _, row in df_resumen_act.iterrows():
+        if row['Actividad'] == 'TOTAL PENDIENTES':
             pdf.set_font("Helvetica", "B", 9)
             pdf.set_fill_color(220, 230, 245)
             fill = True
         else:
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font("Helvetica", "", 8) 
             fill = False
             
-        pdf.cell(60, 7, safestr(row['Categoría']), border=1, fill=fill)
+        pdf.cell(60, 7, safestr(row['Actividad'])[:35], border=1, fill=fill)
         pdf.cell(40, 7, str(row['Asignadas (En Ruta)']), border=1, align="C", fill=fill)
         pdf.cell(40, 7, str(row['Nuevas (Sin Asignar)']), border=1, align="C", fill=fill)
         pdf.cell(40, 7, str(row['TOTAL GENERAL']), border=1, align="C", fill=fill)
@@ -1048,14 +1040,10 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
     pdf.ln(10)
     
     # --- SECCIÓN: DESGLOSE DE NUEVAS SIN ASIGNAR ---
-    # Mostramos a detalle cuáles son las órdenes que nadie ha tomado aún para darles prioridad
-    mask_sin_tec = (df_detalle['TECNICO'].isna()) | (df_detalle['TECNICO'].astype(str).str.strip() == '') | (df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-    df_nuevas_det = df_detalle[mask_sin_tec].copy()
-    
-    if not df_nuevas_det.empty:
+    if not df_no_asig.empty:
         pdf.seccion_titulo("LISTADO PRIORITARIO: ORDENES NUEVAS (SIN ASIGNAR)")
         
-        pdf.set_fill_color(255, 235, 235) # Rojo muy suave para resaltar prioridad
+        pdf.set_fill_color(255, 235, 235) 
         pdf.set_text_color(50, 50, 50)
         pdf.set_font("Helvetica", "B", 8)
         pdf.cell(20, 6, "Orden", border=1, align="C", fill=True)
@@ -1067,7 +1055,7 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(0, 0, 0)
         
-        for _, row in df_nuevas_det.iterrows():
+        for _, row in df_no_asig.iterrows():
             pdf.cell(20, 5, safestr(str(row['NUM'])), border=1, align="C")
             pdf.cell(30, 5, safestr(str(row['CLIENTE'])), border=1, align="C")
             pdf.cell(60, 5, safestr(str(row['ACTIVIDAD']))[:35], border=1, align="L")
@@ -1080,18 +1068,14 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.cell(0, 6, "Excelente. Todas las ordenes se encuentran asignadas a tecnicos.", ln=True)
 
     # --- SECCIÓN: LA TABLA GRANDE (TODAS LAS ASIGNADAS) ---
-    mask_con_tec = df_detalle['TECNICO'].notna() & (df_detalle['TECNICO'].astype(str).str.strip() != '') & (~df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-    df_asignadas_det = df_detalle[mask_con_tec].copy()
-
-    if not df_asignadas_det.empty:
-        pdf.add_page() # Saltamos a una hoja nueva para la tabla grande
+    if not df_asig.empty:
+        pdf.add_page() 
         pdf.seccion_titulo("LISTADO GENERAL DETALLADO: ORDENES EN RUTA (ASIGNADAS)")
         
         pdf.set_fill_color(240, 240, 240)
         pdf.set_text_color(50, 50, 50)
         pdf.set_font("Helvetica", "B", 7)
         
-        # Dibujamos los encabezados
         pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
         pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
         pdf.cell(45, 6, "Actividad", border=1, align="C", fill=True)
@@ -1101,16 +1085,18 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.ln()
         
         pdf.set_font("Helvetica", "", 6)
-        pdf.set_text_color(0, 0, 0)
         
-        # Ordenamos por técnico para que sea fácil de leer por bloques
-        df_asignadas_det = df_asignadas_det.sort_values(by='TECNICO')
+        # ORDENAR POR DÍAS (MAYOR A MENOR) Y LUEGO POR TÉCNICO
+        if 'DIAS_RETRASO' not in df_asig.columns:
+            df_asig['DIAS_RETRASO'] = 0
+        df_asig['DIAS_RETRASO'] = pd.to_numeric(df_asig['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
+        df_asig = df_asig.sort_values(by=['DIAS_RETRASO', 'TECNICO'], ascending=[False, True])
         
-        for _, row in df_asignadas_det.iterrows():
-            # Si la tabla llega al final de la hoja, creamos una nueva y repetimos el encabezado
+        for _, row in df_asig.iterrows():
             if pdf.get_y() > 270:
                 pdf.add_page()
                 pdf.set_font("Helvetica", "B", 7)
+                pdf.set_text_color(50, 50, 50)
                 pdf.set_fill_color(240, 240, 240)
                 pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
                 pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
@@ -1121,15 +1107,33 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
                 pdf.ln()
                 pdf.set_font("Helvetica", "", 6)
             
-            dias_retraso = str(row.get('DIAS_RETRASO', '0'))
+            dias_retraso_val = row['DIAS_RETRASO']
+            dias_retraso_str = str(dias_retraso_val)
             
-            # Dibujamos cada fila (cortando textos muy largos para que no deformen la tabla)
+            pdf.set_text_color(0, 0, 0)
             pdf.cell(15, 5, safestr(str(row.get('NUM', ''))), border=1, align="C")
             pdf.cell(20, 5, safestr(str(row.get('CLIENTE', ''))), border=1, align="C")
             pdf.cell(45, 5, safestr(str(row.get('ACTIVIDAD', '')))[:30], border=1, align="L")
             pdf.cell(50, 5, safestr(str(row.get('COLONIA', '')))[:35], border=1, align="L")
             pdf.cell(40, 5, safestr(str(row.get('TECNICO', '')))[:25], border=1, align="L")
-            pdf.cell(20, 5, safestr(dias_retraso), border=1, align="C")
+            
+            # KPI COLORES SEMÁFORO PARA LOS DÍAS
+            if dias_retraso_val >= 7:
+                pdf.set_fill_color(211, 47, 47) # Rojo
+                pdf.set_text_color(255, 255, 255)
+            elif dias_retraso_val >= 4:
+                pdf.set_fill_color(245, 124, 0) # Naranja
+                pdf.set_text_color(255, 255, 255)
+            elif dias_retraso_val >= 1:
+                pdf.set_fill_color(251, 192, 45) # Amarillo
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.set_fill_color(56, 142, 60) # Verde
+                pdf.set_text_color(255, 255, 255)
+                
+            pdf.cell(20, 5, safestr(dias_retraso_str), border=1, align="C", fill=True)
             pdf.ln()
+            
+        pdf.set_text_color(0, 0, 0)
 
     return finalizar_pdf(pdf)
