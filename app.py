@@ -10,7 +10,6 @@ from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
-from fpdf import FPDF # Importado para el PDF de Pendientes
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -57,6 +56,8 @@ st.set_page_config(
 
 # PATRON ORIGINAL
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+# LISTA NEGRA DE ACTIVIDADES BASURA
+ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
@@ -183,6 +184,11 @@ def sincronizar_datos_nube(conn):
                     df_nube.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns:
                     df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
+
+                # 🚨 ESCUDO ANTI-BASURA EN SINCRONIZACIÓN 🚨
+                if 'ACTIVIDAD' in df_nube.columns:
+                    mask_basura_sync = df_nube['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
+                    df_nube = df_nube[~mask_basura_sync].copy()
 
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
@@ -727,6 +733,11 @@ def main():
                                 if 'NUM' in df_cloud.columns:
                                     df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                     df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
+
+                                # 🚨 ESCUDO ANTI-BASURA EN LA NUBE 🚨
+                                if 'ACTIVIDAD' in df_cloud.columns:
+                                    mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
+                                    df_cloud = df_cloud[~mask_basura_cloud].copy()
                                 
                                 # 3. LÓGICA DE ESPEJO ABSOLUTO INVERSO
                                 PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
@@ -778,6 +789,11 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
+    # 🚨 ESCUDO ANTI-BASURA GLOBAL PARA LA VISTA DE LA APLICACIÓN 🚨
+    if 'ACTIVIDAD' in df_base.columns:
+        mask_basura_global = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
+        df_base = df_base[~mask_basura_global].copy()
+
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str)
         temp_date_b = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
@@ -945,21 +961,20 @@ def main():
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
-                # 3. Función de clasificación exacta (Igual a tablas de Excel)
+                # 3. Función de clasificación exacta
                 def clasificar_dispatch(row):
-                    act_original = str(row.get('ACTIVIDAD', '')).strip().upper()
+                    act = str(row.get('ACTIVIDAD', '')).upper()
+                    com = str(row.get('COMENTARIO', '')).upper()
+                    txt = act + " " + com
                     
-                    # --- 1. OTROS ---
-                    if re.search(r"PLEXISCA|PEXTERNO|SPLITTEROPT|NOINSTALADO|TRASLADOEXTFIBRA|TVADICIONAL", act_original):
-                        return "OTROS"
-                        
-                    # --- 2. INSTALACIONES ---
-                    elif re.search(r"ADIC|CAMBIO|NUEVA", act_original):
+                    if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
                         return "INSTALACIONES"
-                        
-                    # --- 3. SOP / MANTENIMIENTO ---
-                    else:
+                    elif re.search("SOP|FALLA|MANT", act):
                         return "MANTENIMIENTOS"
+                    elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt):
+                        return "PLEX"
+                    else:
+                        return "OTRAS"
                         
                 # 4. Construir DataFrames de resumen
                 if not df_asig.empty:
@@ -1383,9 +1398,8 @@ def main():
             
         df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO'] < 0, 'DIAS_RETRASO'] = 0
 
-        # ETIQUETAS EXACTAS PARA CUADRAR CON EXCEL
         df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(
-            lambda d: ">= 7 Dias" if d >= 7 else (">= 4 Dias" if d >= 4 else (">= 1 Dias" if d >= 1 else ">= 0 Dias"))
+            lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
         )
 
         st.title("⚡ Monitor Operativo Maxcom")
@@ -1429,7 +1443,7 @@ def main():
             
             with col_tab_1:
                 st.caption("📅 Resumen de Retraso")
-                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dias",">= 4 Dias",">= 1 Dias",">= 0 Dias"], fill_value=0).reset_index()
+                res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
                 sum_total_asignadas_v = res_retraso_v['Cant'].sum()
                 res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
@@ -1437,58 +1451,54 @@ def main():
                 def style_dias_apply(row):
                     v = row['Dias']
                     bg_color, font_color = '', 'white'
-                    if v == ">= 7 Dias":
+                    if v == ">= 7 Dia":
                         bg_color = '#d32f2f'
-                    elif v == ">= 4 Dias":
+                    elif v == "= 4 a 6 Dias":
                         bg_color = '#f57c00'
-                    elif v == ">= 1 Dias":
+                    elif v == "= 1 a 3 Dias":
                         bg_color, font_color = '#fbc02d', 'black'
-                    elif v == ">= 0 Dias":
+                    elif v == "= 0 Dia":
                         bg_color = '#388e3c'
                     return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
 
                 st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                 st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
 
-            # CÓDIGO CORREGIDO PARA AGRUPACIÓN ESTRICTA (Igual a tablas de Excel)
             g_tab_list = []
             sub_tab_list = []
             for idx, r in df_todas_pendientes_monitor.iterrows():
-                act_original = str(r.get('ACTIVIDAD', '')).strip().upper()
+                act = str(r.get('ACTIVIDAD', '')).upper()
+                com = str(r.get('COMENTARIO', '')).upper()
+                txt = act + " " + com
                 is_off = r.get('ES_OFFLINE', False)
                 
-                # --- 1. OTROS ---
-                if re.search(r"PLEXISCA|PEXTERNO|SPLITTEROPT|NOINSTALADO|TRASLADOEXTFIBRA|TVADICIONAL", act_original):
+                if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
                     g_tab_list.append("OTROS")
-                    if "PLEXISCA" in act_original: sub_tab_list.append("PLEXISCA")
-                    elif "PEXTERNO" in act_original: sub_tab_list.append("PEXTERNO")
-                    elif "SPLITTEROPT" in act_original: sub_tab_list.append("SPLITTEROPT")
-                    elif "NOINSTALADO" in act_original: sub_tab_list.append("NOINSTALADO")
-                    elif "TRASLADO" in act_original: sub_tab_list.append("TRASLADOEXTFIBRA")
-                    elif "TV" in act_original: sub_tab_list.append("TVADICIONAL")
-                    else: sub_tab_list.append(act_original if act_original != "" else "(en blanco)")
-                    
-                # --- 2. INSTALACIONES ---
-                elif re.search(r"ADIC|CAMBIO|NUEVA", act_original):
+                    sub_tab_list.append(act if act != "" else "N/A")
+                elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
                     g_tab_list.append("INS")
-                    if "ADIC" in act_original:
+                    if re.search("ADIC", txt):
                         sub_tab_list.append("Adición")
-                    elif "CAMBIO" in act_original:
-                        sub_tab_list.append("Cambio de Medio")
+                    elif re.search("CAMBIO|MIGRACI", txt):
+                        sub_tab_list.append("Cambio / Migración")
+                    elif re.search("RECUP", txt):
+                        sub_tab_list.append("Recuperado")
                     else:
                         sub_tab_list.append("Nueva")
-                        
-                # --- 3. SOP / MANTENIMIENTO ---
                 else:
                     g_tab_list.append("SOP")
                     if is_off:
                         sub_tab_list.append("ONT/ONU Offline")
-                    elif "FTTH" in act_original or "FIBRA" in act_original:
+                    elif re.search("NIVEL|DB", com):
+                        sub_tab_list.append("Niveles alterados")
+                    elif re.search("FIBRA|FTTH", act):
                         sub_tab_list.append("FTTH / FIBRA")
-                    elif "MANTENIMIENTO" in act_original or "SOP" in act_original:
-                        sub_tab_list.append("Mantenimiento")
+                    elif re.search("NAV|INTERNET", act):
+                        sub_tab_list.append("Navegación / Internet")
+                    elif re.search("TV|CABLE", act):
+                        sub_tab_list.append("Sin señal de TV")
                     else:
-                        sub_tab_list.append(act_original.title() if act_original else "SOP General")
+                        sub_tab_list.append("SOP General")
                     
             df_tablero = df_todas_pendientes_monitor.copy()
             df_tablero['G_TAB'] = g_tab_list
@@ -1509,7 +1519,7 @@ def main():
                 res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
                 res_ins.columns = ['Instalaciones', 'Cant']
                 
-                cats_ins = ['Nueva', 'Adición', 'Cambio de Medio']
+                cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
                 for c in cats_ins:
                     if c not in res_ins['Instalaciones'].values:
                         res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
