@@ -27,7 +27,7 @@ def extraer_tabla_limpia_pdf(archivo_pdf):
         
     df = pd.DataFrame(todas_las_filas)
     
-    # La fila 0 contiene los nombres reales de las columnas que vimos en tu captura
+    # La fila 0 contiene los nombres reales de las columnas
     df.columns = df.iloc[0]
     df = df[1:].reset_index(drop=True)
     
@@ -41,7 +41,7 @@ def extraer_tabla_limpia_pdf(archivo_pdf):
     
     df = df.fillna('---')
     
-    # Arreglar columnas duplicadas si el PDF viene mal de origen
+    # Arreglar columnas duplicadas
     cols = pd.Series(df.columns)
     for dup in cols[cols.duplicated()].unique(): 
         cols[cols[cols == dup].index.values.tolist()] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
@@ -84,7 +84,6 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
             return
             
         # Seleccionamos las columnas más importantes para que no se salga de la hoja
-        # Basado en la captura que enviaste
         cols_deseadas = ['Nombre completo', 'Departamento', 'Fecha', 'Horario', 'Hora de inicio del trabajo', 'Hora final del trabajo']
         cols_finales = [c for c in cols_deseadas if c in df.columns]
         
@@ -264,7 +263,8 @@ def vista_biometrico():
         with col_u2:
             f_tar = st.file_uploader("📂 PDF de Llegadas Tarde", type=['pdf'], key="up_tar")
             
-        if st.button("🚀 ANALIZAR Y GENERAR DESCARGA", type="primary", use_container_width=True):
+        # BOTÓN PARA PROCESAR LOS ARCHIVOS
+        if st.button("🚀 ANALIZAR ARCHIVOS", type="primary", use_container_width=True):
             if f_aus or f_tar:
                 with st.spinner("Procesando tablas y eliminando basura..."):
                     try:
@@ -274,37 +274,34 @@ def vista_biometrico():
                         pdf_data = generar_pdf_unificado_rrhh(df_a, df_t)
                         
                         if pdf_data:
+                            # Guardamos en la memoria para que el botón de descarga aparezca abajo
                             st.session_state['pdf_final_rrhh'] = pdf_data
-                            st.success("✅ ¡Análisis completado con éxito! Tu PDF está listo.")
-                            
-                            st.download_button(
-                                label="📥 DESCARGAR REPORTE UNIFICADO (PDF)",
-                                data=pdf_data,
-                                file_name=f"Consolidado_RRHH_{datetime.now().strftime('%Y%m%d')}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True
-                            )
-                            
-                            with st.expander("Ver vista previa de datos extraídos"):
-                                if not df_a.empty:
-                                    st.write("**Ausencias:**")
-                                    st.dataframe(df_a.head(5), use_container_width=True)
-                                if not df_t.empty:
-                                    st.write("**Tardanzas:**")
-                                    st.dataframe(df_t.head(5), use_container_width=True)
-                                    
+                            st.session_state['df_a_prev'] = df_a
+                            st.session_state['df_t_prev'] = df_t
+                            st.success("✅ ¡Análisis completado con éxito!")
                             st.balloons()
                     except Exception as e:
-                        st.error(f"Error en el análisis. Asegúrate de tener pdfplumber instalado. Detalles: {e}")
+                        st.error(f"Error en el análisis. Detalles: {e}")
             else:
                 st.warning("Debe subir al menos un archivo para proceder.")
 
-        if 'pdf_final_rrhh' in st.session_state and not (f_aus or f_tar):
+        # --- SECCIÓN QUE DIBUJA EL BOTÓN DE DESCARGA (Se queda fijo) ---
+        if 'pdf_final_rrhh' in st.session_state:
             st.divider()
+            st.markdown("### 🎉 Tu Reporte está listo")
             st.download_button(
-                label="📥 DESCARGAR ÚLTIMO REPORTE GENERADO",
+                label="📥 DESCARGAR REPORTE UNIFICADO (PDF)",
                 data=st.session_state['pdf_final_rrhh'],
-                file_name="Reporte_RRHH.pdf",
+                file_name=f"Consolidado_RRHH_{datetime.now().strftime('%Y%m%d')}.pdf",
                 mime="application/pdf",
+                type="primary",
                 use_container_width=True
             )
+            
+            with st.expander("Ver vista previa de datos extraídos"):
+                if not st.session_state.get('df_a_prev', pd.DataFrame()).empty:
+                    st.write("**Ausencias:**")
+                    st.dataframe(st.session_state['df_a_prev'].head(5), use_container_width=True)
+                if not st.session_state.get('df_t_prev', pd.DataFrame()).empty:
+                    st.write("**Tardanzas:**")
+                    st.dataframe(st.session_state['df_t_prev'].head(5), use_container_width=True)
