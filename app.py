@@ -1536,7 +1536,7 @@ def main():
                 st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Control de Gestión Operativa (Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
+            st.markdown("<h4 style='text-align: center; color: #1F2937;'>Control de Gestión Operativa (Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
             
             # =====================================================================
@@ -1600,7 +1600,7 @@ def main():
                     height=140, 
                     margin=dict(l=10, r=10, t=30, b=10), 
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 13}},
+                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 13}},
                     annotations=[dict(text=texto_central, x=0.5, y=0.5, font_size=22, font_color=color_v, showarrow=False, font_weight="bold")]
                 )
                 return fig
@@ -1625,7 +1625,7 @@ def main():
             st.divider()
 
             # --- AQUI ESTÁN LOS GRÁFICOS DE GANTT DENTRO DE ESTE EXPANDER ---
-            st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
+            st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
             
             # 1. Filtramos a los supervisores para que no salgan en el Gantt
             mask_supervisores = df_solo_asignadas_monitor['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
@@ -1638,61 +1638,42 @@ def main():
             if not df_para_gantt_final.empty:
                 df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
                 
-                # 2. Configurar la hora de inicio fija a las 07:30 AM de hoy
+                # === ORDENAR LOS DATOS ===
+                # Esto asegura que las barras se dibujen estrictamente de izquierda a derecha por hora de inicio
+                df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'HORA_INI'], ascending=[True, True])
+                
+                # 2. Configurar la hora de inicio fija a las 07:30 AM y fin a las 19:30 PM (o más si hay datos)
                 hoy_str = hoy_date_valor.strftime('%Y-%m-%d')
-                rango_inicio_x = f"{hoy_str} 07:30:00"
+                rango_inicio_x = pd.to_datetime(f"{hoy_str} 07:30:00")
+                max_time_gantt = df_para_gantt_final['FIN_LIMITE'].max()
+                # Asegurar un mínimo hasta las 19:30, pero si hay más, se extiende
+                rango_fin_x = max(pd.to_datetime(f"{hoy_str} 19:30:00"), max_time_gantt + timedelta(minutes=30))
                 
-                # Separar los datos por Segmento
-                df_gantt_resi = df_para_gantt_final[df_para_gantt_final['SEGMENTO'] == 'RESIDENCIAL'].copy()
-                df_gantt_plex = df_para_gantt_final[df_para_gantt_final['SEGMENTO'] == 'PLEX'].copy()
+                # --- GRÁFICO ÚNICO: TODOS LOS TÉCNICOS ---
+                st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todos los Técnicos)</h5>", unsafe_allow_html=True)
                 
-                # --- GRÁFICO 1: TÉCNICOS DOMICILIARES ---
-                st.markdown("<h5 style='text-align: left; color: #58a6ff; border-bottom: 1px solid #58a6ff;'>🏠 Técnicos Domiciliares (Residencial)</h5>", unsafe_allow_html=True)
-                if not df_gantt_resi.empty:
-                    fig_resi = px.timeline(
-                        df_gantt_resi, 
-                        x_start="HORA_INI", 
-                        x_end="FIN_LIMITE", 
-                        y="TECNICO", 
-                        color="ACTIVIDAD", 
-                        text="ACTIVIDAD",  # Nombre de la actividad en la barra
-                        template="plotly_dark", 
-                        height=500
-                    )
-                    fig_resi.update_yaxes(autorange="reversed", title_text="")
-                    # Aplicar el rango de tiempo desde las 7:30 AM
-                    max_time_resi = df_gantt_resi['FIN_LIMITE'].max()
-                    fig_resi.update_xaxes(range=[rango_inicio_x, max_time_resi + timedelta(minutes=30)])
-                    fig_resi.update_traces(textposition='inside', insidetextanchor='middle')
-                    fig_resi.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10))
-                    st.plotly_chart(fig_resi, use_container_width=True)
-                else:
-                    st.info("Sin actividad en ruta registrada para Técnicos Domiciliares.")
+                fig_gantt = px.timeline(
+                    df_para_gantt_final, 
+                    x_start="HORA_INI", 
+                    x_end="FIN_LIMITE", 
+                    y="TECNICO", 
+                    color="ACTIVIDAD", 
+                    text="ACTIVIDAD",  
+                    hover_data=["NUM", "COLONIA", "ESTADO", "SEGMENTO"], 
+                    height=650 # Un poco más alto ya que están todos juntos
+                )
                 
-                st.markdown("<br>", unsafe_allow_html=True)
+                # autorange="reversed" hace que la lista de técnicos se lea de arriba a abajo en el eje Y
+                fig_gantt.update_yaxes(autorange="reversed", title_text="")
+                
+                # Forzar el eje X para que siempre vaya de izquierda a derecha desde las 07:30 AM
+                fig_gantt.update_xaxes(range=[rango_inicio_x.strftime('%Y-%m-%d %H:%M:%S'), rango_fin_x.strftime('%Y-%m-%d %H:%M:%S')], title_text="")
+                
+                # Separación visual con borde blanco para distinguir si hacen la misma actividad seguida
+                fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=2.5, opacity=0.9)
+                fig_gantt.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
+                st.plotly_chart(fig_gantt, use_container_width=True)
 
-                # --- GRÁFICO 2: TÉCNICOS DE PLEX ---
-                st.markdown("<h5 style='text-align: left; color: #ff7b72; border-bottom: 1px solid #ff7b72;'>🏢 Técnicos de PLEX</h5>", unsafe_allow_html=True)
-                if not df_gantt_plex.empty:
-                    fig_plex = px.timeline(
-                        df_gantt_plex, 
-                        x_start="HORA_INI", 
-                        x_end="FIN_LIMITE", 
-                        y="TECNICO", 
-                        color="ACTIVIDAD", 
-                        text="ACTIVIDAD",  # Nombre de la actividad en la barra
-                        template="plotly_dark", 
-                        height=350
-                    )
-                    fig_plex.update_yaxes(autorange="reversed", title_text="")
-                    # Aplicar el rango de tiempo desde las 7:30 AM
-                    max_time_plex = df_gantt_plex['FIN_LIMITE'].max()
-                    fig_plex.update_xaxes(range=[rango_inicio_x, max_time_plex + timedelta(minutes=30)])
-                    fig_plex.update_traces(textposition='inside', insidetextanchor='middle')
-                    fig_plex.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10))
-                    st.plotly_chart(fig_plex, use_container_width=True)
-                else:
-                    st.info("Sin actividad en ruta registrada para Técnicos de PLEX.")
             else:
                 st.info("No hay órdenes con hora de inicio registrada para generar los gráficos de Gantt.")
 
