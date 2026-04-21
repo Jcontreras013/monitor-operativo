@@ -1627,11 +1627,22 @@ def main():
             # --- AQUI ESTÁN LOS GRÁFICOS DE GANTT DENTRO DE ESTE EXPANDER ---
             st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
             
-            df_para_gantt_final = df_solo_asignadas_monitor[df_solo_asignadas_monitor['HORA_INI'].notnull()].copy()
+            # 1. Filtramos a los supervisores para que no salgan en el Gantt
+            mask_supervisores = df_solo_asignadas_monitor['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
+            df_para_gantt_bruto = df_solo_asignadas_monitor[~mask_supervisores].copy()
+
+            df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
             
+            st.caption("ℹ️ **Nota:** Si un técnico (como Edy Florentino) no aparece en el Gantt, es porque actualmente no tiene una orden con **Hora de Inicio** (marcada en ruta) en el sistema.")
+
             if not df_para_gantt_final.empty:
                 df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
                 
+                # 2. Configurar la hora de inicio fija a las 07:30 AM de hoy
+                hoy_str = hoy_date_valor.strftime('%Y-%m-%d')
+                rango_inicio_x = f"{hoy_str} 07:30:00"
+                
+                # Separar los datos por Segmento
                 df_gantt_resi = df_para_gantt_final[df_para_gantt_final['SEGMENTO'] == 'RESIDENCIAL'].copy()
                 df_gantt_plex = df_para_gantt_final[df_para_gantt_final['SEGMENTO'] == 'PLEX'].copy()
                 
@@ -1649,6 +1660,9 @@ def main():
                         height=500
                     )
                     fig_resi.update_yaxes(autorange="reversed", title_text="")
+                    # Aplicar el rango de tiempo desde las 7:30 AM
+                    max_time_resi = df_gantt_resi['FIN_LIMITE'].max()
+                    fig_resi.update_xaxes(range=[rango_inicio_x, max_time_resi + timedelta(minutes=30)])
                     fig_resi.update_traces(textposition='inside', insidetextanchor='middle')
                     fig_resi.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10))
                     st.plotly_chart(fig_resi, use_container_width=True)
@@ -1671,6 +1685,9 @@ def main():
                         height=350
                     )
                     fig_plex.update_yaxes(autorange="reversed", title_text="")
+                    # Aplicar el rango de tiempo desde las 7:30 AM
+                    max_time_plex = df_gantt_plex['FIN_LIMITE'].max()
+                    fig_plex.update_xaxes(range=[rango_inicio_x, max_time_plex + timedelta(minutes=30)])
                     fig_plex.update_traces(textposition='inside', insidetextanchor='middle')
                     fig_plex.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10))
                     st.plotly_chart(fig_plex, use_container_width=True)
