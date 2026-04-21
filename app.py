@@ -1536,7 +1536,7 @@ def main():
                 st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
         with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
-            st.markdown("<h4 style='text-align: center; color: #1F2937;'>Control de Gestión Operativa (Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
+            st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Control de Gestión Operativa (Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
             
             # =====================================================================
@@ -1600,7 +1600,7 @@ def main():
                     height=140, 
                     margin=dict(l=10, r=10, t=30, b=10), 
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 13}},
+                    title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 13}},
                     annotations=[dict(text=texto_central, x=0.5, y=0.5, font_size=22, font_color=color_v, showarrow=False, font_weight="bold")]
                 )
                 return fig
@@ -1632,8 +1632,6 @@ def main():
             df_para_gantt_bruto = df_solo_asignadas_monitor[~mask_supervisores].copy()
 
             df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
-            
-            st.caption("ℹ️ **Nota:** Si un técnico (como Edy Florentino) no aparece en el Gantt, es porque actualmente no tiene una orden con **Hora de Inicio** (marcada en ruta) en el sistema.")
 
             if not df_para_gantt_final.empty:
                 df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
@@ -1642,12 +1640,12 @@ def main():
                 # Esto asegura que las barras se dibujen estrictamente de izquierda a derecha por hora de inicio
                 df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'HORA_INI'], ascending=[True, True])
                 
-                # 2. Configurar la hora de inicio fija a las 07:30 AM y fin a las 19:30 PM (o más si hay datos)
-                hoy_str = hoy_date_valor.strftime('%Y-%m-%d')
-                rango_inicio_x = pd.to_datetime(f"{hoy_str} 07:30:00")
+                # 2. Configurar la hora de inicio dinámica para que pegue a los nombres
+                min_time_gantt = df_para_gantt_final['HORA_INI'].min()
                 max_time_gantt = df_para_gantt_final['FIN_LIMITE'].max()
-                # Asegurar un mínimo hasta las 19:30, pero si hay más, se extiende
-                rango_fin_x = max(pd.to_datetime(f"{hoy_str} 19:30:00"), max_time_gantt + timedelta(minutes=30))
+                
+                rango_inicio_x = min_time_gantt - timedelta(minutes=5) # 5 min de margen
+                rango_fin_x = max_time_gantt + timedelta(minutes=30)
                 
                 # --- GRÁFICO ÚNICO: TODOS LOS TÉCNICOS ---
                 st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todos los Técnicos)</h5>", unsafe_allow_html=True)
@@ -1660,18 +1658,16 @@ def main():
                     color="ACTIVIDAD", 
                     text="ACTIVIDAD",  
                     hover_data=["NUM", "COLONIA", "ESTADO", "SEGMENTO"], 
-                    height=650 # Un poco más alto ya que están todos juntos
+                    height=650 
                 )
                 
-                # autorange="reversed" hace que la lista de técnicos se lea de arriba a abajo en el eje Y
                 fig_gantt.update_yaxes(autorange="reversed", title_text="")
                 
-                # Forzar el eje X para que siempre vaya de izquierda a derecha desde las 07:30 AM
+                # Forzar el eje X dinámico
                 fig_gantt.update_xaxes(range=[rango_inicio_x.strftime('%Y-%m-%d %H:%M:%S'), rango_fin_x.strftime('%Y-%m-%d %H:%M:%S')], title_text="")
                 
-                # Separación visual con borde blanco para distinguir si hacen la misma actividad seguida
                 fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=2.5, opacity=0.9)
-                fig_gantt.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
+                fig_gantt.update_layout(showlegend=False, margin=dict(t=20, b=20, l=0, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                 st.plotly_chart(fig_gantt, use_container_width=True)
 
             else:
