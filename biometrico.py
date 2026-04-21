@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 import re
 from datetime import datetime, timedelta
+import io
 
 def limpiar_nombre(raw):
     """Quita la basura que el PDF mezcla con los nombres"""
@@ -10,10 +11,139 @@ def limpiar_nombre(raw):
     limpias = [p for p in palabras if p.lower() not in basura]
     return " ".join(limpias[-4:])
 
+def extraer_tabla_limpia_pdf(archivo_pdf):
+    """Extrae datos con pdfplumber y elimina columnas/filas vacías"""
+    import pdfplumber
+    todas_las_filas = []
+    
+    with pdfplumber.open(archivo_pdf) as pdf:
+        for pagina in pdf.pages:
+            tablas = pagina.extract_tables()
+            for tabla in tablas:
+                # Limpiar saltos de línea extraños dentro de las celdas
+                tabla_limpia = [[str(celda).replace('\n', ' ').strip() if celda else '' for celda in fila] for fila in tabla]
+                todas_las_filas.extend(tabla_limpia)
+                
+    if not todas_las_filas:
+        return pd.DataFrame()
+        
+    # Convertir a DataFrame
+    df = pd.DataFrame(todas_las_filas)
+    
+    # Asignar la primera fila como encabezado
+    df.columns = df.iloc[0]
+    df = df[1:].reset_index(drop=True)
+    
+    # === ELIMINAR COLUMNAS Y FILAS VACÍAS (Requisito) ===
+    # Reemplazar strings vacíos o "None" por valores nulos reales de Pandas
+    df = df.replace(r'^\s*$', pd.NA, regex=True)
+    df = df.replace('None', pd.NA)
+    
+    # Borrar columnas donde TODOS los datos sean nulos
+    df = df.dropna(how='all', axis=1)
+    # Borrar filas donde TODOS los datos sean nulos
+    df = df.dropna(how='all', axis=0)
+    
+    # Rellenar lo que quede vacío con un guión para que el PDF no falle
+    df = df.fillna('---')
+    
+    # Arreglar nombres de columnas duplicados (por si el PDF venía mal formateado)
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique(): 
+        cols[cols[cols == dup].index.values.tolist()] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
+    df.columns = cols
+    
+    return df
+
+def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
+    """Genera un PDF corporativo con ambas tablas limpias"""
+    from fpdf import FPDF
+    import tempfile
+    import os
+    import unicodedata
+    
+    def safestr(texto):
+        if pd.isna(texto): return ""
+        return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+        
+    pdf = FPDF('L', 'mm', 'A4') # Formato Horizontal (Landscape) para que quepan más columnas
+    pdf.add_page()
+    
+    # Encabezado
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, "REPORTE UNIFICADO DE RRHH: AUSENCIAS Y LLEGADAS TARDE", ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, f"Generado el: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}", ln=True, align="C")
+    pdf.ln(5)
+    
+    def dibujar_tabla(pdf_obj, df, titulo):
+        pdf_obj.set_font("Helvetica", "B", 11)
+        pdf_obj.set_text_color(40, 50, 100)
+        pdf_obj.cell(0, 8, safestr(titulo), ln=True)
+        pdf_obj.set_text_color(0, 0, 0)
+        
+        if df.empty:
+            pdf_obj.set_font("Helvetica", "", 9)
+            pdf_obj.cell(0, 6, "No se encontraron registros para esta categoria.", ln=True)
+            pdf_obj.ln(5)
+            return
+            
+        # Tomar máximo 8 columnas para que no se salga de la hoja
+        cols = list(df.columns)[:8]
+        df = df[cols]
+        
+        pdf_obj.set_font("Helvetica", "B", 7)
+        pdf_obj.set_fill_color(220, 230, 245)
+        
+        # Calcular ancho dinámico
+        w = 270 / len(cols) # 270mm es aprox el ancho usable en formato horizontal
+        
+        # Dibujar Encabezados
+        for col in cols:
+            pdf_obj.cell(w, 6, safestr(str(col))[:25], border=1, align="C", fill=True)
+        pdf_obj.ln()
+        
+        # Dibujar Filas
+        pdf_obj.set_font("Helvetica", "", 7)
+        pdf_obj.set_fill_color(255, 255, 255)
+        for _, row in df.iterrows():
+            # Si llegamos al final de la página, crear una nueva
+            if pdf_obj.get_y() > 180:
+                pdf_obj.add_page()
+                pdf_obj.set_font("Helvetica", "B", 7)
+                pdf_obj.set_fill_color(220, 230, 245)
+                for col in cols:
+                    pdf_obj.cell(w, 6, safestr(str(col))[:25], border=1, align="C", fill=True)
+                pdf_obj.ln()
+                pdf_obj.set_font("Helvetica", "", 7)
+                
+            for col in cols:
+                val = safestr(str(row[col]))[:30] # Cortar textos ultra largos
+                pdf_obj.cell(w, 5, val, border=1, align="C")
+            pdf_obj.ln()
+        pdf_obj.ln(10)
+        
+    # Dibujar las dos tablas en el PDF
+    dibujar_tabla(pdf, df_ausencias, "1. DETALLE DE AUSENCIAS")
+    dibujar_tabla(pdf, df_tardanzas, "2. DETALLE DE LLEGADAS TARDE")
+    
+    # Exportar a Bytes
+    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        pdf.output(tmppath)
+        with open(tmppath, "rb") as f: return f.read()
+    finally:
+        try: os.remove(tmppath)
+        except: pass
+
 def vista_biometrico():
     st.title("🚨 Centro de Control Biométrico y RRHH")
     
-    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (Transacciones)", "📊 Consolidado RRHH (PDFs)"])
+    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (Transacciones)", "📊 Consolidado RRHH (Ausencias/Tardanzas)"])
     
     # =========================================================
     # PESTAÑA 1: AUDITORÍA DE TRANSACCIONES ORIGINAL
@@ -43,7 +173,6 @@ def vista_biometrico():
                     for page in reader.pages:
                         texto_completo += page.extract_text() + "\n"
                         
-                    # Extraer marcas con Regex
                     patron = re.compile(r'([A-Za-z\sñÑáéíóúÁÉÍÓÚ\.]+)(\d{1,10})\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})')
                     matches = patron.findall(texto_completo)
                     
@@ -64,7 +193,6 @@ def vista_biometrico():
                     df = df[(df['Time_Diff'].isna()) | (df['Time_Diff'] > pd.Timedelta(minutes=15))].copy()
                     df['FECHA_SOLA'] = df['Datetime'].dt.date
 
-                # --- GESTIÓN DE TURNOS ---
                 usuarios_unicos = df[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
                 usuarios_unicos['Turno'] = "08:00 AM" 
                 
@@ -142,11 +270,11 @@ def vista_biometrico():
                 st.error(f"❌ Ocurrió un error leyendo los datos: {e}")
 
     # =========================================================
-    # PESTAÑA 2: NUEVO CONSOLIDADO DE RRHH
+    # PESTAÑA 2: CONSOLIDADO UNIFICADO DE RRHH
     # =========================================================
     with tab_rrhh:
-        st.markdown("### 📑 Reporte Unificado de RRHH")
-        st.caption("Cruza los PDFs de Ausencias y Llegadas Tarde para generar un consolidado general.")
+        st.markdown("### 📑 Reporte Unificado de RRHH (Extractor Inteligente)")
+        st.caption("Sube los PDFs. El sistema borrará columnas vacías y te armará un PDF limpio.")
         
         col_a, col_b = st.columns(2)
         with col_a:
@@ -154,47 +282,47 @@ def vista_biometrico():
         with col_b:
             file_tardanzas = st.file_uploader("📥 Subir PDF de Llegadas Tarde", type=['pdf'], key="tar")
             
-        if st.button("🔍 Analizar Estructura de PDFs", type="primary", use_container_width=True):
-            if file_ausencias and file_tardanzas:
-                st.info("Analizando cómo está armada la tabla dentro de los PDFs...")
-                try:
-                    import importlib
-                    if importlib.util.find_spec("pdfplumber") is None:
-                        st.warning("⚠️ Necesitamos instalar la librería avanzada. Abre tu terminal y ejecuta: `pip install pdfplumber`")
-                        st.stop()
+        if st.button("🚀 Procesar y Generar Reporte Unificado", type="primary", use_container_width=True):
+            if file_ausencias or file_tardanzas:
+                with st.spinner("Extrayendo, limpiando columnas vacías y dibujando el PDF..."):
+                    try:
+                        import importlib
+                        if importlib.util.find_spec("pdfplumber") is None:
+                            st.warning("⚠️ Asegúrate de que tu archivo 'requirements.txt' en GitHub tenga la palabra 'pdfplumber' para que funcione.")
+                            st.stop()
+                            
+                        # Extraer y limpiar
+                        df_aus = extraer_tabla_limpia_pdf(file_ausencias) if file_ausencias else pd.DataFrame()
+                        df_tar = extraer_tabla_limpia_pdf(file_tardanzas) if file_tardanzas else pd.DataFrame()
                         
-                    import pdfplumber
-                    
-                    # INTENTO DE LECTURA PDF 1 (AUSENCIAS)
-                    st.write("#### 📄 Extracción de PDF Ausencias:")
-                    with pdfplumber.open(file_ausencias) as pdf_a:
-                        # Leemos la primera página para ver el esqueleto
-                        page = pdf_a.pages[0]
-                        tablas = page.extract_tables()
-                        if tablas:
-                            st.write(f"✅ Tabla detectada. Columnas encontradas:")
-                            df_test_a = pd.DataFrame(tablas[0])
-                            st.dataframe(df_test_a.head(10)) # Mostramos solo las primeras 10 filas
-                        else:
-                            st.error("No se detectó una tabla estructurada. Extrayendo texto bruto:")
-                            st.text(page.extract_text()[:1000])
+                        # Mostrar vistas previas en pantalla
+                        if not df_aus.empty:
+                            st.success("✅ Ausencias extraídas y limpiadas:")
+                            st.dataframe(df_aus.head(10), use_container_width=True, hide_index=True)
+                        if not df_tar.empty:
+                            st.success("✅ Tardanzas extraídas y limpiadas:")
+                            st.dataframe(df_tar.head(10), use_container_width=True, hide_index=True)
                             
-                    # INTENTO DE LECTURA PDF 2 (TARDANZAS)
-                    st.write("#### 📄 Extracción de PDF Llegadas Tarde:")
-                    with pdfplumber.open(file_tardanzas) as pdf_t:
-                        page2 = pdf_t.pages[0]
-                        tablas2 = page2.extract_tables()
-                        if tablas2:
-                            st.write(f"✅ Tabla detectada. Columnas encontradas:")
-                            df_test_t = pd.DataFrame(tablas2[0])
-                            st.dataframe(df_test_t.head(10))
-                        else:
-                            st.error("No se detectó una tabla estructurada. Extrayendo texto bruto:")
-                            st.text(page2.extract_text()[:1000])
+                        # Generar el PDF Final
+                        pdf_bytes = generar_pdf_unificado_rrhh(df_aus, df_tar)
+                        
+                        if pdf_bytes:
+                            st.session_state['pdf_rrhh'] = pdf_bytes
+                            st.balloons()
                             
-                    st.success("👆 **¡Pásame una captura de los datos que salieron aquí arriba!** Con eso escribiré el código final que une todo el reporte de RRHH en un solo clic.")
-                    
-                except Exception as e:
-                    st.error(f"Error procesando PDFs: {e}")
+                    except Exception as e:
+                        st.error(f"Ocurrió un error procesando las tablas: {e}")
             else:
-                st.warning("Por favor sube ambos PDFs para hacer el análisis.")
+                st.warning("Sube al menos un PDF para poder generar el reporte.")
+                
+        # Botón de descarga
+        if 'pdf_rrhh' in st.session_state:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.download_button(
+                label="📥 DESCARGAR REPORTE UNIFICADO (PDF)",
+                data=st.session_state['pdf_rrhh'],
+                file_name=f"Consolidado_RRHH_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
