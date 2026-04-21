@@ -13,3 +13,4 @@ xlrd==2.0.1
 extra-streamlit-components
 beautifulsoup4
 pdfplumber
+streamlit-option-menu
