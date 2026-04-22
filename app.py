@@ -960,7 +960,7 @@ if nav_menu_diamante == "📊 Centro de Reportes":
     # ==============================================================================
     # 7. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
-    if nav_menu_diamante == "⚡ Monitor en Vivo":
+if nav_menu_diamante == "⚡ Monitor en Vivo":
         
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
@@ -969,7 +969,7 @@ if nav_menu_diamante == "📊 Centro de Reportes":
 
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
-        if 'TECNICO' in df_todas_pendientes_monitor.columns:
+if 'TECNICO' in df_todas_pendientes_monitor.columns:
             mask_josue_kpi = df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
             df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
             
