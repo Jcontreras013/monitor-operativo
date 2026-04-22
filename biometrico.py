@@ -1,8 +1,18 @@
 import pandas as pd
 import streamlit as st
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import io
+import os
+import tempfile
+import unicodedata
+from fpdf import FPDF
+import pdfplumber
+from PyPDF2 import PdfReader
+
+# =========================================================
+# FUNCIONES ORIGINALES (CONSOLIDADO RRHH - NO TOCADAS)
+# =========================================================
 
 def limpiar_nombre(raw):
     palabras = raw.replace('\n', ' ').strip().split()
@@ -134,124 +144,152 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
         try: os.remove(tmppath)
         except: pass
 
+
+# =========================================================
+# NUEVAS FUNCIONES PARA EL CSV BIOMÉTRICO
+# =========================================================
+
+def procesar_biometrico_mejorado(df_csv):
+    """Procesa el CSV aplicando las 6 marcaciones y la regla de los 6 min."""
+    df_csv.columns = df_csv.columns.str.strip()
+    df_csv['Date'] = pd.to_datetime(df_csv['Date'], dayfirst=True, errors='coerce').dt.date
+    df_csv['Time'] = pd.to_datetime(df_csv['Time'], format='%H:%M', errors='coerce').dt.time
+    df_csv = df_csv.dropna(subset=['Date', 'Time'])
+    df_csv = df_csv.sort_values(by=['Full Name', 'Date', 'Time'])
+
+    resultados = []
+    for (nombre, fecha), grupo in df_csv.groupby(['Full Name', 'Date']):
+        marcas = grupo['Time'].tolist()
+        num_marcas = len(marcas)
+        if num_marcas == 0: continue
+
+        # 1ra Marcación: Entrada y Regla de los 6 Minutos
+        entrada = marcas[0]
+        limite_tardia = time(entrada.hour, 6)
+        es_tardia = "Sí" if entrada > limite_tardia else "No"
+        
+        # Secuencia solicitada
+        salida_alm = marcas[1] if num_marcas > 1 else None
+        regreso_alm = marcas[2] if num_marcas > 2 else None
+        inicio_break = marcas[3] if num_marcas > 3 else None
+        fin_break = marcas[4] if num_marcas > 4 else None
+        salida_final = marcas[5] if num_marcas > 5 else None
+
+        # Cálculos de duración
+        def min_dif(t1, t2):
+            if not t1 or not t2: return 0
+            return int((datetime.combine(fecha, t2) - datetime.combine(fecha, t1)).total_seconds() / 60)
+
+        resultados.append({
+            "Empleado": nombre,
+            "Fecha": fecha.strftime('%d/%m/%Y'),
+            "Entrada": entrada.strftime('%H:%M'),
+            "Tardanza": es_tardia,
+            "Almuerzo (min)": min_dif(salida_alm, regreso_alm),
+            "Break (min)": min_dif(inicio_break, fin_break),
+            "Salida": salida_final.strftime('%H:%M') if salida_final else "-",
+            "Marcaciones": num_marcas
+        })
+    
+    return pd.DataFrame(resultados)
+
+def generar_pdf_infracciones(df_res):
+    """Crea el reporte PDF con el resumen de infracciones."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(190, 10, "Reporte de Infracciones Biometricas", ln=True, align='C')
+    pdf.ln(10)
+
+    # 1. Tardanzas
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(190, 10, "1. Reincidencia de Llegadas Tardias (>6 min)", ln=True)
+    pdf.set_font("Arial", '', 10)
+    tardes = df_res[df_res["Tardanza"] == "Sí"].groupby("Empleado").size().sort_values(ascending=False)
+    if not tardes.empty:
+        for emp, cant in tardes.items():
+            pdf.cell(190, 8, f"- {emp}: {cant} tardanza(s)", ln=True)
+    else:
+        pdf.cell(190, 8, "- Ninguna tardanza registrada.", ln=True)
+    
+    # 2. Almuerzos > 60 min
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(190, 10, "2. Excesos de Almuerzo (> 60 min)", ln=True)
+    pdf.set_font("Arial", '', 10)
+    ex_alm = df_res[df_res["Almuerzo (min)"] > 60]
+    if not ex_alm.empty:
+        for _, row in ex_alm.iterrows():
+            pdf.cell(190, 8, f"- {row['Empleado']} ({row['Fecha']}): {row['Almuerzo (min)']} min", ln=True)
+    else:
+        pdf.cell(190, 8, "- Ningun exceso de almuerzo.", ln=True)
+
+    # 3. Breaks > 15 min
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(190, 10, "3. Excesos de Break (> 15 min)", ln=True)
+    pdf.set_font("Arial", '', 10)
+    ex_brk = df_res[df_res["Break (min)"] > 15]
+    if not ex_brk.empty:
+        for _, row in ex_brk.iterrows():
+            pdf.cell(190, 8, f"- {row['Empleado']} ({row['Fecha']}): {row['Break (min)']} min", ln=True)
+    else:
+        pdf.cell(190, 8, "- Ningun exceso de break.", ln=True)
+
+    return pdf.output(dest='S').encode('latin-1')
+
+
+# =========================================================
+# INTERFAZ PRINCIPAL STREAMLIT
+# =========================================================
+
 def vista_biometrico():
     st.title("🚨 Centro de Control Biométrico y RRHH")
     
-    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (Transacciones)", "📊 Consolidado RRHH (PDFs)"])
+    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (Transacciones CSV)", "📊 Consolidado RRHH (PDFs)"])
     
     # =========================================================
-    # PESTAÑA 1: AUDITORÍA ORIGINAL
+    # PESTAÑA 1: NUEVA LÓGICA DE AUDITORÍA (CSV)
     # =========================================================
     with tab_transacciones:
-        st.caption("Detecta llegadas tarde (ej. a partir de las 08:06 AM exactas), almuerzos mayores a 1 hora y breaks mayores a 15 min.")
-        if st.button("🔄 Reiniciar Turnos"):
-            if 'memoria_turnos' in st.session_state:
-                del st.session_state['memoria_turnos']
-            st.success("Memoria borrada.")
+        st.subheader("Análisis de Marcaciones Biométricas")
+        st.write("Sube el archivo de transacciones (formato CSV) para analizar puntualidad y tiempos.")
+        
+        file_bio = st.file_uploader("Cargar archivo Transaction", type=["csv"], key="bio_upload")
 
-        archivo = st.file_uploader("📥 Subir Archivo Transaction.pdf", type=['pdf'])
-        if archivo:
-            try:
-                from PyPDF2 import PdfReader
-                with st.spinner("🕵️‍♂️ Escaneando PDF y extrayendo marcas..."):
-                    reader = PdfReader(archivo)
-                    texto_completo = ""
-                    for page in reader.pages:
-                        texto_completo += page.extract_text() + "\n"
-                        
-                    patron = re.compile(r'([A-Za-z\sñÑáéíóúÁÉÍÓÚ\.]+)(\d{1,10})\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})')
-                    matches = patron.findall(texto_completo)
+        if file_bio:
+            if "transaction" in file_bio.name.lower():
+                try:
+                    df_raw = pd.read_csv(file_bio, sep=';')
+                    df_p = procesar_biometrico_mejorado(df_raw)
                     
-                    if not matches:
-                        st.error("❌ No se encontraron marcas válidas.")
-                        return
-                        
-                    df = pd.DataFrame(matches, columns=['Name_Raw', 'ID', 'Date', 'Time'])
-                    df['Name_Clean'] = df['Name_Raw'].apply(limpiar_nombre)
-                    id_to_name = df.groupby('ID')['Name_Clean'].agg(lambda x: x.mode()[0] if not x.empty else 'Unknown').to_dict()
-                    df['Full Name'] = df['ID'].map(id_to_name)
-                    df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%Y %H:%M')
-                    df = df.sort_values(['ID', 'Datetime'])
-                    df['Time_Diff'] = df.groupby(['ID', 'Date'])['Datetime'].diff()
-                    df = df[(df['Time_Diff'].isna()) | (df['Time_Diff'] > pd.Timedelta(minutes=15))].copy()
-                    df['FECHA_SOLA'] = df['Datetime'].dt.date
-
-                usuarios_unicos = df[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
-                usuarios_unicos['Turno'] = "08:00 AM" 
-                
-                if 'memoria_turnos' in st.session_state:
-                    previos = st.session_state['memoria_turnos']
-                    usuarios_unicos = pd.merge(usuarios_unicos, previos[['ID', 'Turno']], on='ID', how='left', suffixes=('', '_y'))
-                    usuarios_unicos['Turno'] = usuarios_unicos['Turno_y'].fillna("08:00 AM")
-                    usuarios_unicos = usuarios_unicos.drop(columns=['Turno_y'], errors='ignore')
+                    st.success(f"Archivo {file_bio.name} procesado correctamente.")
                     
-                st.session_state['memoria_turnos'] = usuarios_unicos
-                
-                st.write("### 1️⃣ Asignar Turno de Entrada")
-                opciones_turnos = ["07:00 AM", "08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM", "12:00 PM"]
-                turnos_editados = st.data_editor(
-                    st.session_state['memoria_turnos'],
-                    column_config={"Turno": st.column_config.SelectboxColumn(options=opciones_turnos, required=True)},
-                    disabled=['ID', 'Full Name'],
-                    hide_index=True,
-                    use_container_width=True
-                )
-                st.session_state['memoria_turnos'] = turnos_editados
-                dict_turnos = dict(zip(turnos_editados['ID'], turnos_editados['Turno']))
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
+                    c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
+                    c3.metric("Excesos Break", len(df_p[df_p["Break (min)"] > 15]))
 
-                if st.button("🚀 Extraer Infractores", type="primary"):
-                    resultados = []
-                    for (uid, fecha), grupo in df.groupby(['ID', 'FECHA_SOLA']):
-                        punches = grupo['Datetime'].tolist()
-                        if not punches: continue
-                        nombre = grupo['Full Name'].iloc[0]
-                        turno_str = dict_turnos.get(uid, "08:00 AM")
-                        
-                        entrada = punches[0]
-                        llegada_tarde = False
-                        try:
-                            dt_turno = datetime.strptime(turno_str, "%I:%M %p").time()
-                            limite = datetime.combine(fecha, dt_turno) + timedelta(minutes=5, seconds=59)
-                            if entrada > limite: llegada_tarde = True
-                        except: pass
-                            
-                        almuerzo_exc, almuerzo_str = False, ""
-                        break_exc, break_str = False, ""
-                        
-                        if len(punches) >= 3:
-                            if punches[1].hour < 17 and punches[2].hour < 17:
-                                mins_almuerzo = (punches[2] - punches[1]).total_seconds() / 60
-                                if mins_almuerzo > 60:
-                                    almuerzo_exc = True
-                                    almuerzo_str = f"{int(mins_almuerzo)} min"
-                                    
-                        if len(punches) >= 5:
-                            if punches[3].hour < 17 and punches[4].hour < 17:
-                                mins_break = (punches[4] - punches[3]).total_seconds() / 60
-                                if mins_break > 15:
-                                    break_exc = True
-                                    break_str = f"{int(mins_break)} min"
-                                    
-                        if llegada_tarde or almuerzo_exc or break_exc:
-                            motivos = []
-                            if llegada_tarde: motivos.append(f"Llegada a las {entrada.strftime('%I:%M %p')} (Tarde)")
-                            if almuerzo_exc: motivos.append(f"Almuerzo: {almuerzo_str}")
-                            if break_exc: motivos.append(f"Break: {break_str}")
-                            resultados.append({
-                                'Nombre': nombre, 'Fecha': fecha.strftime('%d/%m/%Y'), 'Infracción Detectada': " | ".join(motivos)
-                            })
-                            
-                    st.write("---")
-                    if resultados:
-                        st.error(f"🚨 Se detectaron {len(resultados)} infracciones.")
-                        st.dataframe(pd.DataFrame(resultados), use_container_width=True, hide_index=True)
-                    else:
-                        st.success("✅ Excelente. Nadie llegó tarde ni se pasó del almuerzo o break.")
-            except Exception as e:
-                st.error(f"❌ Ocurrió un error leyendo los datos: {e}")
+                    st.divider()
+                    
+                    pdf_data = generar_pdf_infracciones(df_p)
+                    st.download_button(
+                        label="📥 Descargar Reporte de Infracciones (PDF)",
+                        data=pdf_data,
+                        file_name=f"Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+
+                    st.dataframe(df_p, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Error al procesar el archivo CSV: {e}")
+            else:
+                st.warning("Por favor, sube un archivo que contenga 'Transaction' en su nombre.")
 
     # =========================================================
-    # PESTAÑA 2: CONSOLIDADO RRHH
+    # PESTAÑA 2: CONSOLIDADO RRHH (TÚ CÓDIGO INTACTO)
     # =========================================================
     with tab_rrhh:
         st.subheader("📑 Generador de Reporte Unificado")
@@ -305,3 +343,8 @@ def vista_biometrico():
                 if not st.session_state.get('df_t_prev', pd.DataFrame()).empty:
                     st.write("**Tardanzas:**")
                     st.dataframe(st.session_state['df_t_prev'].head(5), use_container_width=True)
+
+# Lógica para correr la app
+if __name__ == "__main__":
+    st.set_page_config(page_title="Control Operativo - MaxCom", layout="wide")
+    vista_biometrico()
