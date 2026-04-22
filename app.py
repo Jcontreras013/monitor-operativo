@@ -638,9 +638,9 @@ for col_txt in ['NUM', 'CLIENTE']:
             df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
             df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
     
-    ahora_local = get_honduras_time()
-    hoy_date_valor = ahora_local.date()
-    df_base_activa = df_base.copy()
+ahora_local = get_honduras_time()
+hoy_date_valor = ahora_local.date()
+df_base_activa = df_base.copy()
 
     if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
