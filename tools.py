@@ -741,14 +741,23 @@ def finalizar_pdf(pdfobj):
         try: os.remove(tmppath)
         except: pass
 
-def es_offline_preciso(comentario):
-    txt = str(comentario).upper().strip()
-    if not txt or txt == 'NAN': return False
-    jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
-    if any(word in txt for word in jergasolucion): return False
-    keywordsfalla = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
-    return any(word in txt for word in keywordsfalla)
+# Definimos las listas AFUERA para ahorrar memoria y tiempo de procesamiento
+JERGA_SOLUCION = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
+KEYWORDS_FALLA = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
 
+def es_offline_preciso(comentario):
+    """Detecta si una orden está caída ignorando las que ya fueron reparadas."""
+    txt = str(comentario).upper().strip()
+    
+    if not txt or txt == 'NAN': 
+        return False
+        
+    # 1. Escudo anti falsos positivos (Si dice 'OK', no está caída)
+    if any(word in txt for word in JERGA_SOLUCION): 
+        return False
+        
+    # 2. Búsqueda de falla crítica
+    return any(word in txt for word in KEYWORDS_FALLA)
 def depurar_archivos_en_crudo(fileactividades, filedispositivos):
     try:
         xlact = pd.ExcelFile(fileactividades, engine='openpyxl')
