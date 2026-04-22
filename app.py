@@ -642,7 +642,7 @@ ahora_local = get_honduras_time()
 hoy_date_valor = ahora_local.date()
 df_base_activa = df_base.copy()
 
-    if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
+if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
         if len(filtro_estado) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
