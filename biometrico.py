@@ -8,7 +8,6 @@ import tempfile
 import unicodedata
 from fpdf import FPDF
 import pdfplumber
-from PyPDF2 import PdfReader
 
 # =========================================================
 # FUNCIONES ORIGINALES (CONSOLIDADO RRHH - NO TOCADAS)
@@ -150,7 +149,7 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
 # =========================================================
 
 def procesar_biometrico_mejorado(df_csv):
-    """Procesa el CSV aplicando las 6 marcaciones y la regla de los 6 min."""
+    """Procesa el CSV aplicando las 6 marcaciones y la regla dinámica de los 6 min."""
     df_csv.columns = df_csv.columns.str.strip()
     df_csv['Date'] = pd.to_datetime(df_csv['Date'], dayfirst=True, errors='coerce').dt.date
     df_csv['Time'] = pd.to_datetime(df_csv['Time'], format='%H:%M', errors='coerce').dt.time
@@ -163,10 +162,18 @@ def procesar_biometrico_mejorado(df_csv):
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
-        # 1ra Marcación: Entrada y Regla de los 6 Minutos
+        # 1ra Marcación: Entrada
         entrada = marcas[0]
-        limite_tardia = time(entrada.hour, 6)
-        es_tardia = "Sí" if entrada > limite_tardia else "No"
+        dt_entrada = datetime.combine(datetime.today(), entrada)
+
+        # Lógica de hora base para determinar la tardanza
+        if dt_entrada.minute >= 40: 
+            hora_base = (dt_entrada + timedelta(hours=1)).replace(minute=0, second=0)
+        else: 
+            hora_base = dt_entrada.replace(minute=0, second=0)
+
+        limite_tardia = (hora_base + timedelta(minutes=6)).time()
+        es_tardia = "Sí" if entrada >= limite_tardia else "No"
         
         # Secuencia solicitada
         salida_alm = marcas[1] if num_marcas > 1 else None
@@ -258,6 +265,7 @@ def vista_biometrico():
         file_bio = st.file_uploader("Cargar archivo Transaction", type=["csv"], key="bio_upload")
 
         if file_bio:
+            # Reconoce el archivo aunque tenga un (1), (2), etc.
             if "transaction" in file_bio.name.lower():
                 try:
                     df_raw = pd.read_csv(file_bio, sep=';')
@@ -265,6 +273,7 @@ def vista_biometrico():
                     
                     st.success(f"Archivo {file_bio.name} procesado correctamente.")
                     
+                    # Panel de indicadores rápidos
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
                     c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
@@ -272,6 +281,7 @@ def vista_biometrico():
 
                     st.divider()
                     
+                    # Botón para descargar reporte de infracciones
                     pdf_data = generar_pdf_infracciones(df_p)
                     st.download_button(
                         label="📥 Descargar Reporte de Infracciones (PDF)",
@@ -281,6 +291,7 @@ def vista_biometrico():
                         use_container_width=True
                     )
 
+                    # Mostrar la tabla final en pantalla
                     st.dataframe(df_p, use_container_width=True)
 
                 except Exception as e:
@@ -312,7 +323,6 @@ def vista_biometrico():
                         pdf_data = generar_pdf_unificado_rrhh(df_a, df_t)
                         
                         if pdf_data:
-                            # Guardamos en la memoria para que el botón de descarga aparezca abajo
                             st.session_state['pdf_final_rrhh'] = pdf_data
                             st.session_state['df_a_prev'] = df_a
                             st.session_state['df_t_prev'] = df_t
@@ -323,7 +333,7 @@ def vista_biometrico():
             else:
                 st.warning("Debe subir al menos un archivo para proceder.")
 
-        # --- SECCIÓN QUE DIBUJA EL BOTÓN DE DESCARGA (Se queda fijo) ---
+        # --- SECCIÓN QUE DIBUJA EL BOTÓN DE DESCARGA ---
         if 'pdf_final_rrhh' in st.session_state:
             st.divider()
             st.markdown("### 🎉 Tu Reporte está listo")
@@ -344,7 +354,7 @@ def vista_biometrico():
                     st.write("**Tardanzas:**")
                     st.dataframe(st.session_state['df_t_prev'].head(5), use_container_width=True)
 
-# Lógica para correr la app
+# Lógica de protección por si el archivo se ejecuta directamente en lugar de importarse
 if __name__ == "__main__":
     st.set_page_config(page_title="Control Operativo - MaxCom", layout="wide")
     vista_biometrico()
