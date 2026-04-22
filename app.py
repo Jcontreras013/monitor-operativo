@@ -658,18 +658,18 @@ if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Cent
         if tec_filtro_monitor != "Todos": df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
 else: df_monitor_filtrado = df_base_activa.copy()
 
-    if nav_menu_diamante == "🚙 Auditoría Vehículos":
+if nav_menu_diamante == "🚙 Auditoría Vehículos":
         try: mostrar_auditoria(es_movil, conn)
         except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
         return
 
-    if nav_menu_diamante == "🚫 NOINSTALADO":
+if nav_menu_diamante == "🚫 NOINSTALADO":
         st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
         mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
         st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
         return
 
-    if nav_menu_diamante == "📅 REPROGRAMADAS":
+if nav_menu_diamante == "📅 REPROGRAMADAS":
         st.title("📅 Órdenes Reprogramadas (Futuras)")
         df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
@@ -683,12 +683,12 @@ else: df_monitor_filtrado = df_base_activa.copy()
         else: st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
         return
 
-    if nav_menu_diamante == "📚 Histórico":
+if nav_menu_diamante == "📚 Histórico":
         from historico import main_historico
         main_historico(st.session_state.df_hist)
         return
 
-    if nav_menu_diamante == "📊 Centro de Reportes":
+if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
         tab_diario, tab_pendientes, tab_gerencial, tab_biometrico = st.tabs(["📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"])
