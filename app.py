@@ -12,10 +12,21 @@ from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import numpy as np
 from tools import (
+    get_honduras_time,
     parse_date_ultra_safe, 
     procesar_fechas_seguro, 
     generar_tablas_gerenciales,
-    get_honduras_time 
+    COLUMNS_MAPPING, 
+    es_offline_preciso, 
+    procesar_dataframe_base, 
+    depurar_archivos_en_crudo,
+    logica_generar_pdf,
+    generar_pdf_cierre_diario,
+    generar_pdf_semanal,
+    generar_pdf_mensual,
+    generar_pdf_trimestral_detallado,
+    generar_pdf_primera_orden,
+    generar_pdf_pendientes_dispatch
 )
 
 # ==============================================================================
