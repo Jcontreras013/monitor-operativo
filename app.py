@@ -10,7 +10,6 @@ from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
-import numpy as np
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -28,6 +27,7 @@ try:
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
+# 🚨 IMPORTACIÓN MÓDULO BIOMÉTRICO 🚨
 try:
     import biometrico
 except ImportError:
@@ -45,14 +45,10 @@ try:
         generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
         generar_pdf_primera_orden,
-        generar_pdf_pendientes_dispatch,
-        parse_date_ultra_safe, 
-        procesar_fechas_seguro, 
-        generar_tablas_gerenciales,
-        get_honduras_time
+        generar_pdf_pendientes_dispatch
     )
 except ImportError:
-    st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py' o faltan funciones. Asegúrese de que ambos archivos estén actualizados.")
+    st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
 
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
@@ -71,24 +67,100 @@ def aplicar_estilos_nativos():
         #MainMenu {visibility: hidden;} 
         header {visibility: hidden;} 
         footer {visibility: hidden;} 
+        
         .block-container {
             padding-top: 1rem !important; 
             padding-bottom: 6rem !important; 
             padding-left: 1rem !important;
             padding-right: 1rem !important;
         }
-        html, body { max-width: 100%; overflow-x: hidden; }
+        
+        html, body {
+            max-width: 100%;
+            overflow-x: hidden;
+        }
         </style>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     """
     st.markdown(hide_st_style, unsafe_allow_html=True)
 
+# PATRON ORIGINAL
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 
 # ==============================================================================
-# FUNCIONES DE APOYO Y MODALES
+# 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
 # ==============================================================================
+def get_honduras_time():
+    return datetime.utcnow() - timedelta(hours=6)
+
+def parse_date_ultra_safe(val):
+    if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
+        return pd.NaT
+    str_val = str(val).strip()
+    if str_val in ["0", "0.0", "1899-12-30 00:00:00"]:
+        return pd.NaT
+
+    hoy = pd.Timestamp(get_honduras_time()).normalize()
+
+    try:
+        if isinstance(val, dt_time): return pd.Timestamp.combine(hoy.date(), val)
+        if isinstance(val, datetime):
+            if val.year <= 1970: return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
+            return pd.Timestamp(val)
+        if isinstance(val, (int, float)):
+            if val == 0 or val == 0.0: return pd.NaT
+            if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
+            elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
+            else: return pd.NaT
+        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
+            parsed_time = pd.to_datetime(str_val).time()
+            return pd.Timestamp.combine(hoy.date(), parsed_time)
+        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val): parsed = pd.to_datetime(str_val, errors='coerce')
+        else: parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+
+        if pd.notnull(parsed):
+            if parsed.year <= 1970: return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
+            return parsed
+        return pd.NaT
+    except: return pd.NaT
+
+def procesar_fechas_seguro(df_input, columnas):
+    df = df_input.copy()
+    for col in columnas:
+        if col in df.columns: df[col] = df[col].apply(parse_date_ultra_safe)
+    return df
+
+# ==============================================================================
+# FUNCIÓN DE PROCESAMIENTO GERENCIAL
+# ==============================================================================
+def generar_tablas_gerenciales(df_crudo):
+    df = df_crudo.copy()
+    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_ultra_safe)
+    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_ultra_safe)
+    df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
+    df['FECHA'] = df['HORA_LIQ'].dt.date
+    totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
+    conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
+    tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
+    tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
+
+    df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
+    df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
+    tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
+    tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
+    tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
+
+    jornada = df.groupby(['TECNICO', 'FECHA']).agg(Hora_Apertura=('HORA_INI', 'min'), Hora_Cierre=('HORA_LIQ', 'max'), Total_Ordenes=('NUM', 'count')).reset_index()
+    jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
+    jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
+
+    resumen_jornada = jornada.groupby('TECNICO').agg(Promedio_Horas_Dia=('Horas_En_Calle', 'mean'), Dias_Laborados=('FECHA', 'nunique'), Max_Horas_Dia=('Horas_En_Calle', 'max')).reset_index()
+    resumen_jornada['Promedio_Horas_Dia'] = resumen_jornada['Promedio_Horas_Dia'].round(2)
+    resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
+
+    return tabla_produccion, tabla_eficiencia, resumen_jornada
+
 def sincronizar_datos_nube(conn):
     try:
         with st.spinner("Descargando historial y limpiando duplicados..."):
@@ -292,7 +364,18 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
             return False
             
         df_act['ALERTA_TIEMPO'] = df_act.apply(alert_2h_logic_diamante, axis=1)
-        df_act['ES_OFFLINE'] = df_act.apply(lambda r: es_offline_preciso(r.get('COMENTARIO', '')), axis=1)
+        
+        def offline_seguro_diamante_logic(r_off):
+            if str(r_off.get('TECNICO', '')).strip().upper() == 'JOSUE MIGUEL SAUCEDA': return False
+            if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
+            act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
+            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']): return False
+            if 'SOPFIBRA' not in act_v_name: return False
+            comentario_v_val = str(r_off.get('COMENTARIO', '')).upper()
+            if "ONU OFFLINE" in comentario_v_val or "OFF LINE" in comentario_v_val or "FUERA DE SERVICIO" in comentario_v_val or "OFFLINE" in comentario_v_val: return True
+            return es_offline_preciso(comentario_v_val)
+        
+        df_act['ES_OFFLINE'] = df_act.apply(offline_seguro_diamante_logic, axis=1)
         df_act['MINUTOS_CALC'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds() / 60
         
         def segmentar_plex_diamante_logic(r_seg):
@@ -589,22 +672,21 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-    # --- VECTORIZACIÓN DE RENDIMIENTO ---
-    texto_concat = df_base['ACTIVIDAD'].fillna('').astype(str).str.upper() + " " + df_base['COMENTARIO'].fillna('').astype(str).str.upper()
-    condiciones_motivo = [
-        df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True,
-        texto_concat.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True, na=False),
-        texto_concat.str.contains("TV|CABLE|SEÑAL", regex=True, na=False),
-        texto_concat.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True, na=False),
-        texto_concat.str.contains("NAV|INTERNET|LENT", regex=True, na=False)
-    ]
-    opciones_motivo = [
-        "🔴 Offline / Caída", "📦 Instalación / Cambio", "📺 Falla de TV", "⚡ Niveles Alterados", "🌐 Lentitud / Navegación"
-    ]
-    df_base['MOTIVO'] = np.select(condiciones_motivo, opciones_motivo, default="🔧 Mantenimiento General")
+        def extraer_motivo_falla(row):
+            act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); texto = act + " " + com
+            if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
+            if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
+            if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
+            if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
+            if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
+            return "🔧 Mantenimiento General"
+        df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
 
-    texto_scan = texto_concat + " " + df_base['CLIENTE'].fillna('').astype(str)
-    df_base['SEGMENTO'] = np.where(texto_scan.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True, na=False), 'PLEX', 'RESIDENCIAL')
+        def extraer_segmento_global(row):
+            texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
+            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
+            return 'RESIDENCIAL'
+        df_base['SEGMENTO'] = df_base.apply(extraer_segmento_global, axis=1)
 
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns: df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
@@ -1173,72 +1255,54 @@ def main():
             st.markdown("---")
 
             # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT (1 LÍNEA POR ORDEN)
+            # ⏳ LÓGICA DE GRÁFICA GANTT REPARADA PARA ALINEACIÓN DE TIEMPO
             # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
                 
-                # Filtramos a los supervisores para no ensuciar la gráfica
                 mask_supervisores = df_solo_asignadas_monitor['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
                 df_para_gantt_bruto = df_solo_asignadas_monitor[~mask_supervisores].copy()
                 df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
                 
                 if not df_para_gantt_final.empty:
-                    # 1. Normalizar horas (usamos un día base para alinear todo en el mismo eje X)
+                    # 1. Normalizar horas en un mismo día ficticio (para alineación visual perfecta)
                     gantt_base_date = datetime(2000, 1, 1).date()
                     
                     def normalizar_para_gantt(dt):
                         if pd.isnull(dt): return pd.NaT
+                        # Combinamos la fecha fija con la hora real del registro
                         return datetime.combine(gantt_base_date, dt.time())
 
-                    # Si no tiene hora de liquidación, usamos la hora actual para que la barra llegue hasta "ahora"
                     df_para_gantt_final['FIN_LIMITE_RAW'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
                     
+                    # Columnas matemáticas para el eje X
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final['FIN_LIMITE_RAW'].apply(normalizar_para_gantt)
                     
-                    # 🚀 EL TRUCO VISUAL: Crear un eje Y único para cada fila
-                    df_para_gantt_final['TEC_ORDEN'] = df_para_gantt_final['TECNICO'].astype(str) + " (Ord: " + df_para_gantt_final['NUM'].astype(str) + ")"
+                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'], ascending=[True, True])
                     
-                    # Ordenamos para que visualmente se vea como una escalera por hora
-                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'], ascending=[False, False])
-                    
-                    # Calculamos altura dinámica (35 píxeles por cada orden para que respire)
-                    altura_dinamica = max(400, len(df_para_gantt_final) * 35)
+                    st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todos los Técnicos)</h5>", unsafe_allow_html=True)
                     
                     fig_gantt = px.timeline(
                         df_para_gantt_final, 
                         x_start="GANTT_START", 
                         x_end="GANTT_END", 
-                        y="TEC_ORDEN",  # <--- Usamos el ID único en el eje Y
-                        color="SEGMENTO", # Coloreamos por PLEX o RESIDENCIAL
+                        y="TECNICO", 
+                        color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        hover_data={"TECNICO": True, "NUM": True, "COLONIA": True, "ESTADO": True, "GANTT_START": False, "GANTT_END": False}, 
-                        height=altura_dinamica 
+                        hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "SEGMENTO": True, "GANTT_START": False, "GANTT_END": False}, 
+                        height=650 
                     )
                     
-                    fig_gantt.update_yaxes(title_text="", showgrid=True, gridcolor='rgba(255,255,255,0.1)')
-                    fig_gantt.update_xaxes(tickformat="%H:%M", title_text="Hora de la Jornada", showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                    fig_gantt.update_yaxes(autorange="reversed", title_text="")
+                    # Forzamos formato de hora en el eje X
+                    fig_gantt.update_xaxes(tickformat="%H:%M", title_text="Reloj de Jornada")
                     
-                    # Estilo de las barras
-                    fig_gantt.update_traces(
-                        textposition='inside', 
-                        insidetextanchor='middle', 
-                        marker_line_color='black', 
-                        marker_line_width=1, 
-                        opacity=0.85
-                    )
-                    
-                    fig_gantt.update_layout(
-                        legend_title_text="Segmento",
-                        margin=dict(t=20, b=20, l=10, r=10), 
-                        paper_bgcolor="rgba(0,0,0,0)", 
-                        plot_bgcolor="rgba(0,0,0,0)"
-                    )
-                    
+                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=2.5, opacity=0.9)
+                    fig_gantt.update_layout(showlegend=False, margin=dict(t=20, b=20, l=0, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
-                    st.info("No hay órdenes con hora de inicio registrada para generar el gráfico.")
+                    st.info("No hay órdenes con hora de inicio registrada para generar los gráficos de Gantt.")
 
         st.markdown("---")
         
