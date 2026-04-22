@@ -36,21 +36,18 @@ def extraer_tabla_limpia_pdf(archivo_pdf):
         
     df = pd.DataFrame(todas_las_filas)
     
-    # La fila 0 contiene los nombres reales de las columnas
     df.columns = df.iloc[0]
     df = df[1:].reset_index(drop=True)
     
-    # Limpieza estricta de vacíos
     df = df.replace(r'^\s*$', pd.NA, regex=True)
     df = df.replace('None', pd.NA)
-    df = df.replace('--', pd.NA) # Los guiones de tu PDF de ausencias
+    df = df.replace('--', pd.NA) 
     
-    df = df.dropna(how='all', axis=1) # Elimina columnas 100% vacías
-    df = df.dropna(how='all', axis=0) # Elimina filas 100% vacías
+    df = df.dropna(how='all', axis=1) 
+    df = df.dropna(how='all', axis=0) 
     
     df = df.fillna('---')
     
-    # Arreglar columnas duplicadas
     cols = pd.Series(df.columns)
     for dup in cols[cols.duplicated()].unique(): 
         cols[cols[cols == dup].index.values.tolist()] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
@@ -68,7 +65,7 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
         if pd.isna(texto): return ""
         return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
         
-    pdf = FPDF('L', 'mm', 'A4') # Horizontal para que quepan tus columnas
+    pdf = FPDF('L', 'mm', 'A4') 
     pdf.add_page()
     
     pdf.set_font("Helvetica", "B", 16)
@@ -92,11 +89,9 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
             pdf_obj.ln(5)
             return
             
-        # Seleccionamos las columnas más importantes para que no se salga de la hoja
         cols_deseadas = ['Nombre completo', 'Departamento', 'Fecha', 'Horario', 'Hora de inicio del trabajo', 'Hora final del trabajo']
         cols_finales = [c for c in cols_deseadas if c in df.columns]
         
-        # Si por alguna razón el PDF cambió, agarramos las primeras 6 disponibles
         if not cols_finales:
             cols_finales = list(df.columns)[:6]
             
@@ -109,12 +104,10 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
         ancho_total = 275 
         w = ancho_total / len(cols_finales)
         
-        # Encabezados
         for col in cols_finales:
             pdf_obj.cell(w, 8, safestr(str(col))[:25], border=1, align="C", fill=True)
         pdf_obj.ln()
         
-        # Filas
         pdf_obj.set_font("Helvetica", "", 7)
         for _, row in df_sub.iterrows():
             if pdf_obj.get_y() > 185:
@@ -151,14 +144,20 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
 def procesar_biometrico_mejorado(df_csv):
     """Procesa el CSV aplicando las 6 marcaciones y la regla dinámica de los 6 min."""
     df_csv.columns = df_csv.columns.str.strip()
-    df_csv['Date'] = pd.to_datetime(df_csv['Date'], dayfirst=True, errors='coerce').dt.date
-    df_csv['Time'] = pd.to_datetime(df_csv['Time'], format='%H:%M', errors='coerce').dt.time
-    df_csv = df_csv.dropna(subset=['Date', 'Time'])
-    df_csv = df_csv.sort_values(by=['Full Name', 'Date', 'Time'])
+    
+    # Manejo robusto para buscar la columna correcta incluso si viene en español
+    col_fecha = 'Date' if 'Date' in df_csv.columns else 'Fecha'
+    col_hora = 'Time' if 'Time' in df_csv.columns else 'Hora'
+    col_nombre = 'Full Name' if 'Full Name' in df_csv.columns else 'Nombre completo'
+    
+    df_csv[col_fecha] = pd.to_datetime(df_csv[col_fecha], dayfirst=True, errors='coerce').dt.date
+    df_csv[col_hora] = pd.to_datetime(df_csv[col_hora], format='%H:%M', errors='coerce').dt.time
+    df_csv = df_csv.dropna(subset=[col_fecha, col_hora])
+    df_csv = df_csv.sort_values(by=[col_nombre, col_fecha, col_hora])
 
     resultados = []
-    for (nombre, fecha), grupo in df_csv.groupby(['Full Name', 'Date']):
-        marcas = grupo['Time'].tolist()
+    for (nombre, fecha), grupo in df_csv.groupby([col_nombre, col_fecha]):
+        marcas = grupo[col_hora].tolist()
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
@@ -267,7 +266,23 @@ def vista_biometrico():
         if file_bio:
             if "transaction" in file_bio.name.lower():
                 try:
-                    df_raw = pd.read_csv(file_bio, sep=';')
+                    # ---- EL "RADAR" DE ENCABEZADOS ----
+                    # Leemos el archivo crudo y buscamos en qué línea dice 'Date' para saltar la basura
+                    content = file_bio.getvalue().decode('utf-8-sig', errors='ignore')
+                    lineas = content.splitlines()
+                    skip_lines = 0
+                    
+                    for i, linea in enumerate(lineas[:20]): # Busca en las primeras 20 filas
+                        if 'Date' in linea or 'Time' in linea:
+                            skip_lines = i
+                            break
+                    
+                    # Regresamos el puntero a cero y leemos saltando las líneas malas
+                    file_bio.seek(0)
+                    df_raw = pd.read_csv(file_bio, sep=';', encoding='utf-8-sig', skiprows=skip_lines)
+                    df_raw.columns = df_raw.columns.str.strip()
+                    
+                    # Procesamos
                     df_p = procesar_biometrico_mejorado(df_raw)
                     
                     st.success(f"Archivo {file_bio.name} procesado correctamente.")
