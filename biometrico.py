@@ -20,7 +20,6 @@ def limpiar_nombre(raw):
     return " ".join(limpias[-4:])
 
 def extraer_tabla_limpia_pdf(archivo_pdf):
-    """Extrae datos, asigna la primera fila como header y elimina lo vacío"""
     import pdfplumber
     todas_las_filas = []
     
@@ -35,7 +34,6 @@ def extraer_tabla_limpia_pdf(archivo_pdf):
         return pd.DataFrame()
         
     df = pd.DataFrame(todas_las_filas)
-    
     df.columns = df.iloc[0]
     df = df[1:].reset_index(drop=True)
     
@@ -45,14 +43,12 @@ def extraer_tabla_limpia_pdf(archivo_pdf):
     
     df = df.dropna(how='all', axis=1) 
     df = df.dropna(how='all', axis=0) 
-    
     df = df.fillna('---')
     
     cols = pd.Series(df.columns)
     for dup in cols[cols.duplicated()].unique(): 
         cols[cols[cols == dup].index.values.tolist()] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
     df.columns = cols
-    
     return df
 
 def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
@@ -91,12 +87,9 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
             
         cols_deseadas = ['Nombre completo', 'Departamento', 'Fecha', 'Horario', 'Hora de inicio del trabajo', 'Hora final del trabajo']
         cols_finales = [c for c in cols_deseadas if c in df.columns]
-        
-        if not cols_finales:
-            cols_finales = list(df.columns)[:6]
+        if not cols_finales: cols_finales = list(df.columns)[:6]
             
         df_sub = df[cols_finales]
-        
         pdf_obj.set_font("Helvetica", "B", 8)
         pdf_obj.set_fill_color(230, 235, 245)
         pdf_obj.set_text_color(0, 0, 0)
@@ -136,28 +129,32 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
         try: os.remove(tmppath)
         except: pass
 
-
 # =========================================================
-# NUEVAS FUNCIONES PARA EL CSV BIOMÉTRICO
+# NUEVAS FUNCIONES PARA EL CSV BIOMÉTRICO (DEPURADO)
 # =========================================================
 
 def procesar_biometrico_mejorado(df_csv):
-    """Procesa el CSV aplicando las 6 marcaciones y la regla dinámica de los 6 min."""
+    """Filtra y procesa usando SOLO: Full Name, ID, Date, Time, Weekday"""
     df_csv.columns = df_csv.columns.str.strip()
     
-    # Manejo robusto para buscar la columna correcta incluso si viene en español
-    col_fecha = 'Date' if 'Date' in df_csv.columns else 'Fecha'
-    col_hora = 'Time' if 'Time' in df_csv.columns else 'Hora'
-    col_nombre = 'Full Name' if 'Full Name' in df_csv.columns else 'Nombre completo'
+    # Seleccionar exclusivamente las columnas requeridas (si existen)
+    cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time']
+    cols_presentes = [c for c in cols_requeridas if c in df_csv.columns]
+    df_csv = df_csv[cols_presentes].copy()
+
+    # Formatear Fecha y Hora
+    df_csv['Date'] = pd.to_datetime(df_csv['Date'], dayfirst=True, errors='coerce').dt.date
+    df_csv['Time'] = pd.to_datetime(df_csv['Time'], format='%H:%M', errors='coerce').dt.time
     
-    df_csv[col_fecha] = pd.to_datetime(df_csv[col_fecha], dayfirst=True, errors='coerce').dt.date
-    df_csv[col_hora] = pd.to_datetime(df_csv[col_hora], format='%H:%M', errors='coerce').dt.time
-    df_csv = df_csv.dropna(subset=[col_fecha, col_hora])
-    df_csv = df_csv.sort_values(by=[col_nombre, col_fecha, col_hora])
+    # Descartar filas vacías y ordenar
+    df_csv = df_csv.dropna(subset=['Date', 'Time'])
+    df_csv = df_csv.sort_values(by=['Full Name', 'Date', 'Time'])
 
     resultados = []
-    for (nombre, fecha), grupo in df_csv.groupby([col_nombre, col_fecha]):
-        marcas = grupo[col_hora].tolist()
+    
+    # Agrupamos por ID, Nombre y Fecha
+    for (emp_id, nombre, dia_semana, fecha), grupo in df_csv.groupby(['ID', 'Full Name', 'Weekday', 'Date']):
+        marcas = grupo['Time'].tolist()
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
@@ -165,7 +162,7 @@ def procesar_biometrico_mejorado(df_csv):
         entrada = marcas[0]
         dt_entrada = datetime.combine(datetime.today(), entrada)
 
-        # Lógica de hora base para determinar la tardanza
+        # Regla de tardanza (6 min de la hora base)
         if dt_entrada.minute >= 40: 
             hora_base = (dt_entrada + timedelta(hours=1)).replace(minute=0, second=0)
         else: 
@@ -181,13 +178,15 @@ def procesar_biometrico_mejorado(df_csv):
         fin_break = marcas[4] if num_marcas > 4 else None
         salida_final = marcas[5] if num_marcas > 5 else None
 
-        # Cálculos de duración
         def min_dif(t1, t2):
             if not t1 or not t2: return 0
             return int((datetime.combine(fecha, t2) - datetime.combine(fecha, t1)).total_seconds() / 60)
 
+        # Construir fila final agregando ID y Weekday
         resultados.append({
+            "ID": emp_id,
             "Empleado": nombre,
+            "Día": dia_semana,
             "Fecha": fecha.strftime('%d/%m/%Y'),
             "Entrada": entrada.strftime('%H:%M'),
             "Tardanza": es_tardia,
@@ -200,7 +199,6 @@ def procesar_biometrico_mejorado(df_csv):
     return pd.DataFrame(resultados)
 
 def generar_pdf_infracciones(df_res):
-    """Crea el reporte PDF con el resumen de infracciones."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
@@ -226,7 +224,7 @@ def generar_pdf_infracciones(df_res):
     ex_alm = df_res[df_res["Almuerzo (min)"] > 60]
     if not ex_alm.empty:
         for _, row in ex_alm.iterrows():
-            pdf.cell(190, 8, f"- {row['Empleado']} ({row['Fecha']}): {row['Almuerzo (min)']} min", ln=True)
+            pdf.cell(190, 8, f"- [{row['ID']}] {row['Empleado']} ({row['Fecha']}): {row['Almuerzo (min)']} min", ln=True)
     else:
         pdf.cell(190, 8, "- Ningun exceso de almuerzo.", ln=True)
 
@@ -238,7 +236,7 @@ def generar_pdf_infracciones(df_res):
     ex_brk = df_res[df_res["Break (min)"] > 15]
     if not ex_brk.empty:
         for _, row in ex_brk.iterrows():
-            pdf.cell(190, 8, f"- {row['Empleado']} ({row['Fecha']}): {row['Break (min)']} min", ln=True)
+            pdf.cell(190, 8, f"- [{row['ID']}] {row['Empleado']} ({row['Fecha']}): {row['Break (min)']} min", ln=True)
     else:
         pdf.cell(190, 8, "- Ningun exceso de break.", ln=True)
 
@@ -251,77 +249,68 @@ def generar_pdf_infracciones(df_res):
 
 def vista_biometrico():
     st.title("🚨 Centro de Control Biométrico y RRHH")
+    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (CSV)", "📊 Consolidado RRHH (PDFs)"])
     
-    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (Transacciones CSV)", "📊 Consolidado RRHH (PDFs)"])
-    
-    # =========================================================
-    # PESTAÑA 1: NUEVA LÓGICA DE AUDITORÍA (CSV)
-    # =========================================================
     with tab_transacciones:
         st.subheader("Análisis de Marcaciones Biométricas")
-        st.write("Sube el archivo de transacciones (formato CSV) para analizar puntualidad y tiempos.")
+        st.write("Sube el archivo CSV exportado desde el sistema MaxCom.")
         
-        file_bio = st.file_uploader("Cargar archivo Transaction", type=["csv"], key="bio_upload")
+        file_bio = st.file_uploader("Cargar archivo de Transacciones", type=["csv"], key="bio_upload")
 
         if file_bio:
-            if "transaction" in file_bio.name.lower():
-                try:
-                    # ---- EL "RADAR" DE ENCABEZADOS ----
-                    # Leemos el archivo crudo y buscamos en qué línea dice 'Date' para saltar la basura
-                    content = file_bio.getvalue().decode('utf-8-sig', errors='ignore')
-                    lineas = content.splitlines()
-                    skip_lines = 0
-                    
-                    for i, linea in enumerate(lineas[:20]): # Busca en las primeras 20 filas
-                        if 'Date' in linea or 'Time' in linea:
-                            skip_lines = i
-                            break
-                    
-                    # Regresamos el puntero a cero y leemos saltando las líneas malas
+            try:
+                # ---- DETECTOR AUTOMÁTICO DE ENCABEZADOS ----
+                content = file_bio.getvalue().decode('utf-8-sig', errors='ignore')
+                lineas = content.splitlines()
+                skip_lines = 0
+                
+                # Buscar la fila que contiene los nombres reales de las columnas
+                for i, linea in enumerate(lineas[:10]): 
+                    if 'Full Name' in linea and 'Date' in linea and 'Time' in linea:
+                        skip_lines = i
+                        break
+                
+                # Volver al inicio y leer saltando la "basura" del encabezado
+                file_bio.seek(0)
+                df_raw = pd.read_csv(file_bio, sep=';', encoding='utf-8-sig', skiprows=skip_lines)
+                
+                # Si el archivo usa coma en lugar de punto y coma, Pandas lo pondrá todo en 1 columna. Lo reparamos:
+                if len(df_raw.columns) == 1:
                     file_bio.seek(0)
-                    df_raw = pd.read_csv(file_bio, sep=';', encoding='utf-8-sig', skiprows=skip_lines)
-                    df_raw.columns = df_raw.columns.str.strip()
-                    
-                    # Procesamos
-                    df_p = procesar_biometrico_mejorado(df_raw)
-                    
-                    st.success(f"Archivo {file_bio.name} procesado correctamente.")
-                    
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
-                    c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
-                    c3.metric("Excesos Break", len(df_p[df_p["Break (min)"] > 15]))
+                    df_raw = pd.read_csv(file_bio, sep=',', encoding='utf-8-sig', skiprows=skip_lines)
 
-                    st.markdown("---")
-                    
-                    pdf_data = generar_pdf_infracciones(df_p)
-                    st.download_button(
-                        label="📥 Descargar Reporte de Infracciones (PDF)",
-                        data=pdf_data,
-                        file_name=f"Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
+                df_p = procesar_biometrico_mejorado(df_raw)
+                
+                st.success(f"Archivo procesado correctamente. ¡Tabla limpiada y depurada!")
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
+                c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
+                c3.metric("Excesos Break", len(df_p[df_p["Break (min)"] > 15]))
 
-                    st.dataframe(df_p, use_container_width=True)
+                st.markdown("---")
+                
+                pdf_data = generar_pdf_infracciones(df_p)
+                st.download_button(
+                    label="📥 Descargar Reporte de Infracciones (PDF)",
+                    data=pdf_data,
+                    file_name=f"Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
-                except Exception as e:
-                    st.error(f"Error al procesar el archivo CSV: {e}")
-            else:
-                st.warning("Por favor, sube un archivo que contenga 'Transaction' en su nombre.")
+                st.dataframe(df_p, use_container_width=True)
 
-    # =========================================================
-    # PESTAÑA 2: CONSOLIDADO RRHH
-    # =========================================================
+            except Exception as e:
+                st.error(f"Error al procesar el archivo. Asegúrate de subir el reporte correcto. Detalles: {e}")
+
     with tab_rrhh:
         st.subheader("📑 Generador de Reporte Unificado")
         st.markdown("Cargue los reportes oficiales para limpiar columnas vacías y unificar la información.")
         
         col_u1, col_u2 = st.columns(2)
-        with col_u1:
-            f_aus = st.file_uploader("📂 PDF de Ausencias", type=['pdf'], key="up_aus")
-        with col_u2:
-            f_tar = st.file_uploader("📂 PDF de Llegadas Tarde", type=['pdf'], key="up_tar")
+        with col_u1: f_aus = st.file_uploader("📂 PDF de Ausencias", type=['pdf'], key="up_aus")
+        with col_u2: f_tar = st.file_uploader("📂 PDF de Llegadas Tarde", type=['pdf'], key="up_tar")
             
         if st.button("🚀 ANALIZAR ARCHIVOS", type="primary", use_container_width=True):
             if f_aus or f_tar:
