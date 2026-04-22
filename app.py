@@ -10,6 +10,8 @@ from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+import numpy as np
+from tools import parse_date_ultra_safe, procesar_fechas_seguro, generar_tablas_gerenciales
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -94,72 +96,6 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 def get_honduras_time():
     return datetime.utcnow() - timedelta(hours=6)
 
-def parse_date_ultra_safe(val):
-    if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
-        return pd.NaT
-    str_val = str(val).strip()
-    if str_val in ["0", "0.0", "1899-12-30 00:00:00"]:
-        return pd.NaT
-
-    hoy = pd.Timestamp(get_honduras_time()).normalize()
-
-    try:
-        if isinstance(val, dt_time): return pd.Timestamp.combine(hoy.date(), val)
-        if isinstance(val, datetime):
-            if val.year <= 1970: return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-            return pd.Timestamp(val)
-        if isinstance(val, (int, float)):
-            if val == 0 or val == 0.0: return pd.NaT
-            if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
-            else: return pd.NaT
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
-            parsed_time = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), parsed_time)
-        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val): parsed = pd.to_datetime(str_val, errors='coerce')
-        else: parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
-
-        if pd.notnull(parsed):
-            if parsed.year <= 1970: return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
-            return parsed
-        return pd.NaT
-    except: return pd.NaT
-
-def procesar_fechas_seguro(df_input, columnas):
-    df = df_input.copy()
-    for col in columnas:
-        if col in df.columns: df[col] = df[col].apply(parse_date_ultra_safe)
-    return df
-
-# ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL
-# ==============================================================================
-def generar_tablas_gerenciales(df_crudo):
-    df = df_crudo.copy()
-    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_ultra_safe)
-    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_ultra_safe)
-    df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
-    df['FECHA'] = df['HORA_LIQ'].dt.date
-    totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
-    conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
-    tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
-    tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
-
-    df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
-    df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
-    tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
-    tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
-    tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
-
-    jornada = df.groupby(['TECNICO', 'FECHA']).agg(Hora_Apertura=('HORA_INI', 'min'), Hora_Cierre=('HORA_LIQ', 'max'), Total_Ordenes=('NUM', 'count')).reset_index()
-    jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
-    jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
-
-    resumen_jornada = jornada.groupby('TECNICO').agg(Promedio_Horas_Dia=('Horas_En_Calle', 'mean'), Dias_Laborados=('FECHA', 'nunique'), Max_Horas_Dia=('Horas_En_Calle', 'max')).reset_index()
-    resumen_jornada['Promedio_Horas_Dia'] = resumen_jornada['Promedio_Horas_Dia'].round(2)
-    resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
-
-    return tabla_produccion, tabla_eficiencia, resumen_jornada
 
 def sincronizar_datos_nube(conn):
     try:
@@ -672,22 +608,29 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        def extraer_motivo_falla(row):
-            act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); texto = act + " " + com
-            if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
-            if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
-            if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
-            if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
-            if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
-            return "🔧 Mantenimiento General"
-        df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
+# --- VECTORIZACIÓN DE MOTIVO ---
+texto_concat = df_base['ACTIVIDAD'].fillna('').astype(str).str.upper() + " " + df_base['COMENTARIO'].fillna('').astype(str).str.upper()
 
-        def extraer_segmento_global(row):
-            texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
-            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
-            return 'RESIDENCIAL'
-        df_base['SEGMENTO'] = df_base.apply(extraer_segmento_global, axis=1)
+condiciones_motivo = [
+    df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True,
+    texto_concat.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True, na=False),
+    texto_concat.str.contains("TV|CABLE|SEÑAL", regex=True, na=False),
+    texto_concat.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True, na=False),
+    texto_concat.str.contains("NAV|INTERNET|LENT", regex=True, na=False)
+]
 
+opciones_motivo = [
+    "🔴 Offline / Caída",
+    "📦 Instalación / Cambio",
+    "📺 Falla de TV",
+    "⚡ Niveles Alterados",
+    "🌐 Lentitud / Navegación"
+]
+df_base['MOTIVO'] = np.select(condiciones_motivo, opciones_motivo, default="🔧 Mantenimiento General")
+
+# --- VECTORIZACIÓN DE SEGMENTO ---
+texto_scan = texto_concat + " " + df_base['CLIENTE'].fillna('').astype(str)
+df_base['SEGMENTO'] = np.where(texto_scan.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True, na=False), 'PLEX', 'RESIDENCIAL')
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns: df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
     for col_txt in ['NUM', 'CLIENTE']:
