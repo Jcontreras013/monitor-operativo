@@ -265,7 +265,6 @@ def vista_biometrico():
         file_bio = st.file_uploader("Cargar archivo Transaction", type=["csv"], key="bio_upload")
 
         if file_bio:
-            # Reconoce el archivo aunque tenga un (1), (2), etc.
             if "transaction" in file_bio.name.lower():
                 try:
                     df_raw = pd.read_csv(file_bio, sep=';')
@@ -273,15 +272,13 @@ def vista_biometrico():
                     
                     st.success(f"Archivo {file_bio.name} procesado correctamente.")
                     
-                    # Panel de indicadores rápidos
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
                     c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
                     c3.metric("Excesos Break", len(df_p[df_p["Break (min)"] > 15]))
 
-                    st.divider()
+                    st.markdown("---")
                     
-                    # Botón para descargar reporte de infracciones
                     pdf_data = generar_pdf_infracciones(df_p)
                     st.download_button(
                         label="📥 Descargar Reporte de Infracciones (PDF)",
@@ -291,7 +288,6 @@ def vista_biometrico():
                         use_container_width=True
                     )
 
-                    # Mostrar la tabla final en pantalla
                     st.dataframe(df_p, use_container_width=True)
 
                 except Exception as e:
@@ -300,7 +296,7 @@ def vista_biometrico():
                 st.warning("Por favor, sube un archivo que contenga 'Transaction' en su nombre.")
 
     # =========================================================
-    # PESTAÑA 2: CONSOLIDADO RRHH (TÚ CÓDIGO INTACTO)
+    # PESTAÑA 2: CONSOLIDADO RRHH
     # =========================================================
     with tab_rrhh:
         st.subheader("📑 Generador de Reporte Unificado")
@@ -312,7 +308,6 @@ def vista_biometrico():
         with col_u2:
             f_tar = st.file_uploader("📂 PDF de Llegadas Tarde", type=['pdf'], key="up_tar")
             
-        # BOTÓN PARA PROCESAR LOS ARCHIVOS
         if st.button("🚀 ANALIZAR ARCHIVOS", type="primary", use_container_width=True):
             if f_aus or f_tar:
                 with st.spinner("Procesando tablas y eliminando basura..."):
@@ -333,9 +328,8 @@ def vista_biometrico():
             else:
                 st.warning("Debe subir al menos un archivo para proceder.")
 
-        # --- SECCIÓN QUE DIBUJA EL BOTÓN DE DESCARGA ---
         if 'pdf_final_rrhh' in st.session_state:
-            st.divider()
+            st.markdown("---")
             st.markdown("### 🎉 Tu Reporte está listo")
             st.download_button(
                 label="📥 DESCARGAR REPORTE UNIFICADO (PDF)",
@@ -354,7 +348,9 @@ def vista_biometrico():
                     st.write("**Tardanzas:**")
                     st.dataframe(st.session_state['df_t_prev'].head(5), use_container_width=True)
 
-# Lógica de protección por si el archivo se ejecuta directamente en lugar de importarse
 if __name__ == "__main__":
-    st.set_page_config(page_title="Control Operativo - MaxCom", layout="wide")
+    try:
+        st.set_page_config(page_title="Control Operativo - MaxCom", layout="wide")
+    except:
+        pass
     vista_biometrico()
