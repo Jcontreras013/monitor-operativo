@@ -13,6 +13,12 @@ def safestr(texto):
         return ""
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
+from datetime import datetime, timedelta
+
+def get_honduras_time():
+    """Calcula y devuelve la hora exacta de Honduras (UTC-6)"""
+    return datetime.utcnow() - timedelta(hours=6)
+
 # ==============================================================================
 # 1. MAPEO UNIVERSAL DE COLUMNAS
 # ==============================================================================
