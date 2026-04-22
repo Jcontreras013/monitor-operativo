@@ -609,358 +609,392 @@ def main():
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
 # --- VECTORIZACIÓN DE MOTIVO ---
-texto_concat = df_base['ACTIVIDAD'].fillna('').astype(str).str.upper() + " " + df_base['COMENTARIO'].fillna('').astype(str).str.upper()
+        texto_concat = df_base['ACTIVIDAD'].fillna('').astype(str).str.upper() + " " + df_base['COMENTARIO'].fillna('').astype(str).str.upper()
 
-condiciones_motivo = [
-    df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True,
-    texto_concat.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True, na=False),
-    texto_concat.str.contains("TV|CABLE|SEÑAL", regex=True, na=False),
-    texto_concat.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True, na=False),
-    texto_concat.str.contains("NAV|INTERNET|LENT", regex=True, na=False)
-]
+        condiciones_motivo = [
+            df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True,
+            texto_concat.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True, na=False),
+            texto_concat.str.contains("TV|CABLE|SEÑAL", regex=True, na=False),
+            texto_concat.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True, na=False),
+            texto_concat.str.contains("NAV|INTERNET|LENT", regex=True, na=False)
+        ]
 
-opciones_motivo = [
-    "🔴 Offline / Caída",
-    "📦 Instalación / Cambio",
-    "📺 Falla de TV",
-    "⚡ Niveles Alterados",
-    "🌐 Lentitud / Navegación"
-]
-df_base['MOTIVO'] = np.select(condiciones_motivo, opciones_motivo, default="🔧 Mantenimiento General")
+        opciones_motivo = [
+            "🔴 Offline / Caída",
+            "📦 Instalación / Cambio",
+            "📺 Falla de TV",
+            "⚡ Niveles Alterados",
+            "🌐 Lentitud / Navegación"
+        ]
+        df_base['MOTIVO'] = np.select(condiciones_motivo, opciones_motivo, default="🔧 Mantenimiento General")
 
-# --- VECTORIZACIÓN DE SEGMENTO ---
-texto_scan = texto_concat + " " + df_base['CLIENTE'].fillna('').astype(str)
-df_base['SEGMENTO'] = np.where(texto_scan.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True, na=False), 'PLEX', 'RESIDENCIAL')
-for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
-        if col_n in df_base.columns: df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
-for col_txt in ['NUM', 'CLIENTE']:
-        if col_txt in df_base.columns:
-            df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
-            df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
-    
-ahora_local = get_honduras_time()
-hoy_date_valor = ahora_local.date()
-df_base_activa = df_base.copy()
-
-if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
-        df_monitor_filtrado = df_base_activa.copy()
-        if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
-        if len(filtro_estado) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
-        if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
-        if check_criticos_diamante:
-            mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
-            mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
-            mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
-            df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
-        if check_no_asignadas:
-            mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
-        if tec_filtro_monitor != "Todos": df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
-else: df_monitor_filtrado = df_base_activa.copy()
-
-if nav_menu_diamante == "🚙 Auditoría Vehículos":
-        try: mostrar_auditoria(es_movil, conn)
-        except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
-        return
-
-if nav_menu_diamante == "🚫 NOINSTALADO":
-        st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
-        mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
-        st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
-        return
-
-if nav_menu_diamante == "📅 REPROGRAMADAS":
-        st.title("📅 Órdenes Reprogramadas (Futuras)")
-        df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
-        mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
-        df_reprog = df_base[mask_reprog].copy()
-        st.metric("Total Agendadas a Futuro", len(df_reprog))
-        if not df_reprog.empty:
-            cols_visibles = ['DIAS_RETRASO_REAL', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO', 'FECHA_APE']
-            cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
-            def highlight_reprog(row): return ['background-color: #1a2a3a; color: #58a6ff; font-weight: bold' if col == 'DIAS_RETRASO_REAL' else '' for col in row.index]
-            st.dataframe(df_reprog[cols_finales].style.apply(highlight_reprog, axis=1), use_container_width=True, height=600, hide_index=True)
-        else: st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
-        return
-
-if nav_menu_diamante == "📚 Histórico":
-        from historico import main_historico
-        main_historico(st.session_state.df_hist)
-        return
-
-if nav_menu_diamante == "📊 Centro de Reportes":
-        st.title("📊 Centro Único de Reportes Operativos")
-        st.caption("Central de exportación gerencial de métricas y rendimiento.")
-        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico = st.tabs(["📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"])
-
-        with tab_pendientes:
-            st.subheader("📋 Resumen de Pendientes Generales")
-            df_todas_vivas = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
-            if not df_todas_vivas.empty:
-                mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-                df_asig = df_todas_vivas[~mask_sin_tec].copy()
-                df_no_asig = df_todas_vivas[mask_sin_tec].copy()
-                def clasificar_dispatch(row):
-                    act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
-                    if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
-                    elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
-                    elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt): return "PLEX"
-                    else: return "OTRAS"
-                if not df_asig.empty:
-                    df_asig['CATEGORIA'] = df_asig.apply(clasificar_dispatch, axis=1)
-                    res_a = df_asig['CATEGORIA'].value_counts().reset_index()
-                    res_a.columns = ['Categoría', 'Asignadas (En Ruta)']
-                else: res_a = pd.DataFrame(columns=['Categoría', 'Asignadas (En Ruta)'])
-                if not df_no_asig.empty:
-                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificar_dispatch, axis=1)
-                    res_n = df_no_asig['CATEGORIA'].value_counts().reset_index()
-                    res_n.columns = ['Categoría', 'Nuevas (Sin Asignar)']
-                else: res_n = pd.DataFrame(columns=['Categoría', 'Nuevas (Sin Asignar)'])
+        # --- VECTORIZACIÓN DE SEGMENTO ---
+        texto_scan = texto_concat + " " + df_base['CLIENTE'].fillna('').astype(str)
+        df_base['SEGMENTO'] = np.where(texto_scan.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True, na=False), 'PLEX', 'RESIDENCIAL')
+        
+        for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
+            if col_n in df_base.columns: 
+                df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
                 
-                df_dispatch = pd.merge(res_a, res_n, on='Categoría', how='outer').fillna(0)
-                df_dispatch['Asignadas (En Ruta)'] = df_dispatch['Asignadas (En Ruta)'].astype(int)
-                df_dispatch['Nuevas (Sin Asignar)'] = df_dispatch['Nuevas (Sin Asignar)'].astype(int)
-                df_dispatch['TOTAL GENERAL'] = df_dispatch['Asignadas (En Ruta)'] + df_dispatch['Nuevas (Sin Asignar)']
-                tot_a = df_dispatch['Asignadas (En Ruta)'].sum()
-                tot_n = df_dispatch['Nuevas (Sin Asignar)'].sum()
-                tot_g = df_dispatch['TOTAL GENERAL'].sum()
-                df_totales = pd.DataFrame([{'Categoría': 'TOTAL PENDIENTES', 'Asignadas (En Ruta)': tot_a, 'Nuevas (Sin Asignar)': tot_n, 'TOTAL GENERAL': tot_g}])
-                df_dispatch_final = pd.concat([df_dispatch, df_totales], ignore_index=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                if es_movil: col_kpi1, col_kpi2 = st.columns(2)
-                else: col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
-                with col_kpi1: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #3B82F6; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">ASIGNADAS</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_a}</div></div>""", unsafe_allow_html=True)
-                with col_kpi2: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #F59E0B; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">SIN ASIGNAR</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_n}</div></div>""", unsafe_allow_html=True)
-                if not es_movil:
-                    with col_kpi3: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #10B981; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">TOTAL</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_g}</div></div>""", unsafe_allow_html=True)
+        for col_txt in ['NUM', 'CLIENTE']:
+            if col_txt in df_base.columns:
+                df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
+                df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
+        
+        ahora_local = get_honduras_time()
+        hoy_date_valor = ahora_local.date()
+        df_base_activa = df_base.copy()
 
-                st.markdown("<br>", unsafe_allow_html=True)
-                if es_movil:
-                    def highlight_total(row): return ['background-color: #2D3748; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
-                    st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True)
-                    st.info("Genera reportes para Dispatch.")
-                    buffer = io.BytesIO()
-                    df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
-                    cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
-                    df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
-                    st.download_button(label="📥 Exportar EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                    if st.button("📄 Generar PDF", use_container_width=True, type="primary"):
-                        with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
-                    if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-                else:
-                    col_d1, col_d2 = st.columns([2, 1])
-                    with col_d1:
+        if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
+            df_monitor_filtrado = df_base_activa.copy()
+            if len(filtro_actividad) > 0: 
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
+            if len(filtro_estado) > 0: 
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
+            if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns: 
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
+            if check_criticos_diamante:
+                mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
+                mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
+                mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
+                df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
+            if check_no_asignadas:
+                mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
+            if tec_filtro_monitor != "Todos": 
+                df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
+        else: 
+            df_monitor_filtrado = df_base_activa.copy()
+
+        if nav_menu_diamante == "🚙 Auditoría Vehículos":
+            try: 
+                mostrar_auditoria(es_movil, conn)
+            except Exception as e: 
+                st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
+            return
+
+        if nav_menu_diamante == "🚫 NOINSTALADO":
+            st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
+            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
+            st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
+            return
+
+        if nav_menu_diamante == "📅 REPROGRAMADAS":
+            st.title("📅 Órdenes Reprogramadas (Futuras)")
+            df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
+            mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            df_reprog = df_base[mask_reprog].copy()
+            st.metric("Total Agendadas a Futuro", len(df_reprog))
+            if not df_reprog.empty:
+                cols_visibles = ['DIAS_RETRASO_REAL', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO', 'FECHA_APE']
+                cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
+                def highlight_reprog(row): return ['background-color: #1a2a3a; color: #58a6ff; font-weight: bold' if col == 'DIAS_RETRASO_REAL' else '' for col in row.index]
+                st.dataframe(df_reprog[cols_finales].style.apply(highlight_reprog, axis=1), use_container_width=True, height=600, hide_index=True)
+            else: 
+                st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
+            return
+
+        if nav_menu_diamante == "📚 Histórico":
+            from historico import main_historico
+            main_historico(st.session_state.df_hist)
+            return
+
+        if nav_menu_diamante == "📊 Centro de Reportes":
+            st.title("📊 Centro Único de Reportes Operativos")
+            st.caption("Central de exportación gerencial de métricas y rendimiento.")
+            tab_diario, tab_pendientes, tab_gerencial, tab_biometrico = st.tabs(["📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"])
+
+            with tab_pendientes:
+                st.subheader("📋 Resumen de Pendientes Generales")
+                df_todas_vivas = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
+                if not df_todas_vivas.empty:
+                    mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                    df_asig = df_todas_vivas[~mask_sin_tec].copy()
+                    df_no_asig = df_todas_vivas[mask_sin_tec].copy()
+                    
+                    def clasificar_dispatch(row):
+                        act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
+                        if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
+                        elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
+                        elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt): return "PLEX"
+                        else: return "OTRAS"
+                        
+                    if not df_asig.empty:
+                        df_asig['CATEGORIA'] = df_asig.apply(clasificar_dispatch, axis=1)
+                        res_a = df_asig['CATEGORIA'].value_counts().reset_index()
+                        res_a.columns = ['Categoría', 'Asignadas (En Ruta)']
+                    else: 
+                        res_a = pd.DataFrame(columns=['Categoría', 'Asignadas (En Ruta)'])
+                        
+                    if not df_no_asig.empty:
+                        df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificar_dispatch, axis=1)
+                        res_n = df_no_asig['CATEGORIA'].value_counts().reset_index()
+                        res_n.columns = ['Categoría', 'Nuevas (Sin Asignar)']
+                    else: 
+                        res_n = pd.DataFrame(columns=['Categoría', 'Nuevas (Sin Asignar)'])
+                    
+                    df_dispatch = pd.merge(res_a, res_n, on='Categoría', how='outer').fillna(0)
+                    df_dispatch['Asignadas (En Ruta)'] = df_dispatch['Asignadas (En Ruta)'].astype(int)
+                    df_dispatch['Nuevas (Sin Asignar)'] = df_dispatch['Nuevas (Sin Asignar)'].astype(int)
+                    df_dispatch['TOTAL GENERAL'] = df_dispatch['Asignadas (En Ruta)'] + df_dispatch['Nuevas (Sin Asignar)']
+                    
+                    tot_a = df_dispatch['Asignadas (En Ruta)'].sum()
+                    tot_n = df_dispatch['Nuevas (Sin Asignar)'].sum()
+                    tot_g = df_dispatch['TOTAL GENERAL'].sum()
+                    df_totales = pd.DataFrame([{'Categoría': 'TOTAL PENDIENTES', 'Asignadas (En Ruta)': tot_a, 'Nuevas (Sin Asignar)': tot_n, 'TOTAL GENERAL': tot_g}])
+                    df_dispatch_final = pd.concat([df_dispatch, df_totales], ignore_index=True)
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if es_movil: 
+                        col_kpi1, col_kpi2 = st.columns(2)
+                    else: 
+                        col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+                        
+                    with col_kpi1: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #3B82F6; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">ASIGNADAS</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_a}</div></div>""", unsafe_allow_html=True)
+                    with col_kpi2: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #F59E0B; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">SIN ASIGNAR</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_n}</div></div>""", unsafe_allow_html=True)
+                    
+                    if not es_movil:
+                        with col_kpi3: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #10B981; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">TOTAL</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_g}</div></div>""", unsafe_allow_html=True)
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if es_movil:
                         def highlight_total(row): return ['background-color: #2D3748; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
-                        st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True, column_config={"Categoría": st.column_config.TextColumn("CLASIFICACIÓN"), "Asignadas (En Ruta)": st.column_config.NumberColumn("🚗 ASIGNADAS", format="%d"), "Nuevas (Sin Asignar)": st.column_config.NumberColumn("📥 SIN ASIGNAR", format="%d"), "TOTAL GENERAL": st.column_config.NumberColumn("📦 TOTAL", format="%d")})
-                    with col_d2:
-                        st.info("Genera los reportes para enviar al departamento de Dispatch.")
+                        st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True)
+                        st.info("Genera reportes para Dispatch.")
                         buffer = io.BytesIO()
                         df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
                         cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                         df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
-                        st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                        if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary"):
+                        st.download_button(label="📥 Exportar EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                        if st.button("📄 Generar PDF", use_container_width=True, type="primary"):
                             with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
-                        if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF Generado", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-            else: st.success("🎉 No hay órdenes pendientes registradas. ¡Operación limpia!")
+                        if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                    else:
+                        col_d1, col_d2 = st.columns([2, 1])
+                        with col_d1:
+                            def highlight_total(row): return ['background-color: #2D3748; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
+                            st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True, column_config={"Categoría": st.column_config.TextColumn("CLASIFICACIÓN"), "Asignadas (En Ruta)": st.column_config.NumberColumn("🚗 ASIGNADAS", format="%d"), "Nuevas (Sin Asignar)": st.column_config.NumberColumn("📥 SIN ASIGNAR", format="%d"), "TOTAL GENERAL": st.column_config.NumberColumn("📦 TOTAL", format="%d")})
+                        with col_d2:
+                            st.info("Genera los reportes para enviar al departamento de Dispatch.")
+                            buffer = io.BytesIO()
+                            df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
+                            cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
+                            df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
+                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
+                            st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                            if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary"):
+                                with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
+                            if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF Generado", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                else: 
+                    st.success("🎉 No hay órdenes pendientes registradas. ¡Operación limpia!")
 
-        with tab_biometrico:
-            try: biometrico.vista_biometrico()
-            except Exception as e: st.error(f"Error al cargar la vista del biométrico: {e}")
+            with tab_biometrico:
+                try: 
+                    biometrico.vista_biometrico()
+                except Exception as e: 
+                    st.error(f"Error al cargar la vista del biométrico: {e}")
 
-        with tab_gerencial:
-            st.subheader("📊 Reporte Gerencial Unificado")
-            archivo_gerencial = st.file_uploader("📂 Subir Reporte de Actividades (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_gerencial")
-            if archivo_gerencial:
-                with st.spinner("⏳ Analizando datos, cruzando tablas y calculando jornadas..."):
-                    try:
-                        if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
-                        else: df_raw = pd.read_excel(archivo_gerencial)
-                        df_limpio = procesar_dataframe_base(df_raw)
-                        tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
-                        df_merge_1 = pd.merge(tabla_prod, tabla_efi, on=['TECNICO', 'ACTIVIDAD'], how='left')
-                        df_maestra = pd.merge(df_merge_1, res_jornada, on='TECNICO', how='left')
-                        df_maestra = df_maestra.rename(columns={'TECNICO': 'Técnico', 'Dias_Laborados': 'Días Trabajados', 'Promedio_Horas_Dia': 'Hrs / Día', 'ACTIVIDAD': 'Actividad', 'Cantidad': 'Volumen', 'Participacion_%': '% del Total', 'Promedio_Minutos': 'Min. Promedio'})
-                        df_maestra = df_maestra[['Técnico', 'Días Trabajados', 'Hrs / Día', 'Actividad', 'Volumen', '% del Total', 'Min. Promedio']]
-                        st.success("✅ Datos procesados y unificados correctamente.")
-                        ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
-                        if ordenes_con_error > 0: st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo.")
-                        st.dataframe(df_maestra, use_container_width=True, hide_index=True)
-                        st.markdown("---")
-                        if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
-                            with st.spinner("Dibujando secciones por técnico..."): st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
-                        if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-                    except Exception as e: st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
-        
-        with tab_diario:
-            st.subheader("📦 Archivo de Cierre de Jornada")
-            fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
-            mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-            mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-            df_vivas_espejo = df_monitor_filtrado[mask_vivas_espejo].copy()
-            mask_tec_valido_esp = df_vivas_espejo['TECNICO'].notna() & (df_vivas_espejo['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_espejo['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
-            df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
+            with tab_gerencial:
+                st.subheader("📊 Reporte Gerencial Unificado")
+                archivo_gerencial = st.file_uploader("📂 Subir Reporte de Actividades (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_gerencial")
+                if archivo_gerencial:
+                    with st.spinner("⏳ Analizando datos, cruzando tablas y calculando jornadas..."):
+                        try:
+                            if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
+                            else: df_raw = pd.read_excel(archivo_gerencial)
+                            df_limpio = procesar_dataframe_base(df_raw)
+                            tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
+                            df_merge_1 = pd.merge(tabla_prod, tabla_efi, on=['TECNICO', 'ACTIVIDAD'], how='left')
+                            df_maestra = pd.merge(df_merge_1, res_jornada, on='TECNICO', how='left')
+                            df_maestra = df_maestra.rename(columns={'TECNICO': 'Técnico', 'Dias_Laborados': 'Días Trabajados', 'Promedio_Horas_Dia': 'Hrs / Día', 'ACTIVIDAD': 'Actividad', 'Cantidad': 'Volumen', 'Participacion_%': '% del Total', 'Promedio_Minutos': 'Min. Promedio'})
+                            df_maestra = df_maestra[['Técnico', 'Días Trabajados', 'Hrs / Día', 'Actividad', 'Volumen', '% del Total', 'Min. Promedio']]
+                            st.success("✅ Datos procesados y unificados correctamente.")
+                            ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
+                            if ordenes_con_error > 0: st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo.")
+                            st.dataframe(df_maestra, use_container_width=True, hide_index=True)
+                            st.markdown("---")
+                            if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
+                                with st.spinner("Dibujando secciones por técnico..."): st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
+                            if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                        except Exception as e: 
+                            st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
+            
+            with tab_diario:
+                st.subheader("📦 Archivo de Cierre de Jornada")
+                fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
+                mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
+                df_vivas_espejo = df_monitor_filtrado[mask_vivas_espejo].copy()
+                mask_tec_valido_esp = df_vivas_espejo['TECNICO'].notna() & (df_vivas_espejo['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_espejo['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
+                df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
 
-            st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
-            st.markdown("### 📊 Indicadores de Avance Operativo (Mora)")
-            df_asignadas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_asignadas_espejo['FECHA_APE'], errors='coerce')
-            df_cerradas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_espejo['FECHA_APE'], errors='coerce')
-            df_mora_pend_rep = df_asignadas_espejo[df_asignadas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
-            df_mora_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
-            df_inicio_mora_rep = pd.concat([df_mora_pend_rep, df_mora_cerr_rep]).drop_duplicates(subset=['NUM'])
-            
-            df_plex_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'PLEX']
-            df_plex_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'PLEX']
-            df_plex_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'PLEX']
-            
-            df_resi_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'RESIDENCIAL']
-            df_resi_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'RESIDENCIAL']
-            
-            tot_mora_plex_rep = len(df_plex_m_inicio_rep)
-            avance_mora_plex_rep = (len(df_plex_m_cerr_rep) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
-            
-            tot_mora_resi_rep = len(df_resi_m_inicio_rep)
-            avance_mora_resi_rep = (len(df_resi_m_cerr_rep) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
-            
-            tot_mora_global_rep = len(df_inicio_mora_rep)
-            avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
-            
-            def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
-                color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
-                if total_ordenes == 0: color_v = "#4B5563"
-                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
-                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
-                return fig
-
-            if es_movil:
-                st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
-                st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
-                st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
-            else:
-                col_gr1, col_gr2, col_gr3 = st.columns(3)
-                with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
-                with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
-                with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
-            
-            st.markdown("---")
-
-            if not df_cerradas_espejo.empty:
-                st.markdown("### 📊 Desglose de Producción")
-                if es_movil: cs_col, ci_col = st.columns(2)
-                else: cs_col, ci_col, cp_col, co_col = st.columns(4)
+                st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
+                st.markdown("### 📊 Indicadores de Avance Operativo (Mora)")
+                df_asignadas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_asignadas_espejo['FECHA_APE'], errors='coerce')
+                df_cerradas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_espejo['FECHA_APE'], errors='coerce')
+                df_mora_pend_rep = df_asignadas_espejo[df_asignadas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+                df_mora_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+                df_inicio_mora_rep = pd.concat([df_mora_pend_rep, df_mora_cerr_rep]).drop_duplicates(subset=['NUM'])
                 
-                with cs_col:
-                    st.write("**SOP**")
-                    df_sop = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
-                    st.dataframe(df_sop, hide_index=True, use_container_width=True)
-                    st.write(f"**Total: {df_sop['Cant'].sum()}**")
-                with ci_col:
-                    st.write("**Instalaciones**")
-                    txt_ins_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
-                    mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
-                    df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
-                    if not df_ins_cierre.empty:
-                        def clasificar_ins_cierre(row):
-                            txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
-                            if re.search('ADIC', txt): return 'Adición'
-                            if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
-                            if re.search('RECUP', txt): return 'Recuperado'
-                            return 'Nueva'
-                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
-                        df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
-                        df_ins_grouped.columns = ['Instalaciones', 'Cant']
-                        st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
-                        st.write(f"**Total: {df_ins_grouped['Cant'].sum()}**")
-                    else: st.write("Sin datos")
+                df_plex_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'PLEX']
+                df_plex_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'PLEX']
+                df_plex_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'PLEX']
                 
-                if es_movil: cp_col, co_col = st.columns(2)
-
-                with cp_col:
-                    st.write("**Plex**")
-                    df_plex = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('PLEX|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
-                    st.dataframe(df_plex, hide_index=True, use_container_width=True)
-                    st.write(f"**Total: {df_plex['Cant'].sum()}**")
-                with co_col:
-                    st.write("**Otros**")
-                    txt_otr_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
-                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|PEXTERNO|SPLITTEROPT|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
-                    df_otros = df_cerradas_espejo[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
-                    st.dataframe(df_otros, hide_index=True, use_container_width=True)
-                    st.write(f"**Total: {df_otros['Cant'].sum()}**")
-
-            st.markdown("---")
-            
-            st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
-            m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
-            p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
-            c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
-            resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
-            resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
-            
-            if not resumen_global_rep.empty:
-                resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
-                resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
-                resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
-                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
-                resumen_global_rep = resumen_global_rep[['TIPO', 'INICIO (MORA)', 'PENDIENTES', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
-                tot_m = resumen_global_rep['INICIO (MORA)'].sum()
-                tot_p = resumen_global_rep['PENDIENTES'].sum()
-                tot_c = resumen_global_rep['CERRADAS'].sum()
-                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'INICIO (MORA)': tot_m, 'PENDIENTES': tot_p, 'CERRADAS': tot_c}])
-                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
-                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
-            else: st.info("No hay datos de mora consolidada para esta fecha.")
-
-            st.markdown("### ⏱️ Tiempos de Atención Promedio")
-            if not df_cerradas_espejo.empty:
-                df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
-                st.dataframe(df_pivot_diario, use_container_width=True)
-
-            st.markdown("### 🌅 Primera Orden del Día por Técnico")
-            df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
-            if 'HORA_INI' in df_universo_diario.columns:
-                df_universo_diario['HORA_INI_DT'] = pd.to_datetime(df_universo_diario['HORA_INI'], errors='coerce')
-                df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI_DT'])
-                mask_fecha_ini = df_universo_diario['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cal_sel).date()
-                df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+                df_resi_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'RESIDENCIAL']
+                df_resi_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'RESIDENCIAL']
+                df_resi_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'RESIDENCIAL']
                 
-                if not df_primera.empty:
-                    df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
-                    df_primera_mostrar = df_primera_mostrar.sort_values(by='HORA_INI_DT')
-                    df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
-                    df_primera_mostrar = df_primera_mostrar.drop(columns=['HORA_INI_DT'])
-                    df_primera_mostrar = df_primera_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
-                    st.dataframe(df_primera_mostrar, use_container_width=True, hide_index=True)
+                tot_mora_plex_rep = len(df_plex_m_inicio_rep)
+                avance_mora_plex_rep = (len(df_plex_m_cerr_rep) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
+                
+                tot_mora_resi_rep = len(df_resi_m_inicio_rep)
+                avance_mora_resi_rep = (len(df_resi_m_cerr_rep) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
+                
+                tot_mora_global_rep = len(df_inicio_mora_rep)
+                avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
+                
+                def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
+                    color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
+                    if total_ordenes == 0: color_v = "#4B5563"
+                    fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
+                    fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
+                    return fig
 
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if es_movil: col_btn1, col_btn2 = st.columns(2)
-                    else: col_btn1, col_btn2 = st.columns([1, 2])
-                    with col_btn1:
-                        if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
-                            try:
-                                with st.spinner("Generando PDF..."): st.session_state['pdf_primera'] = generar_pdf_primera_orden(df_base, fecha_cal_sel)
-                            except Exception as e: st.error(f"Error generando PDF: {e}")
-                        if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-                else: st.info("No hay registros de inicio de órdenes para esta fecha.")
-            else: st.info("No hay registros de inicio de órdenes para esta fecha.")
+                if es_movil:
+                    st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+                    st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+                    st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
+                else:
+                    col_gr1, col_gr2, col_gr3 = st.columns(3)
+                    with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+                    with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+                    with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
+                
+                st.markdown("---")
 
-            st.markdown("### 📥 Exportación")
-            if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
-                with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
-            if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-            st.markdown("---")
-            with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
-        return
+                if not df_cerradas_espejo.empty:
+                    st.markdown("### 📊 Desglose de Producción")
+                    if es_movil: 
+                        cs_col, ci_col = st.columns(2)
+                    else: 
+                        cs_col, ci_col, cp_col, co_col = st.columns(4)
+                    
+                    with cs_col:
+                        st.write("**SOP**")
+                        df_sop = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                        st.dataframe(df_sop, hide_index=True, use_container_width=True)
+                        st.write(f"**Total: {df_sop['Cant'].sum()}**")
+                    with ci_col:
+                        st.write("**Instalaciones**")
+                        txt_ins_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
+                        mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                        df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
+                        if not df_ins_cierre.empty:
+                            def clasificar_ins_cierre(row):
+                                txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
+                                if re.search('ADIC', txt): return 'Adición'
+                                if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
+                                if re.search('RECUP', txt): return 'Recuperado'
+                                return 'Nueva'
+                            df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
+                            df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
+                            df_ins_grouped.columns = ['Instalaciones', 'Cant']
+                            st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
+                            st.write(f"**Total: {df_ins_grouped['Cant'].sum()}**")
+                        else: 
+                            st.write("Sin datos")
+                    
+                    if es_movil: cp_col, co_col = st.columns(2)
 
-    # ==============================================================================
-    # 7. MONITOR OPERATIVO EN VIVO 
-    # ==============================================================================
-if nav_menu_diamante == "⚡ Monitor en Vivo":
+                    with cp_col:
+                        st.write("**Plex**")
+                        df_plex = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('PLEX|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                        st.dataframe(df_plex, hide_index=True, use_container_width=True)
+                        st.write(f"**Total: {df_plex['Cant'].sum()}**")
+                    with co_col:
+                        st.write("**Otros**")
+                        txt_otr_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
+                        mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|PEXTERNO|SPLITTEROPT|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                        df_otros = df_cerradas_espejo[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                        st.dataframe(df_otros, hide_index=True, use_container_width=True)
+                        st.write(f"**Total: {df_otros['Cant'].sum()}**")
+
+                st.markdown("---")
+                
+                st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
+                m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
+                p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
+                c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
+                resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
+                resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
+                
+                if not resumen_global_rep.empty:
+                    resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
+                    resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
+                    resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
+                    resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
+                    resumen_global_rep = resumen_global_rep[['TIPO', 'INICIO (MORA)', 'PENDIENTES', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
+                    tot_m = resumen_global_rep['INICIO (MORA)'].sum()
+                    tot_p = resumen_global_rep['PENDIENTES'].sum()
+                    tot_c = resumen_global_rep['CERRADAS'].sum()
+                    fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'INICIO (MORA)': tot_m, 'PENDIENTES': tot_p, 'CERRADAS': tot_c}])
+                    resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
+                    st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
+                else: 
+                    st.info("No hay datos de mora consolidada para esta fecha.")
+
+                st.markdown("### ⏱️ Tiempos de Atención Promedio")
+                if not df_cerradas_espejo.empty:
+                    df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
+                    st.dataframe(df_pivot_diario, use_container_width=True)
+
+                st.markdown("### 🌅 Primera Orden del Día por Técnico")
+                df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
+                if 'HORA_INI' in df_universo_diario.columns:
+                    df_universo_diario['HORA_INI_DT'] = pd.to_datetime(df_universo_diario['HORA_INI'], errors='coerce')
+                    df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI_DT'])
+                    mask_fecha_ini = df_universo_diario['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cal_sel).date()
+                    df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+                    
+                    if not df_primera.empty:
+                        df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
+                        df_primera_mostrar = df_primera_mostrar.sort_values(by='HORA_INI_DT')
+                        df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
+                        df_primera_mostrar = df_primera_mostrar.drop(columns=['HORA_INI_DT'])
+                        df_primera_mostrar = df_primera_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
+                        st.dataframe(df_primera_mostrar, use_container_width=True, hide_index=True)
+
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if es_movil: 
+                            col_btn1, col_btn2 = st.columns(2)
+                        else: 
+                            col_btn1, col_btn2 = st.columns([1, 2])
+                        with col_btn1:
+                            if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
+                                try:
+                                    with st.spinner("Generando PDF..."): st.session_state['pdf_primera'] = generar_pdf_primera_orden(df_base, fecha_cal_sel)
+                                except Exception as e: 
+                                    st.error(f"Error generando PDF: {e}")
+                            if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: 
+                                st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                    else: 
+                        st.info("No hay registros de inicio de órdenes para esta fecha.")
+                else: 
+                    st.info("No hay registros de inicio de órdenes para esta fecha.")
+
+                st.markdown("### 📥 Exportación")
+                if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
+                    with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
+                if 'pdf_cierre' in st.session_state: 
+                    st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                st.markdown("---")
+                with st.expander("Ver Lista Detallada"): 
+                    st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
+            return
+
+    if nav_menu_diamante == "⚡ Monitor en Vivo":
         
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
@@ -969,7 +1003,7 @@ if nav_menu_diamante == "⚡ Monitor en Vivo":
 
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
-if 'TECNICO' in df_todas_pendientes_monitor.columns:
+        if 'TECNICO' in df_todas_pendientes_monitor.columns:
             mask_josue_kpi = df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
             df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
             
