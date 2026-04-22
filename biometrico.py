@@ -157,11 +157,13 @@ def procesar_biometrico_mejorado(df_csv):
         entrada = marcas[0]
         dt_entrada = datetime.combine(datetime.today(), entrada)
 
-        if dt_entrada.minute >= 40: 
+        # NUEVA REGLA: Si llega del minuto 15 en adelante, pertenece a la siguiente hora.
+        if dt_entrada.minute >= 15: 
             hora_base = (dt_entrada + timedelta(hours=1)).replace(minute=0, second=0)
         else: 
             hora_base = dt_entrada.replace(minute=0, second=0)
 
+        # El límite de tardanza es siempre el minuto 06 de su hora base
         limite_tardia = (hora_base + timedelta(minutes=6)).time()
         es_tardia = "Sí" if entrada >= limite_tardia else "No"
         
@@ -225,7 +227,7 @@ def generar_pdf_infracciones(df_res):
 
     # 2. Dibujar la Tabla
     pdf.set_font("Arial", 'B', 9)
-    pdf.set_fill_color(220, 230, 241) # Un azul suave para el encabezado
+    pdf.set_fill_color(220, 230, 241) 
     
     # Anchos de columna (Total = 190)
     w_id, w_emp, w_tar, w_alm, w_brk, w_tot = 15, 65, 25, 30, 30, 25
