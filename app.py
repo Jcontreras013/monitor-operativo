@@ -656,7 +656,7 @@ if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Cent
             mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
             df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
         if tec_filtro_monitor != "Todos": df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
-    else: df_monitor_filtrado = df_base_activa.copy()
+else: df_monitor_filtrado = df_base_activa.copy()
 
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         try: mostrar_auditoria(es_movil, conn)
