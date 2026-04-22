@@ -631,9 +631,9 @@ df_base['MOTIVO'] = np.select(condiciones_motivo, opciones_motivo, default="🔧
 # --- VECTORIZACIÓN DE SEGMENTO ---
 texto_scan = texto_concat + " " + df_base['CLIENTE'].fillna('').astype(str)
 df_base['SEGMENTO'] = np.where(texto_scan.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True, na=False), 'PLEX', 'RESIDENCIAL')
-    for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
+for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns: df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
-    for col_txt in ['NUM', 'CLIENTE']:
+for col_txt in ['NUM', 'CLIENTE']:
         if col_txt in df_base.columns:
             df_base[col_txt] = pd.to_numeric(df_base[col_txt], errors='coerce').fillna(0).astype(int).astype(str)
             df_base[col_txt] = df_base[col_txt].replace('0', 'N/D')
