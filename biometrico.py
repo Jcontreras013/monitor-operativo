@@ -137,32 +137,26 @@ def procesar_biometrico_mejorado(df_csv):
     """Filtra y procesa usando SOLO: Full Name, ID, Date, Time, Weekday"""
     df_csv.columns = df_csv.columns.str.strip()
     
-    # Seleccionar exclusivamente las columnas requeridas (si existen)
     cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time']
     cols_presentes = [c for c in cols_requeridas if c in df_csv.columns]
     df_csv = df_csv[cols_presentes].copy()
 
-    # Formatear Fecha y Hora
     df_csv['Date'] = pd.to_datetime(df_csv['Date'], dayfirst=True, errors='coerce').dt.date
     df_csv['Time'] = pd.to_datetime(df_csv['Time'], format='%H:%M', errors='coerce').dt.time
     
-    # Descartar filas vacías y ordenar
     df_csv = df_csv.dropna(subset=['Date', 'Time'])
     df_csv = df_csv.sort_values(by=['Full Name', 'Date', 'Time'])
 
     resultados = []
     
-    # Agrupamos por ID, Nombre y Fecha
     for (emp_id, nombre, dia_semana, fecha), grupo in df_csv.groupby(['ID', 'Full Name', 'Weekday', 'Date']):
         marcas = grupo['Time'].tolist()
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
-        # 1ra Marcación: Entrada
         entrada = marcas[0]
         dt_entrada = datetime.combine(datetime.today(), entrada)
 
-        # Regla de tardanza (6 min de la hora base)
         if dt_entrada.minute >= 40: 
             hora_base = (dt_entrada + timedelta(hours=1)).replace(minute=0, second=0)
         else: 
@@ -171,7 +165,6 @@ def procesar_biometrico_mejorado(df_csv):
         limite_tardia = (hora_base + timedelta(minutes=6)).time()
         es_tardia = "Sí" if entrada >= limite_tardia else "No"
         
-        # Secuencia solicitada
         salida_alm = marcas[1] if num_marcas > 1 else None
         regreso_alm = marcas[2] if num_marcas > 2 else None
         inicio_break = marcas[3] if num_marcas > 3 else None
@@ -182,7 +175,6 @@ def procesar_biometrico_mejorado(df_csv):
             if not t1 or not t2: return 0
             return int((datetime.combine(fecha, t2) - datetime.combine(fecha, t1)).total_seconds() / 60)
 
-        # Construir fila final agregando ID y Weekday
         resultados.append({
             "ID": emp_id,
             "Empleado": nombre,
@@ -199,49 +191,73 @@ def procesar_biometrico_mejorado(df_csv):
     return pd.DataFrame(resultados)
 
 def generar_pdf_infracciones(df_res):
+    """Crea un reporte PDF RESUMIDO por empleado."""
     pdf = FPDF()
     pdf.add_page()
+    
+    # Título
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(190, 10, "Reporte de Infracciones Biometricas", ln=True, align='C')
+    pdf.cell(190, 10, "Resumen Consolidado de Infracciones", ln=True, align='C')
+    pdf.set_font("Arial", 'I', 10)
+    pdf.cell(190, 6, f"Generado el: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='C')
     pdf.ln(10)
 
-    # 1. Tardanzas
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(190, 10, "1. Reincidencia de Llegadas Tardias (>6 min)", ln=True)
-    pdf.set_font("Arial", '', 10)
-    tardes = df_res[df_res["Tardanza"] == "Sí"].groupby("Empleado").size().sort_values(ascending=False)
-    if not tardes.empty:
-        for emp, cant in tardes.items():
-            pdf.cell(190, 8, f"- {emp}: {cant} tardanza(s)", ln=True)
-    else:
-        pdf.cell(190, 8, "- Ninguna tardanza registrada.", ln=True)
-    
-    # 2. Almuerzos > 60 min
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(190, 10, "2. Excesos de Almuerzo (> 60 min)", ln=True)
-    pdf.set_font("Arial", '', 10)
-    ex_alm = df_res[df_res["Almuerzo (min)"] > 60]
-    if not ex_alm.empty:
-        for _, row in ex_alm.iterrows():
-            pdf.cell(190, 8, f"- [{row['ID']}] {row['Empleado']} ({row['Fecha']}): {row['Almuerzo (min)']} min", ln=True)
-    else:
-        pdf.cell(190, 8, "- Ningun exceso de almuerzo.", ln=True)
+    # 1. Preparar los datos consolidados matemáticamente
+    df_res['Es_Tarde'] = df_res['Tardanza'] == 'Sí'
+    df_res['Exceso_Alm'] = df_res['Almuerzo (min)'] > 60
+    df_res['Exceso_Brk'] = df_res['Break (min)'] > 15
 
-    # 3. Breaks > 15 min
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(190, 10, "3. Excesos de Break (> 15 min)", ln=True)
-    pdf.set_font("Arial", '', 10)
-    ex_brk = df_res[df_res["Break (min)"] > 15]
-    if not ex_brk.empty:
-        for _, row in ex_brk.iterrows():
-            pdf.cell(190, 8, f"- [{row['ID']}] {row['Empleado']} ({row['Fecha']}): {row['Break (min)']} min", ln=True)
-    else:
-        pdf.cell(190, 8, "- Ningun exceso de break.", ln=True)
+    # Agrupar por ID y Empleado, y sumar la cantidad de veces que cometieron la infracción
+    resumen = df_res.groupby(['ID', 'Empleado']).agg(
+        Tardanzas=('Es_Tarde', 'sum'),
+        Almuerzos=('Exceso_Alm', 'sum'),
+        Breaks=('Exceso_Brk', 'sum')
+    ).reset_index()
+
+    # Sumar el total de faltas y filtrar a los que se portaron bien
+    resumen['Total_Faltas'] = resumen['Tardanzas'] + resumen['Almuerzos'] + resumen['Breaks']
+    infractores = resumen[resumen['Total_Faltas'] > 0].sort_values(by='Total_Faltas', ascending=False)
+
+    if infractores.empty:
+        pdf.set_font("Arial", '', 12)
+        pdf.cell(190, 10, "Excelente: No se registraron infracciones en este periodo.", ln=True, align='C')
+        return pdf.output(dest='S').encode('latin-1')
+
+    # 2. Dibujar la Tabla
+    pdf.set_font("Arial", 'B', 9)
+    pdf.set_fill_color(220, 230, 241) # Un azul suave para el encabezado
+    
+    # Anchos de columna (Total = 190)
+    w_id, w_emp, w_tar, w_alm, w_brk, w_tot = 15, 65, 25, 30, 30, 25
+    
+    # Encabezados
+    pdf.cell(w_id, 8, "ID", border=1, fill=True, align='C')
+    pdf.cell(w_emp, 8, "Empleado", border=1, fill=True, align='C')
+    pdf.cell(w_tar, 8, "Tardanzas", border=1, fill=True, align='C')
+    pdf.cell(w_alm, 8, "Exc. Almuerzo", border=1, fill=True, align='C')
+    pdf.cell(w_brk, 8, "Exc. Break", border=1, fill=True, align='C')
+    pdf.cell(w_tot, 8, "TOTAL FALTAS", border=1, fill=True, align='C')
+    pdf.ln()
+
+    # Filas de datos
+    pdf.set_font("Arial", '', 8)
+    for _, row in infractores.iterrows():
+        # Truncar el nombre si es muy largo para que no rompa la tabla
+        nombre_corto = str(row['Empleado'])[:35]
+        
+        pdf.cell(w_id, 8, str(row['ID']), border=1, align='C')
+        pdf.cell(w_emp, 8, f" {nombre_corto}", border=1)
+        pdf.cell(w_tar, 8, str(int(row['Tardanzas'])), border=1, align='C')
+        pdf.cell(w_alm, 8, str(int(row['Almuerzos'])), border=1, align='C')
+        pdf.cell(w_brk, 8, str(int(row['Breaks'])), border=1, align='C')
+        
+        # Resaltar el total en negrita
+        pdf.set_font("Arial", 'B', 9)
+        pdf.cell(w_tot, 8, str(int(row['Total_Faltas'])), border=1, align='C')
+        pdf.set_font("Arial", '', 8)
+        pdf.ln()
 
     return pdf.output(dest='S').encode('latin-1')
-
 
 # =========================================================
 # INTERFAZ PRINCIPAL STREAMLIT
@@ -259,22 +275,18 @@ def vista_biometrico():
 
         if file_bio:
             try:
-                # ---- DETECTOR AUTOMÁTICO DE ENCABEZADOS ----
                 content = file_bio.getvalue().decode('utf-8-sig', errors='ignore')
                 lineas = content.splitlines()
                 skip_lines = 0
                 
-                # Buscar la fila que contiene los nombres reales de las columnas
                 for i, linea in enumerate(lineas[:10]): 
                     if 'Full Name' in linea and 'Date' in linea and 'Time' in linea:
                         skip_lines = i
                         break
                 
-                # Volver al inicio y leer saltando la "basura" del encabezado
                 file_bio.seek(0)
                 df_raw = pd.read_csv(file_bio, sep=';', encoding='utf-8-sig', skiprows=skip_lines)
                 
-                # Si el archivo usa coma en lugar de punto y coma, Pandas lo pondrá todo en 1 columna. Lo reparamos:
                 if len(df_raw.columns) == 1:
                     file_bio.seek(0)
                     df_raw = pd.read_csv(file_bio, sep=',', encoding='utf-8-sig', skiprows=skip_lines)
@@ -292,9 +304,9 @@ def vista_biometrico():
                 
                 pdf_data = generar_pdf_infracciones(df_p)
                 st.download_button(
-                    label="📥 Descargar Reporte de Infracciones (PDF)",
+                    label="📥 Descargar Resumen de Infracciones (PDF)",
                     data=pdf_data,
-                    file_name=f"Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+                    file_name=f"Resumen_Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
