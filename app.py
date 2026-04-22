@@ -259,7 +259,7 @@ def mostrar_comentario_cierre(fila):
         st.write(f"**Técnico:** {fila['TECNICO']}")
         if 'MX' in fila: st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
         if 'GPS' in fila: st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
-    st.divider()
+    st.markdown("---")
     estatus_final_check = str(fila.get('ESTADO','')).upper().strip()
     if estatus_final_check == 'CERRADA': st.success("✅ **COMENTARIO DE LIQUIDACIÓN / CIERRE FINAL:**")
     else: st.markdown("**📝 COMENTARIO DE SEGUIMIENTO (EN PROCESO):**")
@@ -434,7 +434,6 @@ def main():
     
     # === LÓGICA DE NAVEGACIÓN ESTILO MÓVIL VS PC ===
     if es_movil and option_menu is not None:
-        # Mostrar menú inferior si es móvil
         st.markdown("""
             <style>
             [data-testid="collapsedControl"] { display: none; }
@@ -467,21 +466,19 @@ def main():
         elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
         else: 
             nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
-            st.divider()
+            st.markdown("---")
     else:
-        # Modo Escritorio
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
                 nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
             else:
                 nav_menu_diamante = "⚡ Monitor en Vivo"
             
-    # === LÓGICA DE FILTROS ADAPTATIVOS ===
     filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
     
     with filtro_container:
         if nav_menu_diamante == "⚡ Monitor en Vivo":
-            if not es_movil: st.divider()
+            if not es_movil: st.markdown("---")
             st.markdown("### 🎛️ Filtros Múltiples")
             
             if 'df_base' in st.session_state and st.session_state.df_base is not None:
@@ -494,7 +491,7 @@ def main():
                 filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
                 filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
                 
-                st.divider() 
+                st.markdown("---") 
                 st.markdown("### 🔍 Filtros en Vivo")
                 if rol_usuario in ['admin', 'jefe']:
                     m_viva_count = df_base_activa_temp['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -512,7 +509,7 @@ def main():
 
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
-        st.divider()
+        st.markdown("---")
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None: sincronizar_datos_nube(conn)
@@ -529,7 +526,7 @@ def main():
         btn_reprocesar = False
         
         if mostrar_cargador:
-            st.divider()
+            st.markdown("---")
             st.markdown("### 📥 Carga de Archivos")
             if es_admin:
                 st.caption("Eres Admin: Sube los dos archivos (Actividades y FTTX).")
@@ -561,8 +558,6 @@ def main():
                     except: pass
 
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
-        elif rol_usuario == 'jefe' and es_movil:
-            pass # Sin texto redundante en movil
 
     if 'df_base' not in st.session_state or btn_reprocesar:
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
@@ -851,7 +846,7 @@ def main():
                         ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
                         if ordenes_con_error > 0: st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo.")
                         st.dataframe(df_maestra, use_container_width=True, hide_index=True)
-                        st.divider()
+                        st.markdown("---")
                         if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
                             with st.spinner("Dibujando secciones por técnico..."): st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
                         if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
@@ -909,7 +904,7 @@ def main():
                 with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
                 with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             
-            st.divider()
+            st.markdown("---")
 
             if not df_cerradas_espejo.empty:
                 st.markdown("### 📊 Desglose de Producción")
@@ -955,7 +950,7 @@ def main():
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
 
-            st.divider()
+            st.markdown("---")
             
             st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
             m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
@@ -1015,7 +1010,7 @@ def main():
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
                 with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
             if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-            st.divider()
+            st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
         return
 
@@ -1056,7 +1051,6 @@ def main():
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
         if es_movil:
-            # Estilo tarjetas para móviles
             st.markdown(f"""
             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #3B82F6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
@@ -1102,7 +1096,6 @@ def main():
 
         with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=not es_movil):
             if es_movil:
-                # Disposición vertical en móvil
                 st.caption("📅 Resumen de Retraso")
                 res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
@@ -1259,9 +1252,11 @@ def main():
                     st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=tot_mora_global), use_container_width=True, key="p6")
                     if st.button("🔍 Mora Global", use_container_width=True, key="b6"): mostrar_detalle_avance("MORA GLOBAL", df_mora_pendiente_actual, df_mora_cerrada_hoy, df_inicio_mora_total)
 
-            st.divider()
+            st.markdown("---")
 
-            # --- AQUI ESTÁN LOS GRÁFICOS DE GANTT DENTRO DE ESTE EXPANDER ---
+            # ==============================================================================
+            # ⏳ LÓGICA DE GRÁFICA GANTT REPARADA PARA ALINEACIÓN DE TIEMPO
+            # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
                 
@@ -1270,36 +1265,46 @@ def main():
                 df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
                 
                 if not df_para_gantt_final.empty:
-                    df_para_gantt_final['FIN_LIMITE'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
-                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'HORA_INI'], ascending=[True, True])
+                    # 1. Normalizar horas en un mismo día ficticio (para alineación visual perfecta)
+                    gantt_base_date = datetime(2000, 1, 1).date()
                     
-                    min_time_gantt = df_para_gantt_final['HORA_INI'].min()
-                    max_time_gantt = df_para_gantt_final['FIN_LIMITE'].max()
-                    rango_inicio_x = min_time_gantt - timedelta(minutes=5)
-                    rango_fin_x = max_time_gantt + timedelta(minutes=30)
+                    def normalizar_para_gantt(dt):
+                        if pd.isnull(dt): return pd.NaT
+                        # Combinamos la fecha fija con la hora real del registro
+                        return datetime.combine(gantt_base_date, dt.time())
+
+                    df_para_gantt_final['FIN_LIMITE_RAW'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
+                    
+                    # Columnas matemáticas para el eje X
+                    df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
+                    df_para_gantt_final['GANTT_END'] = df_para_gantt_final['FIN_LIMITE_RAW'].apply(normalizar_para_gantt)
+                    
+                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'], ascending=[True, True])
                     
                     st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todos los Técnicos)</h5>", unsafe_allow_html=True)
                     
                     fig_gantt = px.timeline(
                         df_para_gantt_final, 
-                        x_start="HORA_INI", 
-                        x_end="FIN_LIMITE", 
+                        x_start="GANTT_START", 
+                        x_end="GANTT_END", 
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        hover_data=["NUM", "COLONIA", "ESTADO", "SEGMENTO"], 
+                        hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "SEGMENTO": True, "GANTT_START": False, "GANTT_END": False}, 
                         height=650 
                     )
                     
                     fig_gantt.update_yaxes(autorange="reversed", title_text="")
-                    fig_gantt.update_xaxes(range=[rango_inicio_x.strftime('%Y-%m-%d %H:%M:%S'), rango_fin_x.strftime('%Y-%m-%d %H:%M:%S')], title_text="")
+                    # Forzamos formato de hora en el eje X
+                    fig_gantt.update_xaxes(tickformat="%H:%M", title_text="Reloj de Jornada")
+                    
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=2.5, opacity=0.9)
                     fig_gantt.update_layout(showlegend=False, margin=dict(t=20, b=20, l=0, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
                     st.info("No hay órdenes con hora de inicio registrada para generar los gráficos de Gantt.")
 
-        st.divider()
+        st.markdown("---")
         
         # ==============================================================================
         # EXPANDER: PANEL DE CONTROL DETALLADO Y TABS DE ABAJO
@@ -1448,7 +1453,7 @@ def main():
                             ax2.spines['right'].set_visible(False)
                             st.pyplot(fig2)
 
-                st.divider()
+                st.markdown("---")
 
                 fig3, ax3 = plt.subplots(figsize=(10, 3))
                 df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
