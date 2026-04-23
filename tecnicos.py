@@ -55,7 +55,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         df_sheets = df_nube.copy()
         df_sheets = limpiar_columnas(df_sheets)
 
-        # 3. BÚSQUEDA PESADA
+        # 3. BÚSQUEDA PESADA DE COLUMNAS
         col_orden_reg  = next((c for c in df_reg.columns if 'ORDEN' in c or 'NUM' in c), None)
         col_region_reg = next((c for c in df_reg.columns if 'REGI' in c), None)
         col_estado_reg = next((c for c in df_reg.columns if 'ESTADO' in c or 'STATUS' in c), None)
@@ -71,9 +71,12 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             st.error("❌ No se encontró la columna de Número de Orden en la base de datos de la nube.")
             return None
 
-        # 4. ESTANDARIZACIÓN
-        df_reg[col_orden_reg] = df_reg[col_orden_reg].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        df_sheets[col_num_nube] = df_sheets[col_num_nube].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        # 4. ESTANDARIZACIÓN AGRESIVA (Solo dejar números en los ID de las órdenes)
+        df_reg[col_orden_reg] = df_reg[col_orden_reg].astype(str).str.replace(r'\D', '', regex=True)
+        df_sheets[col_num_nube] = df_sheets[col_num_nube].astype(str).str.replace(r'\D', '', regex=True)
+
+        # Quitar órdenes vacías que pudieron generarse al limpiar
+        df_reg = df_reg[df_reg[col_orden_reg] != '']
 
         # 5. FILTRADO (Solo ISLAS y ACEPTABLES)
         df_reg_islas = df_reg[
@@ -85,44 +88,51 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             st.warning("⚠️ No se encontraron órdenes en estado 'ACEPTABLE' para la región 'ISLAS'.")
             return pd.DataFrame()
 
-        # 6. CRUCE MAESTRO (MERGE)
+        # 6. CRUCE MAESTRO (LEFT JOIN para conservar TODAS las órdenes de Mozart)
         df_final = pd.merge(
             df_reg_islas, 
             df_sheets, 
             left_on=col_orden_reg, 
             right_on=col_num_nube, 
-            how='inner',
+            how='left',  # <-- ESTO GARANTIZA QUE DARREN TENGA SUS 25 ÓRDENES
             suffixes=('_REG', '_NUBE')
         )
 
         # --- ESCUDO CONTRA COLISIONES ---
-        # Si las columnas se llamaban igual en ambos archivos, Pandas les puso el sufijo _REG
         final_tec_col   = f"{col_tec_reg}_REG"   if f"{col_tec_reg}_REG"   in df_final.columns else col_tec_reg
         final_orden_col = f"{col_orden_reg}_REG" if f"{col_orden_reg}_REG" in df_final.columns else col_orden_reg
         final_act_col   = f"{col_act_reg}_REG"   if f"{col_act_reg}_REG"   in df_final.columns else col_act_reg
         final_eval_col  = f"{col_eval_reg}_REG"  if f"{col_eval_reg}_REG"  in df_final.columns else col_eval_reg
         final_mod_col   = f"{col_mod_reg}_REG"   if f"{col_mod_reg}_REG"   in df_final.columns else col_mod_reg
 
-        # 7. LÓGICA DE DIRECTRICES
+        # 7. LÓGICA DE DIRECTRICES (Puntos)
         def calcular_puntos(row):
             actividad = str(row.get(final_act_col, '')).strip().upper()
             
+            # Obtener comentarios de Mozart
             val_eval = str(row.get(final_eval_col, '')) if pd.notna(row.get(final_eval_col)) else ""
             val_mod  = str(row.get(final_mod_col, ''))  if pd.notna(row.get(final_mod_col)) else ""
             
+            # Obtener comentarios de Google Sheets (si cruzó la orden)
             vals_nube = []
             for col_com in cols_comentarios_nube:
                 col_nube_real = f"{col_com}_NUBE" if f"{col_com}_NUBE" in df_final.columns else col_com
                 if col_nube_real in row and pd.notna(row[col_nube_real]):
                     vals_nube.append(str(row[col_nube_real]))
             
+            # Unificar todo para la búsqueda
             todos_los_comentarios = f"{val_eval} {val_mod} {' '.join(vals_nube)}".lower()
 
+            # REGLA 1: Traslados e Instalaciones (100% completas porque están ACEPTABLES) = 2.5
             if any(x in actividad for x in ['INSTALACION', 'TRASLADO']):
                 return 2.5
             
+            # REGLA 2: SOPFIBRAS (Cambio = 2, Normal = 1)
             if 'SOPFIBRA' in actividad:
-                cambio_fibra_keywords = ['cambio de fibra', 'cambio fibra', 'reemplazo de fibra', 'se cambio drop', 'fibra nueva']
+                cambio_fibra_keywords = [
+                    'cambio de fibra', 'cambio fibra', 'reemplazo de fibra', 
+                    'se cambio drop', 'fibra nueva', 'cambio drop'
+                ]
                 if any(kw in todos_los_comentarios for kw in cambio_fibra_keywords):
                     return 2.0 
                 return 1.0 
@@ -148,7 +158,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
 
 def render_modulo_tecnicos():
     st.markdown("### 🏆 Evaluación de Rendimiento por Puntos")
-    st.info("Cruce de **Registro de Calidad** con **Comentarios de Google Sheets**.")
+    st.info("Cruce de **Registro de Calidad** con **Comentarios de Google Sheets**. Se conservan todas las órdenes aceptables del registro.")
 
     df_base_nube = st.session_state.get('df_base', None)
 
