@@ -2,64 +2,100 @@
 import streamlit as st
 import pandas as pd
 import re
+import unicodedata
+
+def limpiar_columnas(df):
+    """
+    Búsqueda Pesada: Normaliza los nombres de las columnas quitando tildes, 
+    espacios extra y pasándolas a mayúsculas para que la búsqueda nunca falle.
+    """
+    cols_limpias = []
+    for col in df.columns:
+        # Convertir a texto, mayúsculas y quitar espacios en los bordes
+        c = str(col).strip().upper()
+        # Quitar tildes y caracteres especiales (ej. TÉCNICO -> TECNICO)
+        c = ''.join(char for char in unicodedata.normalize('NFKD', c) if unicodedata.category(char) != 'Mn')
+        cols_limpias.append(c)
+    df.columns = cols_limpias
+    return df
 
 def procesar_evaluacion_puntos(archivo_registro, df_nube):
     """
-    Realiza el cotejo entre el Registro manual y las Actividades de la nube (Google Sheets).
-    Aplica las reglas de puntuación con protecciones contra columnas vacías o tipo float.
+    Coteja Registro manual y Actividades de la nube usando búsqueda profunda de columnas.
     """
     try:
-        # 1. Cargar Registro Manual (Mozart)
+        # 1. CARGA SEGURA DEL REGISTRO LOCAL
         if archivo_registro.name.endswith('.csv'):
-            df_reg = pd.read_csv(archivo_registro, skiprows=3)
+            try:
+                df_raw = pd.read_csv(archivo_registro, header=None, dtype=str)
+            except UnicodeDecodeError:
+                archivo_registro.seek(0)
+                df_raw = pd.read_csv(archivo_registro, header=None, dtype=str, encoding='latin1')
         else:
-            df_reg = pd.read_excel(archivo_registro, skiprows=3)
+            df_raw = pd.read_excel(archivo_registro, header=None, dtype=str)
         
-        # ESCUDO ANTI-FLOAT: Convertir explícitamente a texto antes de limpiar
-        df_reg.columns = df_reg.columns.astype(str).str.strip().str.upper()
+        # Cazador de Encabezados (ignora las filas vacías de arriba)
+        header_idx = -1
+        for i, row in df_raw.iterrows():
+            fila_texto = " ".join(row.dropna().astype(str)).upper()
+            if 'ORDEN' in fila_texto and 'ACTIVIDAD' in fila_texto:
+                header_idx = i
+                break
+                
+        if header_idx == -1:
+            st.error("❌ No se detectaron las columnas de Órdenes. Asegúrate de subir la pestaña 'Registro'.")
+            return None
+            
+        df_reg = df_raw.iloc[header_idx + 1:].copy()
+        df_reg.columns = df_raw.iloc[header_idx]
+        df_reg = df_reg.reset_index(drop=True)
         
-        # 2. Validar Datos de la Nube
+        # Limpieza Pesada de columnas locales
+        df_reg = limpiar_columnas(df_reg)
+        
+        # 2. CARGA Y LIMPIEZA DE LA NUBE
         if df_nube is None or df_nube.empty:
-            st.error("No hay datos cargados desde Google Sheets. Sincroniza el monitor primero.")
+            st.error("No hay datos en la nube. Sincroniza el monitor primero.")
             return None
         
         df_sheets = df_nube.copy()
-        df_sheets.columns = df_sheets.columns.astype(str).str.strip().str.upper()
+        df_sheets = limpiar_columnas(df_sheets)
 
-        # 3. Búsqueda Dinámica de Columnas (buscando seguro dentro de strings)
-        col_orden_reg  = next((c for c in df_reg.columns if 'ORDEN' in str(c)), None)
-        col_region_reg = next((c for c in df_reg.columns if 'REGI' in str(c)), None)
-        col_estado_reg = next((c for c in df_reg.columns if 'ESTADO' in str(c)), None)
-        col_tec_reg    = next((c for c in df_reg.columns if 'TÉCNICO' in str(c) or 'TECNICO' in str(c)), None)
-        col_act_reg    = next((c for c in df_reg.columns if 'ACTIVIDAD' in str(c)), None)
-        col_eval_reg   = next((c for c in df_reg.columns if 'EVALUACI' in str(c) and 'COMENTARIO' in str(c)), None)
-        col_mod_reg    = next((c for c in df_reg.columns if 'MODIFICA' in str(c) and 'COMENTARIO' in str(c)), None)
+        # 3. BÚSQUEDA PESADA DE COLUMNAS (LOCAL)
+        col_orden_reg  = next((c for c in df_reg.columns if 'ORDEN' in c or 'NUM' in c), None)
+        col_region_reg = next((c for c in df_reg.columns if 'REGI' in c), None)
+        col_estado_reg = next((c for c in df_reg.columns if 'ESTADO' in c or 'STATUS' in c), None)
+        col_tec_reg    = next((c for c in df_reg.columns if 'TECNICO' in c or 'ASIGNADO' in c), None)
+        col_act_reg    = next((c for c in df_reg.columns if 'ACTIVIDAD' in c or 'TIPO' in c), None)
+        col_eval_reg   = next((c for c in df_reg.columns if 'EVALUAC' in c), None)
+        col_mod_reg    = next((c for c in df_reg.columns if 'MODIFICAC' in c), None)
 
-        if not col_orden_reg:
-            st.error("❌ No se encontró la columna de Órdenes en el archivo. Asegúrate de subir la pestaña que dice 'Registro'.")
-            return None
+        # BÚSQUEDA PESADA DE COLUMNAS (NUBE)
+        # Buscar Número de Orden en la nube
+        col_num_nube = next((c for c in df_sheets.columns if any(kw in c for kw in ['NUM', 'ORDEN', 'ID'])), None)
+        
+        # Buscar TODAS las columnas de comentarios en la nube (puede haber más de una)
+        cols_comentarios_nube = [c for c in df_sheets.columns if any(kw in c for kw in ['COMENTARIO', 'NOTA', 'OBSERVACION', 'LIQUID', 'DETALLE'])]
 
-        # Búsqueda Dinámica en la Nube
-        col_num_nube = 'NUM' if 'NUM' in df_sheets.columns else next((c for c in df_sheets.columns if 'ORDEN' in str(c)), None)
         if not col_num_nube:
-            st.error("❌ No se encontró la columna de Número de Orden (NUM) en los datos de la nube.")
+            st.error("❌ No se encontró la columna de Número de Orden en la base de datos de la nube.")
             return None
 
-        # Limpiar y estandarizar los números de orden para el cruce exacto
+        # 4. ESTANDARIZACIÓN PARA EL CRUCE
         df_reg[col_orden_reg] = df_reg[col_orden_reg].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         df_sheets[col_num_nube] = df_sheets[col_num_nube].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-        # 4. Filtrado Inicial: Región ISLAS y Estado ACEPTABLE
+        # 5. FILTRADO (ISLAS Y ACEPTABLE)
         df_reg_islas = df_reg[
             (df_reg[col_region_reg].astype(str).str.strip().str.upper() == 'ISLAS') & 
             (df_reg[col_estado_reg].astype(str).str.strip().str.upper() == 'ACEPTABLE')
         ].copy()
 
         if df_reg_islas.empty:
-            st.warning("⚠️ No se encontraron órdenes en estado 'ACEPTABLE' para la región 'ISLAS' en este reporte.")
+            st.warning("⚠️ No se encontraron órdenes en estado 'ACEPTABLE' para la región 'ISLAS'.")
             return pd.DataFrame()
 
-        # 5. Cruce (Merge) para obtener comentarios líquidos de la nube
+        # 6. CRUCE MAESTRO (MERGE)
         df_final = pd.merge(
             df_reg_islas, 
             df_sheets, 
@@ -69,82 +105,82 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             suffixes=('_REG', '_NUBE')
         )
 
-        # 6. Lógica de Puntuación Segura
+        # 7. LÓGICA DE DIRECTRICES (PUNTUACIÓN)
         def calcular_puntos(row):
-            # Extracción segura evitando valores float (NaN) de celdas vacías
             actividad = str(row[col_act_reg] if col_act_reg in row else row.get('ACTIVIDAD', '')).strip().upper()
             
+            # Extraer y concatenar TODOS los comentarios (Registro + Nube)
             val_eval = str(row[col_eval_reg]) if col_eval_reg in row and pd.notna(row[col_eval_reg]) else ""
             val_mod = str(row[col_mod_reg]) if col_mod_reg in row and pd.notna(row[col_mod_reg]) else ""
-            val_nube = str(row['COMENTARIO']) if 'COMENTARIO' in row and pd.notna(row['COMENTARIO']) else ""
+            
+            vals_nube = []
+            for col_com in cols_comentarios_nube:
+                if col_com in row and pd.notna(row[col_com]):
+                    vals_nube.append(str(row[col_com]))
+            
+            # Unir todo el texto en minúsculas
+            todos_los_comentarios = f"{val_eval} {val_mod} {' '.join(vals_nube)}".lower()
 
-            # Combinar comentarios
-            todos_los_comentarios = f"{val_eval} {val_mod} {val_nube}".lower()
-
-            # Directriz: Traslados e Instalaciones (2.5 puntos)
+            # --- DIRECTRICES ---
+            
+            # 1. Traslados e Instalaciones (2.5 puntos)
             if any(x in actividad for x in ['INSTALACION', 'TRASLADO']):
                 return 2.5
             
-            # Directriz: SOPFIBRAS
+            # 2. SOPFIBRAS
             if 'SOPFIBRA' in actividad:
-                # Buscamos evidencias de cambio de fibra en cualquier comentario
                 cambio_fibra_keywords = ['cambio de fibra', 'cambio fibra', 'reemplazo de fibra', 'se cambio drop', 'fibra nueva']
                 if any(kw in todos_los_comentarios for kw in cambio_fibra_keywords):
                     return 2.0 # Con cambio de fibra reportado
-                return 1.0 # Soporte Normal (sin cambio)
+                return 1.0 # Normal (sin cambio)
             
-            return 0.0 # Cualquier otra orden no contemplada
+            return 0.0
 
-        # Aplicar los puntos
         df_final['PUNTOS'] = df_final.apply(calcular_puntos, axis=1)
 
-        # 7. Consolidado por Técnico
+        # 8. CONSOLIDADO
         reporte = df_final.groupby(col_tec_reg).agg(
             Ordenes_Aceptables=(col_orden_reg, 'count'),
             Total_Puntos=('PUNTOS', 'sum')
         ).reset_index()
         
-        # Renombrar para que se vea estético y ordenar de mayor a menor
         reporte = reporte.rename(columns={col_tec_reg: 'Técnico', 'Ordenes_Aceptables': 'Órdenes Aceptables', 'Total_Puntos': 'Total Puntos'})
         reporte = reporte.sort_values(by='Total Puntos', ascending=False)
 
         return reporte
 
     except Exception as e:
-        st.error(f"Error procesando los puntos: {e}")
+        st.error(f"Error crítico procesando el archivo: {e}")
         return None
 
 def render_modulo_tecnicos():
     st.markdown("### 🏆 Evaluación de Rendimiento por Puntos")
-    st.info("Esta sección cruza el **Registro de Calidad (Mozart)** con los **Comentarios de la Nube** para calcular la productividad en base a reglas operativas.")
+    st.info("Cruce de **Registro de Calidad** con **Comentarios de Google Sheets**.")
 
-    # Acceso automático a la base de Google Sheets ya cargada en app.py
     df_base_nube = st.session_state.get('df_base', None)
 
     if df_base_nube is not None and not df_base_nube.empty:
-        st.success("🔗 **Conexión con Google Sheets activa y lista para cruzar.**")
+        st.success("🔗 **Base de datos de Google Sheets sincronizada y lista para cruce.**")
         
-        # Cargador para el Registro manual
-        archivo_reg = st.file_uploader("📂 Sube el archivo de Registro de Calidad (Pestaña 'Registro')", type=['csv', 'xlsx'], key="reg_puntos")
+        archivo_reg = st.file_uploader("📂 Sube el archivo de Registro de Calidad", type=['csv', 'xlsx'], key="reg_puntos")
 
         if archivo_reg:
             if st.button("🚀 Calcular Puntos de Técnicos", type="primary", use_container_width=True):
-                with st.spinner("Analizando comentarios líquidos y directrices..."):
+                with st.spinner("Realizando búsqueda pesada y analizando directrices..."):
                     resultado = procesar_evaluacion_puntos(archivo_reg, df_base_nube)
                     
                     if resultado is not None and not resultado.empty:
                         st.divider()
-                        st.subheader("📊 Resultados de Evaluación - Región ISLAS")
+                        st.subheader("📊 Resultados - Región ISLAS")
                         st.dataframe(resultado, use_container_width=True, hide_index=True)
                         
-                        # Opción de descarga CSV
                         csv = resultado.to_csv(index=False).encode('utf-8')
                         st.download_button(
-                            label="📥 Descargar Reporte de Puntos", 
+                            label="📥 Descargar Reporte CSV", 
                             data=csv, 
                             file_name="Reporte_Puntos_Tecnicos_ISLAS.csv", 
                             mime="text/csv", 
                             use_container_width=True
                         )
     else:
-        st.warning("⚠️ Los datos de la nube aún no están cargados. Por favor, asegúrate de que el Monitor principal se haya sincronizado.")
+        st.warning("⚠️ Los datos de la nube aún no están cargados. Asegúrate de sincronizar en el panel lateral.")
