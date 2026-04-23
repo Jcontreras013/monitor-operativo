@@ -1270,7 +1270,6 @@ def main():
                     
                     def normalizar_para_gantt(dt):
                         if pd.isnull(dt): return pd.NaT
-                        # Combinamos la fecha fija con la hora real del registro
                         return datetime.combine(gantt_base_date, dt.time())
 
                     df_para_gantt_final['FIN_LIMITE_RAW'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
@@ -1278,6 +1277,10 @@ def main():
                     # Columnas matemáticas para el eje X
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final['FIN_LIMITE_RAW'].apply(normalizar_para_gantt)
+                    
+                    # === SOLUCIÓN: FORZAR CATEGORÍAS ESTRICTAS EN EL EJE Y ===
+                    # Convertimos la columna 'TECNICO' a tipo 'category' puro
+                    df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str)
                     
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'], ascending=[True, True])
                     
@@ -1294,7 +1297,8 @@ def main():
                         height=650 
                     )
                     
-                    fig_gantt.update_yaxes(autorange="reversed", title_text="")
+                    # Garantizamos que los técnicos no se separen estableciendo type="category"
+                    fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
                     # Forzamos formato de hora en el eje X
                     fig_gantt.update_xaxes(tickformat="%H:%M", title_text="Reloj de Jornada")
                     
