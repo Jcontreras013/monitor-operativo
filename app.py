@@ -748,7 +748,7 @@ def main():
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
-        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico = st.tabs(["📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"])
+        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico, tab_tecnicos = st.tabs(["📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial Trimestral", "⏱️ Biométrico", "🏆 Puntos Técnicos"])
 
         with tab_pendientes:
             st.subheader("📋 Resumen de Pendientes Generales")
@@ -827,6 +827,13 @@ def main():
         with tab_biometrico:
             try: biometrico.vista_biometrico()
             except Exception as e: st.error(f"Error al cargar la vista del biométrico: {e}")
+
+        with tab_tecnicos:
+            try: 
+                import tecnicos
+                tecnicos.render_modulo_tecnicos()
+            except Exception as e: 
+                st.error(f"Error al cargar el reporte de Puntos Técnicos: {e}")
 
         with tab_gerencial:
             st.subheader("📊 Reporte Gerencial Unificado")
