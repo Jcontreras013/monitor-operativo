@@ -10,7 +10,6 @@ def normalizar_texto(texto):
     if pd.isnull(texto): return ""
     t = str(texto).strip().upper()
     t = ''.join(char for char in unicodedata.normalize('NFKD', t) if unicodedata.category(char) != 'Mn')
-    # Eliminar espacios dobles
     return " ".join(t.split())
 
 def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fin):
@@ -35,11 +34,12 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
             df_cerradas = df_cerradas[(df_cerradas['FECHA_FILTRO'] >= fecha_inicio) & (df_cerradas['FECHA_FILTRO'] <= fecha_fin)]
 
         if df_cerradas.empty:
-            st.warning("⚠️ No se encontraron órdenes cerradas en el periodo seleccionado.")
+            st.warning("⚠️ No se encontraron órdenes cerradas en la Nube para el periodo seleccionado.")
             return None
 
-        # Limpiar IDs y Nombres en Nube
+        # Limpiar IDs en Nube (quitar decimales, quitar letras, quitar ceros a la izquierda)
         df_cerradas['NUM_LIMPIO'] = df_cerradas[col_num_nube].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'\D', '', regex=True)
+        df_cerradas['NUM_LIMPIO'] = df_cerradas['NUM_LIMPIO'].str.lstrip('0')
         df_cerradas['TEC_NORMALIZADO'] = df_cerradas[col_tec_nube].apply(normalizar_texto)
 
         # =======================================================
@@ -51,37 +51,43 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
         else:
             df_raw = pd.read_excel(archivo_registro, header=None, dtype=str)
 
-        # Localizar cabeceras
         h_idx = -1
         for i, row in df_raw.iterrows():
             txt = " ".join(row.dropna().astype(str)).upper()
             if 'ORDEN' in txt and 'ESTADO' in txt:
                 h_idx = i; break
         
-        if h_idx == -1: return None
+        if h_idx == -1: 
+            st.error("No se detectaron cabeceras en Mozart.")
+            return None
 
         df_reg = df_raw.iloc[h_idx + 1:].copy()
         df_reg.columns = [normalizar_texto(c) for c in df_raw.iloc[h_idx]]
         
         col_num_reg = next((c for c in df_reg.columns if 'ORDEN' in c or 'NUM' in c), None)
         col_est_reg = next((c for c in df_reg.columns if 'ESTADO' in c or 'ESTATUS' in c), None)
-        col_reg_reg = next((c for c in df_reg.columns if 'REGION' in c), None)
-        col_tec_reg = next((c for c in df_reg.columns if 'TECNICO' in c), None)
+        col_reg_reg = next((c for c in df_reg.columns if 'REGION' in c or 'REGI' in c), None)
 
-        # --- FILTRO MOZART: ISLAS + ACEPTABLE ---
-        mask_calidad = (df_reg[col_reg_reg].astype(str).str.upper().str.contains('ISLAS', na=False)) & \
-                       (df_reg[col_est_reg].astype(str).str.upper() == 'ACEPTABLE')
-        df_aprobadas = df_reg[mask_calidad].copy()
+        # --- FILTRO MOZART: ISLAS + ACEPTABLE (Más flexible con los espacios) ---
+        if col_reg_reg:
+            mask_region = df_reg[col_reg_reg].astype(str).str.upper().str.contains('ISLAS', na=False)
+        else:
+            mask_region = pd.Series([True]*len(df_reg))
+            
+        if col_est_reg:
+            mask_estado = df_reg[col_est_reg].astype(str).str.upper().str.contains('ACEPTABLE', na=False)
+        else:
+            mask_estado = pd.Series([False]*len(df_reg))
 
-        # Crear Set de validación: (Número de Orden, Nombre Técnico)
-        # Esto garantiza que la orden le pertenezca al técnico correcto
+        df_aprobadas = df_reg[mask_region & mask_estado].copy()
+
+        # Set de validación: SÓLO usamos el Número de Orden (Es único y evita errores de nombres de técnicos)
         validas_identidad = set()
         for _, r in df_aprobadas.iterrows():
             n_ord = str(r[col_num_reg]).replace('.0', '').strip()
-            n_ord = re.sub(r'\D', '', n_ord)
-            n_tec = normalizar_texto(r[col_tec_reg])
-            if n_ord and n_tec:
-                validas_identidad.add((n_ord, n_tec))
+            n_ord = re.sub(r'\D', '', n_ord).lstrip('0')
+            if n_ord:
+                validas_identidad.add(n_ord)
 
         # =======================================================
         # 3. CRUCE Y CALIFICACIÓN
@@ -89,19 +95,18 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
         def evaluar_orden(row):
             act = str(row.get(col_act_nube, "")).upper()
             num = row['NUM_LIMPIO']
-            tec = row['TEC_NORMALIZADO']
             coment = " ".join([str(row[c]) for c in cols_obs_nube if pd.notna(row[c])]).lower()
 
-            # 🏠 INSFIBRA: 2.5 directo (Solo validamos que sea CERRADA y del mes)
+            # 🏠 INSFIBRA: 2.5 directo (No ocupa permiso de Mozart)
             if 'INSFIBRA' in act:
                 return pd.Series(['🏠 INSFIBRA (2.5)', 2.5])
 
-            # 🛠️ SOP / SOPFIBRA: Validación de Identidad (Orden + Técnico en Mozart)
+            # 🛠️ SOP / SOPFIBRA: Validación solo por número de orden (Llave única)
             if 'SOP' in act:
-                if (num, tec) in validas_identidad:
-                    if any(k in coment for k in ['traslado externo', 'traslado de equipo', 'traslado de linea']):
+                if num in validas_identidad:
+                    if any(k in coment for k in ['traslado externo', 'traslado de equipo', 'traslado de linea', 'traslado']):
                         return pd.Series(['🚚 TRASLADO (2.5)', 2.5])
-                    if any(k in coment for k in ['cambia fibra', 'cambio de fibra', 'reemplazo drop', 'fibra nueva']):
+                    if any(k in coment for k in ['cambia fibra', 'cambio de fibra', 'reemplazo drop', 'fibra nueva', 'se tiro fibra', 'cambio fibra']):
                         return pd.Series(['🧵 CAMBIO FIBRA (2.0)', 2.0])
                     return pd.Series(['🔧 SOP NORMAL (1.0)', 1.0])
                 else:
@@ -135,7 +140,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
 
 def render_modulo_tecnicos():
     st.markdown("### 🏆 Evaluación de Puntos: Identidad y Calidad")
-    st.caption("Cruce Estricto: Orden + Técnico (Mozart) vs Cerradas (Nube)")
+    st.caption("Cruce: Número de Orden (Mozart) vs Órdenes Cerradas (Nube)")
     
     df_nube = st.session_state.get('df_base', None)
     if df_nube is not None:
@@ -150,3 +155,7 @@ def render_modulo_tecnicos():
                     st.divider()
                     st.dataframe(res, use_container_width=True, hide_index=True)
                     st.download_button("📥 Descargar Reporte", res.to_csv(index=False).encode('utf-8'), "Puntos_Tecnicos.csv", "text/csv", use_container_width=True)
+            else:
+                st.warning("Selecciona una fecha de inicio y fin validas.")
+    else:
+        st.warning("Sincroniza los datos en el panel lateral antes de continuar.")
