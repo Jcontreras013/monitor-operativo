@@ -1255,17 +1255,20 @@ def main():
             st.markdown("---")
 
             # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT (ALINEACIÓN ESTRICTA DE HORARIOS)
+            # ⏳ LÓGICA DE GRÁFICA GANTT (ALINEACIÓN ESTRICTA DE HORARIOS Y CIERRES)
             # ==============================================================================
             if not es_movil:
-                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
+                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades Cerradas Hoy (Gantt)</h4><br>", unsafe_allow_html=True)
                 
-                mask_supervisores = df_solo_asignadas_monitor['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                df_para_gantt_bruto = df_solo_asignadas_monitor[~mask_supervisores].copy()
-                df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
+                # Usamos df_cerradas_hoy_monitor para que los bloques tengan un final real y fijo
+                mask_supervisores = df_cerradas_hoy_monitor['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
+                df_para_gantt_bruto = df_cerradas_hoy_monitor[~mask_supervisores].copy()
+                
+                # Filtrar solo órdenes que sí tienen hora de inicio y hora de fin
+                df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull() & df_para_gantt_bruto['HORA_LIQ'].notnull()].copy()
                 
                 if not df_para_gantt_final.empty:
-                    # 1. Normalizar fechas usando el DÍA ACTUAL para que Plotly respete la línea de tiempo
+                    # 1. Normalizar fechas usando un día fijo para que Plotly respete la línea de tiempo
                     gantt_base_date = hoy_date_valor
                     
                     def normalizar_para_gantt(dt_val):
@@ -1275,10 +1278,9 @@ def main():
                             return datetime.combine(gantt_base_date, dt_val.time())
                         except: return pd.NaT
 
-                    df_para_gantt_final['FIN_LIMITE_RAW'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
-                    
+                    # Columnas matemáticas para el eje X
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
-                    df_para_gantt_final['GANTT_END'] = df_para_gantt_final['FIN_LIMITE_RAW'].apply(normalizar_para_gantt)
+                    df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].apply(normalizar_para_gantt)
                     
                     # 2. LIMPIEZA DE TÉCNICOS: Fundamental para que todo quede en el MISMO renglón
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
@@ -1287,9 +1289,9 @@ def main():
                     df_para_gantt_final = df_para_gantt_final.dropna(subset=['GANTT_START', 'GANTT_END'])
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                    st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todos los Técnicos)</h5>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Órdenes Finalizadas)</h5>", unsafe_allow_html=True)
                     
-                    # Altura dinámica: si hay pocos técnicos, no hacerla tan gigante
+                    # Altura dinámica
                     altura_gantt = max(350, len(df_para_gantt_final['TECNICO'].unique()) * 45)
 
                     fig_gantt = px.timeline(
@@ -1307,14 +1309,14 @@ def main():
                     fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
                     
                     # 4. FORZAR EJE X ESTÁTICO (Desde las 06:00 AM hasta las 22:00 PM)
-                    # Esto evita que las barras "empiecen en la esquina derecha", dándoles su lugar físico real en el día.
+                    # Esto evita que las barras "empiecen en la esquina derecha" dándoles su lugar real
                     hora_inicio_pantalla = datetime.combine(gantt_base_date, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     hora_fin_pantalla = datetime.combine(gantt_base_date, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt.update_xaxes(
                         range=[hora_inicio_pantalla, hora_fin_pantalla],
                         tickformat="%H:%M", 
-                        title_text="Horario de la Jornada (06:00 - 22:00)",
+                        title_text="Reloj de Jornada (06:00 - 22:00)",
                         dtick=3600000 # Marcas cada 1 hora exacta
                     )
                     
@@ -1331,7 +1333,7 @@ def main():
                     
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
-                    st.info("No hay órdenes con hora de inicio registrada para generar los gráficos de Gantt.")
+                    st.info("No hay órdenes cerradas hoy con hora de inicio y fin registradas para generar los gráficos de Gantt.")
 
         st.markdown("---")
         
