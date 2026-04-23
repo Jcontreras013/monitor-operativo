@@ -6,7 +6,7 @@ import re
 def procesar_evaluacion_puntos(archivo_registro, df_nube):
     """
     Realiza el cotejo entre el Registro manual y las Actividades de la nube (Google Sheets).
-    Aplica las reglas de puntuación a prueba de fallos de nombres de columnas.
+    Aplica las reglas de puntuación con protecciones contra columnas vacías o tipo float.
     """
     try:
         # 1. Cargar Registro Manual (Mozart)
@@ -15,8 +15,8 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         else:
             df_reg = pd.read_excel(archivo_registro, skiprows=3)
         
-        # Convertir todas las columnas a MAYÚSCULAS y quitar espacios para evitar errores
-        df_reg.columns = df_reg.columns.str.strip().str.upper()
+        # ESCUDO ANTI-FLOAT: Convertir explícitamente a texto antes de limpiar
+        df_reg.columns = df_reg.columns.astype(str).str.strip().str.upper()
         
         # 2. Validar Datos de la Nube
         if df_nube is None or df_nube.empty:
@@ -24,24 +24,23 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             return None
         
         df_sheets = df_nube.copy()
-        df_sheets.columns = df_sheets.columns.str.strip().str.upper()
+        df_sheets.columns = df_sheets.columns.astype(str).str.strip().str.upper()
 
-        # 3. Búsqueda Dinámica de Columnas en el archivo de Registro (Mozart)
-        col_orden_reg  = next((c for c in df_reg.columns if 'ORDEN' in c), None)
-        col_region_reg = next((c for c in df_reg.columns if 'REGI' in c), None)
-        col_estado_reg = next((c for c in df_reg.columns if 'ESTADO' in c), None)
-        col_tec_reg    = next((c for c in df_reg.columns if 'TÉCNICO' in c or 'TECNICO' in c), None)
-        col_act_reg    = next((c for c in df_reg.columns if 'ACTIVIDAD' in c), None)
-        col_eval_reg   = next((c for c in df_reg.columns if 'EVALUACI' in c and 'COMENTARIO' in c), None)
-        col_mod_reg    = next((c for c in df_reg.columns if 'MODIFICA' in c and 'COMENTARIO' in c), None)
+        # 3. Búsqueda Dinámica de Columnas (buscando seguro dentro de strings)
+        col_orden_reg  = next((c for c in df_reg.columns if 'ORDEN' in str(c)), None)
+        col_region_reg = next((c for c in df_reg.columns if 'REGI' in str(c)), None)
+        col_estado_reg = next((c for c in df_reg.columns if 'ESTADO' in str(c)), None)
+        col_tec_reg    = next((c for c in df_reg.columns if 'TÉCNICO' in str(c) or 'TECNICO' in str(c)), None)
+        col_act_reg    = next((c for c in df_reg.columns if 'ACTIVIDAD' in str(c)), None)
+        col_eval_reg   = next((c for c in df_reg.columns if 'EVALUACI' in str(c) and 'COMENTARIO' in str(c)), None)
+        col_mod_reg    = next((c for c in df_reg.columns if 'MODIFICA' in str(c) and 'COMENTARIO' in str(c)), None)
 
-        # Validar que se subió el archivo correcto
         if not col_orden_reg:
-            st.error("❌ No se encontró la columna de Órdenes en el archivo. Asegúrate de subir la pestaña que dice 'Registro' o 'Registro.csv'.")
+            st.error("❌ No se encontró la columna de Órdenes en el archivo. Asegúrate de subir la pestaña que dice 'Registro'.")
             return None
 
-        # Búsqueda Dinámica de Columna de Orden en la Nube
-        col_num_nube = 'NUM' if 'NUM' in df_sheets.columns else next((c for c in df_sheets.columns if 'ORDEN' in c), None)
+        # Búsqueda Dinámica en la Nube
+        col_num_nube = 'NUM' if 'NUM' in df_sheets.columns else next((c for c in df_sheets.columns if 'ORDEN' in str(c)), None)
         if not col_num_nube:
             st.error("❌ No se encontró la columna de Número de Orden (NUM) en los datos de la nube.")
             return None
@@ -51,7 +50,6 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         df_sheets[col_num_nube] = df_sheets[col_num_nube].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
         # 4. Filtrado Inicial: Región ISLAS y Estado ACEPTABLE
-        # Se filtra usando las columnas dinámicas encontradas
         df_reg_islas = df_reg[
             (df_reg[col_region_reg].astype(str).str.strip().str.upper() == 'ISLAS') & 
             (df_reg[col_estado_reg].astype(str).str.strip().str.upper() == 'ACEPTABLE')
@@ -59,7 +57,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
 
         if df_reg_islas.empty:
             st.warning("⚠️ No se encontraron órdenes en estado 'ACEPTABLE' para la región 'ISLAS' en este reporte.")
-            return pd.DataFrame() # Retorna tabla vacía para no romper el dashboard
+            return pd.DataFrame()
 
         # 5. Cruce (Merge) para obtener comentarios líquidos de la nube
         df_final = pd.merge(
@@ -71,15 +69,17 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             suffixes=('_REG', '_NUBE')
         )
 
-        # 6. Lógica de Puntuación
+        # 6. Lógica de Puntuación Segura
         def calcular_puntos(row):
-            # Obtener actividad (priorizando la del registro)
-            actividad = str(row.get(col_act_reg, row.get('ACTIVIDAD', ''))).strip().upper()
+            # Extracción segura evitando valores float (NaN) de celdas vacías
+            actividad = str(row[col_act_reg] if col_act_reg in row else row.get('ACTIVIDAD', '')).strip().upper()
             
-            # Combinar comentarios del Registro y de la Nube
-            comentarios_registro = f"{str(row.get(col_eval_reg, ''))} {str(row.get(col_mod_reg, ''))}".lower()
-            comentario_nube = str(row.get('COMENTARIO', '')).lower()
-            todos_los_comentarios = f"{comentarios_registro} {comentario_nube}"
+            val_eval = str(row[col_eval_reg]) if col_eval_reg in row and pd.notna(row[col_eval_reg]) else ""
+            val_mod = str(row[col_mod_reg]) if col_mod_reg in row and pd.notna(row[col_mod_reg]) else ""
+            val_nube = str(row['COMENTARIO']) if 'COMENTARIO' in row and pd.notna(row['COMENTARIO']) else ""
+
+            # Combinar comentarios
+            todos_los_comentarios = f"{val_eval} {val_mod} {val_nube}".lower()
 
             # Directriz: Traslados e Instalaciones (2.5 puntos)
             if any(x in actividad for x in ['INSTALACION', 'TRASLADO']):
