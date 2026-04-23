@@ -1255,7 +1255,7 @@ def main():
             st.markdown("---")
 
             # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT REPARADA PARA ALINEACIÓN DE TIEMPO
+            # ⏳ LÓGICA DE GRÁFICA GANTT (ALINEACIÓN ESTRICTA DE HORARIOS)
             # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades (Gantt)</h4><br>", unsafe_allow_html=True)
@@ -1265,26 +1265,33 @@ def main():
                 df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
                 
                 if not df_para_gantt_final.empty:
-                    # 1. Normalizar horas en un mismo día ficticio (para alineación visual perfecta)
-                    gantt_base_date = datetime(2000, 1, 1).date()
+                    # 1. Normalizar fechas usando el DÍA ACTUAL para que Plotly respete la línea de tiempo
+                    gantt_base_date = hoy_date_valor
                     
-                    def normalizar_para_gantt(dt):
-                        if pd.isnull(dt): return pd.NaT
-                        return datetime.combine(gantt_base_date, dt.time())
+                    def normalizar_para_gantt(dt_val):
+                        if pd.isnull(dt_val): return pd.NaT
+                        try:
+                            if isinstance(dt_val, str): dt_val = pd.to_datetime(dt_val)
+                            return datetime.combine(gantt_base_date, dt_val.time())
+                        except: return pd.NaT
 
                     df_para_gantt_final['FIN_LIMITE_RAW'] = df_para_gantt_final['HORA_LIQ'].fillna(get_honduras_time())
                     
-                    # Columnas matemáticas para el eje X
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final['FIN_LIMITE_RAW'].apply(normalizar_para_gantt)
                     
-                    # === SOLUCIÓN: LIMPIAR NOMBRES PARA QUE SEA 1 SOLA LÍNEA ===
-                    df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip()
+                    # 2. LIMPIEZA DE TÉCNICOS: Fundamental para que todo quede en el MISMO renglón
+                    df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                     
-                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'], ascending=[True, True])
+                    # Descartar nulos y ordenar
+                    df_para_gantt_final = df_para_gantt_final.dropna(subset=['GANTT_START', 'GANTT_END'])
+                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                     
                     st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todos los Técnicos)</h5>", unsafe_allow_html=True)
                     
+                    # Altura dinámica: si hay pocos técnicos, no hacerla tan gigante
+                    altura_gantt = max(350, len(df_para_gantt_final['TECNICO'].unique()) * 45)
+
                     fig_gantt = px.timeline(
                         df_para_gantt_final, 
                         x_start="GANTT_START", 
@@ -1293,21 +1300,31 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "SEGMENTO": True, "GANTT_START": False, "GANTT_END": False}, 
-                        height=650 
+                        height=altura_gantt
                     )
                     
-                    # Garantizamos que los técnicos no se separen estableciendo type="category"
+                    # 3. FORZAR EJE Y COMO CATEGORÍA (Evita que se separen los renglones)
                     fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
-                    # Forzamos formato de hora en el eje X
-                    fig_gantt.update_xaxes(tickformat="%H:%M", title_text="Reloj de Jornada")
                     
-                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=2.5, opacity=0.9)
+                    # 4. FORZAR EJE X ESTÁTICO (Desde las 06:00 AM hasta las 22:00 PM)
+                    # Esto evita que las barras "empiecen en la esquina derecha", dándoles su lugar físico real en el día.
+                    hora_inicio_pantalla = datetime.combine(gantt_base_date, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    hora_fin_pantalla = datetime.combine(gantt_base_date, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
-                    # === LA MAGIA: barmode='overlay' OBLIGA A QUE TODO ESTÉ EN LA MISMA LÍNEA ===
+                    fig_gantt.update_xaxes(
+                        range=[hora_inicio_pantalla, hora_fin_pantalla],
+                        tickformat="%H:%M", 
+                        title_text="Horario de la Jornada (06:00 - 22:00)",
+                        dtick=3600000 # Marcas cada 1 hora exacta
+                    )
+                    
+                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
+                    
                     fig_gantt.update_layout(
-                        barmode='overlay', 
-                        showlegend=False, 
-                        margin=dict(t=20, b=20, l=0, r=10), 
+                        showlegend=True, 
+                        legend_title_text='Tipo de Actividad',
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        margin=dict(t=10, b=20, l=0, r=10), 
                         paper_bgcolor="rgba(0,0,0,0)", 
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
@@ -1315,6 +1332,9 @@ def main():
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
                     st.info("No hay órdenes con hora de inicio registrada para generar los gráficos de Gantt.")
+
+        st.markdown("---")
+        
         # ==============================================================================
         # EXPANDER: PANEL DE CONTROL DETALLADO Y TABS DE ABAJO
         # ==============================================================================
