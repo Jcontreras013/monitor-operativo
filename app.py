@@ -1278,9 +1278,8 @@ def main():
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final['FIN_LIMITE_RAW'].apply(normalizar_para_gantt)
                     
-                    # === SOLUCIÓN: FORZAR CATEGORÍAS ESTRICTAS EN EL EJE Y ===
-                    # Convertimos la columna 'TECNICO' a tipo 'category' puro
-                    df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str)
+                    # === SOLUCIÓN: LIMPIAR NOMBRES PARA QUE SEA 1 SOLA LÍNEA ===
+                    df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip()
                     
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'], ascending=[True, True])
                     
@@ -1303,13 +1302,19 @@ def main():
                     fig_gantt.update_xaxes(tickformat="%H:%M", title_text="Reloj de Jornada")
                     
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=2.5, opacity=0.9)
-                    fig_gantt.update_layout(showlegend=False, margin=dict(t=20, b=20, l=0, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
+                    
+                    # === LA MAGIA: barmode='overlay' OBLIGA A QUE TODO ESTÉ EN LA MISMA LÍNEA ===
+                    fig_gantt.update_layout(
+                        barmode='overlay', 
+                        showlegend=False, 
+                        margin=dict(t=20, b=20, l=0, r=10), 
+                        paper_bgcolor="rgba(0,0,0,0)", 
+                        plot_bgcolor="rgba(0,0,0,0.02)"
+                    )
+                    
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
                     st.info("No hay órdenes con hora de inicio registrada para generar los gráficos de Gantt.")
-
-        st.markdown("---")
-        
         # ==============================================================================
         # EXPANDER: PANEL DE CONTROL DETALLADO Y TABS DE ABAJO
         # ==============================================================================
