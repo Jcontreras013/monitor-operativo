@@ -1,28 +1,22 @@
 # tecnicos.py
 import streamlit as st
 import pandas as pd
-import re
 import unicodedata
 
 def limpiar_columnas(df):
     """
-    Búsqueda Pesada: Normaliza los nombres de las columnas quitando tildes, 
-    espacios extra y pasándolas a mayúsculas para que la búsqueda nunca falle.
+    Normaliza los nombres de las columnas quitando tildes, 
+    espacios extra y pasándolas a mayúsculas.
     """
     cols_limpias = []
     for col in df.columns:
-        # Convertir a texto, mayúsculas y quitar espacios en los bordes
         c = str(col).strip().upper()
-        # Quitar tildes y caracteres especiales (ej. TÉCNICO -> TECNICO)
         c = ''.join(char for char in unicodedata.normalize('NFKD', c) if unicodedata.category(char) != 'Mn')
         cols_limpias.append(c)
     df.columns = cols_limpias
     return df
 
 def procesar_evaluacion_puntos(archivo_registro, df_nube):
-    """
-    Coteja Registro manual y Actividades de la nube usando búsqueda profunda de columnas.
-    """
     try:
         # 1. CARGA SEGURA DEL REGISTRO LOCAL
         if archivo_registro.name.endswith('.csv'):
@@ -34,7 +28,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         else:
             df_raw = pd.read_excel(archivo_registro, header=None, dtype=str)
         
-        # Cazador de Encabezados (ignora las filas vacías de arriba)
+        # Cazador de Encabezados
         header_idx = -1
         for i, row in df_raw.iterrows():
             fila_texto = " ".join(row.dropna().astype(str)).upper()
@@ -50,10 +44,10 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         df_reg.columns = df_raw.iloc[header_idx]
         df_reg = df_reg.reset_index(drop=True)
         
-        # Limpieza Pesada de columnas locales
+        # Limpieza Pesada
         df_reg = limpiar_columnas(df_reg)
         
-        # 2. CARGA Y LIMPIEZA DE LA NUBE
+        # 2. CARGA DE LA NUBE
         if df_nube is None or df_nube.empty:
             st.error("No hay datos en la nube. Sincroniza el monitor primero.")
             return None
@@ -61,7 +55,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         df_sheets = df_nube.copy()
         df_sheets = limpiar_columnas(df_sheets)
 
-        # 3. BÚSQUEDA PESADA DE COLUMNAS (LOCAL)
+        # 3. BÚSQUEDA PESADA
         col_orden_reg  = next((c for c in df_reg.columns if 'ORDEN' in c or 'NUM' in c), None)
         col_region_reg = next((c for c in df_reg.columns if 'REGI' in c), None)
         col_estado_reg = next((c for c in df_reg.columns if 'ESTADO' in c or 'STATUS' in c), None)
@@ -70,22 +64,18 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
         col_eval_reg   = next((c for c in df_reg.columns if 'EVALUAC' in c), None)
         col_mod_reg    = next((c for c in df_reg.columns if 'MODIFICAC' in c), None)
 
-        # BÚSQUEDA PESADA DE COLUMNAS (NUBE)
-        # Buscar Número de Orden en la nube
         col_num_nube = next((c for c in df_sheets.columns if any(kw in c for kw in ['NUM', 'ORDEN', 'ID'])), None)
-        
-        # Buscar TODAS las columnas de comentarios en la nube (puede haber más de una)
         cols_comentarios_nube = [c for c in df_sheets.columns if any(kw in c for kw in ['COMENTARIO', 'NOTA', 'OBSERVACION', 'LIQUID', 'DETALLE'])]
 
         if not col_num_nube:
             st.error("❌ No se encontró la columna de Número de Orden en la base de datos de la nube.")
             return None
 
-        # 4. ESTANDARIZACIÓN PARA EL CRUCE
+        # 4. ESTANDARIZACIÓN
         df_reg[col_orden_reg] = df_reg[col_orden_reg].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         df_sheets[col_num_nube] = df_sheets[col_num_nube].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-        # 5. FILTRADO (ISLAS Y ACEPTABLE)
+        # 5. FILTRADO (Solo ISLAS y ACEPTABLES)
         df_reg_islas = df_reg[
             (df_reg[col_region_reg].astype(str).str.strip().str.upper() == 'ISLAS') & 
             (df_reg[col_estado_reg].astype(str).str.strip().str.upper() == 'ACEPTABLE')
@@ -105,46 +95,49 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             suffixes=('_REG', '_NUBE')
         )
 
-        # 7. LÓGICA DE DIRECTRICES (PUNTUACIÓN)
+        # --- ESCUDO CONTRA COLISIONES ---
+        # Si las columnas se llamaban igual en ambos archivos, Pandas les puso el sufijo _REG
+        final_tec_col   = f"{col_tec_reg}_REG"   if f"{col_tec_reg}_REG"   in df_final.columns else col_tec_reg
+        final_orden_col = f"{col_orden_reg}_REG" if f"{col_orden_reg}_REG" in df_final.columns else col_orden_reg
+        final_act_col   = f"{col_act_reg}_REG"   if f"{col_act_reg}_REG"   in df_final.columns else col_act_reg
+        final_eval_col  = f"{col_eval_reg}_REG"  if f"{col_eval_reg}_REG"  in df_final.columns else col_eval_reg
+        final_mod_col   = f"{col_mod_reg}_REG"   if f"{col_mod_reg}_REG"   in df_final.columns else col_mod_reg
+
+        # 7. LÓGICA DE DIRECTRICES
         def calcular_puntos(row):
-            actividad = str(row[col_act_reg] if col_act_reg in row else row.get('ACTIVIDAD', '')).strip().upper()
+            actividad = str(row.get(final_act_col, '')).strip().upper()
             
-            # Extraer y concatenar TODOS los comentarios (Registro + Nube)
-            val_eval = str(row[col_eval_reg]) if col_eval_reg in row and pd.notna(row[col_eval_reg]) else ""
-            val_mod = str(row[col_mod_reg]) if col_mod_reg in row and pd.notna(row[col_mod_reg]) else ""
+            val_eval = str(row.get(final_eval_col, '')) if pd.notna(row.get(final_eval_col)) else ""
+            val_mod  = str(row.get(final_mod_col, ''))  if pd.notna(row.get(final_mod_col)) else ""
             
             vals_nube = []
             for col_com in cols_comentarios_nube:
-                if col_com in row and pd.notna(row[col_com]):
-                    vals_nube.append(str(row[col_com]))
+                col_nube_real = f"{col_com}_NUBE" if f"{col_com}_NUBE" in df_final.columns else col_com
+                if col_nube_real in row and pd.notna(row[col_nube_real]):
+                    vals_nube.append(str(row[col_nube_real]))
             
-            # Unir todo el texto en minúsculas
             todos_los_comentarios = f"{val_eval} {val_mod} {' '.join(vals_nube)}".lower()
 
-            # --- DIRECTRICES ---
-            
-            # 1. Traslados e Instalaciones (2.5 puntos)
             if any(x in actividad for x in ['INSTALACION', 'TRASLADO']):
                 return 2.5
             
-            # 2. SOPFIBRAS
             if 'SOPFIBRA' in actividad:
                 cambio_fibra_keywords = ['cambio de fibra', 'cambio fibra', 'reemplazo de fibra', 'se cambio drop', 'fibra nueva']
                 if any(kw in todos_los_comentarios for kw in cambio_fibra_keywords):
-                    return 2.0 # Con cambio de fibra reportado
-                return 1.0 # Normal (sin cambio)
+                    return 2.0 
+                return 1.0 
             
             return 0.0
 
         df_final['PUNTOS'] = df_final.apply(calcular_puntos, axis=1)
 
         # 8. CONSOLIDADO
-        reporte = df_final.groupby(col_tec_reg).agg(
-            Ordenes_Aceptables=(col_orden_reg, 'count'),
+        reporte = df_final.groupby(final_tec_col).agg(
+            Ordenes_Aceptables=(final_orden_col, 'count'),
             Total_Puntos=('PUNTOS', 'sum')
         ).reset_index()
         
-        reporte = reporte.rename(columns={col_tec_reg: 'Técnico', 'Ordenes_Aceptables': 'Órdenes Aceptables', 'Total_Puntos': 'Total Puntos'})
+        reporte = reporte.rename(columns={final_tec_col: 'Técnico', 'Ordenes_Aceptables': 'Órdenes Aceptables', 'Total_Puntos': 'Total Puntos'})
         reporte = reporte.sort_values(by='Total Puntos', ascending=False)
 
         return reporte
@@ -166,7 +159,7 @@ def render_modulo_tecnicos():
 
         if archivo_reg:
             if st.button("🚀 Calcular Puntos de Técnicos", type="primary", use_container_width=True):
-                with st.spinner("Realizando búsqueda pesada y analizando directrices..."):
+                with st.spinner("Realizando cruce y protegiendo contra colisiones..."):
                     resultado = procesar_evaluacion_puntos(archivo_reg, df_base_nube)
                     
                     if resultado is not None and not resultado.empty:
