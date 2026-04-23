@@ -3,11 +3,9 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 import re
-from weasyprint import HTML
-import base64
 
-def normalizar_columnas(df):
-    """Limpia encabezados: quita tildes, espacios y pasa a mayúsculas."""
+def limpiar_columnas(df):
+    """Normaliza encabezados: quita tildes, espacios y pasa a mayúsculas."""
     cols_limpias = []
     for col in df.columns:
         c = str(col).strip().upper()
@@ -16,201 +14,132 @@ def normalizar_columnas(df):
     df.columns = cols_limpias
     return df
 
-def generar_pdf_puntos(df_reporte):
-    """
-    Crea un archivo PDF estilizado a partir del DataFrame de resultados.
-    """
-    fecha_actual = pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')
-    
-    # Construcción de las filas de la tabla en HTML
-    filas_html = ""
-    for _, row in df_reporte.iterrows():
-        filas_html += f"""
-        <tr>
-            <td style="text-align: left;">{row['👨‍🔧 Nombre del Técnico']}</td>
-            <td>{int(row['📋 Total Órdenes Cerradas'])}</td>
-            <td style="font-weight: bold; color: #1d4ed8;">{row['⭐ Puntos Totales']:.1f}</td>
-        </tr>
-        """
-
-    # Template HTML con CSS embebido para el PDF
-    html_template = f"""
-    <html>
-    <head>
-        <style>
-            @page {{ size: A4; margin: 20mm; }}
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; color: #333; }}
-            .header {{ text-align: center; border-bottom: 2px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 20px; }}
-            h1 {{ color: #1e3a8a; margin: 0; font-size: 24px; }}
-            .info {{ text-align: right; font-size: 10px; color: #666; margin-bottom: 20px; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            th {{ background-color: #1e3a8a; color: white; padding: 12px; font-size: 12px; text-transform: uppercase; }}
-            td {{ padding: 10px; border-bottom: 1px solid #eee; font-size: 11px; text-align: center; }}
-            tr:nth-child(even) {{ background-color: #f8fafc; }}
-            .footer {{ position: fixed; bottom: 0; width: 100%; text-align: center; font-size: 9px; color: #999; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>REPORTE DE EVALUACIÓN POR PUNTOS</h1>
-            <p>Región: ISLAS | Maxcom PRO</p>
-        </div>
-        <div class="info">Generado el: {fecha_actual}</div>
-        <table>
-            <thead>
-                <tr>
-                    <th style="text-align: left;">Técnico</th>
-                    <th>Órdenes Cerradas</th>
-                    <th>Puntos Totales</th>
-                </tr>
-            </thead>
-            <tbody>
-                {filas_html}
-            </tbody>
-        </table>
-        <div class="footer">Este documento es un reporte automático generado por el Monitor Operativo Maxcom PRO.</div>
-    </body>
-    </html>
-    """
-    
-    # Convertir HTML a PDF en memoria (Bytes)
-    pdf_bytes = HTML(string=html_template).write_pdf()
-    return pdf_bytes
-
-def procesar_evaluacion_inversa(archivo_registro, df_nube):
+def procesar_evaluacion_puntos(archivo_registro, df_nube):
     try:
-        # 1. MAESTRO: Datos de la Nube (Solo Cerradas)
-        df_sheets = normalizar_columnas(df_nube.copy())
+        # 1. CARGA Y LIMPIEZA DE LA NUBE (BASE PRINCIPAL)
+        df_nube_clean = limpiar_columnas(df_nube.copy())
         
-        col_num_nube = next((c for c in df_sheets.columns if any(kw in c for kw in ['NUM', 'ORDEN', 'ID'])), None)
-        col_est_nube = next((c for c in df_sheets.columns if 'ESTADO' in c or 'STATUS' in c), None)
-        col_act_nube = next((c for c in df_sheets.columns if 'ACTIVIDAD' in c), None)
-        col_tec_nube = next((c for c in df_sheets.columns if 'TECNICO' in c), None)
-        cols_comentarios = [c for c in df_sheets.columns if any(kw in c for kw in ['COMENTARIO', 'NOTA', 'OBSERVACION', 'LIQUID'])]
+        # Identificar columnas clave en la nube
+        col_num_nube = next((c for c in df_nube_clean.columns if any(kw in c for kw in ['NUM', 'ORDEN', 'ID'])), None)
+        col_est_nube = next((c for c in df_nube_clean.columns if 'ESTADO' in c), None)
+        col_act_nube = next((c for c in df_nube_clean.columns if 'ACTIVIDAD' in c), None)
+        col_tec_nube = next((c for c in df_nube_clean.columns if 'TECNICO' in c), None)
+        cols_obs_nube = [c for c in df_nube_clean.columns if any(kw in c for kw in ['COMENTARIO', 'OBSERVACION', 'LIQUID'])]
 
-        df_maestro = df_sheets[df_sheets[col_est_nube].astype(str).str.upper() == 'CERRADA'].copy()
-        df_maestro[col_num_nube] = df_maestro[col_num_nube].astype(str).str.replace(r'\D', '', regex=True)
+        # Filtrar solo órdenes CERRADAS en la nube
+        df_cerradas = df_nube_clean[df_nube_clean[col_est_nube].astype(str).str.upper() == 'CERRADA'].copy()
+        df_cerradas[col_num_nube] = df_cerradas[col_num_nube].astype(str).str.replace(r'\D', '', regex=True)
 
-        # 2. VALIDACIÓN: Mozart (Aceptables)
+        # 2. CARGA DEL REGISTRO (MOZART) PARA COTEJAR CALIDAD
         if archivo_registro.name.endswith('.csv'):
-            try:
-                df_raw_reg = pd.read_csv(archivo_registro, header=None, dtype=str)
-            except:
-                archivo_registro.seek(0)
-                df_raw_reg = pd.read_csv(archivo_registro, header=None, dtype=str, encoding='latin1')
+            try: df_raw = pd.read_csv(archivo_registro, header=None, dtype=str)
+            except: df_raw = pd.read_csv(archivo_registro, header=None, dtype=str, encoding='latin1')
         else:
-            df_raw_reg = pd.read_excel(archivo_registro, header=None, dtype=str)
+            df_raw = pd.read_excel(archivo_registro, header=None, dtype=str)
 
         header_idx = -1
-        for i, row in df_raw_reg.iterrows():
-            txt = " ".join(row.dropna().astype(str)).upper()
-            if 'ORDEN' in txt and 'ACTIVIDAD' in txt:
+        for i, row in df_raw.iterrows():
+            fila_texto = " ".join(row.dropna().astype(str)).upper()
+            if 'ORDEN' in fila_texto and 'ESTADO' in fila_texto:
                 header_idx = i
                 break
         
-        df_reg = df_raw_reg.iloc[header_idx + 1:].copy()
-        df_reg.columns = df_raw_reg.iloc[header_idx]
-        df_reg = normalizar_columnas(df_reg.reset_index(drop=True))
+        if header_idx == -1:
+            st.error("❌ No se detectaron las columnas en el Registro.")
+            return None
 
+        df_reg = df_raw.iloc[header_idx + 1:].copy()
+        df_reg.columns = df_raw.iloc[header_idx]
+        df_reg = limpiar_columnas(df_reg.reset_index(drop=True))
+        
+        # Identificar columnas en Registro
         col_num_reg = next((c for c in df_reg.columns if 'ORDEN' in c or 'NUM' in c), None)
         col_est_reg = next((c for c in df_reg.columns if 'ESTADO' in c), None)
         
+        # Limpiar IDs de Registro y filtrar solo ACEPTABLES
         df_reg[col_num_reg] = df_reg[col_num_reg].astype(str).str.replace(r'\D', '', regex=True)
-        ordenes_aceptables = set(df_reg[df_reg[col_est_reg].astype(str).str.upper() == 'ACEPTABLE'][col_num_reg].tolist())
+        # Creamos un set de órdenes aceptables para búsqueda rápida
+        ordenes_aceptables = set(df_reg[df_reg[col_est_reg].astype(str).str.upper() == 'ACEPTABLE'][col_num_reg])
 
-        # 3. ASIGNACIÓN DE PUNTOS
-        def evaluar_puntos(row):
+        # 3. LÓGICA DE ASIGNACIÓN DE PUNTOS
+        def calcular_puntos(row):
             actividad = str(row.get(col_act_nube, "")).upper()
-            orden_id = str(row.get(col_num_nube, ""))
-            texto_coment = " ".join([str(row[c]) for c in cols_comentarios if pd.notna(row[c])]).lower()
-
-            # REGLA: Instalaciones (2.5 pts)
-            if any(x in actividad for x in ['INSFIBRA', 'INSTALACION']):
+            num_orden = str(row.get(col_num_nube, ""))
+            
+            # --- CASO 1: INSFIBRA (Instalación Fija) ---
+            if 'INSFIBRA' in actividad:
                 return 2.5
             
-            # REGLA: Traslado Externo en comentario (2.5 pts)
-            if 'TRASLADO EXTERNO' in texto_coment or 'TRASLADO' in actividad:
-                return 2.5
-
-            # REGLA: SOP / SOPFIBRA (Debe ser aceptable en Mozart)
+            # --- CASO 2: SOPFIBRA / SOP (Requieren cotejo con Registro) ---
             if 'SOP' in actividad:
-                if orden_id in ordenes_aceptables:
-                    keywords_cambio = ['cambio de fibra', 'cambio fibra', 'reemplazo de fibra', 'cambio drop', 'fibra nueva', 'se tiro fibra']
-                    if any(kw in texto_coment for kw in keywords_cambio):
+                # Si NO está en el registro como aceptable, no gana puntos o solo base? 
+                # Según tu instrucción: "cotejamos con las ordenes que hay en estado aceptable"
+                if num_orden in ordenes_aceptables:
+                    # Unimos todos los comentarios de la nube para buscar palabras clave
+                    comentario = " ".join([str(row[c]) for c in cols_obs_nube if pd.notna(row[c])]).lower()
+                    
+                    # Traslado Externo = 2.5 pts
+                    if any(kw in comentario for kw in ['traslado externo', 'traslado de equipo', 'traslado de linea']):
+                        return 2.5
+                    # Cambio de Fibra = 2.0 pts
+                    if any(kw in comentario for kw in ['cambia fibra', 'cambio de fibra', 'reemplazo drop', 'fibra nueva']):
                         return 2.0
+                    
+                    # SOP Normal Aceptable = 1.0 pt
                     return 1.0
+                else:
+                    # Si es SOP pero no está aceptable en Mozart, 0 puntos
+                    return 0.0
             
-            # REGLA: Mantenimiento (1 pt si es aceptable)
-            if 'MANTENIMIENTO' in actividad and orden_id in ordenes_aceptables:
-                return 1.0
-
             return 0.0
 
-        df_maestro['PUNTOS'] = df_maestro.apply(evaluar_puntos, axis=1)
+        # Aplicar puntos
+        df_cerradas['PUNTOS'] = df_cerradas.apply(calcular_puntos, axis=1)
 
-        # 4. AGRUPACIÓN
-        reporte = df_maestro.groupby(col_tec_nube).agg(
-            Ordenes_Cerradas=(col_num_nube, 'count'),
+        # 4. CONSOLIDACIÓN FINAL
+        reporte = df_cerradas.groupby(col_tec_nube).agg(
+            Total_Ordenes_Cerradas=(col_num_nube, 'count'),
             Puntos_Ganados=('PUNTOS', 'sum')
         ).reset_index()
 
         reporte = reporte.rename(columns={
             col_tec_nube: '👨‍🔧 Nombre del Técnico',
-            'Ordenes_Cerradas': '📋 Total Órdenes Cerradas',
+            'Total_Ordenes_Cerradas': '📦 Órdenes Cerradas',
             'Puntos_Ganados': '⭐ Puntos Totales'
         })
 
         return reporte.sort_values(by='⭐ Puntos Totales', ascending=False)
 
     except Exception as e:
-        st.error(f"Error en el procesamiento: {e}")
+        st.error(f"Error procesando la evaluación: {e}")
         return None
 
 def render_modulo_tecnicos():
-    st.markdown("### 🏆 Evaluación de Rendimiento (Puntos)")
-    st.caption("Base: Nube (Cerradas) | Validación: Registro Mozart (Aceptables)")
-
+    st.markdown("### 🏆 Evaluación Gerencial por Puntos")
+    st.caption("Base: Órdenes Cerradas (Nube) vs. Calidad Aceptable (Mozart)")
+    
     df_nube = st.session_state.get('df_base', None)
-
+    
     if df_nube is not None and not df_nube.empty:
-        st.success("🔗 **Conexión con Google Sheets activa.**")
+        st.info("📊 Analizando base de datos de la nube con estatus 'Cerrada'.")
         
-        archivo_reg = st.file_uploader("📂 Sube el Registro de Calidad", type=['csv', 'xlsx'])
+        archivo_reg = st.file_uploader("📂 Sube el archivo Mozart (Pestaña Registro)", type=['csv', 'xlsx'])
         
-        if archivo_reg:
-            if st.button("🚀 Calcular y Mostrar Resultados", use_container_width=True, type="primary"):
-                resultado = procesar_evaluacion_inversa(archivo_reg, df_nube)
+        if archivo_reg and st.button("🚀 Ejecutar Auditoría de Puntos", use_container_width=True, type="primary"):
+            with st.spinner("Cruzando datos y analizando comentarios..."):
+                resultado = procesar_evaluacion_puntos(archivo_reg, df_nube)
                 
-                if resultado is not None and not resultado.empty:
+                if resultado is not None:
                     st.divider()
-                    
-                    # Tabla Nativa (Cero HTML en pantalla)
                     st.dataframe(resultado, use_container_width=True, hide_index=True)
                     
-                    st.markdown("### 📥 Descargar Reportes")
-                    col_dl1, col_dl2 = st.columns(2)
-                    
-                    with col_dl1:
-                        # Descarga PDF
-                        with st.spinner("Generando PDF..."):
-                            pdf_file = generar_pdf_puntos(resultado)
-                            st.download_button(
-                                label="📄 Descargar Reporte en PDF",
-                                data=pdf_file,
-                                file_name=f"Reporte_Puntos_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True
-                            )
-                            
-                    with col_dl2:
-                        # Descarga CSV
-                        csv = resultado.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Descargar Reporte en CSV",
-                            data=csv,
-                            file_name="Reporte_Puntos_Tecnicos.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
+                    csv = resultado.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Descargar Reporte de Puntos", 
+                        data=csv, 
+                        file_name="Evaluacion_Puntos_Tecnicos.csv", 
+                        mime="text/csv", 
+                        use_container_width=True
+                    )
     else:
-        st.warning("⚠️ Los datos de la nube no están sincronizados. Actualiza desde el panel lateral.")
+        st.warning("⚠️ Sincroniza los datos en el panel lateral antes de continuar.")
