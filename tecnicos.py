@@ -96,7 +96,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             texto_nube = " ".join(comentarios_nube_lista).lower()
 
             # --- DIRECTRICES ---
-            # 1. Traslados e Instalaciones (Completados 100% por estar Aceptables) = 2.5 pts
+            # 1. Traslados e Instalaciones = 2.5 pts
             if any(x in actividad for x in ['INSTALACION', 'TRASLADO']):
                 return 2.5
             
@@ -124,13 +124,14 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube):
             Total_Puntos=('PUNTOS', 'sum')
         ).reset_index()
 
+        # Renombramos las columnas EXACTAMENTE como en tu imagen
         reporte = reporte.rename(columns={
-            tec_final_col: 'Técnico', 
-            'Ordenes_Aceptables': 'Órdenes Aceptables', 
-            'Total_Puntos': 'Puntos Totales'
+            tec_final_col: '👨‍🔧 Nombre del Técnico', 
+            'Ordenes_Aceptables': '📋 Órdenes 100% Completas', 
+            'Total_Puntos': '⭐ Puntos Ganados'
         })
         
-        return reporte.sort_values(by='Puntos Totales', ascending=False)
+        return reporte.sort_values(by='⭐ Puntos Ganados', ascending=False)
 
     except Exception as e:
         st.error(f"Error crítico procesando el archivo: {e}")
@@ -154,26 +155,11 @@ def render_modulo_tecnicos():
                 if resultado is not None and not resultado.empty:
                     st.divider()
                     
-                    # Renderizado nativo y estético de Streamlit
+                    # Uso de tabla nativa (cero HTML)
                     st.dataframe(
                         resultado,
                         use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Técnico": st.column_config.TextColumn(
-                                "👨‍🔧 Nombre del Técnico", 
-                                width="large"
-                            ),
-                            "Órdenes Aceptables": st.column_config.NumberColumn(
-                                "📋 Órdenes 100% Completas", 
-                                help="Cantidad de órdenes ACEPTABLES según Mozart"
-                            ),
-                            "Puntos Totales": st.column_config.NumberColumn(
-                                "⭐ Puntos Ganados", 
-                                format="%.1f",
-                                help="Basado en directrices de Instalación, Traslado, SOPFibra y Mantenimiento"
-                            )
-                        }
+                        hide_index=True
                     )
                     
                     csv = resultado.to_csv(index=False).encode('utf-8')
