@@ -28,7 +28,6 @@ try:
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
-# 🚨 IMPORTACIÓN MÓDULO BIOMÉTRICO 🚨
 try:
     import biometrico
 except ImportError:
@@ -52,7 +51,7 @@ except ImportError:
     st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
 
 # ==============================================================================
-# 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ Y FUNCIONES DE TIEMPOS MUERTOS
+# 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
 # ==============================================================================
 st.set_page_config(
     layout="wide", 
@@ -85,7 +84,6 @@ def aplicar_estilos_nativos():
     """
     st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# PATRON ORIGINAL
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 
@@ -174,7 +172,7 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
+# 🛡️ MOTOR SEGURO DE FECHAS
 # ==============================================================================
 def get_honduras_time():
     return datetime.utcnow() - timedelta(hours=6)
@@ -520,7 +518,7 @@ def main():
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
     
-    ancho_pantalla = streamlit_js_eval(js_expressions='window.innerWidth', key='WIDTH_CHECK', want_output=True)
+    ancho_pantalla = streamlit_js_eval(js_expressions='window.screen.width', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
 
     if rol_usuario in ['admin', 'jefe']:
@@ -541,13 +539,6 @@ def main():
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
         pass 
 
-    filtro_actividad = []
-    filtro_estado = []
-    filtro_motivo = []
-    check_criticos_diamante = False
-    check_no_asignadas = False 
-    tec_filtro_monitor = "Todos"
-    
     # === LÓGICA DE NAVEGACIÓN (BLOQUEO ROL MONITOREO) ===
     if es_movil and option_menu is not None:
         st.markdown("""
@@ -563,78 +554,52 @@ def main():
         
         st.markdown('<div class="bottom-menu-container">', unsafe_allow_html=True)
         
-        # Filtro de acceso móvil
         if rol_usuario in ['admin', 'jefe']:
-            nav_opts = ["Monitor", "Reportes", "Vehículos", "Más"]
-            nav_icons = ["lightning", "bar-chart", "car-front", "list"]
+            selected_nav = option_menu(
+                menu_title=None,
+                options=["Monitor", "Reportes", "Vehículos", "Más"],
+                icons=["lightning", "bar-chart", "car-front", "list"],
+                default_index=0,
+                orientation="horizontal",
+                styles={
+                    "container": {"padding": "0!important", "background-color": "transparent"},
+                    "icon": {"color": "#94A3B8", "font-size": "20px"}, 
+                    "nav-link": {"font-size": "11px", "text-align": "center", "margin":"0px", "--hover-color": "#2D2F39", "padding": "5px"},
+                    "nav-link-selected": {"background-color": "transparent", "color": "#3B82F6", "font-weight": "bold"},
+                }
+            )
+            if selected_nav == "Monitor": nav_menu_diamante = "⚡ Monitor en Vivo"
+            elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
+            elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
+            else: 
+                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
         else:
-            nav_opts = ["Monitor"]
-            nav_icons = ["lightning"]
-
-        selected_nav = option_menu(
-            menu_title=None,
-            options=nav_opts,
-            icons=nav_icons,
-            default_index=0,
-            orientation="horizontal",
-            styles={
-                "container": {"padding": "0!important", "background-color": "transparent"},
-                "icon": {"color": "#94A3B8", "font-size": "20px"}, 
-                "nav-link": {"font-size": "11px", "text-align": "center", "margin":"0px", "--hover-color": "#2D2F39", "padding": "5px"},
-                "nav-link-selected": {"background-color": "transparent", "color": "#3B82F6", "font-weight": "bold"},
-            }
-        )
+            selected_nav = option_menu(
+                menu_title=None,
+                options=["Monitor"],
+                icons=["lightning"],
+                default_index=0,
+                orientation="horizontal",
+                styles={
+                    "container": {"padding": "0!important", "background-color": "transparent"},
+                    "icon": {"color": "#94A3B8", "font-size": "20px"}, 
+                    "nav-link": {"font-size": "11px", "text-align": "center", "margin":"0px", "--hover-color": "#2D2F39", "padding": "5px"},
+                    "nav-link-selected": {"background-color": "transparent", "color": "#3B82F6", "font-weight": "bold"},
+                }
+            )
+            nav_menu_diamante = "⚡ Monitor en Vivo"
+            
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        if selected_nav == "Monitor": nav_menu_diamante = "⚡ Monitor en Vivo"
-        elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
-        elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
-        else: 
-            nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
-            st.divider()
+        if nav_menu_diamante != "⚡ Monitor en Vivo": st.divider()
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
                 nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
             else:
                 st.markdown("### 🖥️ Menú de Control")
-                st.info("🔒 Acceso exclusivo a Monitor en Vivo")
+                st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
                 nav_menu_diamante = "⚡ Monitor en Vivo"
             
-    filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
-    
-    with filtro_container:
-        if nav_menu_diamante == "⚡ Monitor en Vivo":
-            if not es_movil: st.divider()
-            st.markdown("### 🎛️ Filtros Múltiples")
-            
-            if 'df_base' in st.session_state and st.session_state.df_base is not None:
-                df_base_activa_temp = st.session_state.df_base.copy()
-                lista_actividades = sorted(df_base_activa_temp['ACTIVIDAD'].dropna().unique().tolist())
-                lista_estados = sorted(df_base_activa_temp['ESTADO'].dropna().unique().tolist())
-                lista_motivos = sorted(df_base_activa_temp['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa_temp.columns else []
-                
-                filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-                filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-                filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
-                
-                st.divider() 
-                st.markdown("### 🔍 Filtros en Vivo")
-                
-                # TODOS LOS ROLES (INCLUYENDO MONITOREO) PUEDEN USAR LOS FILTROS EN VIVO AHORA
-                m_viva_count = df_base_activa_temp['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                mascara_offline_segura = df_base_activa_temp['ES_OFFLINE'] == True
-                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                
-                mascara_no_asignadas = (df_base_activa_temp['TECNICO'].isna()) | (df_base_activa_temp['TECNICO'].astype(str).str.strip() == '') | (df_base_activa_temp['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-                total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
-                
-                check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
-                check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
-                
-                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa_temp['TECNICO'].dropna().unique().tolist())
-                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
-
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
@@ -645,7 +610,6 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
-        # Solo el admin o jefe pueden ver el cargador de archivos
         mostrar_cargador = False
         if rol_usuario in ['admin', 'jefe'] and not es_movil:
             mostrar_cargador = True
@@ -688,6 +652,9 @@ def main():
 
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
 
+    # ==============================================================================
+    # 2. CARGA Y PROCESAMIENTO DE DATOS
+    # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
@@ -828,22 +795,70 @@ def main():
     hoy_date_valor = ahora_local.date()
     df_base_activa = df_base.copy()
 
-    if nav_menu_diamante == "⚡ Monitor en Vivo" or nav_menu_diamante == "📊 Centro de Reportes":
+    # ==============================================================================
+    # 3. FILTROS Y NAVEGACIÓN PRINCIPAL
+    # ==============================================================================
+    filtro_actividad = []
+    filtro_estado = []
+    filtro_motivo = []
+    check_criticos_diamante = False
+    check_no_asignadas = False 
+    tec_filtro_monitor = "Todos"
+
+    if nav_menu_diamante == "⚡ Monitor en Vivo":
+        filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
+        with filtro_container:
+            if not es_movil: st.markdown("---")
+            st.markdown("### 🎛️ Filtros Múltiples")
+            
+            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
+            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
+            
+            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+            
+            st.divider() 
+            st.markdown("### 🔍 Filtros en Vivo")
+            
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            
+            if 'ES_OFFLINE' not in df_base_activa.columns:
+                df_base_activa['ES_OFFLINE'] = False
+            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+            
+            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+            
+            mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
+            
+            check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
+            check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+            
+            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
         if len(filtro_estado) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
         if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
         if check_criticos_diamante:
-            mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado['ALERTA_TIEMPO']
+            mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado.get('ALERTA_TIEMPO', False)
             mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
             mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
             df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
         if check_no_asignadas:
             mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
             df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
-        if tec_filtro_monitor != "Todos": df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
-    else: df_monitor_filtrado = df_base_activa.copy()
+        if tec_filtro_monitor != "Todos": 
+            df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
+    else: 
+        df_monitor_filtrado = df_base_activa.copy()
 
+    # ==============================================================================
+    # 4. RENDERIZADO DE PANTALLAS
+    # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         try: mostrar_auditoria(es_movil, conn)
         except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
