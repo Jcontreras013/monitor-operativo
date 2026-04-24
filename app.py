@@ -1256,28 +1256,22 @@ def main():
 
             st.divider()
 
-            # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT (CERRADAS Y EN PROCESO)
+# ==============================================================================
+            # ⏳ LÓGICA DE GRÁFICA GANTT (COLORES POR ACTIVIDAD Y LEYENDA A LA DERECHA)
             # ==============================================================================
             if not es_movil:
-                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades Hoy (Gantt)</h4><br>", unsafe_allow_html=True)
+                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>", unsafe_allow_html=True)
                 
-                # --- NUEVO FILTRO ESTRICTO PARA LIMPIAR LA GRÁFICA ---
-                # 1. Órdenes que se liquidaron hoy
+                # 1. Filtro estricto: Solo lo liquidado hoy o lo abierto que inició hoy (limpia la gráfica)
                 mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                
-                # 2. Órdenes que siguen abiertas, pero que REALMENTE iniciaron hoy (ignora fantasmas de días pasados)
                 mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
                 
-                # Unimos ambas condiciones
                 df_gantt_limpio = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
                 
-                # Filtramos todos los técnicos que no sean supervisores
+                # 2. Excluir supervisores y filtrar nulos
                 mask_supervisores = df_gantt_limpio['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                df_para_gantt_bruto = df_gantt_limpio[~mask_supervisores].copy()
-                
-                # Filtrar solo órdenes con hora de inicio
-                df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
+                df_para_gantt_final = df_gantt_limpio[~mask_supervisores].copy()
+                df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                 
                 if not df_para_gantt_final.empty:
                     gantt_base_date = hoy_date_valor
@@ -1290,64 +1284,61 @@ def main():
                             return datetime.combine(gantt_base_date, dt_val.time())
                         except: return pd.NaT
 
-                    # Columnas matemáticas para el eje X
+                    # Calcular puntos de inicio y fin
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
-                    
-                    # MAGIA: Si no tiene hora de liquidación (abierta), usar la hora actual
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final.apply(
                         lambda row: normalizar_para_gantt(row['HORA_LIQ']) if pd.notnull(row['HORA_LIQ']) else normalizar_para_gantt(ahora_hx),
                         axis=1
                     )
                     
-                    # Limpieza de nombres
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
-                    
-                    # Descartar nulos y ordenar
-                    df_para_gantt_final = df_para_gantt_final.dropna(subset=['GANTT_START', 'GANTT_END'])
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                    st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Todas las Órdenes Aperturadas Hoy)</h5>", unsafe_allow_html=True)
-                    
-                    altura_gantt = max(350, len(df_para_gantt_final['TECNICO'].unique()) * 45)
-
-                    # Coloreamos por ESTADO para que veas cuáles son las abiertas y cuáles las cerradas
+                    # 3. Creación del px.timeline con color por ACTIVIDAD
                     fig_gantt = px.timeline(
                         df_para_gantt_final, 
                         x_start="GANTT_START", 
                         x_end="GANTT_END", 
                         y="TECNICO", 
-                        color="ESTADO", 
+                        color="ACTIVIDAD", # <--- Aquí activamos un color por cada tipo de actividad
                         text="ACTIVIDAD",  
-                        hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "ACTIVIDAD": True, "GANTT_START": False, "GANTT_END": False}, 
-                        height=altura_gantt
+                        hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "GANTT_START": False, "GANTT_END": False}, 
+                        height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
                     
                     fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
                     
+                    # Forzar el eje X para que no se pegue a la derecha (Rango de 6 AM a 10 PM)
                     hora_inicio_pantalla = datetime.combine(gantt_base_date, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     hora_fin_pantalla = datetime.combine(gantt_base_date, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt.update_xaxes(
                         range=[hora_inicio_pantalla, hora_fin_pantalla],
                         tickformat="%H:%M", 
-                        title_text="Línea de Tiempo Operativa (En Vivo)",
-                        dtick=3600000 
+                        title_text="Cronograma de Actividades"
                     )
                     
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
                     
+                    # 4. Configuración de la LEYENDA (Esquina Derecha)
                     fig_gantt.update_layout(
                         showlegend=True, 
-                        legend_title_text='Estado de Orden',
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        margin=dict(t=10, b=20, l=0, r=10), 
+                        legend_title_text='Identificador de Actividades',
+                        legend=dict(
+                            orientation="v",      # Vertical para que quepan todos los nombres
+                            yanchor="top", 
+                            y=1, 
+                            xanchor="left", 
+                            x=1.02                # Lo mueve justo fuera del gráfico a la derecha
+                        ),
+                        margin=dict(t=10, b=20, l=0, r=150), # Espacio extra a la derecha para que no se corte la leyenda
                         paper_bgcolor="rgba(0,0,0,0)", 
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
                     
                     st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
-                    st.info("No hay órdenes con hora de inicio registrada para hoy.")
+                    st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
         st.divider()
         
