@@ -253,13 +253,29 @@ def mostrar_comentario_cierre(fila):
         nombre_real = fila.get('NOMBRE', fila.get('SUSCRIPTOR', fila.get('NOMBRE CLIENTE', fila.get('NOMBRE_CLIENTE', 'N/D'))))
         if nombre_real != 'N/D': st.write(f"**Nombre:** {nombre_real}")
         st.write(f"**Ubicación (Colonia):** {fila.get('COLONIA', 'N/D')}")
+    
     with col_modal_b:
         st.markdown("##### 🚦 Datos de Operación")
         st.write(f"**Estado Actual:** {fila['ESTADO']}")
         st.write(f"**Técnico:** {fila['TECNICO']}")
+        
+        # --- Lógica de Tiempos en el Diálogo ---
+        try:
+            h_ini = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
+            st.write(f"**Hora Inicio:** {h_ini}")
+            
+            if str(fila.get('ESTADO', '')).upper() == 'CERRADA' and pd.notnull(fila.get('HORA_LIQ')):
+                h_liq = pd.to_datetime(fila.get('HORA_LIQ')).strftime('%H:%M')
+                st.write(f"**Hora Cierre:** {h_liq}")
+            else:
+                st.write("**Hora Cierre:** En Proceso")
+        except:
+            pass
+
         if 'MX' in fila: st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
         if 'GPS' in fila: st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
-    st.divider()
+
+    st.markdown("---")
     estatus_final_check = str(fila.get('ESTADO','')).upper().strip()
     if estatus_final_check == 'CERRADA': st.success("✅ **COMENTARIO DE LIQUIDACIÓN / CIERRE FINAL:**")
     else: st.markdown("**📝 COMENTARIO DE SEGUIMIENTO (EN PROCESO):**")
@@ -466,7 +482,7 @@ def main():
         elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
         else: 
             nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
-            st.divider()
+            st.markdown("---")
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
@@ -478,7 +494,7 @@ def main():
     
     with filtro_container:
         if nav_menu_diamante == "⚡ Monitor en Vivo":
-            if not es_movil: st.divider()
+            if not es_movil: st.markdown("---")
             st.markdown("### 🎛️ Filtros Múltiples")
             
             if 'df_base' in st.session_state and st.session_state.df_base is not None:
@@ -491,7 +507,7 @@ def main():
                 filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
                 filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
                 
-                st.divider() 
+                st.markdown("---") 
                 st.markdown("### 🔍 Filtros en Vivo")
                 if rol_usuario in ['admin', 'jefe']:
                     m_viva_count = df_base_activa_temp['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -509,7 +525,7 @@ def main():
 
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
-        st.divider()
+        st.markdown("---")
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None: sincronizar_datos_nube(conn)
@@ -526,7 +542,7 @@ def main():
         btn_reprocesar = False
         
         if mostrar_cargador:
-            st.divider()
+            st.markdown("---")
             st.markdown("### 📥 Carga de Archivos")
             if es_admin:
                 st.caption("Eres Admin: Sube los dos archivos (Actividades y FTTX).")
@@ -846,7 +862,7 @@ def main():
                         ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
                         if ordenes_con_error > 0: st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo.")
                         st.dataframe(df_maestra, use_container_width=True, hide_index=True)
-                        st.divider()
+                        st.markdown("---")
                         if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
                             with st.spinner("Dibujando secciones por técnico..."): st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
                         if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
@@ -879,10 +895,10 @@ def main():
             df_resi_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'RESIDENCIAL']
             
             tot_mora_plex_rep = len(df_plex_m_inicio_rep)
-            avance_mora_plex_rep = (len(df_plex_m_cerr_rep) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
+            avance_mora_plex_rep = (len(df_plex_m_cerr) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
             
             tot_mora_resi_rep = len(df_resi_m_inicio_rep)
-            avance_mora_resi_rep = (len(df_resi_m_cerr_rep) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
+            avance_mora_resi_rep = (len(df_resi_m_cerr) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
             
             tot_mora_global_rep = len(df_inicio_mora_rep)
             avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
@@ -904,7 +920,7 @@ def main():
                 with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
                 with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             
-            st.divider()
+            st.markdown("---")
 
             if not df_cerradas_espejo.empty:
                 st.markdown("### 📊 Desglose de Producción")
@@ -950,7 +966,7 @@ def main():
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
 
-            st.divider()
+            st.markdown("---")
             
             st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
             m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
@@ -1010,7 +1026,7 @@ def main():
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
                 with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
             if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-            st.divider()
+            st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
         return
 
@@ -1051,7 +1067,6 @@ def main():
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
         if es_movil:
-            # Estilo tarjetas para móviles
             st.markdown(f"""
             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #3B82F6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
@@ -1097,7 +1112,6 @@ def main():
 
         with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=not es_movil):
             if es_movil:
-                # Disposición vertical en móvil
                 st.caption("📅 Resumen de Retraso")
                 res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                 res_retraso_v.columns = ['Dias', 'Cant']
@@ -1254,15 +1268,15 @@ def main():
                     st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=tot_mora_global), use_container_width=True, key="p6")
                     if st.button("🔍 Mora Global", use_container_width=True, key="b6"): mostrar_detalle_avance("MORA GLOBAL", df_mora_pendiente_actual, df_mora_cerrada_hoy, df_inicio_mora_total)
 
-            st.divider()
+            st.markdown("---")
 
-# ==============================================================================
+            # ==============================================================================
             # ⏳ LÓGICA DE GRÁFICA GANTT (COLORES POR ACTIVIDAD Y LEYENDA A LA DERECHA)
             # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>", unsafe_allow_html=True)
                 
-                # 1. Filtro estricto: Solo lo liquidado hoy o lo abierto que inició hoy (limpia la gráfica)
+                # 1. Filtro estricto: Solo lo liquidado hoy o lo abierto que inició hoy
                 mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
                 mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
                 
@@ -1291,8 +1305,16 @@ def main():
                         axis=1
                     )
                     
+                    # --- PREPARAR ETIQUETAS PARA EL HOVER ---
+                    df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
+                    df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
+                        lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
+                    )
+                    
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
+                    
+                    st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                     
                     # 3. Creación del px.timeline con color por ACTIVIDAD
                     fig_gantt = px.timeline(
@@ -1300,15 +1322,24 @@ def main():
                         x_start="GANTT_START", 
                         x_end="GANTT_END", 
                         y="TECNICO", 
-                        color="ACTIVIDAD", # <--- Aquí activamos un color por cada tipo de actividad
+                        color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "GANTT_START": False, "GANTT_END": False}, 
+                        hover_data={
+                            "NUM": True, 
+                            "COLONIA": True, 
+                            "ESTADO": True, 
+                            "Inicio": True,
+                            "Cierre": True,
+                            "GANTT_START": False, 
+                            "GANTT_END": False,
+                            "ACTIVIDAD": False
+                        }, 
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
                     
                     fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
                     
-                    # Forzar el eje X para que no se pegue a la derecha (Rango de 6 AM a 10 PM)
+                    # Rango de 6 AM a 10 PM
                     hora_inicio_pantalla = datetime.combine(gantt_base_date, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     hora_fin_pantalla = datetime.combine(gantt_base_date, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
@@ -1320,18 +1351,13 @@ def main():
                     
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
                     
-                    # 4. Configuración de la LEYENDA (Esquina Derecha)
                     fig_gantt.update_layout(
                         showlegend=True, 
                         legend_title_text='Identificador de Actividades',
                         legend=dict(
-                            orientation="v",      # Vertical para que quepan todos los nombres
-                            yanchor="top", 
-                            y=1, 
-                            xanchor="left", 
-                            x=1.02                # Lo mueve justo fuera del gráfico a la derecha
+                            orientation="v", yanchor="top", y=1, xanchor="left", x=1.02 
                         ),
-                        margin=dict(t=10, b=20, l=0, r=150), # Espacio extra a la derecha para que no se corte la leyenda
+                        margin=dict(t=10, b=20, l=0, r=150), 
                         paper_bgcolor="rgba(0,0,0,0)", 
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
@@ -1340,7 +1366,7 @@ def main():
                 else:
                     st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
-        st.divider()
+        st.markdown("---")
         
         # ==============================================================================
         # EXPANDER: PANEL DE CONTROL DETALLADO Y TABS DE ABAJO
@@ -1489,7 +1515,7 @@ def main():
                             ax2.spines['right'].set_visible(False)
                             st.pyplot(fig2)
 
-                st.divider()
+                st.markdown("---")
 
                 fig3, ax3 = plt.subplots(figsize=(10, 3))
                 df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
