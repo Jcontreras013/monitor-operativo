@@ -90,7 +90,7 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 
 # ==============================================================================
-# GENERACIÓN DE PDF: TIEMPOS MUERTOS (NUEVO)
+# GENERACIÓN DE PDF: TIEMPOS MUERTOS 
 # ==============================================================================
 def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
@@ -151,8 +151,7 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
             pdf.cell(25, 6, duracion_str, border=1, align='C')
             pdf.ln()
             
-        # Calculo Base 8 Horas
-        jornada_base = 480 # 8 horas * 60 minutos
+        jornada_base = 480 
         tiempo_perdido_mins = max(0, jornada_base - total_minutos_trabajados)
         hrs_t, mins_t = divmod(total_minutos_trabajados, 60)
         hrs_p, mins_p = divmod(tiempo_perdido_mins, 60)
@@ -549,7 +548,7 @@ def main():
     check_no_asignadas = False 
     tec_filtro_monitor = "Todos"
     
-    # === LÓGICA DE NAVEGACIÓN ESTILO MÓVIL VS PC ===
+    # === LÓGICA DE NAVEGACIÓN (BLOQUEO ROL MONITOREO) ===
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
@@ -563,10 +562,19 @@ def main():
         """, unsafe_allow_html=True)
         
         st.markdown('<div class="bottom-menu-container">', unsafe_allow_html=True)
+        
+        # Filtro de acceso móvil
+        if rol_usuario in ['admin', 'jefe']:
+            nav_opts = ["Monitor", "Reportes", "Vehículos", "Más"]
+            nav_icons = ["lightning", "bar-chart", "car-front", "list"]
+        else:
+            nav_opts = ["Monitor"]
+            nav_icons = ["lightning"]
+
         selected_nav = option_menu(
             menu_title=None,
-            options=["Monitor", "Reportes", "Vehículos", "Más"],
-            icons=["lightning", "bar-chart", "car-front", "list"],
+            options=nav_opts,
+            icons=nav_icons,
             default_index=0,
             orientation="horizontal",
             styles={
@@ -583,19 +591,21 @@ def main():
         elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
         else: 
             nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
-            st.markdown("---")
+            st.divider()
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
                 nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
             else:
+                st.markdown("### 🖥️ Menú de Control")
+                st.info("🔒 Acceso exclusivo a Monitor en Vivo")
                 nav_menu_diamante = "⚡ Monitor en Vivo"
             
     filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
     
     with filtro_container:
         if nav_menu_diamante == "⚡ Monitor en Vivo":
-            if not es_movil: st.markdown("---")
+            if not es_movil: st.divider()
             st.markdown("### 🎛️ Filtros Múltiples")
             
             if 'df_base' in st.session_state and st.session_state.df_base is not None:
@@ -608,25 +618,26 @@ def main():
                 filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
                 filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
                 
-                st.markdown("---") 
+                st.divider() 
                 st.markdown("### 🔍 Filtros en Vivo")
-                if rol_usuario in ['admin', 'jefe']:
-                    m_viva_count = df_base_activa_temp['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                    mascara_offline_segura = df_base_activa_temp['ES_OFFLINE'] == True
-                    total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                    
-                    mascara_no_asignadas = (df_base_activa_temp['TECNICO'].isna()) | (df_base_activa_temp['TECNICO'].astype(str).str.strip() == '') | (df_base_activa_temp['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-                    total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
-                    
-                    check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
-                    check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
-                    
-                    lista_tecs_monitor = ["Todos"] + sorted(df_base_activa_temp['TECNICO'].dropna().unique().tolist())
-                    tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+                
+                # TODOS LOS ROLES (INCLUYENDO MONITOREO) PUEDEN USAR LOS FILTROS EN VIVO AHORA
+                m_viva_count = df_base_activa_temp['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                mascara_offline_segura = df_base_activa_temp['ES_OFFLINE'] == True
+                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+                
+                mascara_no_asignadas = (df_base_activa_temp['TECNICO'].isna()) | (df_base_activa_temp['TECNICO'].astype(str).str.strip() == '') | (df_base_activa_temp['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
+                
+                check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
+                check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+                
+                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa_temp['TECNICO'].dropna().unique().tolist())
+                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
 
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("---")
+        st.divider()
         st.markdown("### ☁️ Sincronización")
         if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None: sincronizar_datos_nube(conn)
@@ -634,6 +645,7 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
+        # Solo el admin o jefe pueden ver el cargador de archivos
         mostrar_cargador = False
         if rol_usuario in ['admin', 'jefe'] and not es_movil:
             mostrar_cargador = True
@@ -643,7 +655,7 @@ def main():
         btn_reprocesar = False
         
         if mostrar_cargador:
-            st.markdown("---")
+            st.divider()
             st.markdown("### 📥 Carga de Archivos")
             if es_admin:
                 st.caption("Eres Admin: Sube los dos archivos (Actividades y FTTX).")
@@ -1024,16 +1036,14 @@ def main():
             st.markdown("---")
 
             # ==============================================================================
-            # ⏳ GANTT EN PESTAÑA CIERRE DIARIO (NUEVO)
+            # ⏳ GANTT EN PESTAÑA CIERRE DIARIO
             # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
-                # Filtramos las órdenes que iniciaron en la fecha seleccionada
                 mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
                 df_gantt_diario = df_base[mask_ini_dia].copy()
                 
-                # Excluimos supervisores
                 mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
                 df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
                 
@@ -1050,7 +1060,6 @@ def main():
 
                     df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI'].apply(normalizar_para_gantt_d)
                     
-                    # Si la fecha del archivo es HOY, las abiertas llegan hasta la hora actual. Si es de ayer, llegan hasta las 22:00
                     hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(gantt_base_date_d, dt_time(22, 0))
                     
                     df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario.apply(
@@ -1066,7 +1075,6 @@ def main():
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                    # Gráfica Gantt
                     fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
@@ -1100,7 +1108,6 @@ def main():
                     
                     st.plotly_chart(fig_gantt_d, use_container_width=True)
 
-                    # ----------------- BOTÓN DE DESCARGA PDF TIEMPOS MUERTOS -----------------
                     col_bpdf1, col_bpdf2 = st.columns([1, 2])
                     with col_bpdf1:
                         if st.button("📄 GENERAR PDF TIEMPOS Y TIEMPO PERDIDO", use_container_width=True):
