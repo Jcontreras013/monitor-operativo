@@ -5,8 +5,7 @@ import unicodedata
 from datetime import date, datetime
 import re
 import io
-import base64
-from weasyprint import HTML
+from fpdf import FPDF
 
 def normalizar_texto(texto):
     """Limpia el texto: quita tildes, espacios extras y pasa a mayúsculas."""
@@ -16,134 +15,57 @@ def normalizar_texto(texto):
     return " ".join(t.split())
 
 def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
-    """Genera un reporte PDF con formato profesional usando HTML/CSS y WeasyPrint."""
+    """Genera un reporte PDF profesional con FPDF."""
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
     
-    # Formatear fechas para el reporte
+    # Encabezado
+    pdf.set_font("Arial", 'B', 16)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, "REPORTE DE PRODUCCION Y PUNTOS POR TECNICO", ln=True, align='C')
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.set_text_color(100, 100, 100)
     f_ini = fecha_inicio.strftime('%d/%m/%Y')
     f_fin = fecha_fin.strftime('%d/%m/%Y')
     f_emision = datetime.now().strftime('%d/%m/%Y %I:%M %p')
-
-    # Convertir DataFrame a filas HTML
-    rows_html = ""
-    for _, row in df.iterrows():
-        rows_html += f"""
-        <tr>
-            <td style="text-align: left;">{row['👨‍🔧 Técnico']}</td>
-            <td style="font-weight: bold;">{row['⭐ TOTAL PUNTOS']}</td>
-            <td>{row['🏠 INSFIBRA (2.5)']}</td>
-            <td>{row['🚚 TRASLADOS (2.5)']}</td>
-            <td>{row['🧵 CAMBIO FIBRA (2.0)']}</td>
-            <td>{row['🔧 SOP NORMAL (1.0)']}</td>
-        </tr>
-        """
-
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            @page {{
-                size: A4;
-                margin: 20mm;
-                background-color: #ffffff;
-            }}
-            body {{
-                font-family: 'Helvetica', 'Arial', sans-serif;
-                color: #333;
-                line-height: 1.6;
-            }}
-            .header {{
-                text-align: center;
-                border-bottom: 2px solid #2e59a7;
-                padding-bottom: 10px;
-                margin-bottom: 20px;
-            }}
-            .header h1 {{
-                color: #2e59a7;
-                margin: 0;
-                font-size: 22pt;
-                text-transform: uppercase;
-            }}
-            .info-section {{
-                margin-bottom: 20px;
-                font-size: 10pt;
-                color: #666;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-top: 10px;
-            }}
-            th {{
-                background-color: #f2f5fa;
-                color: #2e59a7;
-                font-weight: bold;
-                text-transform: uppercase;
-                font-size: 9pt;
-                border: 1px solid #dee2e6;
-                padding: 10px 5px;
-            }}
-            td {{
-                border: 1px solid #dee2e6;
-                padding: 8px 5px;
-                text-align: center;
-                font-size: 9pt;
-            }}
-            tr:nth-child(even) {{
-                background-color: #fafafa;
-            }}
-            .footer {{
-                position: fixed;
-                bottom: 0;
-                width: 100%;
-                text-align: center;
-                font-size: 8pt;
-                color: #aaa;
-                border-top: 1px solid #eee;
-                padding-top: 5px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>Reporte de Evaluación por Técnico</h1>
-        </div>
-        
-        <div class="info-section">
-            <p><strong>Periodo de Evaluación:</strong> {f_ini} al {f_fin}<br>
-            <strong>Fecha de Emisión:</strong> {f_emision}</p>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th style="width: 30%;">Técnico</th>
-                    <th>Total Puntos</th>
-                    <th>INSFIBRA (2.5)</th>
-                    <th>Traslados (2.5)</th>
-                    <th>Cambio Fibra (2.0)</th>
-                    <th>SOP Normal (1.0)</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-        </table>
-
-        <div class="footer">
-            Sistema Monitor Operativo Maxcom PRO - Confidencial
-        </div>
-    </body>
-    </html>
-    """
+    pdf.cell(0, 6, f"Periodo de Evaluacion: {f_ini} al {f_fin}", ln=True, align='C')
+    pdf.cell(0, 6, f"Fecha de Emision: {f_emision}", ln=True, align='C')
+    pdf.ln(10)
     
-    # Generar PDF
-    pdf_file = io.BytesIO()
-    HTML(string=html_content).write_pdf(pdf_file)
-    return pdf_file.getvalue()
+    # Tabla - Encabezados
+    pdf.set_font("Arial", 'B', 9)
+    pdf.set_fill_color(230, 235, 245)
+    pdf.set_text_color(0, 0, 0)
+    
+    w = [65, 30, 35, 40, 40, 40]
+    headers = ['Nombre del Tecnico', 'TOTAL PUNTOS', 'INSFIBRA (2.5)', 'Traslados (2.5)', 'Cambio Fibra (2.0)', 'SOP Normal (1.0)']
+    
+    for i in range(len(headers)):
+        pdf.cell(w[i], 8, headers[i], border=1, align='C', fill=True)
+    pdf.ln()
+    
+    # Tabla - Datos
+    pdf.set_font("Arial", '', 8)
+    for _, row in df.iterrows():
+        # Limpieza para compatibilidad con FPDF (latin-1)
+        tec = str(row['👨‍🔧 Técnico']).encode('latin-1', 'ignore').decode('latin-1')
+        
+        pdf.cell(w[0], 6, f" {tec[:35]}", border=1)
+        pdf.set_font("Arial", 'B', 9)
+        pdf.cell(w[1], 6, str(row['⭐ TOTAL PUNTOS']), border=1, align='C')
+        pdf.set_font("Arial", '', 8)
+        pdf.cell(w[2], 6, str(row['🏠 INSFIBRA (2.5)']), border=1, align='C')
+        pdf.cell(w[3], 6, str(row['🚚 TRASLADOS (2.5)']), border=1, align='C')
+        pdf.cell(w[4], 6, str(row['🧵 CAMBIO FIBRA (2.0)']), border=1, align='C')
+        pdf.cell(w[5], 6, str(row['🔧 SOP NORMAL (1.0)']), border=1, align='C')
+        pdf.ln()
+
+    return pdf.output(dest='S').encode('latin-1')
 
 def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fin):
     try:
-        # 1. PREPARACIÓN DE LA NUBE
+        # 1. Preparar Nube
         df_nube_clean = df_nube.copy()
         df_nube_clean.columns = [normalizar_texto(c) for c in df_nube_clean.columns]
         
@@ -160,12 +82,12 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
             df_cerradas = df_cerradas[(df_cerradas['FECHA_FILTRO'] >= fecha_inicio) & (df_cerradas['FECHA_FILTRO'] <= fecha_fin)]
 
         if df_cerradas.empty:
-            st.warning("No hay órdenes cerradas en el periodo seleccionado.")
+            st.warning("⚠️ No se encontraron órdenes cerradas en este periodo.")
             return None
 
         df_cerradas['NUM_LIMPIO'] = df_cerradas[col_num_nube].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'\D', '', regex=True).str.lstrip('0')
 
-        # 2. CARGA DE MOZART
+        # 2. Cargar Mozart
         if archivo_registro.name.endswith('.csv'):
             try: df_raw = pd.read_csv(archivo_registro, header=None, dtype=str)
             except: df_raw = pd.read_csv(archivo_registro, header=None, dtype=str, encoding='latin1')
@@ -179,6 +101,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
                 h_idx = i; break
         
         if h_idx == -1: return None
+
         df_reg = df_raw.iloc[h_idx + 1:].copy()
         df_reg.columns = [normalizar_texto(c) for c in df_raw.iloc[h_idx]]
         
@@ -188,9 +111,10 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
 
         mask_region = df_reg[col_reg_reg].astype(str).str.upper().str.contains('ISLAS', na=False) if col_reg_reg else True
         mask_estado = df_reg[col_est_reg].astype(str).str.upper().str.contains('ACEPTABLE', na=False) if col_est_reg else False
+        
         ordenes_aceptables = set(df_reg[mask_region & mask_estado][col_num_reg].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'\D', '', regex=True).str.lstrip('0'))
 
-        # 3. EVALUACIÓN
+        # 3. Clasificación
         def evaluar_orden(row):
             act = str(row.get(col_act_nube, "")).upper()
             num = row['NUM_LIMPIO']
@@ -198,6 +122,7 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
 
             if 'INSFIBRA' in act:
                 return pd.Series(['🏠 INSFIBRA (2.5)', 2.5])
+
             if 'SOP' in act:
                 if num in ordenes_aceptables:
                     if any(k in coment for k in ['traslado externo', 'traslado de equipo', 'traslado de linea', 'traslado']):
@@ -205,13 +130,15 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
                     if any(k in coment for k in ['cambia fibra', 'cambio de fibra', 'reemplazo drop', 'fibra nueva', 'se tiro fibra', 'cambio fibra']):
                         return pd.Series(['🧵 CAMBIO FIBRA (2.0)', 2.0])
                     return pd.Series(['🔧 SOP NORMAL (1.0)', 1.0])
+            
             return pd.Series(['OCULTO', 0.0])
 
         df_cerradas[['CATEGORIA', 'PUNTOS']] = df_cerradas.apply(evaluar_orden, axis=1)
 
-        # 4. CONSOLIDACIÓN
+        # 4. Consolidación
         resumen_conteo = df_cerradas.groupby([col_tec_nube, 'CATEGORIA']).size().unstack(fill_value=0)
         cols_finales = ['🏠 INSFIBRA (2.5)', '🚚 TRASLADOS (2.5)', '🧵 CAMBIO FIBRA (2.0)', '🔧 SOP NORMAL (1.0)']
+        
         for col in cols_finales:
             if col not in resumen_conteo.columns: resumen_conteo[col] = 0
         
@@ -228,7 +155,6 @@ def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fi
 
 def render_modulo_tecnicos():
     st.markdown("### 🏆 Evaluación de Puntos: Producción Aceptable")
-    st.caption("Cruce: Nube (Cerradas) vs Mozart (Aceptables Islas)")
     
     df_nube = st.session_state.get('df_base', None)
     if df_nube is not None:
@@ -243,22 +169,11 @@ def render_modulo_tecnicos():
                     st.divider()
                     st.dataframe(res, use_container_width=True, hide_index=True)
                     
-                    # Botones de descarga
-                    col_pdf, col_csv = st.columns(2)
-                    with col_pdf:
+                    c1, c2 = st.columns(2)
+                    with c1:
                         pdf_data = generar_pdf_evaluacion(res, rango[0], rango[1])
-                        st.download_button(
-                            label="📄 Descargar Reporte PDF",
-                            data=pdf_data,
-                            file_name=f"Evaluacion_Tecnicos_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
-                    with col_csv:
-                        st.download_button(
-                            label="📥 Descargar Reporte CSV",
-                            data=res.to_csv(index=False).encode('utf-8'),
-                            file_name="Puntos_Tecnicos.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
+                        st.download_button("📄 Descargar Reporte PDF", pdf_data, f"Puntos_Tecnicos_{datetime.now().strftime('%Y%m%d')}.pdf", "application/pdf", use_container_width=True)
+                    with c2:
+                        st.download_button("📥 Descargar Reporte CSV", res.to_csv(index=False).encode('utf-8'), "Puntos_Tecnicos.csv", "text/csv", use_container_width=True)
+    else:
+        st.warning("⚠️ Sincroniza los datos antes de continuar.")
