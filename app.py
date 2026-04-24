@@ -1262,9 +1262,19 @@ def main():
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo de Actividades Hoy (Gantt)</h4><br>", unsafe_allow_html=True)
                 
+                # --- NUEVO FILTRO ESTRICTO PARA LIMPIAR LA GRÁFICA ---
+                # 1. Órdenes que se liquidaron hoy
+                mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
+                
+                # 2. Órdenes que siguen abiertas, pero que REALMENTE iniciaron hoy (ignora fantasmas de días pasados)
+                mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
+                
+                # Unimos ambas condiciones
+                df_gantt_limpio = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+                
                 # Filtramos todos los técnicos que no sean supervisores
-                mask_supervisores = df_monitor_filtrado['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                df_para_gantt_bruto = df_monitor_filtrado[~mask_supervisores].copy()
+                mask_supervisores = df_gantt_limpio['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
+                df_para_gantt_bruto = df_gantt_limpio[~mask_supervisores].copy()
                 
                 # Filtrar solo órdenes con hora de inicio
                 df_para_gantt_final = df_para_gantt_bruto[df_para_gantt_bruto['HORA_INI'].notnull()].copy()
@@ -1300,12 +1310,13 @@ def main():
                     
                     altura_gantt = max(350, len(df_para_gantt_final['TECNICO'].unique()) * 45)
 
+                    # Coloreamos por ESTADO para que veas cuáles son las abiertas y cuáles las cerradas
                     fig_gantt = px.timeline(
                         df_para_gantt_final, 
                         x_start="GANTT_START", 
                         x_end="GANTT_END", 
                         y="TECNICO", 
-                        color="ESTADO", # Colorear por estado para distinguir abiertas de cerradas
+                        color="ESTADO", 
                         text="ACTIVIDAD",  
                         hover_data={"NUM": True, "COLONIA": True, "ESTADO": True, "ACTIVIDAD": True, "GANTT_START": False, "GANTT_END": False}, 
                         height=altura_gantt
