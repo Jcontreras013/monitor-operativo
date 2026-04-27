@@ -134,7 +134,7 @@ def vista_biometrico():
     tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (Transacciones)", "📊 Consolidado RRHH (PDFs)"])
     
     # =========================================================
-    # PESTAÑA 1: AUDITORÍA ORIGINAL (ACTUALIZADA CON TABLA CONSOLIDADA)
+    # PESTAÑA 1: AUDITORÍA ORIGINAL + CONSOLIDADOS COMPLETOS
     # =========================================================
     with tab_transacciones:
         st.caption("Detecta llegadas tarde (ej. a partir de las 08:06 AM exactas), almuerzos mayores a 1 hora y breaks mayores a 15 min.")
@@ -195,7 +195,7 @@ def vista_biometrico():
 
                 if st.button("🚀 Extraer Infractores", type="primary"):
                     resultados_detalle = []
-                    resumen_empleados = {} # Diccionario para agrupar la tabla consolidada
+                    resumen_empleados = {} 
                     
                     for (uid, fecha), grupo in df.groupby(['ID', 'FECHA_SOLA']):
                         punches = grupo['Datetime'].tolist()
@@ -203,7 +203,7 @@ def vista_biometrico():
                         nombre = grupo['Full Name'].iloc[0]
                         turno_str = dict_turnos.get(uid, "08:00 AM")
                         
-                        # Iniciar conteo del empleado si no existe
+                        # Preparar la estructura del empleado en el diccionario
                         if uid not in resumen_empleados:
                             resumen_empleados[uid] = {
                                 'ID': uid,
@@ -211,6 +211,7 @@ def vista_biometrico():
                                 'Tardanzas': 0,
                                 'Exc. Almuerzo': 0,
                                 'Exc. Break': 0,
+                                'Suma_Exceso_Entrada': 0.0,
                                 'Suma_Exceso_Almuerzo': 0.0,
                                 'Suma_Exceso_Break': 0.0
                             }
@@ -219,10 +220,14 @@ def vista_biometrico():
                         llegada_tarde = False
                         try:
                             dt_turno = datetime.strptime(turno_str, "%I:%M %p").time()
+                            # Tolerancia hasta el minuto 5:59
                             limite = datetime.combine(fecha, dt_turno) + timedelta(minutes=5, seconds=59)
                             if entrada > limite: 
                                 llegada_tarde = True
+                                minutos_tarde = (entrada - limite).total_seconds() / 60
+                                
                                 resumen_empleados[uid]['Tardanzas'] += 1
+                                resumen_empleados[uid]['Suma_Exceso_Entrada'] += minutos_tarde
                         except: pass
                             
                         almuerzo_exc, almuerzo_str = False, ""
@@ -234,7 +239,7 @@ def vista_biometrico():
                                 if mins_almuerzo > 60:
                                     almuerzo_exc = True
                                     exceso = mins_almuerzo - 60
-                                    almuerzo_str = f"{int(mins_almuerzo)} min (+{int(exceso)} min)"
+                                    almuerzo_str = f"{int(mins_almuerzo)} min"
                                     
                                     resumen_empleados[uid]['Exc. Almuerzo'] += 1
                                     resumen_empleados[uid]['Suma_Exceso_Almuerzo'] += exceso
@@ -245,12 +250,12 @@ def vista_biometrico():
                                 if mins_break > 15:
                                     break_exc = True
                                     exceso = mins_break - 15
-                                    break_str = f"{int(mins_break)} min (+{int(exceso)} min)"
+                                    break_str = f"{int(mins_break)} min"
                                     
                                     resumen_empleados[uid]['Exc. Break'] += 1
                                     resumen_empleados[uid]['Suma_Exceso_Break'] += exceso
                                     
-                        # Guardar detalle de bitácora
+                        # Guardar el detalle original día por día
                         if llegada_tarde or almuerzo_exc or break_exc:
                             motivos = []
                             if llegada_tarde: motivos.append(f"Llegada a las {entrada.strftime('%I:%M %p')} (Tarde)")
@@ -262,35 +267,39 @@ def vista_biometrico():
                             
                     st.write("---")
                     
-                    # Armar la tabla resumen
+                    df_detalle = pd.DataFrame(resultados_detalle)
                     df_resumen = pd.DataFrame(list(resumen_empleados.values()))
                     
                     if not df_resumen.empty:
                         df_resumen['TOTAL FALTAS'] = df_resumen['Tardanzas'] + df_resumen['Exc. Almuerzo'] + df_resumen['Exc. Break']
-                        df_resumen = df_resumen[df_resumen['TOTAL FALTAS'] > 0].copy() # Filtrar los que sí tienen faltas
+                        df_resumen = df_resumen[df_resumen['TOTAL FALTAS'] > 0].copy() 
                         
                     if not df_resumen.empty:
                         st.error(f"🚨 Se detectaron {df_resumen['TOTAL FALTAS'].sum()} infracciones en total.")
                         
-                        # Calcular promedios de exceso
-                        df_resumen['Prom. Exceso Almuerzo'] = df_resumen.apply(
+                        # Cálculos Matemáticos de los promedios
+                        df_resumen['Prom. Tardanza'] = df_resumen.apply(
+                            lambda x: f"{int(x['Suma_Exceso_Entrada'] / x['Tardanzas'])} min" if x['Tardanzas'] > 0 else "---", axis=1
+                        )
+                        df_resumen['Prom. Exc. Almuerzo'] = df_resumen.apply(
                             lambda x: f"{int(x['Suma_Exceso_Almuerzo'] / x['Exc. Almuerzo'])} min" if x['Exc. Almuerzo'] > 0 else "---", axis=1
                         )
-                        df_resumen['Prom. Exceso Break'] = df_resumen.apply(
+                        df_resumen['Prom. Exc. Break'] = df_resumen.apply(
                             lambda x: f"{int(x['Suma_Exceso_Break'] / x['Exc. Break'])} min" if x['Exc. Break'] > 0 else "---", axis=1
                         )
                         
                         # Ordenar columnas
-                        df_resumen = df_resumen[['ID', 'Empleado', 'Tardanzas', 'Exc. Almuerzo', 'Prom. Exceso Almuerzo', 'Exc. Break', 'Prom. Exceso Break', 'TOTAL FALTAS']]
+                        df_resumen = df_resumen[['ID', 'Empleado', 'Tardanzas', 'Prom. Tardanza', 'Exc. Almuerzo', 'Prom. Exc. Almuerzo', 'Exc. Break', 'Prom. Exc. Break', 'TOTAL FALTAS']]
                         df_resumen = df_resumen.sort_values(by='TOTAL FALTAS', ascending=False)
                         
-                        # Mostrar Tabla Consolidada
-                        st.markdown("### 📊 Tabla Consolidada de Faltas")
-                        st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+                        # === AQUÍ RESTAURO TUS DOS VISTAS PARA QUE NO SE TE PIERDA NADA ===
+                        t_resumen, t_detalle = st.tabs(["📊 Tabla Consolidada de Faltas", "📝 Lista Detallada (Día por Día)"])
                         
-                        # Ocultar el detalle gigante en un expander
-                        with st.expander("Ver bitácora detallada por día y horario"):
-                            st.dataframe(pd.DataFrame(resultados_detalle), use_container_width=True, hide_index=True)
+                        with t_resumen:
+                            st.dataframe(df_resumen, use_container_width=True, hide_index=True)
+                        with t_detalle:
+                            st.dataframe(df_detalle, use_container_width=True, hide_index=True)
+                            
                     else:
                         st.success("✅ Excelente. Nadie llegó tarde ni se pasó del almuerzo o break.")
             except Exception as e:
