@@ -133,8 +133,8 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
 # NUEVAS FUNCIONES PARA EL CSV BIOMÉTRICO (DEPURADO)
 # =========================================================
 
-def procesar_biometrico_mejorado(df_csv):
-    """Filtra y procesa usando SOLO: Full Name, ID, Date, Time, Weekday"""
+def procesar_biometrico_mejorado(df_csv, dict_turnos):
+    """Filtra y procesa aplicando reglas estrictas de horario para evitar errores matemáticos"""
     df_csv.columns = df_csv.columns.str.strip()
     
     cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time']
@@ -154,42 +154,50 @@ def procesar_biometrico_mejorado(df_csv):
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
+        # 1. EVALUAR ENTRADA Y TARDANZA REAL
         entrada = marcas[0]
-        dt_entrada = datetime.combine(datetime.today(), entrada)
-
-        # NUEVA REGLA: Si llega del minuto 15 en adelante, pertenece a la siguiente hora.
-        if dt_entrada.minute >= 15: 
-            hora_base = (dt_entrada + timedelta(hours=1)).replace(minute=0, second=0)
-        else: 
-            hora_base = dt_entrada.replace(minute=0, second=0)
-
-        # El límite de tardanza es siempre el minuto 06 de su hora base
-        limite_tardia = (hora_base + timedelta(minutes=6)).time()
-        dt_limite = datetime.combine(datetime.today(), limite_tardia)
+        dt_entrada = datetime.combine(fecha, entrada)
+        
+        turno_str = dict_turnos.get(emp_id, "08:00 AM")
+        try:
+            dt_turno = datetime.strptime(turno_str, "%I:%M %p").time()
+        except:
+            dt_turno = datetime.strptime("08:00 AM", "%I:%M %p").time()
+            
+        dt_base = datetime.combine(fecha, dt_turno)
+        limite_tardia = (dt_base + timedelta(minutes=5, seconds=59)).time()
         
         es_tardia = "Sí" if entrada >= limite_tardia else "No"
         
-        # CÁLCULO EXACTO DE MINUTOS TARDE
         exceso_tardanza = 0
         if es_tardia == "Sí":
-            exceso_tardanza = int((dt_entrada - dt_limite).total_seconds() / 60)
+            exceso_tardanza = int((dt_entrada - dt_base).total_seconds() / 60)
             if exceso_tardanza < 0: exceso_tardanza = 0
         
-        salida_alm = marcas[1] if num_marcas > 1 else None
-        regreso_alm = marcas[2] if num_marcas > 2 else None
-        inicio_break = marcas[3] if num_marcas > 3 else None
-        fin_break = marcas[4] if num_marcas > 4 else None
-        salida_final = marcas[5] if num_marcas > 5 else None
-
         def min_dif(t1, t2):
             if not t1 or not t2: return 0
             return int((datetime.combine(fecha, t2) - datetime.combine(fecha, t1)).total_seconds() / 60)
 
-        alm_min = min_dif(salida_alm, regreso_alm)
-        exceso_alm = alm_min - 60 if alm_min > 60 else 0
-        
-        brk_min = min_dif(inicio_break, fin_break)
-        exceso_brk = brk_min - 15 if brk_min > 15 else 0
+        # 2. EVALUAR ALMUERZO Y BREAKS (CON SEGURO DE 17:00 PM)
+        alm_min = 0
+        exceso_alm = 0
+        if num_marcas >= 3:
+            # Seguro vital: Si marcan después de las 5PM, NO es regreso de almuerzo
+            if marcas[1].hour < 17 and marcas[2].hour < 17:
+                alm_min = min_dif(marcas[1], marcas[2])
+                if alm_min > 60:
+                    exceso_alm = alm_min - 60
+                    
+        brk_min = 0
+        exceso_brk = 0
+        if num_marcas >= 5:
+            # Seguro vital: Evitar que salidas finales cuenten como fin de break
+            if marcas[3].hour < 17 and marcas[4].hour < 17:
+                brk_min = min_dif(marcas[3], marcas[4])
+                if brk_min > 15:
+                    exceso_brk = brk_min - 15
+
+        salida_final = marcas[-1] if num_marcas > 1 else None
 
         resultados.append({
             "ID": emp_id,
@@ -198,11 +206,11 @@ def procesar_biometrico_mejorado(df_csv):
             "Fecha": fecha.strftime('%d/%m/%Y'),
             "Entrada": entrada.strftime('%H:%M'),
             "Tardanza": es_tardia,
-            "Exceso_Tardanza_min": exceso_tardanza, # Columna oculta para matemática
+            "Exceso_Tardanza_min": exceso_tardanza, 
             "Almuerzo (min)": alm_min,
-            "Exceso_Alm_min": exceso_alm,           # Columna oculta para matemática
+            "Exceso_Alm_min": exceso_alm,           
             "Break (min)": brk_min,
-            "Exceso_Brk_min": exceso_brk,           # Columna oculta para matemática
+            "Exceso_Brk_min": exceso_brk,           
             "Salida": salida_final.strftime('%H:%M') if salida_final else "-",
             "Marcaciones": num_marcas
         })
@@ -325,69 +333,104 @@ def vista_biometrico():
                     file_bio.seek(0)
                     df_raw = pd.read_csv(file_bio, sep=',', encoding='utf-8-sig', skiprows=skip_lines)
 
-                df_p = procesar_biometrico_mejorado(df_raw)
+                # ========================================================
+                # SECCIÓN 1: ASIGNAR TURNOS ANTES DE PROCESAR
+                # ========================================================
+                df_raw.columns = df_raw.columns.str.strip()
+                df_raw['Full Name'] = df_raw['Full Name'].fillna("Desconocido")
+                usuarios_unicos = df_raw[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
+                usuarios_unicos['Turno'] = "08:00 AM" 
                 
-                st.success(f"Archivo procesado correctamente. ¡Tabla limpiada y depurada!")
+                if 'memoria_turnos' in st.session_state:
+                    previos = st.session_state['memoria_turnos']
+                    usuarios_unicos = pd.merge(usuarios_unicos, previos[['ID', 'Turno']], on='ID', how='left', suffixes=('', '_y'))
+                    usuarios_unicos['Turno'] = usuarios_unicos['Turno_y'].fillna("08:00 AM")
+                    usuarios_unicos = usuarios_unicos.drop(columns=['Turno_y'], errors='ignore')
+                    
+                st.session_state['memoria_turnos'] = usuarios_unicos
                 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
-                c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
-                c3.metric("Excesos Break", len(df_p[df_p["Break (min)"] > 15]))
-
-                st.markdown("---")
-                
-                # === CREAMOS LA VISTA CONSOLIDADA (CON LOS PROMEDIOS INCLUIDOS) ===
-                df_p['Es_Tarde'] = df_p['Tardanza'] == 'Sí'
-                df_p['Tiene_Exc_Alm'] = df_p['Almuerzo (min)'] > 60
-                df_p['Tiene_Exc_Brk'] = df_p['Break (min)'] > 15
-
-                agrupado = df_p.groupby(['ID', 'Empleado']).agg(
-                    Tardanzas=('Es_Tarde', 'sum'),
-                    Suma_Tardanza=('Exceso_Tardanza_min', 'sum'),
-                    Exc_Almuerzo=('Tiene_Exc_Alm', 'sum'),
-                    Suma_Alm=('Exceso_Alm_min', 'sum'),
-                    Exc_Break=('Tiene_Exc_Brk', 'sum'),
-                    Suma_Brk=('Exceso_Brk_min', 'sum')
-                ).reset_index()
-
-                agrupado['TOTAL FALTAS'] = agrupado['Tardanzas'] + agrupado['Exc_Almuerzo'] + agrupado['Exc_Break']
-                agrupado = agrupado[agrupado['TOTAL FALTAS'] > 0].copy()
-
-                if not agrupado.empty:
-                    # Aplicando los promedios
-                    agrupado['Prom. Tardanza'] = agrupado.apply(lambda x: f"{int(x['Suma_Tardanza']/x['Tardanzas'])} min" if x['Tardanzas'] > 0 else "---", axis=1)
-                    agrupado['Prom. Exc. Almuerzo'] = agrupado.apply(lambda x: f"{int(x['Suma_Alm']/x['Exc_Almuerzo'])} min" if x['Exc_Almuerzo'] > 0 else "---", axis=1)
-                    agrupado['Prom. Exc. Break'] = agrupado.apply(lambda x: f"{int(x['Suma_Brk']/x['Exc_Break'])} min" if x['Exc_Break'] > 0 else "---", axis=1)
-
-                    agrupado = agrupado.sort_values(by='TOTAL FALTAS', ascending=False)
-                    df_mostrar = agrupado[['ID', 'Empleado', 'Tardanzas', 'Prom. Tardanza', 'Exc_Almuerzo', 'Prom. Exc. Almuerzo', 'Exc_Break', 'Prom. Exc. Break', 'TOTAL FALTAS']]
-                    df_mostrar.columns = ['ID', 'Empleado', 'Tardanzas', 'Prom. Tardanza', 'Exc. Almuerzo', 'Prom. Exc. Almuerzo', 'Exc. Break', 'Prom. Exc. Break', 'TOTAL FALTAS']
-                else:
-                    df_mostrar = pd.DataFrame()
-
-                # Generar el nuevo PDF Horizontal
-                pdf_data = generar_pdf_infracciones(df_p)
-                st.download_button(
-                    label="📥 Descargar Resumen de Infracciones (PDF)",
-                    data=pdf_data,
-                    file_name=f"Resumen_Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
-                    mime="application/pdf",
+                st.write("### 1️⃣ Asignar Turno de Entrada")
+                opciones_turnos = ["07:00 AM", "08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM", "12:00 PM"]
+                turnos_editados = st.data_editor(
+                    st.session_state['memoria_turnos'],
+                    column_config={"Turno": st.column_config.SelectboxColumn(options=opciones_turnos, required=True)},
+                    disabled=['ID', 'Full Name'],
+                    hide_index=True,
                     use_container_width=True
                 )
+                st.session_state['memoria_turnos'] = turnos_editados
+                dict_turnos = dict(zip(turnos_editados['ID'], turnos_editados['Turno']))
 
-                # Mostramos las dos vistas usando Pestañas (Tabs)
-                t_consolidado, t_detalle = st.tabs(["📊 Tabla Consolidada", "📝 Detalle Diario"])
-                
-                with t_consolidado:
-                    if not df_mostrar.empty:
-                        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+                # ========================================================
+                # SECCIÓN 2: PROCESAR LA TABLA CON LOS TURNOS ASIGNADOS
+                # ========================================================
+                if st.button("🚀 Extraer Infractores", type="primary"):
+                    df_p = procesar_biometrico_mejorado(df_raw, dict_turnos)
+                    
+                    st.success(f"Archivo procesado correctamente. ¡Tabla limpiada y depurada!")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Tardanzas Detectadas", len(df_p[df_p["Tardanza"] == "Sí"]))
+                    c2.metric("Excesos Almuerzo", len(df_p[df_p["Almuerzo (min)"] > 60]))
+                    c3.metric("Excesos Break", len(df_p[df_p["Break (min)"] > 15]))
+
+                    st.markdown("---")
+                    
+                    # === CREAMOS LA VISTA CONSOLIDADA (CON LOS PROMEDIOS INCLUIDOS) ===
+                    df_p['Es_Tarde'] = df_p['Tardanza'] == 'Sí'
+                    df_p['Tiene_Exc_Alm'] = df_p['Almuerzo (min)'] > 60
+                    df_p['Tiene_Exc_Brk'] = df_p['Break (min)'] > 15
+
+                    agrupado = df_p.groupby(['ID', 'Empleado']).agg(
+                        Tardanzas=('Es_Tarde', 'sum'),
+                        Suma_Tardanza=('Exceso_Tardanza_min', 'sum'),
+                        Exc_Almuerzo=('Tiene_Exc_Alm', 'sum'),
+                        Suma_Alm=('Exceso_Alm_min', 'sum'),
+                        Exc_Break=('Tiene_Exc_Brk', 'sum'),
+                        Suma_Brk=('Exceso_Brk_min', 'sum')
+                    ).reset_index()
+
+                    agrupado['TOTAL FALTAS'] = agrupado['Tardanzas'] + agrupado['Exc_Almuerzo'] + agrupado['Exc_Break']
+                    agrupado = agrupado[agrupado['TOTAL FALTAS'] > 0].copy()
+
+                    if not agrupado.empty:
+                        # Aplicando los promedios
+                        agrupado['Prom. Tardanza'] = agrupado.apply(lambda x: f"{int(x['Suma_Tardanza']/x['Tardanzas'])} min" if x['Tardanzas'] > 0 else "---", axis=1)
+                        agrupado['Prom. Exc. Almuerzo'] = agrupado.apply(lambda x: f"{int(x['Suma_Alm']/x['Exc_Almuerzo'])} min" if x['Exc_Almuerzo'] > 0 else "---", axis=1)
+                        agrupado['Prom. Exc. Break'] = agrupado.apply(lambda x: f"{int(x['Suma_Brk']/x['Exc_Break'])} min" if x['Exc_Break'] > 0 else "---", axis=1)
+
+                        agrupado = agrupado.sort_values(by='TOTAL FALTAS', ascending=False)
+                        df_mostrar = agrupado[['ID', 'Empleado', 'Tardanzas', 'Prom. Tardanza', 'Exc_Almuerzo', 'Prom. Exc. Almuerzo', 'Exc_Break', 'Prom. Exc. Break', 'TOTAL FALTAS']]
+                        df_mostrar.columns = ['ID', 'Empleado', 'Tardanzas', 'Prom. Tardanza', 'Exc. Almuerzo', 'Prom. Exc. Almuerzo', 'Exc. Break', 'Prom. Exc. Break', 'TOTAL FALTAS']
                     else:
-                        st.success("✅ Excelente. Nadie llegó tarde ni se pasó del almuerzo o break.")
-                        
-                with t_detalle:
-                    # Ocultamos de la vista las columnas de suma basura para que se vea limpio
-                    columnas_a_esconder = ['Exceso_Tardanza_min', 'Exceso_Alm_min', 'Exceso_Brk_min', 'Es_Tarde', 'Tiene_Exc_Alm', 'Tiene_Exc_Brk']
-                    st.dataframe(df_p.drop(columns=columnas_a_esconder, errors='ignore'), use_container_width=True, hide_index=True)
+                        df_mostrar = pd.DataFrame()
+
+                    # Generar el nuevo PDF Horizontal
+                    pdf_data = generar_pdf_infracciones(df_p)
+                    st.download_button(
+                        label="📥 Descargar Resumen de Infracciones (PDF)",
+                        data=pdf_data,
+                        file_name=f"Resumen_Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+
+                    # Mostramos las dos vistas usando Pestañas (Tabs)
+                    t_consolidado, t_detalle = st.tabs(["📊 Tabla Consolidada", "📝 Detalle Diario"])
+                    
+                    with t_consolidado:
+                        if not df_mostrar.empty:
+                            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+                        else:
+                            st.success("✅ Excelente. Nadie llegó tarde ni se pasó del almuerzo o break.")
+                            
+                    with t_detalle:
+                        # Ocultamos de la vista las columnas de suma matemática para que se vea limpio el detalle
+                        columnas_a_esconder = ['Exceso_Tardanza_min', 'Exceso_Alm_min', 'Exceso_Brk_min', 'Es_Tarde', 'Tiene_Exc_Alm', 'Tiene_Exc_Brk']
+                        df_limpio_detalle = df_p.drop(columns=columnas_a_esconder, errors='ignore')
+                        # Mostrar solo los que tuvieron alguna falta para no saturar
+                        df_solo_infracciones = df_limpio_detalle[(df_limpio_detalle['Tardanza'] == 'Sí') | (df_limpio_detalle['Almuerzo (min)'] > 60) | (df_limpio_detalle['Break (min)'] > 15)]
+                        st.dataframe(df_solo_infracciones, use_container_width=True, hide_index=True)
 
             except Exception as e:
                 st.error(f"Error al procesar el archivo. Asegúrate de subir el reporte correcto. Detalles: {e}")
