@@ -138,7 +138,6 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
     df_csv.columns = df_csv.columns.str.strip()
     
     # Capturamos toda la fila como texto para buscar fácilmente "Santa Elena"
-    # sin importar en qué columna venga guardado por el reloj.
     df_csv['Raw_Text'] = df_csv.apply(lambda row: ' '.join(row.values.astype(str)).upper(), axis=1)
     
     cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time', 'Raw_Text']
@@ -165,11 +164,26 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
             if (t2 - t1).total_seconds() / 60 >= 2:
                 marcas.append(m)
 
+        # --- DETECCIÓN DE PERSONAL DE CAMPO (SANTA ELENA) Y FILTRO DE HORARIO ---
+        es_campo = grupo['Raw_Text'].str.contains('SANTA ELENA|SANTAELENA', regex=True).any()
+
+        if es_campo:
+            marcas_filtradas = []
+            for m in marcas:
+                # fecha.weekday() -> Lunes=0, Martes=1, Miercoles=2, Jueves=3, Viernes=4, Sabado=5, Domingo=6
+                if fecha.weekday() == 5: # Sábado
+                    if m.hour <= 12: # Permite marcas hasta las 12:59 PM
+                        marcas_filtradas.append(m)
+                else: # Lunes a Viernes
+                    if m.hour <= 17: # Permite marcas hasta las 17:59 PM
+                        marcas_filtradas.append(m)
+            
+            # Si después del filtro quedaron marcas, las usamos
+            if marcas_filtradas:
+                marcas = marcas_filtradas
+
         num_marcas = len(marcas)
         if num_marcas == 0: continue
-
-        # --- DETECCIÓN DE PERSONAL DE CAMPO (SANTA ELENA) ---
-        es_campo = grupo['Raw_Text'].str.contains('SANTA ELENA|SANTAELENA', regex=True).any()
 
         # 1. EVALUAR ENTRADA Y TARDANZA REAL
         entrada = marcas[0]
