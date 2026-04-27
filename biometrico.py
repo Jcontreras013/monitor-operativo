@@ -207,6 +207,11 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
                 if brk_min > 15:
                     exceso_brk = brk_min - 15
 
+        # === EXCEPCIÓN DE NEGOCIO: CYNIA (Ignorar Break) ===
+        if "CYNIA" in str(nombre).upper():
+            brk_min = 0
+            exceso_brk = 0
+
         salida_final = marcas[-1] if num_marcas > 1 else None
 
         resultados.append({
@@ -349,12 +354,22 @@ def vista_biometrico():
                 df_raw.columns = df_raw.columns.str.strip()
                 df_raw['Full Name'] = df_raw['Full Name'].fillna("Desconocido")
                 usuarios_unicos = df_raw[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
-                usuarios_unicos['Turno'] = "08:00 AM" 
+                
+                # --- PREASIGNACIÓN AUTOMÁTICA DE TURNOS SEGÚN REGLAS ---
+                def preasignar_turno(nombre):
+                    nom = str(nombre).upper()
+                    if "BARIKA" in nom or "JAIR" in nom: return "09:00 AM"
+                    if "RAMON" in nom and "CACERES" in nom: return "07:00 AM"
+                    if "DARIO" in nom: return "10:00 AM"
+                    return "08:00 AM"
+                    
+                usuarios_unicos['Turno'] = usuarios_unicos['Full Name'].apply(preasignar_turno)
                 
                 if 'memoria_turnos' in st.session_state:
                     previos = st.session_state['memoria_turnos']
                     usuarios_unicos = pd.merge(usuarios_unicos, previos[['ID', 'Turno']], on='ID', how='left', suffixes=('', '_y'))
-                    usuarios_unicos['Turno'] = usuarios_unicos['Turno_y'].fillna("08:00 AM")
+                    # Priorizar memoria, sino usar la preasignación automática
+                    usuarios_unicos['Turno'] = usuarios_unicos['Turno_y'].fillna(usuarios_unicos['Turno'])
                     usuarios_unicos = usuarios_unicos.drop(columns=['Turno_y'], errors='ignore')
                     
                 st.session_state['memoria_turnos'] = usuarios_unicos
