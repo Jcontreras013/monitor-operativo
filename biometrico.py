@@ -134,10 +134,14 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
 # =========================================================
 
 def procesar_biometrico_mejorado(df_csv, dict_turnos):
-    """Filtra y procesa aplicando reglas estrictas y un filtro de 2 min contra errores de doble marca"""
+    """Filtra y procesa aplicando reglas estrictas y detectando personal de campo (Santa Elena)"""
     df_csv.columns = df_csv.columns.str.strip()
     
-    cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time']
+    # Capturamos toda la fila como texto para buscar fácilmente "Santa Elena"
+    # sin importar en qué columna venga guardado por el reloj.
+    df_csv['Raw_Text'] = df_csv.apply(lambda row: ' '.join(row.values.astype(str)).upper(), axis=1)
+    
+    cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time', 'Raw_Text']
     cols_presentes = [c for c in cols_requeridas if c in df_csv.columns]
     df_csv = df_csv[cols_presentes].copy()
 
@@ -164,6 +168,9 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
+        # --- DETECCIÓN DE PERSONAL DE CAMPO (SANTA ELENA) ---
+        es_campo = grupo['Raw_Text'].str.contains('SANTA ELENA|SANTAELENA', regex=True).any()
+
         # 1. EVALUAR ENTRADA Y TARDANZA REAL
         entrada = marcas[0]
         dt_entrada = datetime.combine(fecha, entrada)
@@ -176,43 +183,50 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
             
         dt_base = datetime.combine(fecha, dt_turno)
         limite_tardia = (dt_base + timedelta(minutes=5, seconds=59)).time()
+        dt_limite = datetime.combine(fecha, limite_tardia)
         
         es_tardia = "Sí" if entrada >= limite_tardia else "No"
         
         exceso_tardanza = 0
         if es_tardia == "Sí":
-            exceso_tardanza = int((dt_entrada - dt_base).total_seconds() / 60)
+            exceso_tardanza = int((dt_entrada - dt_limite).total_seconds() / 60)
             if exceso_tardanza < 0: exceso_tardanza = 0
         
         def min_dif(t1, t2):
             if not t1 or not t2: return 0
             return int((datetime.combine(fecha, t2) - datetime.combine(fecha, t1)).total_seconds() / 60)
 
-        # 2. EVALUAR ALMUERZO Y BREAKS (CON SEGURO DE 17:00 PM)
         alm_min = 0
         exceso_alm = 0
-        if num_marcas >= 3:
-            # Seguro vital: Si marcan después de las 5PM, NO es regreso de almuerzo
-            if marcas[1].hour < 17 and marcas[2].hour < 17:
-                alm_min = min_dif(marcas[1], marcas[2])
-                if alm_min > 60:
-                    exceso_alm = alm_min - 60
-                    
         brk_min = 0
         exceso_brk = 0
-        if num_marcas >= 5:
-            # Seguro vital: Evitar que salidas finales cuenten como fin de break
-            if marcas[3].hour < 17 and marcas[4].hour < 17:
-                brk_min = min_dif(marcas[3], marcas[4])
-                if brk_min > 15:
-                    exceso_brk = brk_min - 15
+        
+        # 2. REGLA DE NEGOCIO: PERSONAL DE CAMPO (SANTA ELENA)
+        if es_campo:
+            salida_final = marcas[-1] if num_marcas > 1 else None
+            # Al ser de campo, almuerzo y break quedan en 0 automáticamente.
+        else:
+            # 3. REGLAS NORMALES DE OFICINA
+            if num_marcas >= 3:
+                # Seguro vital: Si marcan después de las 5PM, NO es regreso de almuerzo
+                if marcas[1].hour < 17 and marcas[2].hour < 17:
+                    alm_min = min_dif(marcas[1], marcas[2])
+                    if alm_min > 60:
+                        exceso_alm = alm_min - 60
+                        
+            if num_marcas >= 5:
+                # Seguro vital: Evitar que salidas finales cuenten como fin de break
+                if marcas[3].hour < 17 and marcas[4].hour < 17:
+                    brk_min = min_dif(marcas[3], marcas[4])
+                    if brk_min > 15:
+                        exceso_brk = brk_min - 15
 
-        # === EXCEPCIÓN DE NEGOCIO: CYNIA (Ignorar Break) ===
+            salida_final = marcas[-1] if num_marcas > 1 else None
+
+        # Excepción de Negocio Adicional: CYNIA (Ignorar Break)
         if "CYNIA" in str(nombre).upper():
             brk_min = 0
             exceso_brk = 0
-
-        salida_final = marcas[-1] if num_marcas > 1 else None
 
         resultados.append({
             "ID": emp_id,
@@ -227,13 +241,14 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
             "Break (min)": brk_min,
             "Exceso_Brk_min": exceso_brk,           
             "Salida": salida_final.strftime('%H:%M') if salida_final else "-",
-            "Marcaciones": num_marcas
+            "Marcaciones": num_marcas,
+            "Es_Campo": "Sí" if es_campo else "No" # Solo para referencia interna
         })
     
     return pd.DataFrame(resultados)
 
 def generar_pdf_infracciones(df_res):
-    """Crea un reporte PDF RESUMIDO por empleado con 3 nuevas columnas."""
+    """Crea un reporte PDF RESUMIDO por empleado con las columnas promedio."""
     from fpdf import FPDF
     pdf = FPDF('L', 'mm', 'A4') # Formato Horizontal para que quepa todo
     pdf.add_page()
@@ -451,7 +466,7 @@ def vista_biometrico():
                             
                     with t_detalle:
                         # Ocultamos de la vista las columnas de suma matemática para que se vea limpio el detalle
-                        columnas_a_esconder = ['Exceso_Tardanza_min', 'Exceso_Alm_min', 'Exceso_Brk_min', 'Es_Tarde', 'Tiene_Exc_Alm', 'Tiene_Exc_Brk']
+                        columnas_a_esconder = ['Exceso_Tardanza_min', 'Exceso_Alm_min', 'Exceso_Brk_min', 'Es_Tarde', 'Tiene_Exc_Alm', 'Tiene_Exc_Brk', 'Es_Campo']
                         df_limpio_detalle = df_p.drop(columns=columnas_a_esconder, errors='ignore')
                         # Mostrar solo los que tuvieron alguna falta para no saturar
                         df_solo_infracciones = df_limpio_detalle[(df_limpio_detalle['Tardanza'] == 'Sí') | (df_limpio_detalle['Almuerzo (min)'] > 60) | (df_limpio_detalle['Break (min)'] > 15)]
