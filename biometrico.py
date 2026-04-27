@@ -134,7 +134,7 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
 # =========================================================
 
 def procesar_biometrico_mejorado(df_csv, dict_turnos):
-    """Filtra y procesa aplicando reglas estrictas de horario para evitar errores matemáticos"""
+    """Filtra y procesa aplicando reglas estrictas y un filtro de 2 min contra errores de doble marca"""
     df_csv.columns = df_csv.columns.str.strip()
     
     cols_requeridas = ['ID', 'Full Name', 'Weekday', 'Date', 'Time']
@@ -150,7 +150,17 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
     resultados = []
     
     for (emp_id, nombre, dia_semana, fecha), grupo in df_csv.groupby(['ID', 'Full Name', 'Weekday', 'Date']):
-        marcas = grupo['Time'].tolist()
+        marcas_crudas = grupo['Time'].tolist()
+        if not marcas_crudas: continue
+
+        # --- FILTRO ANTI DOUBLE-PUNCH (IGNORA MARCAS CON < 2 MIN DE DIFERENCIA) ---
+        marcas = [marcas_crudas[0]]
+        for m in marcas_crudas[1:]:
+            t1 = datetime.combine(fecha, marcas[-1])
+            t2 = datetime.combine(fecha, m)
+            if (t2 - t1).total_seconds() / 60 >= 2:
+                marcas.append(m)
+
         num_marcas = len(marcas)
         if num_marcas == 0: continue
 
