@@ -34,6 +34,8 @@ except ImportError:
     st.error("⚠️ Falta el archivo 'biometrico.py'. Asegúrate de crearlo en la misma carpeta para ver el reporte Biométrico.")
 
 try:
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
         COLUMNS_MAPPING, 
         es_offline_preciso, 
@@ -47,8 +49,8 @@ try:
         generar_pdf_primera_orden,
         generar_pdf_pendientes_dispatch
     )
-except ImportError:
-    st.error("⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Asegúrese de que ambos archivos estén en la misma carpeta.")
+except ImportError as e:
+    st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalles: {e}")
 
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
@@ -448,8 +450,8 @@ def aplicar_estilos_df(df_original_para_estilo):
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
 
-@st.cache_data(show_spinner="Depurando datos al estilo Macro de Excel...", ttl=60, hash_funcs={io.BytesIO: lambda _: None, UploadedFile: lambda _: None, bytes: lambda _: None})
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
+    # Ya no se usa @st.cache_data para evitar el bug de las subidas de Óscar
     try:
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
@@ -662,13 +664,16 @@ def main():
                     df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
                     if not df_fttx_cloud.empty:
                         b_io = io.BytesIO()
-                        df_fttx_cloud.to_csv(b_io, index=False)
-                        b_io.seek(0); b_io.name = "fttx_nube.csv"
+                        with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
+                            df_fttx_cloud.to_excel(writer, index=False)
+                        b_io.seek(0); b_io.name = "fttx_nube.xlsx"
                         file_disp_ptr = b_io
                     else: raise ValueError("La pestaña está vacía.")
                 except Exception as e:
                     b_io = io.BytesIO()
-                    pd.DataFrame(columns=['ID']).to_excel(b_io, index=False); b_io.seek(0); b_io.name = "dummy_fttx.xlsx"
+                    with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
+                        pd.DataFrame(columns=['ID']).to_excel(writer, index=False)
+                    b_io.seek(0); b_io.name = "dummy_fttx.xlsx"
                     file_disp_ptr = b_io
 
         if file_act_ptr is None or file_disp_ptr is None:
@@ -685,7 +690,6 @@ def main():
         else:
             res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
             if res_p_diamante is not None:
-                st.session_state.df_base = res_p_diamante
                 st.session_state.df_hist = res_h_diamante
                 if conn is not None:
                     with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
@@ -722,6 +726,7 @@ def main():
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
+                            st.session_state.df_base = df_combined
                             
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
@@ -731,8 +736,15 @@ def main():
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
                                 except Exception as e_fttx: pass
                             st.success("✅ Datos sincronizados en modo Espejo Inverso y unidos al historial correctamente.")
-                        except Exception as e: st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
-                else: st.success("✅ Datos procesados localmente.")
+                            import time
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e: 
+                            st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
+                            st.session_state.df_base = res_p_diamante
+                else: 
+                    st.session_state.df_base = res_p_diamante
+                    st.success("✅ Datos procesados localmente.")
             else: return
 
     df_base = st.session_state.df_base.copy()
