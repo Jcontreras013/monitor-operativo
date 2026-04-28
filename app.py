@@ -62,6 +62,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed" 
 )
 
+# === INYECCIÓN CSS PARA PERMITIR COPIAR TEXTO EN GRÁFICOS PLOTLY (Requisito 3) ===
+st.markdown("""
+    <style>
+    /* Permitir selección de texto en los gráficos de Plotly (Eje Y para técnicos) */
+    .js-plotly-plot .plotly text {
+        user-select: text !important;
+        pointer-events: auto !important;
+        cursor: text !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 def aplicar_estilos_nativos():
     """Inyecta CSS para hacer que Streamlit parezca una App Nativa en Móviles"""
     hide_st_style = """
@@ -351,6 +363,8 @@ def mostrar_comentario_cierre(fila):
 
     st.markdown("##### ⏳ Tiempos Operativos")
     col_t1, col_t2 = st.columns(2)
+    
+    # === LÓGICA DE TIEMPO TRANSCURRIDO MEJORADA (Requisito 1) ===
     with col_t1:
         try:
             h_ini = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
@@ -363,8 +377,23 @@ def mostrar_comentario_cierre(fila):
             if str(fila.get('ESTADO', '')).upper() == 'CERRADA' and pd.notnull(fila.get('HORA_LIQ')):
                 h_liq = pd.to_datetime(fila.get('HORA_LIQ')).strftime('%H:%M')
                 st.write(f"**Hora de Cierre:** {h_liq}")
+                
+                # Calcular tiempo total si está cerrada
+                if pd.notnull(fila.get('HORA_INI')):
+                    diff = pd.to_datetime(fila.get('HORA_LIQ')) - pd.to_datetime(fila.get('HORA_INI'))
+                    mins = diff.total_seconds() / 60
+                    hrs, rem_mins = divmod(max(0, mins), 60)
+                    st.write(f"**Tiempo de Gestión:** {int(hrs)}h {int(rem_mins)}m")
             else:
                 st.write("**Hora de Cierre:** En Proceso (Abierta)")
+                
+                # Calcular tiempo transcurrido "EN VIVO" si está abierta
+                if pd.notnull(fila.get('HORA_INI')):
+                    ahora = get_honduras_time()
+                    diff = ahora - pd.to_datetime(fila.get('HORA_INI'))
+                    mins = diff.total_seconds() / 60
+                    hrs, rem_mins = divmod(max(0, mins), 60)
+                    st.write(f"**Tiempo Transcurrido:** {int(hrs)}h {int(rem_mins)}m ⏳")
         except:
             st.write("**Hora de Cierre:** N/D")
 
@@ -451,7 +480,6 @@ def aplicar_estilos_df(df_original_para_estilo):
     return df_visual_procesado[columnas_finales], row_styler_logic
 
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
-    # Ya no se usa @st.cache_data para evitar el bug de las subidas de Óscar
     try:
         if isinstance(file_dispos, bytes):
             file_dispos_obj = io.BytesIO(file_dispos)
@@ -1084,6 +1112,17 @@ def main():
                             if isinstance(dt_val, str): dt_val = pd.to_datetime(dt_val)
                             return datetime.combine(gantt_base_date_d, dt_val.time())
                         except: return pd.NaT
+                        
+                    # Lógica de cálculo de tiempo transcurrido (Requisito 1)
+                    def calc_tiempo_transcurrido_d(row):
+                        if pd.isnull(row['HORA_INI']): return "N/D"
+                        if pd.notnull(row['HORA_LIQ']):
+                            diff = row['HORA_LIQ'] - row['HORA_INI']
+                        else:
+                            diff = ahora_hx_d - row['HORA_INI']
+                        mins = diff.total_seconds() / 60
+                        hrs, rem_mins = divmod(max(0, mins), 60)
+                        return f"{int(hrs)}h {int(rem_mins)}m"
 
                     df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI'].apply(normalizar_para_gantt_d)
                     
@@ -1098,6 +1137,7 @@ def main():
                     df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
                         lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                     )
+                    df_para_gantt_diario['Duracion'] = df_para_gantt_diario.apply(calc_tiempo_transcurrido_d, axis=1)
                     
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
@@ -1111,7 +1151,7 @@ def main():
                         text="ACTIVIDAD",  
                         hover_data={
                             "NUM": True, "COLONIA": True, "ESTADO": True, 
-                            "Inicio": True, "Cierre": True,
+                            "Inicio": True, "Cierre": True, "Duracion": True,
                             "GANTT_START": False, "GANTT_END": False, "ACTIVIDAD": False
                         }, 
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
@@ -1133,7 +1173,15 @@ def main():
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
                     
-                    st.plotly_chart(fig_gantt_d, use_container_width=True)
+                    # === ON_SELECT Y RERUN PARA DIÁLOGO (Requisito 2) ===
+                    evento_d = st.plotly_chart(fig_gantt_d, use_container_width=True, on_select="rerun", selection_mode="points", key="g_diario")
+                    if evento_d and evento_d.selection.points:
+                        punto = evento_d.selection.points[0]
+                        if "customdata" in punto:
+                            num_orden = str(punto["customdata"][0])
+                            # Buscamos la fila original por NUM
+                            fila_sel = df_para_gantt_diario[df_para_gantt_diario['NUM'].astype(str) == num_orden].iloc[0]
+                            mostrar_comentario_cierre(fila_sel)
 
                     col_bpdf1, col_bpdf2 = st.columns([1, 2])
                     with col_bpdf1:
@@ -1528,6 +1576,17 @@ def main():
                             return datetime.combine(gantt_base_date, dt_val.time())
                         except: return pd.NaT
 
+                    # === LÓGICA DE TIEMPO TRANSCURRIDO (Requisito 1) ===
+                    def calc_tiempo_transcurrido(row):
+                        if pd.isnull(row['HORA_INI']): return "N/D"
+                        if pd.notnull(row['HORA_LIQ']):
+                            diff = row['HORA_LIQ'] - row['HORA_INI']
+                        else:
+                            diff = ahora_hx - row['HORA_INI']
+                        mins = diff.total_seconds() / 60
+                        hrs, rem_mins = divmod(max(0, mins), 60)
+                        return f"{int(hrs)}h {int(rem_mins)}m"
+
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final.apply(
                         lambda row: normalizar_para_gantt(row['HORA_LIQ']) if pd.notnull(row['HORA_LIQ']) else normalizar_para_gantt(ahora_hx),
@@ -1538,6 +1597,7 @@ def main():
                     df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
                         lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                     )
+                    df_para_gantt_final['Duracion'] = df_para_gantt_final.apply(calc_tiempo_transcurrido, axis=1)
                     
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
@@ -1557,6 +1617,7 @@ def main():
                             "ESTADO": True, 
                             "Inicio": True,
                             "Cierre": True,
+                            "Duracion": True,  # Se añade aquí el tiempo calculado (Requisito 1)
                             "GANTT_START": False, 
                             "GANTT_END": False,
                             "ACTIVIDAD": False
@@ -1572,7 +1633,16 @@ def main():
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
                     fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     
-                    st.plotly_chart(fig_gantt, use_container_width=True)
+                    # === ON_SELECT Y RERUN PARA DIÁLOGO AL HACER CLIC (Requisito 2) ===
+                    evento_m = st.plotly_chart(fig_gantt, use_container_width=True, on_select="rerun", selection_mode="points", key="g_monitor")
+                    if evento_m and evento_m.selection.points:
+                        punto = evento_m.selection.points[0]
+                        if "customdata" in punto:
+                            num_orden = str(punto["customdata"][0])
+                            # Encontramos la fila que coincide con la orden seleccionada
+                            fila_sel = df_para_gantt_final[df_para_gantt_final['NUM'].astype(str) == num_orden].iloc[0]
+                            mostrar_comentario_cierre(fila_sel)
+
                 else:
                     st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
