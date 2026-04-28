@@ -410,6 +410,25 @@ def mostrar_comentario_cierre(fila):
         texto_comentario_registrado = "No existen observaciones registradas para esta gestión."
     st.info(texto_comentario_registrado)
     
+    # ==============================================================================
+    # SECCIÓN DE COPIADO AL PORTAPAPELES CON ÍCONO DE PÁGINAS
+    # ==============================================================================
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("📋 Copiar resumen (Clic en el ícono de las 2 páginas a la derecha):")
+    
+    # Preparamos la hora de inicio para que coincida exactamente con lo visual
+    try:
+        h_ini_copy = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
+    except:
+        h_ini_copy = "N/D"
+        
+    # Replicamos el texto exacto que ves en tu tooltip de la imagen
+    texto_copia = f"TECNICO={fila.get('TECNICO', 'N/D')}\nNUM={fila.get('NUM', 'N/D')}\nCOLONIA={fila.get('COLONIA', 'N/D')}\nESTADO={fila.get('ESTADO', 'N/D')}\nInicio={h_ini_copy}"
+    
+    # st.code renderiza un recuadro limpio con el icono de copiar nativo de Streamlit
+    st.code(texto_copia, language="text")
+    # ==============================================================================
+
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True): 
         st.rerun()
 
@@ -1113,7 +1132,6 @@ def main():
                             return datetime.combine(gantt_base_date_d, dt_val.time())
                         except: return pd.NaT
                         
-                    # Lógica de cálculo de tiempo transcurrido (Requisito 1)
                     def calc_tiempo_transcurrido_d(row):
                         if pd.isnull(row['HORA_INI']): return "N/D"
                         if pd.notnull(row['HORA_LIQ']):
@@ -1173,13 +1191,11 @@ def main():
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
                     
-                    # === ON_SELECT Y RERUN PARA DIÁLOGO (Requisito 2) ===
                     evento_d = st.plotly_chart(fig_gantt_d, use_container_width=True, on_select="rerun", selection_mode="points", key="g_diario")
                     if evento_d and evento_d.selection.points:
                         punto = evento_d.selection.points[0]
                         if "customdata" in punto:
                             num_orden = str(punto["customdata"][0])
-                            # Buscamos la fila original por NUM
                             fila_sel = df_para_gantt_diario[df_para_gantt_diario['NUM'].astype(str) == num_orden].iloc[0]
                             mostrar_comentario_cierre(fila_sel)
 
