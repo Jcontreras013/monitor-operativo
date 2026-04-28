@@ -1110,15 +1110,19 @@ def main():
                             return datetime.combine(gantt_base_date_d, dt_val.time())
                         except: return pd.NaT
                         
+                    # Lógica de cálculo de tiempo transcurrido
                     def calc_tiempo_transcurrido_d(row):
                         if pd.isnull(row['HORA_INI']): return "N/D"
-                        if pd.notnull(row['HORA_LIQ']): diff = row['HORA_LIQ'] - row['HORA_INI']
-                        else: diff = ahora_hx_d - row['HORA_INI']
+                        if pd.notnull(row['HORA_LIQ']):
+                            diff = row['HORA_LIQ'] - row['HORA_INI']
+                        else:
+                            diff = ahora_hx_d - row['HORA_INI']
                         mins = diff.total_seconds() / 60
                         hrs, rem_mins = divmod(max(0, mins), 60)
                         return f"{int(hrs)}h {int(rem_mins)}m"
 
                     df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI'].apply(normalizar_para_gantt_d)
+                    
                     hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(gantt_base_date_d, dt_time(22, 0))
                     
                     df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario.apply(
@@ -1141,18 +1145,21 @@ def main():
                         x_end="GANTT_END", 
                         y="TECNICO", 
                         color="ACTIVIDAD", 
-                        text="ACTIVIDAD",
-                        custom_data=["NUM"], # Obligamos a Plotly a pasar el NUM de orden primero
+                        text="ACTIVIDAD",  
                         hover_data={
-                            "COLONIA": True, "ESTADO": True, 
-                            "Inicio": True, "Cierre": True, "Duracion": True,
-                            "GANTT_START": False, "GANTT_END": False, "ACTIVIDAD": False
+                            "NUM": True,       # RESTAURADO EL NÚMERO DE ORDEN AL PASAR EL MOUSE
+                            "COLONIA": True, 
+                            "ESTADO": True, 
+                            "Inicio": True, 
+                            "Cierre": True, 
+                            "Duracion": True,
+                            "GANTT_START": False, 
+                            "GANTT_END": False, 
+                            "ACTIVIDAD": False
                         }, 
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                     )
                     
-                    # Habilita el evento de clic en el diseño del gráfico
-                    fig_gantt_d.update_layout(clickmode='event+select')
                     fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
                     hora_inicio_pantalla_d = datetime.combine(gantt_base_date_d, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     hora_fin_pantalla_d = datetime.combine(gantt_base_date_d, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
@@ -1169,28 +1176,20 @@ def main():
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
                     
-                    # Captura el evento del clic
-                    evento_d = st.plotly_chart(fig_gantt_d, use_container_width=True, on_select="rerun", selection_mode="points", key="g_diario")
-                    
-                    try: pts_d = evento_d.selection.points if evento_d else []
-                    except: pts_d = []
+                    # SE ELIMINÓ ON_SELECT PARA PREVENIR EL PANTALLAZO BLANCO
+                    st.plotly_chart(fig_gantt_d, use_container_width=True)
 
-                    if pts_d and len(pts_d) > 0:
-                        punto = pts_d[0]
-                        if "customdata" in punto:
-                            num_orden = str(punto["customdata"][0])
-                            coincidencias = df_para_gantt_diario[df_para_gantt_diario['NUM'].astype(str) == num_orden]
-                            if not coincidencias.empty:
-                                fila_sel = coincidencias.iloc[0]
-                                
-                                try: mostrar_comentario_cierre(fila_sel)
-                                except: pass
-                                
-                                # FALLBACK ESTÁTICO: Este cuadro SIEMPRE aparecerá abajo y tiene botón para copiar
-                                st.markdown("---")
-                                st.markdown(f"#### 📌 Detalle para Copiar (Orden: {num_orden})")
-                                texto_copiable = f"ORDEN: {num_orden}\nCUENTA: {fila_sel.get('CLIENTE', 'N/D')}\nCLIENTE: {fila_sel.get('NOMBRE', 'N/D')}\nCOLONIA: {fila_sel.get('COLONIA', 'N/D')}\nACTIVIDAD: {fila_sel.get('ACTIVIDAD', 'N/D')}\nESTADO: {fila_sel.get('ESTADO', 'N/D')}\nTECNICO: {fila_sel.get('TECNICO', 'N/D')}\nCOMENTARIO: {fila_sel.get('COMENTARIO', 'N/D')}"
-                                st.code(texto_copiable, language="text")
+                    # === ALTERNATIVA ESTÁTICA PARA COPIAR (SELECCIONADOR MANUAL) ===
+                    st.markdown("<hr style='margin-top: 10px; margin-bottom: 10px; border-color: #2D2F39;'>", unsafe_allow_html=True)
+                    st.markdown("##### 🔍 Cuadro Estático para Copiar")
+                    ordenes_dia = sorted(df_para_gantt_diario['NUM'].dropna().unique().tolist())
+                    ord_sel_dia = st.selectbox("Seleccione el Número de Orden (NUM) que vio en el gráfico:", ["Seleccione..."] + ordenes_dia, key="sel_gantt_dia")
+                    
+                    if ord_sel_dia != "Seleccione...":
+                        fila_sel = df_para_gantt_diario[df_para_gantt_diario['NUM'] == ord_sel_dia].iloc[0]
+                        texto_copiable = f"ORDEN: {ord_sel_dia}\nCUENTA: {fila_sel.get('CLIENTE', 'N/D')}\nCLIENTE: {fila_sel.get('NOMBRE', 'N/D')}\nCOLONIA: {fila_sel.get('COLONIA', 'N/D')}\nACTIVIDAD: {fila_sel.get('ACTIVIDAD', 'N/D')}\nESTADO: {fila_sel.get('ESTADO', 'N/D')}\nTECNICO: {fila_sel.get('TECNICO', 'N/D')}\nCOMENTARIO: {fila_sel.get('COMENTARIO', 'N/D')}"
+                        st.info("💡 Haz clic en el ícono de 'Copiar' en la esquina superior derecha del recuadro gris.")
+                        st.code(texto_copiable, language="text")
 
                     col_bpdf1, col_bpdf2 = st.columns([1, 2])
                     with col_bpdf1:
@@ -1617,8 +1616,8 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",
-                        custom_data=["NUM"], # Obligamos a Plotly a pasar el NUM de orden primero
                         hover_data={
+                            "NUM": True,       # RESTAURADO EL NÚMERO DE ORDEN AL PASAR EL MOUSE
                             "COLONIA": True, 
                             "ESTADO": True, 
                             "Inicio": True,
@@ -1631,8 +1630,6 @@ def main():
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
                     
-                    # Habilita el evento de clic en el diseño del gráfico
-                    fig_gantt.update_layout(clickmode='event+select')
                     fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
                     hora_inicio_pantalla = datetime.combine(gantt_base_date, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     hora_fin_pantalla = datetime.combine(gantt_base_date, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
@@ -1641,28 +1638,20 @@ def main():
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
                     fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     
-                    # Captura el evento del clic
-                    evento_m = st.plotly_chart(fig_gantt, use_container_width=True, on_select="rerun", selection_mode="points", key="g_monitor")
-                    
-                    try: pts_m = evento_m.selection.points if evento_m else []
-                    except: pts_m = []
+                    # SE ELIMINÓ ON_SELECT PARA PREVENIR EL PANTALLAZO BLANCO
+                    st.plotly_chart(fig_gantt, use_container_width=True)
 
-                    if pts_m and len(pts_m) > 0:
-                        punto = pts_m[0]
-                        if "customdata" in punto:
-                            num_orden = str(punto["customdata"][0])
-                            coincidencias = df_para_gantt_final[df_para_gantt_final['NUM'].astype(str) == num_orden]
-                            if not coincidencias.empty:
-                                fila_sel = coincidencias.iloc[0]
-                                
-                                try: mostrar_comentario_cierre(fila_sel)
-                                except: pass
-                                
-                                # FALLBACK ESTÁTICO: Este cuadro SIEMPRE aparecerá abajo y tiene botón para copiar
-                                st.markdown("---")
-                                st.markdown(f"#### 📌 Detalle para Copiar (Orden: {num_orden})")
-                                texto_copiable = f"ORDEN: {num_orden}\nCUENTA: {fila_sel.get('CLIENTE', 'N/D')}\nCLIENTE: {fila_sel.get('NOMBRE', 'N/D')}\nCOLONIA: {fila_sel.get('COLONIA', 'N/D')}\nACTIVIDAD: {fila_sel.get('ACTIVIDAD', 'N/D')}\nESTADO: {fila_sel.get('ESTADO', 'N/D')}\nTECNICO: {fila_sel.get('TECNICO', 'N/D')}\nCOMENTARIO: {fila_sel.get('COMENTARIO', 'N/D')}"
-                                st.code(texto_copiable, language="text")
+                    # === ALTERNATIVA ESTÁTICA PARA COPIAR (SELECCIONADOR MANUAL) ===
+                    st.markdown("<hr style='margin-top: 10px; margin-bottom: 10px; border-color: #2D2F39;'>", unsafe_allow_html=True)
+                    st.markdown("##### 🔍 Cuadro Estático para Copiar")
+                    ordenes_mon = sorted(df_para_gantt_final['NUM'].dropna().unique().tolist())
+                    ord_sel_mon = st.selectbox("Seleccione el Número de Orden (NUM) que vio en el gráfico:", ["Seleccione..."] + ordenes_mon, key="sel_gantt_mon")
+                    
+                    if ord_sel_mon != "Seleccione...":
+                        fila_sel = df_para_gantt_final[df_para_gantt_final['NUM'] == ord_sel_mon].iloc[0]
+                        texto_copiable = f"ORDEN: {ord_sel_mon}\nCUENTA: {fila_sel.get('CLIENTE', 'N/D')}\nCLIENTE: {fila_sel.get('NOMBRE', 'N/D')}\nCOLONIA: {fila_sel.get('COLONIA', 'N/D')}\nACTIVIDAD: {fila_sel.get('ACTIVIDAD', 'N/D')}\nESTADO: {fila_sel.get('ESTADO', 'N/D')}\nTECNICO: {fila_sel.get('TECNICO', 'N/D')}\nCOMENTARIO: {fila_sel.get('COMENTARIO', 'N/D')}"
+                        st.info("💡 Haz clic en el ícono de 'Copiar' en la esquina superior derecha del recuadro gris.")
+                        st.code(texto_copiable, language="text")
 
                 else:
                     st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
