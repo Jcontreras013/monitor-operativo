@@ -2,7 +2,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import re
-import io
 import fitz  # PyMuPDF para extraer texto del PDF de manera robusta
 
 # REGLA DE DIAMANTE: No tocar la lógica de la app principal, solo se agrega este módulo.
@@ -34,7 +33,6 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
         tiempos_encontrados = patron_muerto.findall(texto_completo)
         
         # Emparejar cada técnico con su tiempo muerto
-        # Nota: Asumimos que el PDF lista un tiempo muerto por técnico
         for i in range(min(len(tecnicos_encontrados), len(tiempos_encontrados))):
             datos_extraidos.append({
                 'TECNICO': tecnicos_encontrados[i].strip().upper(),
@@ -53,7 +51,8 @@ def mostrar_tiempos_tecnicos():
     col1, col2 = st.columns(2)
     
     with col1:
-        archivo_excel = st.file_uploader("1. Sube el Excel de Pausas (Atrasos)", type=['xlsx', 'xls'])
+        # AHORA ACEPTA CSV TAMBIÉN
+        archivo_excel = st.file_uploader("1. Sube el Excel/CSV de Pausas (Atrasos)", type=['xlsx', 'xls', 'csv'])
     
     with col2:
         archivo_pdf = st.file_uploader("2. Sube el PDF de Eficiencia (Tiempos Muertos)", type=['pdf'])
@@ -61,21 +60,37 @@ def mostrar_tiempos_tecnicos():
     if archivo_excel and archivo_pdf:
         with st.spinner("Procesando y cruzando reportes..."):
             try:
-                # 1. Procesar Excel de Pausas
-                df_pausas = pd.read_excel(archivo_excel, sheet_name='Hoja1', header=2)
+                # 1. Procesar Excel/CSV de Pausas
+                if archivo_excel.name.lower().endswith('.csv'):
+                    # Intento de lectura para CSV
+                    df_pausas = pd.read_csv(archivo_excel)
+                    # Si el CSV se exportó con las 2 filas vacías arriba (como el Excel), lo ajustamos
+                    if 'TECNICO5' not in df_pausas.columns and 'TECNICO' not in df_pausas.columns:
+                        archivo_excel.seek(0)
+                        df_pausas = pd.read_csv(archivo_excel, header=2)
+                else:
+                    # Intento de lectura normal para Excel
+                    try:
+                        df_pausas = pd.read_excel(archivo_excel, sheet_name='Hoja1', header=2)
+                    except:
+                        archivo_excel.seek(0)
+                        df_pausas = pd.read_excel(archivo_excel) # Fallback si no tiene 'Hoja1'
+                        
                 df_pausas = df_pausas.dropna(axis=1, how='all')
                 
+                # Normalización del nombre de la columna de técnico
                 if 'TECNICO5' in df_pausas.columns:
                     df_pausas['TECNICO'] = df_pausas['TECNICO5'].str.strip().str.upper()
+                elif 'TECNICO' in df_pausas.columns:
+                    df_pausas['TECNICO'] = df_pausas['TECNICO'].str.strip().str.upper()
                 else:
-                    st.error("No se encontró la columna de técnicos en el Excel. Verifica el formato.")
+                    st.error("No se encontró la columna de técnicos ('TECNICO' o 'TECNICO5') en el archivo. Verifica el formato.")
                     return
                 
                 df_pausas['FECHA_INICIO'] = pd.to_datetime(df_pausas['FECHA_INICIO'], errors='coerce')
                 df_pausas['FECHA_FIN'] = pd.to_datetime(df_pausas['FECHA_FIN'], errors='coerce')
                 
-                # Calcular pausas totales en horas (sin filtrar por un día específico fijo, 
-                # para que funcione con cualquier archivo que subas)
+                # Calcular pausas totales en horas
                 df_valido_pausas = df_pausas.dropna(subset=['FECHA_INICIO', 'FECHA_FIN']).copy()
                 df_valido_pausas['DURACION_HORAS'] = (df_valido_pausas['FECHA_FIN'] - df_valido_pausas['FECHA_INICIO']).dt.total_seconds() / 3600
                 pausas_agrupadas = df_valido_pausas.groupby('TECNICO')['DURACION_HORAS'].sum().reset_index()
@@ -93,10 +108,10 @@ def mostrar_tiempos_tecnicos():
                 df_final = pd.merge(df_muerto, pausas_agrupadas, on='TECNICO', how='left').fillna(0)
                 df_final.rename(columns={'DURACION_HORAS': 'PAUSAS_HORAS'}, inplace=True)
                 
-                # Solo para mostrar el cuadro comparativo limpio
+                # Formateo visual del cuadro
                 df_mostrar = df_final.copy()
                 df_mostrar['Tiempo Muerto (PDF)'] = df_mostrar['MUERTO_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
-                df_mostrar['Pausas Justificadas (Excel)'] = df_mostrar['PAUSAS_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
+                df_mostrar['Pausas Justificadas (Excel/CSV)'] = df_mostrar['PAUSAS_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
                 
                 df_mostrar['Diferencia_Num'] = df_mostrar['PAUSAS_HORAS'] - df_mostrar['MUERTO_HORAS']
                 
@@ -138,7 +153,7 @@ def mostrar_tiempos_tecnicos():
                     return f'color: {color}; font-weight: bold'
                 
                 st.dataframe(
-                    df_mostrar[['TECNICO', 'Tiempo Muerto (PDF)', 'Pausas Justificadas (Excel)', 'Balance (Justificado - Muerto)']].style.map(color_balance, subset=['Balance (Justificado - Muerto)']),
+                    df_mostrar[['TECNICO', 'Tiempo Muerto (PDF)', 'Pausas Justificadas (Excel/CSV)', 'Balance (Justificado - Muerto)']].style.map(color_balance, subset=['Balance (Justificado - Muerto)']),
                     use_container_width=True,
                     hide_index=True
                 )
