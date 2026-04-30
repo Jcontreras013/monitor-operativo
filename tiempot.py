@@ -4,7 +4,7 @@ import streamlit as st
 import re
 import fitz  # PyMuPDF para extraer texto del PDF
 from fpdf import FPDF
-from datetime import datetime
+from datetime import datetime, time as dt_time
 import os
 import tempfile
 import unicodedata
@@ -84,7 +84,7 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
         
         datos_extraidos = []
         patron_tecnico = re.compile(r'TECNICO:\s*(.+)')
-        patron_muerto = re.compile(r'TIEMPO PERDIDO\s*/\s*MUERTO\s*\(Base 8 Horas\):\s*(\d+h\s*\d+m)', re.IGNORECASE)
+        patron_muerto = re.compile(r'TIEMPO PERDIDO\s*/\s*MUERTO\s*\(Base.*?\):\s*(\d+h\s*\d+m)', re.IGNORECASE)
         
         tecnicos_encontrados = patron_tecnico.findall(texto_completo)
         tiempos_encontrados = patron_muerto.findall(texto_completo)
@@ -99,6 +99,26 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
     except Exception as e:
         st.error(f"Error al procesar el PDF: {e}")
         return pd.DataFrame()
+
+# NVA FUNCIÓN: Extrae SOLAMENTE la hora, ignorando cualquier fecha corrupta del Excel
+def extraer_solo_tiempo(val):
+    if pd.isnull(val):
+        return pd.NaT
+    if isinstance(val, dt_time):
+        return pd.Timestamp.combine(pd.Timestamp('2000-01-01'), val)
+    try:
+        dt_val = pd.to_datetime(val)
+        return pd.Timestamp.combine(pd.Timestamp('2000-01-01'), dt_val.time())
+    except:
+        return pd.NaT
+
+def calcular_diferencia_horas(row):
+    ini = row['FECHA_INICIO']
+    fin = row['FECHA_FIN']
+    if fin < ini:
+        # Si la pausa cruzó la medianoche, le sumamos un día a la fecha de fin
+        fin += pd.Timedelta(days=1)
+    return (fin - ini).total_seconds() / 3600
 
 def generar_pdf_comparativo(df_mostrar):
     """Construye el PDF Gerencial A4 Vertical basado en la lógica de tools.py"""
@@ -230,12 +250,18 @@ def mostrar_tiempos_tecnicos():
                     st.error("No se encontró la columna de técnicos ('TECNICO' o 'TECNICO5') en el archivo. Verifica el formato.")
                     return
                 
-                df_pausas['FECHA_INICIO'] = pd.to_datetime(df_pausas['FECHA_INICIO'], errors='coerce')
-                df_pausas['FECHA_FIN'] = pd.to_datetime(df_pausas['FECHA_FIN'], errors='coerce')
+                # APLICAMOS LA REGLA PARA EXTRAER SOLO EL TIEMPO
+                df_pausas['FECHA_INICIO'] = df_pausas['FECHA_INICIO'].apply(extraer_solo_tiempo)
+                df_pausas['FECHA_FIN'] = df_pausas['FECHA_FIN'].apply(extraer_solo_tiempo)
                 
                 df_valido_pausas = df_pausas.dropna(subset=['FECHA_INICIO', 'FECHA_FIN']).copy()
-                df_valido_pausas['DURACION_HORAS'] = (df_valido_pausas['FECHA_FIN'] - df_valido_pausas['FECHA_INICIO']).dt.total_seconds() / 3600
-                pausas_agrupadas = df_valido_pausas.groupby('TECNICO')['DURACION_HORAS'].sum().reset_index()
+                
+                # Calculamos usando la nueva función dinámica
+                if not df_valido_pausas.empty:
+                    df_valido_pausas['DURACION_HORAS'] = df_valido_pausas.apply(calcular_diferencia_horas, axis=1)
+                    pausas_agrupadas = df_valido_pausas.groupby('TECNICO')['DURACION_HORAS'].sum().reset_index()
+                else:
+                    pausas_agrupadas = pd.DataFrame(columns=['TECNICO', 'DURACION_HORAS'])
                 
                 # 2. Procesar PDF de Tiempos Muertos
                 df_muerto = extraer_tiempos_muertos_pdf(archivo_pdf)
