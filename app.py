@@ -122,7 +122,15 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     df_valido['HORA_INI'] = pd.to_datetime(df_valido['HORA_INI'])
     df_valido['HORA_LIQ'] = pd.to_datetime(df_valido['HORA_LIQ'])
     tecnicos = sorted(df_valido['TECNICO'].astype(str).unique())
+    
     ahora_hx = get_honduras_time()
+    
+    # Límites estrictos de la jornada a auditar (8:00 AM a 5:00 PM)
+    inicio_jornada = pd.Timestamp.combine(fecha_sel, dt_time(8, 0))
+    fin_jornada = pd.Timestamp.combine(fecha_sel, dt_time(17, 0))
+    
+    # El límite máximo de evaluación es las 5 PM o la hora actual (si sacan el reporte a mediodía)
+    limite_evaluacion = min(ahora_hx, fin_jornada) if fecha_sel == ahora_hx.date() else fin_jornada
     
     for tec in tecnicos:
         df_tec = df_valido[df_valido['TECNICO'] == tec].sort_values(by='HORA_INI')
@@ -141,59 +149,68 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
         pdf.ln()
         
         total_minutos_trabajados = 0
-        total_minutos_base_eficiencia = 0  # <--- NUEVO: Cuenta solo hasta las 5 PM
+        tiempo_muerto_acumulado = 0
+        cursor_tiempo = inicio_jornada # El escáner arranca a las 8:00 AM
+        
         pdf.set_font("Arial", '', 8)
         
         for _, row in df_tec.iterrows():
             num = str(row.get('NUM', 'N/D'))
             act = str(row.get('ACTIVIDAD', '')).encode('latin-1', 'ignore').decode('latin-1')[:55]
-            h_ini = row['HORA_INI'].strftime('%H:%M') if pd.notnull(row['HORA_INI']) else "N/D"
-            h_fin = row['HORA_LIQ'].strftime('%H:%M') if pd.notnull(row['HORA_LIQ']) else "En curso"
+            
+            h_ini_dt = row['HORA_INI']
+            h_liq_dt = row['HORA_LIQ']
+            
+            h_ini_str = h_ini_dt.strftime('%H:%M') if pd.notnull(h_ini_dt) else "N/D"
+            h_fin_str = h_liq_dt.strftime('%H:%M') if pd.notnull(h_liq_dt) else "En curso"
             
             duracion_str = "---"
-            mins_reales = 0
-            mins_base = 0
             
-            if pd.notnull(row['HORA_INI']):
-                limite_17h = pd.Timestamp.combine(row['HORA_INI'].date(), dt_time(17, 0))
-                
-                if pd.notnull(row['HORA_LIQ']):
-                    fin_real = row['HORA_LIQ']
+            if pd.notnull(h_ini_dt):
+                # === 1. CÁLCULO DE TIEMPO REAL TRABAJADO (Para la tabla, incluye extras) ===
+                if pd.notnull(h_liq_dt):
+                    fin_real = h_liq_dt
                 else:
-                    # Si está abierta, tomamos la hora actual (o las 17h si es de un día pasado)
-                    if row['HORA_INI'].date() == ahora_hx.date():
-                        fin_real = ahora_hx
-                    else:
-                        fin_real = limite_17h
-
-                # 1. Calcular tiempo real total para mostrar en la tabla (Incluye extras)
-                if fin_real > row['HORA_INI']:
-                    mins_reales = (fin_real - row['HORA_INI']).total_seconds() / 60
+                    # Si sigue abierta, calculamos hasta este instante (o fin del día evaluado)
+                    fin_real = ahora_hx if h_ini_dt.date() == ahora_hx.date() else fin_jornada
                     
-                # 2. Calcular tiempo base SOLO hasta las 5:00 PM para castigar la eficiencia
-                if row['HORA_INI'] < limite_17h:
-                    fin_base = min(fin_real, limite_17h)
-                    mins_base = (fin_base - row['HORA_INI']).total_seconds() / 60
-                    if mins_base < 0: mins_base = 0
+                if fin_real > h_ini_dt:
+                    mins_reales = (fin_real - h_ini_dt).total_seconds() / 60
+                    if mins_reales > 0:
+                        total_minutos_trabajados += mins_reales
+                        hrs_d, mins_d = divmod(mins_reales, 60)
+                        duracion_str = f"{int(hrs_d)}h {int(mins_d)}m"
 
-                if mins_reales > 0:
-                    total_minutos_trabajados += mins_reales
-                    total_minutos_base_eficiencia += mins_base
-                    hrs_d, mins_d = divmod(mins_reales, 60)
-                    duracion_str = f"{int(hrs_d)}h {int(mins_d)}m"
-            
+                # === 2. CÁLCULO DE BRECHAS/TIEMPO MUERTO (Escáner de inactividad) ===
+                # A. Buscar si hubo un hueco de inactividad antes de abrir esta orden
+                if h_ini_dt > cursor_tiempo and cursor_tiempo < limite_evaluacion:
+                    gap_end = min(h_ini_dt, limite_evaluacion)
+                    gap_mins = (gap_end - cursor_tiempo).total_seconds() / 60
+                    if gap_mins > 0:
+                        tiempo_muerto_acumulado += gap_mins
+                
+                # B. Mover el "escáner" hacia adelante al momento en que se liquida la orden
+                fin_orden_gap = h_liq_dt if pd.notnull(h_liq_dt) else ahora_hx
+                if pd.notnull(fin_orden_gap):
+                    cursor_tiempo = max(cursor_tiempo, fin_orden_gap)
+
             pdf.cell(25, 6, num, border=1, align='C')
             pdf.cell(100, 6, act, border=1)
-            pdf.cell(25, 6, h_ini, border=1, align='C')
-            pdf.cell(25, 6, h_fin, border=1, align='C')
+            pdf.cell(25, 6, h_ini_str, border=1, align='C')
+            pdf.cell(25, 6, h_fin_str, border=1, align='C')
             pdf.cell(25, 6, duracion_str, border=1, align='C')
             pdf.ln()
             
-        # REGLA: Jornada Base de 8 horas (excluyendo el almuerzo)
-        jornada_base = 480 
+        # === 3. BRECHA AL FINAL DE LA JORNADA ===
+        # Si la última orden terminó antes de las 5 PM, se cuenta el resto del día como inactivo
+        if cursor_tiempo < limite_evaluacion:
+            gap_mins = (limite_evaluacion - cursor_tiempo).total_seconds() / 60
+            if gap_mins > 0:
+                tiempo_muerto_acumulado += gap_mins
         
-        # AQUÍ ESTÁ LA MAGIA: Restamos a la base SOLO el tiempo trabajado de 8 a 5. Las extras ya no lo salvan.
-        tiempo_perdido_mins = max(0, jornada_base - total_minutos_base_eficiencia)
+        # === 4. DESCONTAR ALMUERZO ===
+        # Restamos los 60 minutos de almuerzo de las brechas de inactividad encontradas
+        tiempo_perdido_mins = max(0, tiempo_muerto_acumulado - 60)
         
         hrs_t, mins_t = divmod(total_minutos_trabajados, 60)
         hrs_p, mins_p = divmod(tiempo_perdido_mins, 60)
@@ -205,7 +222,7 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
         
-        pdf.cell(175, 6, "TIEMPO PERDIDO / MUERTO (Base 8 Horas / Excluye Extras):", border=1, align='R')
+        pdf.cell(175, 6, "TIEMPO PERDIDO / MUERTO (Base Brechas 8am-5pm - Almuerzo):", border=1, align='R')
         if tiempo_perdido_mins > 0:
             pdf.set_text_color(200, 0, 0)
         pdf.cell(25, 6, f"{int(hrs_p)}h {int(mins_p)}m", border=1, align='C')
