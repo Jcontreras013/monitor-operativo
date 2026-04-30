@@ -2,6 +2,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import re
+import io
+import fitz  # PyMuPDF para extraer texto del PDF de manera robusta
+
+# REGLA DE DIAMANTE: No tocar la lógica de la app principal, solo se agrega este módulo.
 
 def extraer_horas(tiempo_str):
     if not isinstance(tiempo_str, str): return 0
@@ -10,62 +14,136 @@ def extraer_horas(tiempo_str):
         return int(m.group(1)) + round(int(m.group(2))/60, 2)
     return 0
 
+def extraer_tiempos_muertos_pdf(archivo_pdf):
+    """Extrae los nombres de los técnicos y su tiempo perdido desde el PDF subido."""
+    try:
+        # Usamos PyMuPDF (fitz) que es más robusto para leer PDFs complejos
+        doc = fitz.open(stream=archivo_pdf.read(), filetype="pdf")
+        texto_completo = ""
+        for pagina in doc:
+            texto_completo += pagina.get_text()
+        
+        datos_extraidos = []
+        
+        # Buscar el nombre del técnico
+        patron_tecnico = re.compile(r'TECNICO:\s*(.+)')
+        # Buscar el tiempo muerto base 8 horas
+        patron_muerto = re.compile(r'TIEMPO PERDIDO\s*/\s*MUERTO\s*\(Base 8 Horas\):\s*(\d+h\s*\d+m)', re.IGNORECASE)
+        
+        tecnicos_encontrados = patron_tecnico.findall(texto_completo)
+        tiempos_encontrados = patron_muerto.findall(texto_completo)
+        
+        # Emparejar cada técnico con su tiempo muerto
+        # Nota: Asumimos que el PDF lista un tiempo muerto por técnico
+        for i in range(min(len(tecnicos_encontrados), len(tiempos_encontrados))):
+            datos_extraidos.append({
+                'TECNICO': tecnicos_encontrados[i].strip().upper(),
+                'TIEMPO_MUERTO': tiempos_encontrados[i].strip()
+            })
+            
+        return pd.DataFrame(datos_extraidos)
+    except Exception as e:
+        st.error(f"Error al procesar el PDF: {e}")
+        return pd.DataFrame()
+
 def mostrar_tiempos_tecnicos():
     st.subheader("Análisis de Eficiencia: Tiempo Muerto vs Pausas Reportadas")
+    st.markdown("Sube los reportes del día para comparar la eficiencia de la cuadrilla.")
     
-    try:
-        df_pausas = pd.read_excel("Atrasos 29.04.2026.xlsx", sheet_name='Hoja1', header=2)
-        df_pausas = df_pausas.dropna(axis=1, how='all')
-        df_pausas['TECNICO'] = df_pausas['TECNICO5'].str.strip().str.upper()
-        
-        df_pausas['FECHA_INICIO'] = pd.to_datetime(df_pausas['FECHA_INICIO'], errors='coerce')
-        df_pausas['FECHA_FIN'] = pd.to_datetime(df_pausas['FECHA_FIN'], errors='coerce')
-        
-        df_29 = df_pausas[(df_pausas['FECHA_INICIO'].dt.day == 29) | (df_pausas['FECHA_FIN'].dt.day == 29)].copy()
-        df_29['DURACION_HORAS'] = (df_29['FECHA_FIN'] - df_29['FECHA_INICIO']).dt.total_seconds() / 3600
-        pausas_agrupadas = df_29.groupby('TECNICO')['DURACION_HORAS'].sum().reset_index()
-        
-    except Exception as e:
-        st.error(f"Error al leer archivo de Excel: {e}")
-        return
-
-    datos_pdf = [
-        {'TECNICO': 'DANIEL EZEQUIEL PONCE GUZMAN', 'TIEMPO_MUERTO': '1h 21m'},
-        {'TECNICO': 'DARREN HENLEY WEBSTER BENNETT', 'TIEMPO_MUERTO': '4h 47m'},
-        {'TECNICO': 'DARWIN RAUL AGUILAR BENITEZ', 'TIEMPO_MUERTO': '0h 18m'},
-        {'TECNICO': 'EDGARDO DANIEL CASTRO SALGADO', 'TIEMPO_MUERTO': '3h 33m'},
-        {'TECNICO': 'EDY FLORENTINO GUZMAN PEREZ', 'TIEMPO_MUERTO': '0h 0m'},
-        {'TECNICO': 'FRANKLIN ALONZO DELARCA ZELAYA', 'TIEMPO_MUERTO': '0h 0m'},
-        {'TECNICO': 'MARVIN DARREL BODDEN SANCHEZ', 'TIEMPO_MUERTO': '1h 26m'},
-        {'TECNICO': 'OLVIN JOSUE PINEDA CASTELLANOS', 'TIEMPO_MUERTO': '1h 52m'},
-        {'TECNICO': 'QUIEN CHARLEE FRITZ MATUTE', 'TIEMPO_MUERTO': '5h 44m'},
-        {'TECNICO': 'RAYAM ORLIN MACLIN ALVAREZ', 'TIEMPO_MUERTO': '1h 24m'},
-        {'TECNICO': 'ROBERTO CARLOS JUAREZ PADILLA', 'TIEMPO_MUERTO': '1h 50m'},
-        {'TECNICO': 'VICTOR MANUEL CASTELLANOS DURON', 'TIEMPO_MUERTO': '0h 50m'}
-    ]
+    col1, col2 = st.columns(2)
     
-    df_muerto = pd.DataFrame(datos_pdf)
-    df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas)
+    with col1:
+        archivo_excel = st.file_uploader("1. Sube el Excel de Pausas (Atrasos)", type=['xlsx', 'xls'])
+    
+    with col2:
+        archivo_pdf = st.file_uploader("2. Sube el PDF de Eficiencia (Tiempos Muertos)", type=['pdf'])
+        
+    if archivo_excel and archivo_pdf:
+        with st.spinner("Procesando y cruzando reportes..."):
+            try:
+                # 1. Procesar Excel de Pausas
+                df_pausas = pd.read_excel(archivo_excel, sheet_name='Hoja1', header=2)
+                df_pausas = df_pausas.dropna(axis=1, how='all')
+                
+                if 'TECNICO5' in df_pausas.columns:
+                    df_pausas['TECNICO'] = df_pausas['TECNICO5'].str.strip().str.upper()
+                else:
+                    st.error("No se encontró la columna de técnicos en el Excel. Verifica el formato.")
+                    return
+                
+                df_pausas['FECHA_INICIO'] = pd.to_datetime(df_pausas['FECHA_INICIO'], errors='coerce')
+                df_pausas['FECHA_FIN'] = pd.to_datetime(df_pausas['FECHA_FIN'], errors='coerce')
+                
+                # Calcular pausas totales en horas (sin filtrar por un día específico fijo, 
+                # para que funcione con cualquier archivo que subas)
+                df_valido_pausas = df_pausas.dropna(subset=['FECHA_INICIO', 'FECHA_FIN']).copy()
+                df_valido_pausas['DURACION_HORAS'] = (df_valido_pausas['FECHA_FIN'] - df_valido_pausas['FECHA_INICIO']).dt.total_seconds() / 3600
+                pausas_agrupadas = df_valido_pausas.groupby('TECNICO')['DURACION_HORAS'].sum().reset_index()
+                
+                # 2. Procesar PDF de Tiempos Muertos
+                df_muerto = extraer_tiempos_muertos_pdf(archivo_pdf)
+                
+                if df_muerto.empty:
+                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
+                    return
+                
+                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas)
 
-    df_final = pd.merge(df_muerto, pausas_agrupadas, on='TECNICO', how='left').fillna(0)
-    df_final.rename(columns={'DURACION_HORAS': 'PAUSAS_HORAS'}, inplace=True)
+                # 3. Unir y calcular diferencias
+                df_final = pd.merge(df_muerto, pausas_agrupadas, on='TECNICO', how='left').fillna(0)
+                df_final.rename(columns={'DURACION_HORAS': 'PAUSAS_HORAS'}, inplace=True)
+                
+                # Solo para mostrar el cuadro comparativo limpio
+                df_mostrar = df_final.copy()
+                df_mostrar['Tiempo Muerto (PDF)'] = df_mostrar['MUERTO_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
+                df_mostrar['Pausas Justificadas (Excel)'] = df_mostrar['PAUSAS_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
+                
+                df_mostrar['Diferencia_Num'] = df_mostrar['PAUSAS_HORAS'] - df_mostrar['MUERTO_HORAS']
+                
+                def formato_diferencia(val):
+                    signo = "+" if val >= 0 else "-"
+                    val_abs = abs(val)
+                    return f"{signo} {int(val_abs)}h {int(round((val_abs%1)*60))}m"
+                
+                df_mostrar['Balance (Justificado - Muerto)'] = df_mostrar['Diferencia_Num'].apply(formato_diferencia)
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=df_final['TECNICO'], 
-        y=df_final['MUERTO_HORAS'],
-        name='Tiempo Muerto (Órdenes)',
-        marker_color='#ef4444'
-    ))
-    fig.add_trace(go.Bar(
-        x=df_final['TECNICO'], 
-        y=df_final['PAUSAS_HORAS'],
-        name='Pausas (Reportadas a Supervisor)',
-        marker_color='#3b82f6'
-    ))
-    fig.update_layout(
-        barmode='group',
-        xaxis_tickangle=-45,
-        height=550
-    )
-    st.plotly_chart(fig, use_container_width=True)
+                # 4. Visualización Gráfica
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=df_final['TECNICO'], 
+                    y=df_final['MUERTO_HORAS'],
+                    name='Tiempo Muerto (Órdenes)',
+                    marker_color='#ef4444' # Rojo indicador
+                ))
+                fig.add_trace(go.Bar(
+                    x=df_final['TECNICO'], 
+                    y=df_final['PAUSAS_HORAS'],
+                    name='Pausas (Reportadas a Supervisor)',
+                    marker_color='#3b82f6' # Azul justificado
+                ))
+                fig.update_layout(
+                    barmode='group',
+                    title="Contraste Operativo por Técnico",
+                    xaxis_tickangle=-45,
+                    height=550,
+                    margin=dict(b=150)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # 5. Tabla Comparativa
+                st.markdown("### 📋 Cuadro Comparativo Detallado")
+                
+                def color_balance(val):
+                    color = '#388e3c' if '+' in val else '#d32f2f'
+                    return f'color: {color}; font-weight: bold'
+                
+                st.dataframe(
+                    df_mostrar[['TECNICO', 'Tiempo Muerto (PDF)', 'Pausas Justificadas (Excel)', 'Balance (Justificado - Muerto)']].style.map(color_balance, subset=['Balance (Justificado - Muerto)']),
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+            except Exception as e:
+                st.error(f"Error procesando los archivos: {e}")
+    else:
+        st.info("👆 Por favor sube ambos archivos para generar el cruce de información.")
