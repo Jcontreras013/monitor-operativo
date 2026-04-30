@@ -5,9 +5,68 @@ import re
 import fitz  # PyMuPDF para extraer texto del PDF
 from fpdf import FPDF
 from datetime import datetime
+import os
+import tempfile
+import unicodedata
 
 # REGLA DE DIAMANTE: No tocar la lógica de la app principal, solo se agrega este módulo.
 
+def safestr(texto):
+    """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
+    if pd.isna(texto):
+        return ""
+    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+
+# ==============================================================================
+# 1. CLASE PARA PDF (REPORTING GERENCIAL ADAPTADO DE TOOLS.PY)
+# ==============================================================================
+class ReporteEficienciaPDF(FPDF):
+    def header(self):
+        # Insertar logo si existe
+        if os.path.exists('logo.png'):
+            self.image('logo.png', 10, 8, 33) 
+        
+        self.set_y(10)
+        self.set_x(50) 
+        self.set_text_color(0, 0, 0)
+        self.set_font("Helvetica", "", 8)
+        self.cell(80, 5, safestr("Reporte Comparativo de Tiempos Muertos y Pausas"), ln=False, align="L")
+        self.cell(0, 5, safestr("Maxcom PRO - Modulo Gerencial"), ln=True, align="R")
+        
+        # Línea divisoria
+        self.set_draw_color(200, 200, 200)
+        y_line = max(self.get_y(), 20) 
+        self.line(10, y_line, 200, y_line)
+        self.set_y(y_line + 5)
+
+    def footer(self):
+        # Número de página en la parte inferior
+        self.set_y(-15)
+        self.set_text_color(150, 150, 150)
+        self.set_font("Helvetica", "", 8)
+        self.cell(0, 10, f"Pagina {self.page_no()} / {{nb}}", align="R")
+
+    def seccion_titulo(self, titulo):
+        # Formato de subtítulos de herramientas
+        self.set_text_color(84, 98, 143)
+        self.set_font("Helvetica", "B", 11)
+        self.cell(0, 8, safestr(titulo), ln=True, align="L")
+        self.ln(2)
+
+def finalizar_pdf(pdfobj):
+    """Guarda y retorna los bytes del PDF de manera segura usando temporales."""
+    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        pdfobj.output(tmppath)
+        with open(tmppath, "rb") as f: return f.read()
+    finally:
+        try: os.remove(tmppath)
+        except: pass
+
+# ==============================================================================
+# 2. FUNCIONES DE PROCESAMIENTO DE TIEMPOS
+# ==============================================================================
 def extraer_horas(tiempo_str):
     if not isinstance(tiempo_str, str): return 0
     m = re.match(r'(?i)(\d+)h\s*(\d+)m', tiempo_str.strip().replace('O','0'))
@@ -41,53 +100,97 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
         st.error(f"Error al procesar el PDF: {e}")
         return pd.DataFrame()
 
-# === NUEVA FUNCIÓN DE EXPORTACIÓN A PDF ===
 def generar_pdf_comparativo(df_mostrar):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    """Construye el PDF Gerencial A4 Vertical basado en la lógica de tools.py"""
+    pdf = ReporteEficienciaPDF(orientation='P', unit='mm', format='A4') # A4 Vertical (P)
+    pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Título
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_text_color(40, 50, 100)
     hoy_str = datetime.now().strftime("%d/%m/%Y")
-    pdf.cell(0, 10, f"REPORTE COMPARATIVO DE TIEMPOS MUERTOS VS PAUSAS - {hoy_str}", ln=True, align='C')
-    pdf.ln(5)
+    
+    # Título Principal
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE COMPARATIVO DE TIEMPOS MUERTOS"), ln=True, align='C')
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Corte Evaluativo: {hoy_str}"), ln=True, align='C')
+    pdf.ln(8)
+    
+    # Subtítulo Gerencial
+    pdf.seccion_titulo("Analisis de Diferencia: Sistema vs Pausas Reportadas")
     
     # Encabezados de tabla
-    pdf.set_font("Arial", 'B', 10)
-    pdf.set_fill_color(220, 230, 250)
-    pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
-    pdf.cell(50, 8, "TIEMPO MUERTO (PDF)", border=1, align='C', fill=True)
-    pdf.cell(50, 8, "PAUSAS (EXCEL/CSV)", border=1, align='C', fill=True)
-    pdf.cell(50, 8, "BALANCE", border=1, align='C', fill=True)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(225, 225, 225)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.set_text_color(50, 50, 50)
+    
+    # Anchos para A4 Vertical (Total ~190mm)
+    w_tec = 70
+    w_muerto = 40
+    w_pausa = 40
+    w_bal = 40
+    
+    pdf.cell(w_tec, 8, "COLABORADOR", border=1, align='C', fill=True)
+    pdf.cell(w_muerto, 8, "T. MUERTO (SISTEMA)", border=1, align='C', fill=True)
+    pdf.cell(w_pausa, 8, "PAUSAS (REPORTADAS)", border=1, align='C', fill=True)
+    pdf.cell(w_bal, 8, "BALANCE", border=1, align='C', fill=True)
     pdf.ln()
     
     # Filas de datos
-    pdf.set_font("Arial", '', 9)
+    pdf.set_font("Helvetica", "", 8)
     for _, row in df_mostrar.iterrows():
-        tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
-        muerto = str(row['Tiempo Muerto (PDF)'])
-        pausa = str(row['Pausas Justificadas (Excel/CSV)'])
-        balance = str(row['Balance (Justificado - Muerto)'])
+        # Verificador de salto de página
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_fill_color(225, 225, 225)
+            pdf.set_text_color(50, 50, 50)
+            pdf.cell(w_tec, 8, "COLABORADOR", border=1, align='C', fill=True)
+            pdf.cell(w_muerto, 8, "T. MUERTO (SISTEMA)", border=1, align='C', fill=True)
+            pdf.cell(w_pausa, 8, "PAUSAS (REPORTADAS)", border=1, align='C', fill=True)
+            pdf.cell(w_bal, 8, "BALANCE", border=1, align='C', fill=True)
+            pdf.ln()
+            pdf.set_font("Helvetica", "", 8)
+            
+        tec = safestr(str(row['TECNICO']))[:35]
+        muerto = safestr(str(row['Tiempo Muerto (PDF)']))
+        pausa = safestr(str(row['Pausas Justificadas (Excel/CSV)']))
+        balance = safestr(str(row['Balance (Justificado - Muerto)']))
         
-        pdf.cell(90, 8, tec, border=1)
-        pdf.cell(50, 8, muerto, border=1, align='C')
-        pdf.cell(50, 8, pausa, border=1, align='C')
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(w_tec, 7, tec, border=1)
+        pdf.cell(w_muerto, 7, muerto, border=1, align='C')
+        pdf.cell(w_pausa, 7, pausa, border=1, align='C')
         
-        # Colorear solo la celda de balance
+        # Semáforo para Balance
         if "+" in balance:
             pdf.set_text_color(0, 128, 0) # Verde
+            pdf.set_font("Helvetica", "B", 8)
         elif "-" in balance:
             pdf.set_text_color(200, 0, 0) # Rojo
+            pdf.set_font("Helvetica", "B", 8)
         else:
-            pdf.set_text_color(0, 0, 0)
+            pdf.set_text_color(0, 0, 0) # Negro
+            pdf.set_font("Helvetica", "", 8)
             
-        pdf.cell(50, 8, balance, border=1, align='C')
-        pdf.set_text_color(0, 0, 0) # Resetear a negro para la siguiente fila
+        pdf.cell(w_bal, 7, balance, border=1, align='C')
+        
+        # Reset de fuente
+        pdf.set_text_color(0, 0, 0) 
+        pdf.set_font("Helvetica", "", 8)
         pdf.ln()
+        
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 5, "* Notas de lectura:", ln=True)
+    pdf.cell(0, 5, "- Balance Positivo (+ Verde): El colaborador reporto sus pausas excediendo o cubriendo el tiempo muerto del sistema.", ln=True)
+    pdf.cell(0, 5, "- Balance Negativo (- Rojo): El colaborador presenta tiempo muerto sin reportar (Tiempo en el aire).", ln=True)
 
-    # Retorna los bytes listos para descargar
-    return pdf.output(dest='S').encode('latin-1')
+    # Retorna los bytes listos para descargar usando temporales seguros
+    return finalizar_pdf(pdf)
 
 def mostrar_tiempos_tecnicos():
     st.subheader("Análisis de Eficiencia: Tiempo Muerto vs Pausas Reportadas")
@@ -160,7 +263,7 @@ def mostrar_tiempos_tecnicos():
                 
                 df_mostrar['Balance (Justificado - Muerto)'] = df_mostrar['Diferencia_Num'].apply(formato_diferencia)
 
-                # 4. Visualización Gráfica
+                # 4. Visualización Gráfica (Solo en Web)
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
                     x=df_final['TECNICO'], 
@@ -183,15 +286,14 @@ def mostrar_tiempos_tecnicos():
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 5. Tabla Comparativa y Botón de Descarga
+                # 5. Tabla Comparativa y Botón de Descarga PDF
                 st.markdown("### 📋 Cuadro Comparativo Detallado")
                 
-                # === BOTÓN DE DESCARGA PDF ===
                 col_down1, col_down2 = st.columns([1, 2])
                 with col_down1:
                     pdf_bytes = generar_pdf_comparativo(df_mostrar)
                     st.download_button(
-                        label="📥 Descargar Reporte en PDF",
+                        label="📄 Descargar Reporte Gerencial en PDF",
                         data=pdf_bytes,
                         file_name=f"Comparativo_Tiempos_{datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
@@ -199,7 +301,7 @@ def mostrar_tiempos_tecnicos():
                         use_container_width=True
                     )
                 with col_down2:
-                    st.caption("ℹ️ El PDF incluirá la tabla detallada de auditoría para su revisión formal.")
+                    st.caption("ℹ️ El PDF incluirá la tabla detallada de auditoría formateada en A4 vertical con los balances de colores para su revisión formal.")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
