@@ -221,10 +221,11 @@ def mostrar_tiempos_tecnicos():
                 else:
                     df_pausas_bruto = pd.read_excel(archivo_excel, header=None)
                 
-                # Encontrar dinámicamente la fila donde están los encabezados (Busca FECHA_INICIO)
+                # Encontrar dinámicamente la fila donde están los encabezados de forma segura
                 idx_header = -1
                 for idx, row in df_pausas_bruto.iterrows():
-                    fila_str = ' '.join(row.astype(str).str.upper())
+                    # Obligamos a que cada celda sea String para evitar el error de floats (NaN) en celdas vacías
+                    fila_str = ' '.join([str(val).upper() for val in row.tolist()])
                     if 'FECHA_INICIO' in fila_str or 'FECHA INICIO' in fila_str:
                         idx_header = idx
                         break
