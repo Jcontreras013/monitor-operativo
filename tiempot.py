@@ -54,7 +54,7 @@ def finalizar_pdf(pdfobj):
         except: pass
 
 # ==============================================================================
-# 2. FUNCIONES DE EXTRACCIÓN DE DATOS Y TIEMPO (BLINDADAS Y TOPADAS A 5 PM)
+# 2. FUNCIONES DE EXTRACCIÓN DE DATOS Y TIEMPO
 # ==============================================================================
 def extraer_horas_pdf(tiempo_str):
     if not isinstance(tiempo_str, str): return 0
@@ -68,6 +68,14 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
         texto_completo = ""
         for pagina in doc: texto_completo += pagina.get_text()
         
+        # Extraer la fecha del reporte del título
+        patron_fecha = re.search(r'REPORTE.*?-.*?(\d{2}/\d{2}/\d{4})', texto_completo, re.IGNORECASE)
+        fecha_reporte = None
+        if patron_fecha:
+            try:
+                fecha_reporte = pd.to_datetime(patron_fecha.group(1), format='%d/%m/%Y').date()
+            except: pass
+
         datos_extraidos = []
         patron_tecnico = re.compile(r'TECNICO:\s*(.+)')
         patron_muerto = re.compile(r'TIEMPO PERDIDO\s*/\s*MUERTO\s*\(Base.*?\):\s*(\d+h\s*\d+m)', re.IGNORECASE)
@@ -80,31 +88,34 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
                 'TECNICO': tecnicos_encontrados[i].strip().upper(),
                 'TIEMPO_MUERTO': tiempos_encontrados[i].strip()
             })
-        return pd.DataFrame(datos_extraidos)
+        return pd.DataFrame(datos_extraidos), fecha_reporte
     except Exception as e:
         st.error(f"Error al procesar el PDF: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
-def purificar_hora_excel(val):
-    """Extrae estrictamente la Hora, descartando días invisibles de Excel"""
-    if pd.isnull(val): return None
+def extraer_fecha_y_hora(val):
+    """Extrae la fecha (si existe) y la hora pura como timedelta."""
+    if pd.isnull(val): return None, None
     val_str = str(val).strip()
     
-    # Si Excel lo procesó como objeto de tiempo
-    if hasattr(val, 'hour'):
+    fecha_dt = None
+    if hasattr(val, 'date'):
+        fecha_dt = val.date()
         val_str = f"{val.hour:02d}:{val.minute:02d}:{val.second:02d}"
-        
-    # Si tiene un día pegado (ej. '2026-04-29 12:54:15'), nos quedamos solo con la hora
-    if ' ' in val_str:
-        val_str = val_str.split(' ')[-1]
+    elif ' ' in val_str:
+        partes_espacio = val_str.split(' ')
+        try:
+            fecha_dt = pd.to_datetime(partes_espacio[0]).date()
+        except: pass
+        val_str = partes_espacio[-1]
         
     partes = val_str.split(':')
     try:
         h = int(partes[0])
         m = int(partes[1])
         s = int(float(partes[2])) if len(partes) > 2 else 0
-        return timedelta(hours=h, minutes=m, seconds=s)
-    except: return None
+        return fecha_dt, timedelta(hours=h, minutes=m, seconds=s)
+    except: return None, None
 
 def calcular_duracion_pausa(row):
     """Calcula duración topando estrictamente a las 5:00 PM (17:00 horas)"""
@@ -114,11 +125,9 @@ def calcular_duracion_pausa(row):
     
     limite_17h = timedelta(hours=17)
     
-    # Si la pausa inició después de las 5 PM, no aporta al balance del día regular
     if ini >= limite_17h:
         return 0.0
         
-    # Si el fin es menor que inicio (pasó de medianoche) o si excede las 5 PM, topamos
     if fin < ini or fin > limite_17h:
         fin_efectivo = limite_17h
     else:
@@ -130,7 +139,7 @@ def calcular_duracion_pausa(row):
 # ==============================================================================
 # 3. CONSTRUCTOR DEL REPORTE PDF FINAL
 # ==============================================================================
-def generar_pdf_comparativo(df_mostrar):
+def generar_pdf_comparativo(df_mostrar, fecha_str):
     pdf = ReporteEficienciaPDF(orientation='P', unit='mm', format='A4') 
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -141,7 +150,9 @@ def generar_pdf_comparativo(df_mostrar):
     pdf.cell(0, 10, safestr("REPORTE COMPARATIVO DE TIEMPOS MUERTOS"), ln=True, align='C')
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, safestr(f"Corte Evaluativo: {hoy_str}"), ln=True, align='C')
+    
+    fecha_titulo = fecha_str if fecha_str else hoy_str
+    pdf.cell(0, 6, safestr(f"Corte Evaluativo: {fecha_titulo}"), ln=True, align='C')
     pdf.ln(8)
     
     pdf.seccion_titulo("Analisis de Diferencia: Sistema vs Pausas Reportadas")
@@ -224,13 +235,24 @@ def mostrar_tiempos_tecnicos():
     if archivo_excel and archivo_pdf:
         with st.spinner("Procesando y cruzando reportes..."):
             try:
-                # 1. LEER EXCEL/CSV BUSCANDO LA TABLA ESTÉ DONDE ESTÉ
+                # ==============================================================
+                # 1. EXTRAER TIEMPOS MUERTOS Y FECHA DEL PDF
+                # ==============================================================
+                df_muerto, fecha_pdf = extraer_tiempos_muertos_pdf(archivo_pdf)
+                if df_muerto.empty:
+                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
+                    return
+                
+                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas_pdf)
+
+                # ==============================================================
+                # 2. LEER EXCEL/CSV BUSCANDO LA TABLA ESTÉ DONDE ESTÉ
+                # ==============================================================
                 if archivo_excel.name.lower().endswith('.csv'):
                     df_pausas_bruto = pd.read_csv(archivo_excel, header=None)
                 else:
                     df_pausas_bruto = pd.read_excel(archivo_excel, header=None)
                 
-                # Encontrar dinámicamente la fila donde están los encabezados (Busca FECHA_INICIO)
                 idx_header = -1
                 for idx, row in df_pausas_bruto.iterrows():
                     fila_str = ' '.join([str(val).upper() for val in row.tolist()])
@@ -242,12 +264,10 @@ def mostrar_tiempos_tecnicos():
                     st.error("No se encontraron las columnas FECHA_INICIO y FECHA_FIN en el archivo.")
                     return
                 
-                # Reconstruir la tabla con los encabezados correctos
                 df_pausas = df_pausas_bruto.iloc[idx_header+1:].reset_index(drop=True)
                 df_pausas.columns = [str(c).upper().strip() for c in df_pausas_bruto.iloc[idx_header]]
                 df_pausas = df_pausas.dropna(axis=1, how='all')
                 
-                # Buscar columna del técnico de manera robusta
                 col_tec = next((col for col in df_pausas.columns if 'TEC' in col or 'TÉC' in col), None)
                 if not col_tec:
                     st.error("No se encontró la columna de Técnicos en el archivo de pausas.")
@@ -255,11 +275,28 @@ def mostrar_tiempos_tecnicos():
                 
                 df_pausas['TECNICO_LIMPIO'] = df_pausas[col_tec].astype(str).str.strip().str.upper()
                 
-                # 2. EXTRAER TIEMPOS EXACTOS (IGNORANDO FECHAS OCULTAS DE EXCEL)
-                df_pausas['T_INICIO'] = df_pausas['FECHA_INICIO'].apply(purificar_hora_excel)
-                df_pausas['T_FIN'] = df_pausas['FECHA_FIN'].apply(purificar_hora_excel)
+                # ==============================================================
+                # 3. EXTRAER TIEMPOS EXACTOS Y FILTRAR POR LA FECHA DEL PDF
+                # ==============================================================
+                fechas_ini, horas_ini = zip(*df_pausas['FECHA_INICIO'].apply(extraer_fecha_y_hora))
+                fechas_fin, horas_fin = zip(*df_pausas['FECHA_FIN'].apply(extraer_fecha_y_hora))
+                
+                df_pausas['D_INICIO'] = fechas_ini
+                df_pausas['T_INICIO'] = horas_ini
+                df_pausas['D_FIN'] = fechas_fin
+                df_pausas['T_FIN'] = horas_fin
                 
                 df_valido_pausas = df_pausas.dropna(subset=['T_INICIO', 'T_FIN']).copy()
+                
+                # --- FILTRO CRÍTICO: SOLO EL DÍA DEL PDF ---
+                if fecha_pdf:
+                    # Filtramos filas donde la fecha de inicio o fin coincida con la del PDF.
+                    # Si el archivo NO traía fechas (solo hora), D_INICIO será None. En ese caso, 
+                    # asumimos que todo el archivo corresponde a ese día.
+                    mask_fecha = (df_valido_pausas['D_INICIO'] == fecha_pdf) | (df_valido_pausas['D_FIN'] == fecha_pdf) | (df_valido_pausas['D_INICIO'].isnull())
+                    df_valido_pausas = df_valido_pausas[mask_fecha]
+                else:
+                    st.warning("No se pudo detectar la fecha en el título del PDF. Se sumarán todas las pausas disponibles en el Excel.")
                 
                 if not df_valido_pausas.empty:
                     df_valido_pausas['DURACION_HORAS'] = df_valido_pausas.apply(calcular_duracion_pausa, axis=1)
@@ -268,15 +305,9 @@ def mostrar_tiempos_tecnicos():
                 else:
                     pausas_agrupadas = pd.DataFrame(columns=['TECNICO', 'DURACION_HORAS'])
                 
-                # 3. EXTRAER TIEMPOS MUERTOS DEL PDF
-                df_muerto = extraer_tiempos_muertos_pdf(archivo_pdf)
-                if df_muerto.empty:
-                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
-                    return
-                
-                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas_pdf)
-
+                # ==============================================================
                 # 4. CRUZAR DATOS Y CALCULAR BALANCES
+                # ==============================================================
                 df_final = pd.merge(df_muerto, pausas_agrupadas, on='TECNICO', how='left').fillna(0)
                 df_final.rename(columns={'DURACION_HORAS': 'PAUSAS_HORAS'}, inplace=True)
                 
@@ -294,7 +325,9 @@ def mostrar_tiempos_tecnicos():
                 
                 df_mostrar['Balance (Pausas - T. Muerto)'] = df_mostrar['Diferencia_Num'].apply(formato_diferencia)
 
+                # ==============================================================
                 # 5. GRÁFICA VISUAL INTERACTIVA
+                # ==============================================================
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
                     x=df_final['TECNICO'], 
@@ -310,22 +343,25 @@ def mostrar_tiempos_tecnicos():
                 ))
                 fig.update_layout(
                     barmode='group',
-                    title="Contraste Operativo por Técnico",
+                    title=f"Contraste Operativo por Técnico - {fecha_pdf.strftime('%d/%m/%Y') if fecha_pdf else ''}",
                     xaxis_tickangle=-45,
                     height=550,
                     margin=dict(b=150)
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
+                # ==============================================================
                 # 6. TABLA Y EXPORTACIÓN A PDF
+                # ==============================================================
                 st.markdown("### 📋 Cuadro Comparativo Detallado")
                 col_down1, col_down2 = st.columns([1, 2])
                 with col_down1:
-                    pdf_bytes = generar_pdf_comparativo(df_mostrar)
+                    fecha_pdf_str = fecha_pdf.strftime("%d/%m/%Y") if fecha_pdf else None
+                    pdf_bytes = generar_pdf_comparativo(df_mostrar, fecha_pdf_str)
                     st.download_button(
                         label="📄 Descargar Reporte Gerencial en PDF",
                         data=pdf_bytes,
-                        file_name=f"Comparativo_Eficiencia_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        file_name=f"Comparativo_Eficiencia_{fecha_pdf.strftime('%Y%m%d') if fecha_pdf else datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
                         type="primary",
                         use_container_width=True
