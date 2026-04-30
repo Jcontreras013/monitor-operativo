@@ -69,13 +69,23 @@ def extraer_horas(tiempo_str):
         return int(m.group(1)) + round(int(m.group(2))/60, 2)
     return 0
 
-def extraer_tiempos_muertos_pdf(archivo_pdf):
+def extraer_datos_pdf(archivo_pdf):
+    """Extrae la fecha del reporte, los técnicos y su tiempo perdido desde el PDF."""
     try:
         doc = fitz.open(stream=archivo_pdf.read(), filetype="pdf")
         texto_completo = ""
         for pagina in doc:
             texto_completo += pagina.get_text()
         
+        # 1. Buscar la fecha en el título del PDF
+        patron_fecha = re.search(r'REPORTE.*?-.*?(\d{2}/\d{2}/\d{4})', texto_completo, re.IGNORECASE)
+        fecha_reporte = None
+        if patron_fecha:
+            try:
+                fecha_reporte = pd.to_datetime(patron_fecha.group(1), format='%d/%m/%Y').date()
+            except: pass
+
+        # 2. Extraer técnicos y tiempos
         datos_extraidos = []
         patron_tecnico = re.compile(r'TECNICO:\s*(.+)')
         patron_muerto = re.compile(r'TIEMPO PERDIDO\s*/\s*MUERTO\s*\(Base.*?\):\s*(\d+h\s*\d+m)', re.IGNORECASE)
@@ -89,40 +99,17 @@ def extraer_tiempos_muertos_pdf(archivo_pdf):
                 'TIEMPO_MUERTO': tiempos_encontrados[i].strip()
             })
             
-        return pd.DataFrame(datos_extraidos)
+        return pd.DataFrame(datos_extraidos), fecha_reporte
     except Exception as e:
         st.error(f"Error al procesar el PDF: {e}")
-        return pd.DataFrame()
-
-# === NUEVA LÓGICA DE TIEMPO PARA EXCEL ===
-def convertir_hora_a_timedelta(val):
-    """Convierte strings como '12:54:15' o floats de Excel a timedelta para poder restarlos."""
-    if pd.isnull(val):
-        return pd.NaT
-    
-    # Si viene como string 'HH:MM:SS'
-    if isinstance(val, str):
-        try:
-            partes = val.strip().split(':')
-            h = int(partes[0])
-            m = int(partes[1])
-            s = int(partes[2]) if len(partes) > 2 else 0
-            return timedelta(hours=h, minutes=m, seconds=s)
-        except:
-            return pd.NaT
-            
-    # Si viene como objeto datetime.time puro de Excel
-    elif hasattr(val, 'hour'):
-        return timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-        
-    return pd.NaT
+        return pd.DataFrame(), None
 
 def calcular_diferencia_horas(row):
-    ini = row['T_INICIO']
-    fin = row['T_FIN']
+    """Calcula la diferencia de horas asumiendo que ocurren en el mismo día."""
+    ini = row['FECHA_INICIO']
+    fin = row['FECHA_FIN']
     
-    if pd.isnull(ini) or pd.isnull(fin):
-        return 0.0
+    if pd.isnull(ini) or pd.isnull(fin): return 0.0
         
     diff = fin - ini
     
@@ -181,7 +168,7 @@ def generar_pdf_comparativo(df_mostrar):
             
         tec = safestr(str(row['TECNICO']))[:35]
         muerto = safestr(str(row['Tiempo Muerto (PDF)']))
-        pausa = safestr(str(row['Pausas Reportadas (Excel/CSV)']))
+        pausa = safestr(str(row['Pausas Reportadas']))
         balance = safestr(str(row['Balance (Pausas - T. Muerto)']))
         
         pdf.set_text_color(0, 0, 0)
@@ -230,7 +217,18 @@ def mostrar_tiempos_tecnicos():
         with st.spinner("Procesando y cruzando reportes..."):
             try:
                 # ==============================================================
-                # 1. PROCESAR EXCEL/CSV DE PAUSAS
+                # 1. PROCESAR PDF DE TIEMPOS MUERTOS PARA OBTENER LA FECHA
+                # ==============================================================
+                df_muerto, fecha_pdf = extraer_datos_pdf(archivo_pdf)
+                
+                if df_muerto.empty:
+                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
+                    return
+                    
+                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas)
+
+                # ==============================================================
+                # 2. PROCESAR EXCEL/CSV DE PAUSAS Y FILTRAR POR LA FECHA DEL PDF
                 # ==============================================================
                 if archivo_excel.name.lower().endswith('.csv'):
                     df_pausas = pd.read_csv(archivo_excel)
@@ -247,11 +245,7 @@ def mostrar_tiempos_tecnicos():
                 df_pausas.columns = [str(c).upper().strip() for c in df_pausas.columns]
                 
                 # Buscar columna del técnico
-                col_tec = None
-                for col in df_pausas.columns:
-                    if 'TECNICO' in col:
-                        col_tec = col
-                        break
+                col_tec = next((col for col in df_pausas.columns if 'TECNICO' in col), None)
                         
                 if not col_tec:
                     st.error("No se encontró la columna 'TECNICO' en el archivo de pausas.")
@@ -259,11 +253,18 @@ def mostrar_tiempos_tecnicos():
                 
                 df_pausas['TECNICO_LIMPIO'] = df_pausas[col_tec].str.strip().str.upper()
                 
-                # === APLICAR NUEVA LÓGICA DE TIEMPOS ===
-                df_pausas['T_INICIO'] = df_pausas['FECHA_INICIO'].apply(convertir_hora_a_timedelta)
-                df_pausas['T_FIN'] = df_pausas['FECHA_FIN'].apply(convertir_hora_a_timedelta)
+                # Convertimos las columnas de fecha a datetime real de Pandas
+                df_pausas['FECHA_INICIO'] = pd.to_datetime(df_pausas['FECHA_INICIO'], errors='coerce')
+                df_pausas['FECHA_FIN'] = pd.to_datetime(df_pausas['FECHA_FIN'], errors='coerce')
                 
-                df_valido_pausas = df_pausas.dropna(subset=['T_INICIO', 'T_FIN']).copy()
+                df_valido_pausas = df_pausas.dropna(subset=['FECHA_INICIO', 'FECHA_FIN']).copy()
+                
+                # APLICAMOS EL FILTRO: Solo sumar las pausas que coincidan con el día del PDF
+                if fecha_pdf:
+                    mask_fecha = (df_valido_pausas['FECHA_INICIO'].dt.date == fecha_pdf) | (df_valido_pausas['FECHA_FIN'].dt.date == fecha_pdf)
+                    df_valido_pausas = df_valido_pausas[mask_fecha]
+                else:
+                    st.warning("No se pudo detectar la fecha en el título del PDF. Se sumarán todas las pausas disponibles en el Excel.")
                 
                 if not df_valido_pausas.empty:
                     df_valido_pausas['DURACION_HORAS'] = df_valido_pausas.apply(calcular_diferencia_horas, axis=1)
@@ -273,17 +274,6 @@ def mostrar_tiempos_tecnicos():
                     pausas_agrupadas = pd.DataFrame(columns=['TECNICO', 'DURACION_HORAS'])
                 
                 # ==============================================================
-                # 2. PROCESAR PDF DE TIEMPOS MUERTOS
-                # ==============================================================
-                df_muerto = extraer_tiempos_muertos_pdf(archivo_pdf)
-                
-                if df_muerto.empty:
-                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
-                    return
-                
-                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas)
-
-                # ==============================================================
                 # 3. UNIR Y CALCULAR EL BALANCE
                 # ==============================================================
                 df_final = pd.merge(df_muerto, pausas_agrupadas, on='TECNICO', how='left').fillna(0)
@@ -291,7 +281,7 @@ def mostrar_tiempos_tecnicos():
                 
                 df_mostrar = df_final.copy()
                 df_mostrar['Tiempo Muerto (PDF)'] = df_mostrar['MUERTO_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
-                df_mostrar['Pausas Reportadas (Excel/CSV)'] = df_mostrar['PAUSAS_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
+                df_mostrar['Pausas Reportadas'] = df_mostrar['PAUSAS_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
                 
                 # BALANCE = Pausas - Tiempo Muerto Sistema
                 df_mostrar['Diferencia_Num'] = df_mostrar['PAUSAS_HORAS'] - df_mostrar['MUERTO_HORAS']
@@ -321,7 +311,7 @@ def mostrar_tiempos_tecnicos():
                 ))
                 fig.update_layout(
                     barmode='group',
-                    title="Contraste Operativo por Técnico",
+                    title=f"Contraste Operativo por Técnico - {fecha_pdf if fecha_pdf else ''}",
                     xaxis_tickangle=-45,
                     height=550,
                     margin=dict(b=150)
@@ -339,7 +329,7 @@ def mostrar_tiempos_tecnicos():
                     st.download_button(
                         label="📄 Descargar Reporte Gerencial en PDF",
                         data=pdf_bytes,
-                        file_name=f"Comparativo_Eficiencia_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        file_name=f"Comparativo_Eficiencia_{fecha_pdf if fecha_pdf else datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
                         type="primary",
                         use_container_width=True
@@ -354,7 +344,7 @@ def mostrar_tiempos_tecnicos():
                     return f'color: {color}; font-weight: bold'
                 
                 st.dataframe(
-                    df_mostrar[['TECNICO', 'Tiempo Muerto (PDF)', 'Pausas Reportadas (Excel/CSV)', 'Balance (Pausas - T. Muerto)']].style.map(color_balance, subset=['Balance (Pausas - T. Muerto)']),
+                    df_mostrar[['TECNICO', 'Tiempo Muerto (PDF)', 'Pausas Reportadas', 'Balance (Pausas - T. Muerto)']].style.map(color_balance, subset=['Balance (Pausas - T. Muerto)']),
                     use_container_width=True,
                     hide_index=True
                 )
