@@ -54,7 +54,7 @@ def finalizar_pdf(pdfobj):
         except: pass
 
 # ==============================================================================
-# 2. FUNCIONES DE EXTRACCIÓN DE DATOS Y TIEMPO (BLINDADAS)
+# 2. FUNCIONES DE EXTRACCIÓN DE DATOS Y TIEMPO (BLINDADAS Y TOPADAS A 5 PM)
 # ==============================================================================
 def extraer_horas_pdf(tiempo_str):
     if not isinstance(tiempo_str, str): return 0
@@ -107,16 +107,25 @@ def purificar_hora_excel(val):
     except: return None
 
 def calcular_duracion_pausa(row):
-    """Resta las horas exactas sin importar la fecha oculta de las celdas"""
+    """Calcula duración topando estrictamente a las 5:00 PM (17:00 horas)"""
     ini = row['T_INICIO']
     fin = row['T_FIN']
     if ini is None or fin is None: return 0.0
     
-    diff = fin - ini
-    if diff.total_seconds() < 0: # Caso si cruza la medianoche (ej. de 23:00 a 01:00)
-        diff += timedelta(days=1)
+    limite_17h = timedelta(hours=17)
+    
+    # Si la pausa inició después de las 5 PM, no aporta al balance del día regular
+    if ini >= limite_17h:
+        return 0.0
         
-    return diff.total_seconds() / 3600
+    # Si el fin es menor que inicio (pasó de medianoche) o si excede las 5 PM, topamos
+    if fin < ini or fin > limite_17h:
+        fin_efectivo = limite_17h
+    else:
+        fin_efectivo = fin
+        
+    diff = fin_efectivo - ini
+    return max(0.0, diff.total_seconds() / 3600)
 
 # ==============================================================================
 # 3. CONSTRUCTOR DEL REPORTE PDF FINAL
@@ -191,7 +200,7 @@ def generar_pdf_comparativo(df_mostrar):
     pdf.ln(10)
     pdf.set_font("Helvetica", "I", 7)
     pdf.set_text_color(150, 150, 150)
-    pdf.cell(0, 5, "* Notas de lectura:", ln=True)
+    pdf.cell(0, 5, "* Notas de lectura (Corte a las 17:00 hrs):", ln=True)
     pdf.cell(0, 5, "- Balance Positivo (+ Verde): Las pausas reportadas justifican y exceden el tiempo muerto registrado en sistema.", ln=True)
     pdf.cell(0, 5, "- Balance Negativo (- Rojo): El colaborador tiene tiempo muerto en sistema que no justifico con pausas (Tiempo en el aire).", ln=True)
 
@@ -202,7 +211,7 @@ def generar_pdf_comparativo(df_mostrar):
 # ==============================================================================
 def mostrar_tiempos_tecnicos():
     st.subheader("Análisis de Eficiencia: Tiempo Muerto vs Pausas Reportadas")
-    st.markdown("Sube los reportes del día para comparar la eficiencia de la cuadrilla.")
+    st.markdown("Sube los reportes del día para comparar la eficiencia de la cuadrilla (Mide topado a las 5:00 PM).")
     
     col1, col2 = st.columns(2)
     
@@ -221,10 +230,9 @@ def mostrar_tiempos_tecnicos():
                 else:
                     df_pausas_bruto = pd.read_excel(archivo_excel, header=None)
                 
-                # Encontrar dinámicamente la fila donde están los encabezados de forma segura
+                # Encontrar dinámicamente la fila donde están los encabezados (Busca FECHA_INICIO)
                 idx_header = -1
                 for idx, row in df_pausas_bruto.iterrows():
-                    # Obligamos a que cada celda sea String para evitar el error de floats (NaN) en celdas vacías
                     fila_str = ' '.join([str(val).upper() for val in row.tolist()])
                     if 'FECHA_INICIO' in fila_str or 'FECHA INICIO' in fila_str:
                         idx_header = idx
@@ -297,7 +305,7 @@ def mostrar_tiempos_tecnicos():
                 fig.add_trace(go.Bar(
                     x=df_final['TECNICO'], 
                     y=df_final['PAUSAS_HORAS'],
-                    name='Pausas Reportadas',
+                    name='Pausas Reportadas (< 5 PM)',
                     marker_color='#3b82f6' 
                 ))
                 fig.update_layout(
@@ -323,7 +331,7 @@ def mostrar_tiempos_tecnicos():
                         use_container_width=True
                     )
                 with col_down2:
-                    st.caption("ℹ️ El PDF incluye la tabla auditora con balances en semáforo (Verde: Cubre el tiempo muerto / Rojo: Tiempo en el aire sin justificar).")
+                    st.caption("ℹ️ El PDF incluye la tabla auditora con balances en semáforo (Verde: Cubre el tiempo muerto / Rojo: Tiempo en el aire sin justificar). Las pausas reportadas se topan automáticamente a las 5:00 PM.")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
