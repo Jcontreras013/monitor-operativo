@@ -9,29 +9,23 @@ import os
 import tempfile
 import unicodedata
 
-# REGLA DE DIAMANTE: No tocar la lógica de la app principal, solo se agrega este módulo.
-
+# ==============================================================================
+# 1. CLASE PARA PDF Y UTILIDADES GERENCIALES
+# ==============================================================================
 def safestr(texto):
-    """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
-    if pd.isna(texto):
-        return ""
+    if pd.isna(texto): return ""
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
-# ==============================================================================
-# 1. CLASE PARA PDF (REPORTING GERENCIAL ADAPTADO DE TOOLS.PY)
-# ==============================================================================
 class ReporteEficienciaPDF(FPDF):
     def header(self):
         if os.path.exists('logo.png'):
             self.image('logo.png', 10, 8, 33) 
-        
         self.set_y(10)
         self.set_x(50) 
         self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "", 8)
         self.cell(80, 5, safestr("Reporte Comparativo de Tiempos Muertos y Pausas"), ln=False, align="L")
         self.cell(0, 5, safestr("Maxcom PRO - Modulo Gerencial"), ln=True, align="R")
-        
         self.set_draw_color(200, 200, 200)
         y_line = max(self.get_y(), 20) 
         self.line(10, y_line, 200, y_line)
@@ -60,32 +54,20 @@ def finalizar_pdf(pdfobj):
         except: pass
 
 # ==============================================================================
-# 2. FUNCIONES DE PROCESAMIENTO DE TIEMPOS
+# 2. FUNCIONES DE EXTRACCIÓN DE DATOS Y TIEMPO (BLINDADAS)
 # ==============================================================================
-def extraer_horas(tiempo_str):
+def extraer_horas_pdf(tiempo_str):
     if not isinstance(tiempo_str, str): return 0
     m = re.match(r'(?i)(\d+)h\s*(\d+)m', tiempo_str.strip().replace('O','0'))
-    if m:
-        return int(m.group(1)) + round(int(m.group(2))/60, 2)
+    if m: return int(m.group(1)) + round(int(m.group(2))/60, 2)
     return 0
 
-def extraer_datos_pdf(archivo_pdf):
-    """Extrae la fecha del reporte, los técnicos y su tiempo perdido desde el PDF."""
+def extraer_tiempos_muertos_pdf(archivo_pdf):
     try:
         doc = fitz.open(stream=archivo_pdf.read(), filetype="pdf")
         texto_completo = ""
-        for pagina in doc:
-            texto_completo += pagina.get_text()
+        for pagina in doc: texto_completo += pagina.get_text()
         
-        # 1. Buscar la fecha en el título del PDF
-        patron_fecha = re.search(r'REPORTE.*?-.*?(\d{2}/\d{2}/\d{4})', texto_completo, re.IGNORECASE)
-        fecha_reporte = None
-        if patron_fecha:
-            try:
-                fecha_reporte = pd.to_datetime(patron_fecha.group(1), format='%d/%m/%Y').date()
-            except: pass
-
-        # 2. Extraer técnicos y tiempos
         datos_extraidos = []
         patron_tecnico = re.compile(r'TECNICO:\s*(.+)')
         patron_muerto = re.compile(r'TIEMPO PERDIDO\s*/\s*MUERTO\s*\(Base.*?\):\s*(\d+h\s*\d+m)', re.IGNORECASE)
@@ -98,32 +80,51 @@ def extraer_datos_pdf(archivo_pdf):
                 'TECNICO': tecnicos_encontrados[i].strip().upper(),
                 'TIEMPO_MUERTO': tiempos_encontrados[i].strip()
             })
-            
-        return pd.DataFrame(datos_extraidos), fecha_reporte
+        return pd.DataFrame(datos_extraidos)
     except Exception as e:
         st.error(f"Error al procesar el PDF: {e}")
-        return pd.DataFrame(), None
+        return pd.DataFrame()
 
-def calcular_diferencia_horas(row):
-    """Calcula la diferencia de horas asumiendo que ocurren en el mismo día."""
-    ini = row['FECHA_INICIO']
-    fin = row['FECHA_FIN']
+def purificar_hora_excel(val):
+    """Extrae estrictamente la Hora, descartando días invisibles de Excel"""
+    if pd.isnull(val): return None
+    val_str = str(val).strip()
     
-    if pd.isnull(ini) or pd.isnull(fin): return 0.0
+    # Si Excel lo procesó como objeto de tiempo
+    if hasattr(val, 'hour'):
+        val_str = f"{val.hour:02d}:{val.minute:02d}:{val.second:02d}"
         
-    diff = fin - ini
+    # Si tiene un día pegado (ej. '2026-04-29 12:54:15'), nos quedamos solo con la hora
+    if ' ' in val_str:
+        val_str = val_str.split(' ')[-1]
+        
+    partes = val_str.split(':')
+    try:
+        h = int(partes[0])
+        m = int(partes[1])
+        s = int(float(partes[2])) if len(partes) > 2 else 0
+        return timedelta(hours=h, minutes=m, seconds=s)
+    except: return None
+
+def calcular_duracion_pausa(row):
+    """Resta las horas exactas sin importar la fecha oculta de las celdas"""
+    ini = row['T_INICIO']
+    fin = row['T_FIN']
+    if ini is None or fin is None: return 0.0
     
-    # Si la pausa cruzó la medianoche (ej. de 23:00 a 01:00)
-    if diff.total_seconds() < 0:
+    diff = fin - ini
+    if diff.total_seconds() < 0: # Caso si cruza la medianoche (ej. de 23:00 a 01:00)
         diff += timedelta(days=1)
         
     return diff.total_seconds() / 3600
 
+# ==============================================================================
+# 3. CONSTRUCTOR DEL REPORTE PDF FINAL
+# ==============================================================================
 def generar_pdf_comparativo(df_mostrar):
     pdf = ReporteEficienciaPDF(orientation='P', unit='mm', format='A4') 
     pdf.alias_nb_pages()
     pdf.add_page()
-    
     hoy_str = datetime.now().strftime("%d/%m/%Y")
     
     pdf.set_font("Helvetica", "B", 14)
@@ -141,11 +142,7 @@ def generar_pdf_comparativo(df_mostrar):
     pdf.set_draw_color(200, 200, 200)
     pdf.set_text_color(50, 50, 50)
     
-    w_tec = 70
-    w_muerto = 40
-    w_pausa = 40
-    w_bal = 40
-    
+    w_tec, w_muerto, w_pausa, w_bal = 70, 40, 40, 40
     pdf.cell(w_tec, 8, "COLABORADOR", border=1, align='C', fill=True)
     pdf.cell(w_muerto, 8, "T. MUERTO (SISTEMA)", border=1, align='C', fill=True)
     pdf.cell(w_pausa, 8, "PAUSAS (REPORTADAS)", border=1, align='C', fill=True)
@@ -187,7 +184,6 @@ def generar_pdf_comparativo(df_mostrar):
             pdf.set_font("Helvetica", "", 8)
             
         pdf.cell(w_bal, 7, balance, border=1, align='C')
-        
         pdf.set_text_color(0, 0, 0) 
         pdf.set_font("Helvetica", "", 8)
         pdf.ln()
@@ -201,6 +197,9 @@ def generar_pdf_comparativo(df_mostrar):
 
     return finalizar_pdf(pdf)
 
+# ==============================================================================
+# 4. APLICACIÓN PRINCIPAL (VISTA STREAMLIT)
+# ==============================================================================
 def mostrar_tiempos_tecnicos():
     st.subheader("Análisis de Eficiencia: Tiempo Muerto vs Pausas Reportadas")
     st.markdown("Sube los reportes del día para comparar la eficiencia de la cuadrilla.")
@@ -216,66 +215,59 @@ def mostrar_tiempos_tecnicos():
     if archivo_excel and archivo_pdf:
         with st.spinner("Procesando y cruzando reportes..."):
             try:
-                # ==============================================================
-                # 1. PROCESAR PDF DE TIEMPOS MUERTOS PARA OBTENER LA FECHA
-                # ==============================================================
-                df_muerto, fecha_pdf = extraer_datos_pdf(archivo_pdf)
-                
-                if df_muerto.empty:
-                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
-                    return
-                    
-                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas)
-
-                # ==============================================================
-                # 2. PROCESAR EXCEL/CSV DE PAUSAS Y FILTRAR POR LA FECHA DEL PDF
-                # ==============================================================
+                # 1. LEER EXCEL/CSV BUSCANDO LA TABLA ESTÉ DONDE ESTÉ
                 if archivo_excel.name.lower().endswith('.csv'):
-                    df_pausas = pd.read_csv(archivo_excel)
-                    if 'TECNICO' not in [str(c).upper() for c in df_pausas.columns]:
-                        archivo_excel.seek(0)
-                        df_pausas = pd.read_csv(archivo_excel, header=1)
+                    df_pausas_bruto = pd.read_csv(archivo_excel, header=None)
                 else:
-                    try:
-                        df_pausas = pd.read_excel(archivo_excel, header=0)
-                    except:
-                        archivo_excel.seek(0)
-                        df_pausas = pd.read_excel(archivo_excel, header=1)
-                        
-                df_pausas.columns = [str(c).upper().strip() for c in df_pausas.columns]
+                    df_pausas_bruto = pd.read_excel(archivo_excel, header=None)
                 
-                # Buscar columna del técnico
-                col_tec = next((col for col in df_pausas.columns if 'TECNICO' in col), None)
-                        
-                if not col_tec:
-                    st.error("No se encontró la columna 'TECNICO' en el archivo de pausas.")
+                # Encontrar dinámicamente la fila donde están los encabezados (Busca FECHA_INICIO)
+                idx_header = -1
+                for idx, row in df_pausas_bruto.iterrows():
+                    fila_str = ' '.join(row.astype(str).str.upper())
+                    if 'FECHA_INICIO' in fila_str or 'FECHA INICIO' in fila_str:
+                        idx_header = idx
+                        break
+                
+                if idx_header == -1:
+                    st.error("No se encontraron las columnas FECHA_INICIO y FECHA_FIN en el archivo.")
                     return
                 
-                df_pausas['TECNICO_LIMPIO'] = df_pausas[col_tec].str.strip().str.upper()
+                # Reconstruir la tabla con los encabezados correctos
+                df_pausas = df_pausas_bruto.iloc[idx_header+1:].reset_index(drop=True)
+                df_pausas.columns = [str(c).upper().strip() for c in df_pausas_bruto.iloc[idx_header]]
+                df_pausas = df_pausas.dropna(axis=1, how='all')
                 
-                # Convertimos las columnas de fecha a datetime real de Pandas
-                df_pausas['FECHA_INICIO'] = pd.to_datetime(df_pausas['FECHA_INICIO'], errors='coerce')
-                df_pausas['FECHA_FIN'] = pd.to_datetime(df_pausas['FECHA_FIN'], errors='coerce')
+                # Buscar columna del técnico de manera robusta
+                col_tec = next((col for col in df_pausas.columns if 'TEC' in col or 'TÉC' in col), None)
+                if not col_tec:
+                    st.error("No se encontró la columna de Técnicos en el archivo de pausas.")
+                    return
                 
-                df_valido_pausas = df_pausas.dropna(subset=['FECHA_INICIO', 'FECHA_FIN']).copy()
+                df_pausas['TECNICO_LIMPIO'] = df_pausas[col_tec].astype(str).str.strip().str.upper()
                 
-                # APLICAMOS EL FILTRO: Solo sumar las pausas que coincidan con el día del PDF
-                if fecha_pdf:
-                    mask_fecha = (df_valido_pausas['FECHA_INICIO'].dt.date == fecha_pdf) | (df_valido_pausas['FECHA_FIN'].dt.date == fecha_pdf)
-                    df_valido_pausas = df_valido_pausas[mask_fecha]
-                else:
-                    st.warning("No se pudo detectar la fecha en el título del PDF. Se sumarán todas las pausas disponibles en el Excel.")
+                # 2. EXTRAER TIEMPOS EXACTOS (IGNORANDO FECHAS OCULTAS DE EXCEL)
+                df_pausas['T_INICIO'] = df_pausas['FECHA_INICIO'].apply(purificar_hora_excel)
+                df_pausas['T_FIN'] = df_pausas['FECHA_FIN'].apply(purificar_hora_excel)
+                
+                df_valido_pausas = df_pausas.dropna(subset=['T_INICIO', 'T_FIN']).copy()
                 
                 if not df_valido_pausas.empty:
-                    df_valido_pausas['DURACION_HORAS'] = df_valido_pausas.apply(calcular_diferencia_horas, axis=1)
+                    df_valido_pausas['DURACION_HORAS'] = df_valido_pausas.apply(calcular_duracion_pausa, axis=1)
                     pausas_agrupadas = df_valido_pausas.groupby('TECNICO_LIMPIO')['DURACION_HORAS'].sum().reset_index()
                     pausas_agrupadas.rename(columns={'TECNICO_LIMPIO': 'TECNICO'}, inplace=True)
                 else:
                     pausas_agrupadas = pd.DataFrame(columns=['TECNICO', 'DURACION_HORAS'])
                 
-                # ==============================================================
-                # 3. UNIR Y CALCULAR EL BALANCE
-                # ==============================================================
+                # 3. EXTRAER TIEMPOS MUERTOS DEL PDF
+                df_muerto = extraer_tiempos_muertos_pdf(archivo_pdf)
+                if df_muerto.empty:
+                    st.warning("No se pudieron extraer los tiempos muertos del PDF. Revisa el formato.")
+                    return
+                
+                df_muerto['MUERTO_HORAS'] = df_muerto['TIEMPO_MUERTO'].apply(extraer_horas_pdf)
+
+                # 4. CRUZAR DATOS Y CALCULAR BALANCES
                 df_final = pd.merge(df_muerto, pausas_agrupadas, on='TECNICO', how='left').fillna(0)
                 df_final.rename(columns={'DURACION_HORAS': 'PAUSAS_HORAS'}, inplace=True)
                 
@@ -283,7 +275,7 @@ def mostrar_tiempos_tecnicos():
                 df_mostrar['Tiempo Muerto (PDF)'] = df_mostrar['MUERTO_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
                 df_mostrar['Pausas Reportadas'] = df_mostrar['PAUSAS_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
                 
-                # BALANCE = Pausas - Tiempo Muerto Sistema
+                # REGLA: BALANCE = PAUSAS JUSTIFICADAS - TIEMPO MUERTO
                 df_mostrar['Diferencia_Num'] = df_mostrar['PAUSAS_HORAS'] - df_mostrar['MUERTO_HORAS']
                 
                 def formato_diferencia(val):
@@ -293,9 +285,7 @@ def mostrar_tiempos_tecnicos():
                 
                 df_mostrar['Balance (Pausas - T. Muerto)'] = df_mostrar['Diferencia_Num'].apply(formato_diferencia)
 
-                # ==============================================================
-                # 4. VISUALIZACIÓN GRÁFICA WEB
-                # ==============================================================
+                # 5. GRÁFICA VISUAL INTERACTIVA
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
                     x=df_final['TECNICO'], 
@@ -311,31 +301,28 @@ def mostrar_tiempos_tecnicos():
                 ))
                 fig.update_layout(
                     barmode='group',
-                    title=f"Contraste Operativo por Técnico - {fecha_pdf if fecha_pdf else ''}",
+                    title="Contraste Operativo por Técnico",
                     xaxis_tickangle=-45,
                     height=550,
                     margin=dict(b=150)
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # ==============================================================
-                # 5. TABLA Y DESCARGA DE PDF GERENCIAL
-                # ==============================================================
+                # 6. TABLA Y EXPORTACIÓN A PDF
                 st.markdown("### 📋 Cuadro Comparativo Detallado")
-                
                 col_down1, col_down2 = st.columns([1, 2])
                 with col_down1:
                     pdf_bytes = generar_pdf_comparativo(df_mostrar)
                     st.download_button(
                         label="📄 Descargar Reporte Gerencial en PDF",
                         data=pdf_bytes,
-                        file_name=f"Comparativo_Eficiencia_{fecha_pdf if fecha_pdf else datetime.now().strftime('%Y%m%d')}.pdf",
+                        file_name=f"Comparativo_Eficiencia_{datetime.now().strftime('%Y%m%d')}.pdf",
                         mime="application/pdf",
                         type="primary",
                         use_container_width=True
                     )
                 with col_down2:
-                    st.caption("ℹ️ El PDF incluirá la tabla detallada de auditoría con los balances en semáforo (Verde: Pausas cubren el tiempo muerto. Rojo: Tiempo muerto en el aire sin justificar).")
+                    st.caption("ℹ️ El PDF incluye la tabla auditora con balances en semáforo (Verde: Cubre el tiempo muerto / Rojo: Tiempo en el aire sin justificar).")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
@@ -350,6 +337,6 @@ def mostrar_tiempos_tecnicos():
                 )
                 
             except Exception as e:
-                st.error(f"Error procesando los archivos: {e}")
+                st.error(f"Error crítico al procesar los archivos: {e}")
     else:
         st.info("👆 Por favor sube ambos archivos para generar el cruce de información.")
