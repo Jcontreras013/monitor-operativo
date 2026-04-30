@@ -248,8 +248,7 @@ def generar_pdf_comparativo(df_mostrar, fecha_str):
 
     return finalizar_pdf(pdf)
 
-def generar_pdf_solo_pausas(df_detalles, pausas_agrupadas, archivo_nombre):
-    pdf = ReporteEficienciaPDF(orientation='P', unit='mm', format='A4') 
+def generar_pdf_solo_pausas(df_detalles, pausas_agrupadas, archivo_nombre, fecha_ini, fecha_fin):
     # Sustituimos el título en el header nativo solo para esta instancia
     class ReportePausas(ReporteEficienciaPDF):
         def header(self):
@@ -269,14 +268,20 @@ def generar_pdf_solo_pausas(df_detalles, pausas_agrupadas, archivo_nombre):
     pdf = ReportePausas(orientation='P', unit='mm', format='A4')
     pdf.alias_nb_pages()
     pdf.add_page()
-    hoy_str = datetime.now().strftime("%d/%m/%Y")
     
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, safestr("REPORTE GERENCIAL DE PAUSAS Y ATRASOS"), ln=True, align='C')
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, safestr(f"Corte Evaluativo: {hoy_str} | Archivo: {archivo_nombre}"), ln=True, align='C')
+    
+    # Formateo de fechas para el subtítulo
+    if fecha_ini == fecha_fin:
+        rango_str = f"{fecha_ini.strftime('%d/%m/%Y')}"
+    else:
+        rango_str = f"Del {fecha_ini.strftime('%d/%m/%Y')} al {fecha_fin.strftime('%d/%m/%Y')}"
+        
+    pdf.cell(0, 6, safestr(f"Periodo Evaluado: {rango_str} | Archivo: {archivo_nombre}"), ln=True, align='C')
     pdf.ln(8)
     
     # 1. TABLA RESUMEN
@@ -309,16 +314,17 @@ def generar_pdf_solo_pausas(df_detalles, pausas_agrupadas, archivo_nombre):
     pdf.set_font("Helvetica", "B", 7)
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(60, 8, "COLABORADOR", border=1, align='C', fill=True)
-    pdf.cell(60, 8, "MOTIVO / RAZON", border=1, align='C', fill=True)
-    pdf.cell(20, 8, "INICIO", border=1, align='C', fill=True)
-    pdf.cell(20, 8, "FIN", border=1, align='C', fill=True)
+    pdf.cell(50, 8, "MOTIVO / RAZON", border=1, align='C', fill=True)
+    pdf.cell(20, 8, "FECHA", border=1, align='C', fill=True)
+    pdf.cell(15, 8, "INICIO", border=1, align='C', fill=True)
+    pdf.cell(15, 8, "FIN", border=1, align='C', fill=True)
     pdf.cell(30, 8, "DURACION", border=1, align='C', fill=True)
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 7)
     
-    # Ordenar para que el detalle se vea bonito por técnico
-    df_detalles = df_detalles.sort_values(by=['TECNICO_LIMPIO', 'T_INICIO'])
+    # Ordenar para que el detalle se vea bonito por técnico y luego por fecha
+    df_detalles = df_detalles.sort_values(by=['TECNICO_LIMPIO', 'D_INICIO', 'T_INICIO'])
     
     for _, row in df_detalles.iterrows():
         if pdf.get_y() > 270:
@@ -326,9 +332,10 @@ def generar_pdf_solo_pausas(df_detalles, pausas_agrupadas, archivo_nombre):
             pdf.set_font("Helvetica", "B", 7)
             pdf.set_fill_color(240, 240, 240)
             pdf.cell(60, 8, "COLABORADOR", border=1, align='C', fill=True)
-            pdf.cell(60, 8, "MOTIVO / RAZON", border=1, align='C', fill=True)
-            pdf.cell(20, 8, "INICIO", border=1, align='C', fill=True)
-            pdf.cell(20, 8, "FIN", border=1, align='C', fill=True)
+            pdf.cell(50, 8, "MOTIVO / RAZON", border=1, align='C', fill=True)
+            pdf.cell(20, 8, "FECHA", border=1, align='C', fill=True)
+            pdf.cell(15, 8, "INICIO", border=1, align='C', fill=True)
+            pdf.cell(15, 8, "FIN", border=1, align='C', fill=True)
             pdf.cell(30, 8, "DURACION", border=1, align='C', fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 7)
@@ -339,19 +346,22 @@ def generar_pdf_solo_pausas(df_detalles, pausas_agrupadas, archivo_nombre):
         motivo_raw = str(row.get('RAZON PAUSA', row.get('MOTIVO', 'N/D')))
         if motivo_raw.upper() == 'NAN' or motivo_raw == '':
             motivo_raw = str(row.get('MOTIVO', 'N/D'))
-        motivo = safestr(motivo_raw)[:35]
+        motivo = safestr(motivo_raw)[:30]
         
-        ini_val = str(row.get('FECHA_INICIO', '')).split()[-1][:8] if pd.notnull(row.get('FECHA_INICIO')) else "N/D"
-        fin_val = str(row.get('FECHA_FIN', '')).split()[-1][:8] if pd.notnull(row.get('FECHA_FIN')) else "N/D"
+        # Mostrar la fecha si existe, sino 'N/D'
+        fecha_str = row['D_INICIO'].strftime("%d/%m/%y") if pd.notnull(row['D_INICIO']) else "N/D"
+        ini_val = str(row.get('FECHA_INICIO', '')).split()[-1][:8] if pd.notnull(row.get('FECHA_INICIO')) else "---"
+        fin_val = str(row.get('FECHA_FIN', '')).split()[-1][:8] if pd.notnull(row.get('FECHA_FIN')) else "---"
         
         dur_num = row['DURACION_HORAS']
         hrs, mins = divmod(dur_num * 60, 60)
         dur_str = f"{int(hrs)}h {int(round(mins))}m"
         
         pdf.cell(60, 6, tec, border=1)
-        pdf.cell(60, 6, motivo, border=1)
-        pdf.cell(20, 6, ini_val, border=1, align='C')
-        pdf.cell(20, 6, fin_val, border=1, align='C')
+        pdf.cell(50, 6, motivo, border=1)
+        pdf.cell(20, 6, fecha_str, border=1, align='C')
+        pdf.cell(15, 6, ini_val, border=1, align='C')
+        pdf.cell(15, 6, fin_val, border=1, align='C')
         pdf.cell(30, 6, dur_str, border=1, align='C')
         pdf.ln()
 
@@ -441,44 +451,63 @@ def mostrar_tiempos_tecnicos():
             st.info("👆 Por favor sube ambos archivos en esta pestaña para cruzar la información.")
 
     # -------------------------------------------------------------------------
-    # PESTAÑA 2: REPORTE GERENCIAL DE SOLO PAUSAS
+    # PESTAÑA 2: REPORTE GERENCIAL DE SOLO PAUSAS (CON FILTRO DE FECHAS)
     # -------------------------------------------------------------------------
     with tab_rep:
-        st.markdown("Sube el archivo Excel o CSV de atrasos para generar un PDF formal (Se procesarán todas las filas válidas del archivo).")
+        st.markdown("Genera un PDF formal de Atrasos seleccionando un rango de fechas.")
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            fecha_ini_rep = st.date_input("Fecha de Inicio:", value=datetime.now().date())
+        with col_f2:
+            fecha_fin_rep = st.date_input("Fecha de Fin:", value=datetime.now().date())
+            
         archivo_solo_excel = st.file_uploader("Sube el Excel/CSV de Pausas", type=['xlsx', 'xls', 'csv'], key="solo_excel")
         
         if archivo_solo_excel:
-            with st.spinner("Procesando desglose de pausas..."):
+            with st.spinner("Filtrando y procesando desglose de pausas..."):
                 try:
                     df_valido_pausas, error_msg = procesar_excel_pausas_blindado(archivo_solo_excel)
                     if error_msg:
                         st.error(error_msg)
                     else:
                         if not df_valido_pausas.empty:
-                            df_valido_pausas['DURACION_HORAS'] = df_valido_pausas.apply(calcular_duracion_pausa, axis=1)
-                            pausas_agrupadas = df_valido_pausas.groupby('TECNICO_LIMPIO')['DURACION_HORAS'].sum().reset_index()
-                            pausas_agrupadas.rename(columns={'TECNICO_LIMPIO': 'TECNICO'}, inplace=True)
                             
-                            col_down_p1, col_down_p2 = st.columns([1, 2])
-                            with col_down_p1:
-                                pdf_bytes_pausas = generar_pdf_solo_pausas(df_valido_pausas, pausas_agrupadas, archivo_solo_excel.name)
-                                st.download_button(
-                                    label="📄 Generar y Descargar PDF de Atrasos",
-                                    data=pdf_bytes_pausas,
-                                    file_name=f"Reporte_Atrasos_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                                    mime="application/pdf",
-                                    type="primary",
-                                    use_container_width=True
-                                )
-                            with col_down_p2:
-                                st.success("✅ Datos analizados correctamente. Haz clic en el botón para descargar el reporte.")
+                            # FILTRO INTELIGENTE DE FECHAS
+                            def checar_rango(d):
+                                if pd.isnull(d): return True # Si el archivo no traía fecha, lo procesamos completo
+                                return fecha_ini_rep <= d <= fecha_fin_rep
+                                
+                            mask_rango = df_valido_pausas['D_INICIO'].apply(checar_rango)
+                            df_filtrado = df_valido_pausas[mask_rango].copy()
                             
-                            st.markdown("---")
-                            st.markdown("**Vista previa del consolidado:**")
-                            
-                            df_preview = pausas_agrupadas.copy()
-                            df_preview['Duracion Exacta'] = df_preview['DURACION_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
-                            st.dataframe(df_preview[['TECNICO', 'Duracion Exacta']], use_container_width=True, hide_index=True)
+                            if df_filtrado.empty:
+                                st.warning(f"No se encontraron pausas registradas entre el {fecha_ini_rep.strftime('%d/%m/%Y')} y el {fecha_fin_rep.strftime('%d/%m/%Y')}.")
+                            else:
+                                df_filtrado['DURACION_HORAS'] = df_filtrado.apply(calcular_duracion_pausa, axis=1)
+                                pausas_agrupadas = df_filtrado.groupby('TECNICO_LIMPIO')['DURACION_HORAS'].sum().reset_index()
+                                pausas_agrupadas.rename(columns={'TECNICO_LIMPIO': 'TECNICO'}, inplace=True)
+                                
+                                col_down_p1, col_down_p2 = st.columns([1, 2])
+                                with col_down_p1:
+                                    pdf_bytes_pausas = generar_pdf_solo_pausas(df_filtrado, pausas_agrupadas, archivo_solo_excel.name, fecha_ini_rep, fecha_fin_rep)
+                                    st.download_button(
+                                        label="📄 Generar y Descargar PDF de Atrasos",
+                                        data=pdf_bytes_pausas,
+                                        file_name=f"Reporte_Atrasos_{fecha_ini_rep.strftime('%Y%m%d')}_al_{fecha_fin_rep.strftime('%Y%m%d')}.pdf",
+                                        mime="application/pdf",
+                                        type="primary",
+                                        use_container_width=True
+                                    )
+                                with col_down_p2:
+                                    st.success("✅ Filtro aplicado correctamente. Haz clic para descargar el reporte.")
+                                
+                                st.markdown("---")
+                                st.markdown(f"**Vista previa del consolidado ({fecha_ini_rep.strftime('%d/%m/%Y')} - {fecha_fin_rep.strftime('%d/%m/%Y')}):**")
+                                
+                                df_preview = pausas_agrupadas.copy()
+                                df_preview['Duracion Exacta'] = df_preview['DURACION_HORAS'].apply(lambda x: f"{int(x)}h {int(round((x%1)*60))}m")
+                                st.dataframe(df_preview[['TECNICO', 'Duracion Exacta']], use_container_width=True, hide_index=True)
                         else:
                             st.warning("El archivo no contiene registros de horas válidos.")
                 except Exception as e:
