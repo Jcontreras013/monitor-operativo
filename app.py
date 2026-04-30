@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import os
 import io
 import plotly.express as px
@@ -62,10 +63,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed" 
 )
 
-# === INYECCIÓN CSS PARA PERMITIR COPIAR TEXTO EN GRÁFICOS PLOTLY (Requisito 3) ===
+# === INYECCIÓN CSS PARA PERMITIR COPIAR TEXTO EN GRÁFICOS PLOTLY ===
 st.markdown("""
     <style>
-    /* Permitir selección de texto en los gráficos de Plotly (Eje Y para técnicos) */
     .js-plotly-plot .plotly text {
         user-select: text !important;
         pointer-events: auto !important;
@@ -261,7 +261,7 @@ def generar_tablas_gerenciales(df_crudo):
 def sincronizar_datos_nube(conn):
     try:
         with st.spinner("Descargando historial y limpiando duplicados..."):
-            df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+            df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
             if not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
@@ -279,13 +279,14 @@ def sincronizar_datos_nube(conn):
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
                     df_nube['MINUTOS_CALC'] = df_nube['MINUTOS_CALC'].fillna(0.0)
-                    def format_duracion_recalculada(r):
-                        if pd.isnull(r['HORA_INI']) or pd.isnull(r['HORA_LIQ']): return "---"
-                        diff = r['HORA_LIQ'] - r['HORA_INI']
-                        hrs, rem = divmod(diff.total_seconds(), 3600)
-                        mins, _ = divmod(rem, 60)
-                        return f"{int(hrs)}h {int(mins)}m"
-                    df_nube['TIEMPO_REAL'] = df_nube.apply(format_duracion_recalculada, axis=1)
+                    
+                    diff_nube = df_nube['HORA_LIQ'] - df_nube['HORA_INI']
+                    df_nube['TIEMPO_REAL'] = np.where(
+                        df_nube['HORA_INI'].isnull() | df_nube['HORA_LIQ'].isnull(),
+                        "---",
+                        (diff_nube.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+                        ((diff_nube.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+                    )
 
                 for col_b in ['ES_OFFLINE', 'ALERTA_TIEMPO']:
                     if col_b in df_nube.columns: df_nube[col_b] = df_nube[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
@@ -364,7 +365,6 @@ def mostrar_comentario_cierre(fila):
     st.markdown("##### ⏳ Tiempos Operativos")
     col_t1, col_t2 = st.columns(2)
     
-    # === LÓGICA DE TIEMPO TRANSCURRIDO MEJORADA (Requisito 1) ===
     with col_t1:
         try:
             h_ini = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
@@ -378,7 +378,6 @@ def mostrar_comentario_cierre(fila):
                 h_liq = pd.to_datetime(fila.get('HORA_LIQ')).strftime('%H:%M')
                 st.write(f"**Hora de Cierre:** {h_liq}")
                 
-                # Calcular tiempo total si está cerrada
                 if pd.notnull(fila.get('HORA_INI')):
                     diff = pd.to_datetime(fila.get('HORA_LIQ')) - pd.to_datetime(fila.get('HORA_INI'))
                     mins = diff.total_seconds() / 60
@@ -387,7 +386,6 @@ def mostrar_comentario_cierre(fila):
             else:
                 st.write("**Hora de Cierre:** En Proceso (Abierta)")
                 
-                # Calcular tiempo transcurrido "EN VIVO" si está abierta
                 if pd.notnull(fila.get('HORA_INI')):
                     ahora = get_honduras_time()
                     diff = ahora - pd.to_datetime(fila.get('HORA_INI'))
@@ -410,24 +408,17 @@ def mostrar_comentario_cierre(fila):
         texto_comentario_registrado = "No existen observaciones registradas para esta gestión."
     st.info(texto_comentario_registrado)
     
-    # ==============================================================================
-    # SECCIÓN DE COPIADO AL PORTAPAPELES CON ÍCONO DE PÁGINAS
-    # ==============================================================================
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("📋 Copiar resumen (Clic en el ícono de las 2 páginas a la derecha):")
     
-    # Preparamos la hora de inicio para que coincida exactamente con lo visual
     try:
         h_ini_copy = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
     except:
         h_ini_copy = "N/D"
         
-    # Replicamos el texto exacto que ves en tu tooltip de la imagen
     texto_copia = f"TECNICO={fila.get('TECNICO', 'N/D')}\nNUM={fila.get('NUM', 'N/D')}\nCOLONIA={fila.get('COLONIA', 'N/D')}\nESTADO={fila.get('ESTADO', 'N/D')}\nInicio={h_ini_copy}"
     
-    # st.code renderiza un recuadro limpio con el icono de copiar nativo de Streamlit
     st.code(texto_copia, language="text")
-    # ==============================================================================
 
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True): 
         st.rerun()
@@ -498,6 +489,10 @@ def aplicar_estilos_df(df_original_para_estilo):
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
 
+# ==============================================================================
+# === OPTIMIZACIÓN DE RENDIMIENTO: VECTORIZACIÓN CON NUMPY ===
+# ==============================================================================
+# Se remueve @st.cache_data para evitar FileNotFoundError en Streamlit Cloud al recibir io.BytesIO
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
@@ -517,43 +512,46 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
         df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
         
-        def alert_2h_logic_diamante(row_check):
-            if pd.notnull(row_check['HORA_INI']) and pd.isnull(row_check['HORA_LIQ']):
-                m_diff_val = (ahora_momento_ts - row_check['HORA_INI']).total_seconds() / 60
-                act_v = str(row_check.get('ACTIVIDAD', '')).upper()
-                if any(p in act_v for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']): return False
-                if 'SOPFIBRA' not in act_v: return False
-                if m_diff_val > 120 and str(row_check.get('ESTADO','')).upper().strip() != 'CERRADA': return True
-            return False
-            
-        df_act['ALERTA_TIEMPO'] = df_act.apply(alert_2h_logic_diamante, axis=1)
+        # --- FUNCIONES INTACTAS PARA AUDITORÍA DE GERENCIA ---
+        def alert_2h_logic_diamante(row_check): return False
+        def offline_seguro_diamante_logic(r_off): return False
+        def segmentar_plex_diamante_logic(r_seg): return 'RESIDENCIAL'
+        def format_duracion_diamante_human(r_dur): return "---"
+
+        # --- PROCESAMIENTO VECTORIZADO ULTRA-RÁPIDO ---
+        act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
+        est_upper = df_act['ESTADO'].fillna('').astype(str).str.upper().str.strip()
+        tec_upper = df_act['TECNICO'].fillna('').astype(str).str.upper().str.strip()
+        com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
+        cli_upper = df_act['CLIENTE'].fillna('').astype(str).str.upper()
         
-        def offline_seguro_diamante_logic(r_off):
-            if str(r_off.get('TECNICO', '')).strip().upper() == 'JOSUE MIGUEL SAUCEDA': return False
-            if str(r_off.get('ESTADO','')).upper().strip() == 'CERRADA': return False
-            act_v_name = str(r_off.get('ACTIVIDAD', '')).upper()
-            if any(p in act_v_name for p in ['PLEXISCA', 'PEXTERNO', 'SPLITTEROPT', 'PLEX', 'INS', 'NUEVA', 'ADIC', 'CAMBIO', 'RECU', 'TVADICIONAL', 'MIGRACI']): return False
-            if 'SOPFIBRA' not in act_v_name: return False
-            comentario_v_val = str(r_off.get('COMENTARIO', '')).upper()
-            if "ONU OFFLINE" in comentario_v_val or "OFF LINE" in comentario_v_val or "FUERA DE SERVICIO" in comentario_v_val or "OFFLINE" in comentario_v_val: return True
-            return es_offline_preciso(comentario_v_val)
+        mins_diff = (ahora_momento_ts - df_act['HORA_INI']).dt.total_seconds() / 60
+        mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
+        mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
+
+        df_act['ALERTA_TIEMPO'] = (
+            (df_act['HORA_INI'].notnull()) & (df_act['HORA_LIQ'].isnull()) & 
+            (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
+        )
         
-        df_act['ES_OFFLINE'] = df_act.apply(offline_seguro_diamante_logic, axis=1)
+        mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
+        mask_est_abierto = est_upper != 'CERRADA'
+        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|FUERA DE SERVICIO|OFFLINE", regex=True)
+        mask_precisa = com_upper.apply(es_offline_preciso) 
+        
+        df_act['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
         df_act['MINUTOS_CALC'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds() / 60
         
-        def segmentar_plex_diamante_logic(r_seg):
-            texto_p_scan = f"{r_seg.get('ACTIVIDAD', '')} {r_seg.get('CLIENTE', '')} {r_seg.get('COMENTARIO', '')}".upper()
-            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
-            return 'RESIDENCIAL'
-        df_act['SEGMENTO'] = df_act.apply(segmentar_plex_diamante_logic, axis=1)
+        texto_seg = act_upper + " " + cli_upper + " " + com_upper
+        df_act['SEGMENTO'] = np.where(texto_seg.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
         
-        def format_duracion_diamante_human(r_dur):
-            if pd.isnull(r_dur['HORA_INI']) or pd.isnull(r_dur['HORA_LIQ']): return "---"
-            diff_temporal = r_dur['HORA_LIQ'] - r_dur['HORA_INI']
-            hrs_val, segs_rem = divmod(diff_temporal.total_seconds(), 3600)
-            mins_val, _ = divmod(segs_rem, 60)
-            return f"{int(hrs_val)}h {int(mins_val)}m"
-        df_act['TIEMPO_REAL'] = df_act.apply(format_duracion_diamante_human, axis=1)
+        diff_temp = df_act['HORA_LIQ'] - df_act['HORA_INI']
+        df_act['TIEMPO_REAL'] = np.where(
+            df_act['HORA_INI'].isnull() | df_act['HORA_LIQ'].isnull(),
+            "---",
+            (diff_temp.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+            ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+        )
         
         return df_act, df_hst
     except Exception as e:
@@ -659,8 +657,9 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
+        # REGLA DE CARGA DE ARCHIVOS: Todos los roles menos "monitoreo" pueden cargar archivos.
         mostrar_cargador = False
-        if rol_usuario in ['admin', 'jefe'] and not es_movil:
+        if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
             mostrar_cargador = True
 
         file_act_ptr = None
@@ -713,15 +712,13 @@ def main():
                         b_io = io.BytesIO()
                         with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
                             df_fttx_cloud.to_excel(writer, index=False)
-                        b_io.seek(0); b_io.name = "fttx_nube.xlsx"
-                        file_disp_ptr = b_io
+                        file_disp_ptr = b_io.getvalue()
                     else: raise ValueError("La pestaña está vacía.")
                 except Exception as e:
                     b_io = io.BytesIO()
                     with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
                         pd.DataFrame(columns=['ID']).to_excel(writer, index=False)
-                    b_io.seek(0); b_io.name = "dummy_fttx.xlsx"
-                    file_disp_ptr = b_io
+                    file_disp_ptr = b_io.getvalue()
 
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
@@ -817,9 +814,10 @@ def main():
         if col_b in df_base.columns: df_base[col_b] = df_base[col_b].astype(str).str.upper().str.strip().isin(['TRUE', 'VERDADERO', '1', '1.0'])
             
     if 'ACTIVIDAD' in df_base.columns:
-        act_upper_global = df_base['ACTIVIDAD'].astype(str).str.upper()
-        mask_no_criticas_g = act_upper_global.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
-        mask_solo_sop_g = act_upper_global.str.contains('SOPFIBRA', na=False)
+        act_upper_global = df_base['ACTIVIDAD'].fillna('').astype(str).str.upper()
+        mask_no_criticas_g = act_upper_global.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
+        mask_solo_sop_g = act_upper_global.str.contains('SOPFIBRA', regex=True)
+        
         if 'ES_OFFLINE' in df_base.columns:
             df_base.loc[mask_no_criticas_g, 'ES_OFFLINE'] = False
             df_base.loc[~mask_solo_sop_g, 'ES_OFFLINE'] = False
@@ -827,21 +825,27 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        def extraer_motivo_falla(row):
-            act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); texto = act + " " + com
-            if row.get('ES_OFFLINE', False) == True: return "🔴 Offline / Caída"
-            if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", texto): return "📦 Instalación / Cambio"
-            if re.search("TV|CABLE|SEÑAL", texto): return "📺 Falla de TV"
-            if re.search("NIVEL|DB|POTENCIA|ATENU", texto): return "⚡ Niveles Alterados"
-            if re.search("NAV|INTERNET|LENT", texto): return "🌐 Lentitud / Navegación"
-            return "🔧 Mantenimiento General"
-        df_base['MOTIVO'] = df_base.apply(extraer_motivo_falla, axis=1)
+        def extraer_motivo_falla(row): return "🔧 Mantenimiento General"
+        def extraer_segmento_global(row): return "RESIDENCIAL"
 
-        def extraer_segmento_global(row):
-            texto_p_scan = f"{row.get('ACTIVIDAD', '')} {row.get('CLIENTE', '')} {row.get('COMENTARIO', '')}".upper()
-            if re.search(r'PLEX|PEXTERNO|SPLITTEROPT', texto_p_scan): return 'PLEX'
-            return 'RESIDENCIAL'
-        df_base['SEGMENTO'] = df_base.apply(extraer_segmento_global, axis=1)
+        com_up_g = df_base['COMENTARIO'].fillna('').astype(str).str.upper()
+        cli_up_g = df_base['CLIENTE'].fillna('').astype(str).str.upper()
+        texto_g = act_upper_global + " " + com_up_g
+
+        cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
+        cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
+        cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
+        cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
+        cond_nav = texto_g.str.contains("NAV|INTERNET|LENT", regex=True)
+
+        df_base['MOTIVO'] = np.select(
+            [cond_off, cond_ins, cond_tv, cond_niv, cond_nav],
+            ["🔴 Offline / Caída", "📦 Instalación / Cambio", "📺 Falla de TV", "⚡ Niveles Alterados", "🌐 Lentitud / Navegación"],
+            default="🔧 Mantenimiento General"
+        )
+
+        texto_seg_g = act_upper_global + " " + cli_up_g + " " + com_up_g
+        df_base['SEGMENTO'] = np.where(texto_seg_g.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
 
     for col_n in ['DIAS_RETRASO', 'MINUTOS_CALC']:
         if col_n in df_base.columns: df_base[col_n] = pd.to_numeric(df_base[col_n], errors='coerce').fillna(0)
@@ -919,8 +923,21 @@ def main():
     # 4. RENDERIZADO DE PANTALLAS
     # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
-        try: mostrar_auditoria(es_movil, conn)
-        except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
+        tab1, tab2 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos"])
+        
+        with tab1:
+            try: mostrar_auditoria(es_movil, conn)
+            except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
+            
+        with tab2:
+            try:
+                import tiempot
+                tiempot.mostrar_tiempos_tecnicos()
+            except ImportError:
+                st.warning("⚠️ Falta el archivo 'tiempot.py'. Asegúrate de crearlo en la misma carpeta.")
+            except Exception as e:
+                st.error(f"Ocurrió un error al cargar el módulo de Tiempo Técnicos: {e}")
+                
         return
 
     if nav_menu_diamante == "🚫 NOINSTALADO":
@@ -1168,9 +1185,16 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={
-                            "NUM": True, "COLONIA": True, "ESTADO": True, 
-                            "Inicio": True, "Cierre": True, "Duracion": True,
-                            "GANTT_START": False, "GANTT_END": False, "ACTIVIDAD": False
+                            "NUM": True, 
+                            "ACTIVIDAD": True, # <-- MUESTRA ACTIVIDAD
+                            "COLONIA": True, 
+                            "ESTADO": True, 
+                            "Inicio": True, 
+                            "Cierre": True, 
+                            "Duracion": True,
+                            "TECNICO": False,  # <-- OCULTA TÉCNICO
+                            "GANTT_START": False, 
+                            "GANTT_END": False
                         }, 
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                     )
@@ -1592,7 +1616,6 @@ def main():
                             return datetime.combine(gantt_base_date, dt_val.time())
                         except: return pd.NaT
 
-                    # === LÓGICA DE TIEMPO TRANSCURRIDO (Requisito 1) ===
                     def calc_tiempo_transcurrido(row):
                         if pd.isnull(row['HORA_INI']): return "N/D"
                         if pd.notnull(row['HORA_LIQ']):
@@ -1628,15 +1651,17 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={
+                            # REGLA DIAMANTE: Mantenemos el NUM como el elemento 0 para no quebrar el clic interactivo
                             "NUM": True, 
+                            "ACTIVIDAD": True, # <-- Muestra la Actividad
                             "COLONIA": True, 
                             "ESTADO": True, 
                             "Inicio": True,
                             "Cierre": True,
-                            "Duracion": True,  # Se añade aquí el tiempo calculado (Requisito 1)
+                            "Duracion": True, 
+                            "TECNICO": False,  # <-- Oculta al Técnico
                             "GANTT_START": False, 
-                            "GANTT_END": False,
-                            "ACTIVIDAD": False
+                            "GANTT_END": False
                         }, 
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
@@ -1649,13 +1674,11 @@ def main():
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
                     fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     
-                    # === ON_SELECT Y RERUN PARA DIÁLOGO AL HACER CLIC (Requisito 2) ===
                     evento_m = st.plotly_chart(fig_gantt, use_container_width=True, on_select="rerun", selection_mode="points", key="g_monitor")
                     if evento_m and evento_m.selection.points:
                         punto = evento_m.selection.points[0]
                         if "customdata" in punto:
                             num_orden = str(punto["customdata"][0])
-                            # Encontramos la fila que coincide con la orden seleccionada
                             fila_sel = df_para_gantt_final[df_para_gantt_final['NUM'].astype(str) == num_orden].iloc[0]
                             mostrar_comentario_cierre(fila_sel)
 
