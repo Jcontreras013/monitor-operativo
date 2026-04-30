@@ -122,6 +122,7 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     df_valido['HORA_INI'] = pd.to_datetime(df_valido['HORA_INI'])
     df_valido['HORA_LIQ'] = pd.to_datetime(df_valido['HORA_LIQ'])
     tecnicos = sorted(df_valido['TECNICO'].astype(str).unique())
+    ahora_hx = get_honduras_time()
     
     for tec in tecnicos:
         df_tec = df_valido[df_valido['TECNICO'] == tec].sort_values(by='HORA_INI')
@@ -140,20 +141,45 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
         pdf.ln()
         
         total_minutos_trabajados = 0
+        total_minutos_base_eficiencia = 0  # <--- NUEVO: Cuenta solo hasta las 5 PM
         pdf.set_font("Arial", '', 8)
         
         for _, row in df_tec.iterrows():
             num = str(row.get('NUM', 'N/D'))
             act = str(row.get('ACTIVIDAD', '')).encode('latin-1', 'ignore').decode('latin-1')[:55]
             h_ini = row['HORA_INI'].strftime('%H:%M') if pd.notnull(row['HORA_INI']) else "N/D"
-            h_fin = row['HORA_LIQ'].strftime('%H:%M') if pd.notnull(row['HORA_LIQ']) else "Abierta"
+            h_fin = row['HORA_LIQ'].strftime('%H:%M') if pd.notnull(row['HORA_LIQ']) else "En curso"
             
             duracion_str = "---"
-            if pd.notnull(row['HORA_INI']) and pd.notnull(row['HORA_LIQ']):
-                mins = (row['HORA_LIQ'] - row['HORA_INI']).total_seconds() / 60
-                if mins > 0:
-                    total_minutos_trabajados += mins
-                    hrs_d, mins_d = divmod(mins, 60)
+            mins_reales = 0
+            mins_base = 0
+            
+            if pd.notnull(row['HORA_INI']):
+                limite_17h = pd.Timestamp.combine(row['HORA_INI'].date(), dt_time(17, 0))
+                
+                if pd.notnull(row['HORA_LIQ']):
+                    fin_real = row['HORA_LIQ']
+                else:
+                    # Si está abierta, tomamos la hora actual (o las 17h si es de un día pasado)
+                    if row['HORA_INI'].date() == ahora_hx.date():
+                        fin_real = ahora_hx
+                    else:
+                        fin_real = limite_17h
+
+                # 1. Calcular tiempo real total para mostrar en la tabla (Incluye extras)
+                if fin_real > row['HORA_INI']:
+                    mins_reales = (fin_real - row['HORA_INI']).total_seconds() / 60
+                    
+                # 2. Calcular tiempo base SOLO hasta las 5:00 PM para castigar la eficiencia
+                if row['HORA_INI'] < limite_17h:
+                    fin_base = min(fin_real, limite_17h)
+                    mins_base = (fin_base - row['HORA_INI']).total_seconds() / 60
+                    if mins_base < 0: mins_base = 0
+
+                if mins_reales > 0:
+                    total_minutos_trabajados += mins_reales
+                    total_minutos_base_eficiencia += mins_base
+                    hrs_d, mins_d = divmod(mins_reales, 60)
                     duracion_str = f"{int(hrs_d)}h {int(mins_d)}m"
             
             pdf.cell(25, 6, num, border=1, align='C')
@@ -163,19 +189,23 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
             pdf.cell(25, 6, duracion_str, border=1, align='C')
             pdf.ln()
             
+        # REGLA: Jornada Base de 8 horas (excluyendo el almuerzo)
         jornada_base = 480 
-        tiempo_perdido_mins = max(0, jornada_base - total_minutos_trabajados)
+        
+        # AQUÍ ESTÁ LA MAGIA: Restamos a la base SOLO el tiempo trabajado de 8 a 5. Las extras ya no lo salvan.
+        tiempo_perdido_mins = max(0, jornada_base - total_minutos_base_eficiencia)
+        
         hrs_t, mins_t = divmod(total_minutos_trabajados, 60)
         hrs_p, mins_p = divmod(tiempo_perdido_mins, 60)
         
         pdf.set_font("Arial", 'B', 8)
-        pdf.cell(175, 6, "TOTAL TIEMPO TRABAJADO EN ORDENES:", border=1, align='R')
+        pdf.cell(175, 6, "TOTAL TIEMPO TRABAJADO EN ORDENES (Incluye Extras):", border=1, align='R')
         pdf.set_text_color(0, 100, 0)
         pdf.cell(25, 6, f"{int(hrs_t)}h {int(mins_t)}m", border=1, align='C')
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
         
-        pdf.cell(175, 6, "TIEMPO PERDIDO / MUERTO (Base 8 Horas):", border=1, align='R')
+        pdf.cell(175, 6, "TIEMPO PERDIDO / MUERTO (Base 8 Horas / Excluye Extras):", border=1, align='R')
         if tiempo_perdido_mins > 0:
             pdf.set_text_color(200, 0, 0)
         pdf.cell(25, 6, f"{int(hrs_p)}h {int(mins_p)}m", border=1, align='C')
