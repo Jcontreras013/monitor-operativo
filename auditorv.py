@@ -204,7 +204,7 @@ def procesar_auditoria_semanal(df_input):
 
         diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
-        # 🚨 CÁLCULO DE TIEMPOS SEGURO (Corrige el error de los 00:00:00)
+        # 🚨 CÁLCULO DE TIEMPOS SEGURO (Retorna enteros para evitar error int64)
         def calc_segs(row):
             ps = row['P_S']
             ue = row['U_E']
@@ -225,8 +225,8 @@ def procesar_auditoria_semanal(df_input):
             
             if ue_full > ps_full:
                 diff = (ue_full - ps_full).total_seconds()
-                if diff > 3600: return diff - 3600 # Descuenta almuerzo
-                return diff
+                if diff > 3600: return int(diff - 3600) # Descuenta almuerzo
+                return int(diff)
             return 0
 
         diario['segundos'] = diario.apply(calc_segs, axis=1)
@@ -236,6 +236,9 @@ def procesar_auditoria_semanal(df_input):
             Total_Segundos=('segundos', 'sum')
         ).reset_index()
 
+        # Asegurarnos de que no haya floats
+        semanal['Total_Segundos'] = semanal['Total_Segundos'].fillna(0).astype(int)
+
         # Promedio basado SOLO en días realmente trabajados (que generaron segundos válidos)
         dias_reales = diario[diario['segundos'] > 0].groupby('_P').size().reset_index(name='Dias_Efectivos')
         semanal = pd.merge(semanal, dias_reales, on='_P', how='left')
@@ -243,7 +246,10 @@ def procesar_auditoria_semanal(df_input):
         
         semanal['Prom_Segundos'] = 0
         mask_efectivos = semanal['Dias_Efectivos'] > 0
-        semanal.loc[mask_efectivos, 'Prom_Segundos'] = semanal.loc[mask_efectivos, 'Total_Segundos'] / semanal.loc[mask_efectivos, 'Dias_Efectivos']
+        
+        # Calcular promedio de forma segura
+        semanal.loc[mask_efectivos, 'Prom_Segundos'] = (semanal.loc[mask_efectivos, 'Total_Segundos'] / semanal.loc[mask_efectivos, 'Dias_Efectivos']).astype(int)
+        semanal['Prom_Segundos'] = semanal['Prom_Segundos'].fillna(0).astype(int)
 
         def format_segs(secs):
             if pd.isnull(secs) or secs <= 0: return "00:00:00"
