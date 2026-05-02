@@ -180,46 +180,70 @@ def procesar_auditoria_semanal(df_input):
         df['_P'] = df['_P'].astype(str).str.strip()
         df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
         
-        df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
-        df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I)
+        # Limpiar AM/PM
+        df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
+        df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
         
-        df['_I'] = pd.to_datetime(df['_I'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_I'], dayfirst=False, errors='coerce'))
-        df['_S'] = pd.to_datetime(df['_S'], dayfirst=True, errors='coerce').fillna(pd.to_datetime(df['_S'], dayfirst=False, errors='coerce'))
+        # Forzar Datetime
+        df['_I'] = pd.to_datetime(df['_I'], format='mixed', dayfirst=True, errors='coerce')
+        df['_S'] = pd.to_datetime(df['_S'], format='mixed', dayfirst=True, errors='coerce')
         
         df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
         df = df.dropna(subset=['Fecha'])
         
         if df.empty: return None, None, "No hay fechas válidas en el archivo.", None, None
         
+        # 🚨 ESCUDO ANTI-FECHAS ANTIGUAS (Corrige el rango 05/01/2026)
+        fecha_maxima = df['Fecha'].max()
+        if pd.notnull(fecha_maxima):
+            fecha_minima_valida = fecha_maxima - timedelta(days=7)
+            df = df[df['Fecha'] > fecha_minima_valida].copy()
+
         f_inicio = df['Fecha'].min()
         f_fin = df['Fecha'].max()
 
         diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
+        # 🚨 CÁLCULO DE TIEMPOS SEGURO (Corrige el error de los 00:00:00)
         def calc_segs(row):
             ps = row['P_S']
             ue = row['U_E']
             if pd.isnull(ps) or pd.isnull(ue): return 0
             
-            limite_inf = ps.replace(hour=6, minute=30, second=0, microsecond=0)
-            limite_sup = ps.replace(hour=23, minute=59, second=59, microsecond=0)
-            
-            if ps < limite_inf: ps = limite_inf
-            if ue > limite_sup: ue = limite_sup
-            
-            if ue > ps:
-                diff = (ue - ps).total_seconds()
-                if diff > 3600: return diff - 3600 # Descuenta almuerzo
+            fecha_base = row['Fecha']
+            try:
+                ps_full = datetime.combine(fecha_base, ps.time())
+                ue_full = datetime.combine(fecha_base, ue.time())
+            except:
                 return 0
+            
+            limite_inf = ps_full.replace(hour=6, minute=30, second=0, microsecond=0)
+            limite_sup = ps_full.replace(hour=23, minute=59, second=59, microsecond=0)
+            
+            if ps_full < limite_inf: ps_full = limite_inf
+            if ue_full > limite_sup: ue_full = limite_sup
+            
+            if ue_full > ps_full:
+                diff = (ue_full - ps_full).total_seconds()
+                if diff > 3600: return diff - 3600 # Descuenta almuerzo
+                return diff
             return 0
 
         diario['segundos'] = diario.apply(calc_segs, axis=1)
         
         semanal = diario.groupby('_P').agg(
             Dias_Laborados=('Fecha', 'nunique'),
-            Total_Segundos=('segundos', 'sum'),
-            Prom_Segundos=('segundos', 'mean')
+            Total_Segundos=('segundos', 'sum')
         ).reset_index()
+
+        # Promedio basado SOLO en días realmente trabajados (que generaron segundos válidos)
+        dias_reales = diario[diario['segundos'] > 0].groupby('_P').size().reset_index(name='Dias_Efectivos')
+        semanal = pd.merge(semanal, dias_reales, on='_P', how='left')
+        semanal['Dias_Efectivos'] = semanal['Dias_Efectivos'].fillna(semanal['Dias_Laborados'])
+        
+        semanal['Prom_Segundos'] = 0
+        mask_efectivos = semanal['Dias_Efectivos'] > 0
+        semanal.loc[mask_efectivos, 'Prom_Segundos'] = semanal.loc[mask_efectivos, 'Total_Segundos'] / semanal.loc[mask_efectivos, 'Dias_Efectivos']
 
         def format_segs(secs):
             if pd.isnull(secs) or secs <= 0: return "00:00:00"
@@ -335,35 +359,36 @@ def generar_pdf_auditoria_tiempos(df_resumen):
     return finalizar_pdf(pdf)
 
 def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
-    # Usar hoja A4 en formato Apaisado (Landscape) para la Mega-Tabla
+    # Usar hoja A4 en formato Apaisado (Landscape 'L')
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
     pdf.alias_nb_pages()
     pdf.add_page()
     
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(84, 98, 143)
-    titulo = f" Auditoría Semanal Consolidada ({f_inicio.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')})"
+    
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+    
+    titulo = f" Auditoria Semanal Consolidada ({inicio_str} al {fin_str})"
     pdf.cell(0, 10, safestr(titulo), border=1, ln=True, fill=True, align="C")
     pdf.ln(5)
     
     if df_diario is not None and not df_diario.empty and df_semanal is not None and not df_semanal.empty:
-        # Unir los dos dataframes en uno solo basado en el Vehículo
         df_full = pd.merge(df_diario, df_semanal, on='Vehículo / Placa', how='left')
         
-        # Anchos de columna optimizados para el ancho total de un A4 Horizontal (275mm usables)
+        # Anchos ajustados para cubrir el total horizontal (275mm)
         w = [75, 25, 25, 25, 30, 25, 35, 35] 
         
-        # Configurar colores del encabezado
         pdf.set_fill_color(210, 210, 215)
         pdf.set_text_color(50, 50, 50)
         pdf.set_font("Helvetica", "B", 8)
         
-        headers = ['VEHÍCULO / PLACA', 'FECHA', '1RA SALIDA', 'ÚLT ENTRADA', 'TIEMPO DIARIO', 'DÍAS TRAB.', 'TIEMPO SEMANAL', 'PROMEDIO DIARIO']
+        headers = ['VEHICULO / PLACA', 'FECHA', '1RA SALIDA', 'ULT ENTRADA', 'TIEMPO DIARIO', 'DIAS TRAB.', 'TIEMPO SEMANAL', 'PROMEDIO DIARIO']
         for i, h in enumerate(headers):
             pdf.cell(w[i], 8, safestr(h), border=1, align="C", fill=True)
         pdf.ln()
         
-        # Iterar sobre las filas combinadas
         pdf.set_font("Helvetica", "", 8)
         last_tec = None
         
@@ -371,13 +396,12 @@ def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
             tec = row['Vehículo / Placa']
             fecha_str = row['Fecha'].strftime('%d/%m/%Y') if hasattr(row['Fecha'], 'strftime') else str(row['Fecha'])
             
-            # Solo mostrar el resumen total en la primera fila de cada técnico
             if tec != last_tec:
                 tec_display = safestr(tec)[:40]
                 dias = str(row['Días Trabajados'])
                 t_sem = safestr(row['Tiempo Total Semana'])
                 p_dia = safestr(row['Promedio Diario'])
-                pdf.set_fill_color(240, 248, 255) # Fondo azul súper claro para resaltar el inicio
+                pdf.set_fill_color(240, 248, 255) 
                 fill = True
                 last_tec = tec
             else:
@@ -390,23 +414,25 @@ def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
                 
             pdf.set_text_color(0, 0, 0)
             
-            # Celda 1: Placa (Negrita si es la primera fila)
             if tec_display != "": pdf.set_font("Helvetica", "B", 8)
             pdf.cell(w[0], 6, tec_display, border=1, align="L", fill=fill)
             pdf.set_font("Helvetica", "", 8)
             
-            # Celdas Diarias
             pdf.cell(w[1], 6, fecha_str, border=1, align="C", fill=fill)
             pdf.cell(w[2], 6, safestr(row['Primera Salida']), border=1, align="C", fill=fill)
             pdf.cell(w[3], 6, safestr(row['Última Entrada']), border=1, align="C", fill=fill)
-            pdf.cell(w[4], 6, safestr(row['Tiempo Diario']), border=1, align="C", fill=fill)
             
-            # Celdas de Totales (Negrita y color verde en el promedio)
+            # Si un día no trabajó bien, ponerlo en color gris
+            if row['Tiempo Diario'] == "00:00:00": pdf.set_text_color(180, 180, 180)
+            pdf.cell(w[4], 6, safestr(row['Tiempo Diario']), border=1, align="C", fill=fill)
+            pdf.set_text_color(0, 0, 0)
+            
             if tec_display != "": pdf.set_font("Helvetica", "B", 8)
             pdf.cell(w[5], 6, dias, border=1, align="C", fill=fill)
             pdf.cell(w[6], 6, t_sem, border=1, align="C", fill=fill)
             
-            if tec_display != "": pdf.set_text_color(0, 100, 0) # Texto verde para el promedio
+            # Color verde para el Promedio
+            if tec_display != "": pdf.set_text_color(0, 100, 0) 
             pdf.cell(w[7], 6, p_dia, border=1, align="C", fill=fill)
             
             pdf.set_font("Helvetica", "", 8)
