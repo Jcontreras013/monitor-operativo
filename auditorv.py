@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
 import re
 import os
 import io
+from datetime import datetime, timedelta, time as dt_time
 
-# Importar las herramientas de PDF
+# Importar las herramientas de PDF y utilidades
 try:
     from tools import ReporteGenerencialPDF, finalizar_pdf, safestr
 except ImportError:
@@ -19,10 +19,9 @@ def get_hn_time():
     return datetime.utcnow() - timedelta(hours=6)
 
 # ==============================================================================
-# ESCUDO ANTI-DUPLICADOS (Evita el crash de PyArrow)
+# ESCUDO ANTI-DUPLICADOS Y LECTOR DE ARCHIVOS
 # ==============================================================================
 def forzar_columnas_unicas(df):
-    """Detecta columnas con el mismo nombre y las renombra (ej. Col, Col_1)."""
     if df is None or df.empty: return df
     df.columns = df.columns.astype(str).str.strip()
     cols = pd.Series(df.columns)
@@ -34,9 +33,6 @@ def forzar_columnas_unicas(df):
     df.columns = cols
     return df
 
-# ==============================================================================
-# LECTOR BLINDADO DE ARCHIVOS
-# ==============================================================================
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
@@ -68,9 +64,6 @@ def read_file_robust(uploaded_file):
 
     return forzar_columnas_unicas(df)
 
-# ==============================================================================
-# HERRAMIENTA ROBUSTA PARA LEER TIEMPOS DEL GPS ("8 dias 10:20:00")
-# ==============================================================================
 def time_to_sec_robust(t_str):
     if pd.isnull(t_str) or not str(t_str).strip(): return 0
     t_str = str(t_str).strip().lower()
@@ -86,13 +79,11 @@ def time_to_sec_robust(t_str):
     except: return 0
 
 # ==============================================================================
-# 1. LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS DIARIOS)
+# 1. LÓGICA DE AUDITORÍA DE VEHÍCULOS (TIEMPOS DIARIOS) - INTACTO
 # ==============================================================================
 def procesar_auditoria_vehiculos(df_input):
     try:
         df = df_input.copy()
-        
-        # 🚨 ESCUDO ANTI-FLOAT: Convertimos todo a texto puro con una lista
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         if not col_placa:
             for i in range(min(15, len(df))):
@@ -158,13 +149,12 @@ def procesar_auditoria_vehiculos(df_input):
     except Exception as e: return None, str(e)
 
 # ==============================================================================
-# 2. AUDITORÍA SEMANAL AUTOMÁTICA
+# 2. AUDITORÍA SEMANAL AUTOMÁTICA (CON DESGLOSE DIARIO Y PROMEDIOS) - NUEVO
 # ==============================================================================
 def procesar_auditoria_semanal(df_input):
     try:
         df = df_input.copy()
         
-        # 🚨 ESCUDO ANTI-FLOAT
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         if not col_placa:
             for i in range(min(15, len(df))):
@@ -184,7 +174,7 @@ def procesar_auditoria_semanal(df_input):
         if not col_salida:
             col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
         
-        if not (col_placa and col_ingreso and col_salida): return None, "Columnas no detectadas.", None, None
+        if not (col_placa and col_ingreso and col_salida): return None, None, "Columnas no detectadas.", None, None
             
         df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
         df['_P'] = df['_P'].astype(str).str.strip()
@@ -199,7 +189,7 @@ def procesar_auditoria_semanal(df_input):
         df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
         df = df.dropna(subset=['Fecha'])
         
-        if df.empty: return None, "No hay fechas válidas en el archivo.", None, None
+        if df.empty: return None, None, "No hay fechas válidas en el archivo.", None, None
         
         f_inicio = df['Fecha'].min()
         f_fin = df['Fecha'].max()
@@ -219,7 +209,7 @@ def procesar_auditoria_semanal(df_input):
             
             if ue > ps:
                 diff = (ue - ps).total_seconds()
-                if diff > 3600: return diff - 3600
+                if diff > 3600: return diff - 3600 # Descuenta almuerzo
                 return 0
             return 0
 
@@ -227,7 +217,8 @@ def procesar_auditoria_semanal(df_input):
         
         semanal = diario.groupby('_P').agg(
             Dias_Laborados=('Fecha', 'nunique'),
-            Total_Segundos=('segundos', 'sum')
+            Total_Segundos=('segundos', 'sum'),
+            Prom_Segundos=('segundos', 'mean')
         ).reset_index()
 
         def format_segs(secs):
@@ -235,18 +226,23 @@ def procesar_auditoria_semanal(df_input):
             h, r = divmod(int(secs), 3600); m, s = divmod(r, 60)
             return f"{h:02d}:{m:02d}:{s:02d}"
 
-        semanal['Tiempo Total Semana'] = semanal['Total_Segundos'].apply(format_segs)
-        semanal['Promedio Diario'] = (semanal['Total_Segundos'] / semanal['Dias_Laborados']).apply(format_segs)
+        diario['Primera Salida'] = diario['P_S'].dt.strftime('%I:%M %p').fillna("---")
+        diario['Última Entrada'] = diario['U_E'].dt.strftime('%I:%M %p').fillna("---")
+        diario['Tiempo Diario'] = diario['segundos'].apply(format_segs)
+        diario = diario.rename(columns={'_P': 'Vehículo / Placa'})
+        final_diario = diario[['Vehículo / Placa', 'Fecha', 'Primera Salida', 'Última Entrada', 'Tiempo Diario']].copy()
 
+        semanal['Tiempo Total Semana'] = semanal['Total_Segundos'].apply(format_segs)
+        semanal['Promedio Diario'] = semanal['Prom_Segundos'].apply(format_segs)
         semanal = semanal.rename(columns={'_P': 'Vehículo / Placa', 'Dias_Laborados': 'Días Trabajados'})
-        final_df = semanal[['Vehículo / Placa', 'Días Trabajados', 'Tiempo Total Semana', 'Promedio Diario']].copy()
+        final_semanal = semanal[['Vehículo / Placa', 'Días Trabajados', 'Tiempo Total Semana', 'Promedio Diario']].copy()
         
-        return forzar_columnas_unicas(final_df), "OK", f_inicio, f_fin
-    except Exception as e: return None, str(e), None, None
+        return forzar_columnas_unicas(final_diario), forzar_columnas_unicas(final_semanal), "OK", f_inicio, f_fin
+    except Exception as e: return None, None, str(e), None, None
 
 
 # ==============================================================================
-# LÓGICA DE TELEMETRÍA (MATRIZ REPARADA CON FECHAS EN LUGAR DE DÍAS)
+# 3. LÓGICA DE TELEMETRÍA 
 # ==============================================================================
 def procesar_matriz_telemetria(df_raw):
     try:
@@ -259,7 +255,6 @@ def procesar_matriz_telemetria(df_raw):
         df = df_raw.iloc[header_idx + 1:].copy()
         raw_columns = df_raw.iloc[header_idx].astype(str).str.strip().tolist()
         
-        # Extracción Inteligente de Fechas y Días
         clean_columns = []
         for i, col in enumerate(raw_columns):
             col_str = str(col).strip()
@@ -284,7 +279,6 @@ def procesar_matriz_telemetria(df_raw):
                     clean_columns.append(col_str if col_str else f"Dia_{i-1}")
         
         df.columns = clean_columns
-        
         df = forzar_columnas_unicas(df)
         
         col_placa = df.columns[0]
@@ -306,50 +300,6 @@ def procesar_matriz_telemetria(df_raw):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-def extraer_promedios_detallados(df_raw, limite_vel, file_name, placas_validas):
-    try:
-        header_idx = None
-        # 🚨 ESCUDO ANTI-FLOAT
-        for i in range(min(20, len(df_raw))):
-            row_str = " ".join([str(x) for x in df_raw.iloc[i].values]).upper()
-            if 'VELOCIDAD' in row_str or 'KM/H' in row_str or 'SPEED' in row_str:
-                header_idx = i; break
-        
-        if header_idx is None:
-            cols_str = " ".join([str(x) for x in df_raw.columns]).upper()
-            if 'VELOCIDAD' in cols_str or 'KM/H' in cols_str or 'SPEED' in cols_str: df = df_raw.copy()
-            else: return {}
-        else:
-            df = df_raw.iloc[header_idx + 1:].copy()
-            df.columns = [str(x).strip().upper() for x in df_raw.iloc[header_idx].values]
-            df = forzar_columnas_unicas(df)
-        
-        col_vel = next((c for c in df.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
-        if not col_vel: return {}
-        
-        df['Vel_Num'] = df[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
-        df_excesos = df[df['Vel_Num'] > limite_vel]
-        if df_excesos.empty: return {}
-        
-        promedio = round(df_excesos['Vel_Num'].mean(), 2)
-        
-        col_placa = next((c for c in df.columns if re.search(r'PLACA|ALIAS|VEHICULO', str(c), re.I)), None)
-        if col_placa:
-            resultados = {}
-            for p_sucia in df_excesos[col_placa].dropna().unique():
-                if 'VERSIÓN' in str(p_sucia).upper(): continue
-                p_limpia = str(p_sucia).split('-')[0].strip().upper()
-                prom_indiv = df_excesos[df_excesos[col_placa] == p_sucia]['Vel_Num'].mean()
-                resultados[p_limpia] = round(prom_indiv, 2)
-            return resultados
-            
-        full_text = df_raw.astype(str).to_string().upper()
-        for p in placas_validas:
-            if str(p).upper() in full_text or str(p).upper() in file_name.upper(): 
-                return {str(p).upper(): promedio}
-                
-        return {}
-    except Exception: return {}
 
 # ==============================================================================
 # GENERADORES DE PDF 
@@ -373,23 +323,55 @@ def generar_pdf_auditoria_tiempos(df_resumen):
             pdf.ln()
     return finalizar_pdf(pdf)
 
-def generar_pdf_semanal_tiempos(df_resumen, f_inicio, f_fin):
+def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
     pdf = ReporteGenerencialPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(84, 98, 143)
-    titulo = f" Auditoria Semanal ({f_inicio.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')})"
+    titulo = f" Auditoria Semanal Detallada ({f_inicio.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')})"
     pdf.cell(0, 10, safestr(titulo), border=1, ln=True, fill=True)
-    pdf.ln(5); pdf.seccion_titulo("Consolidado Semanal de Tiempos en Calle")
+    pdf.ln(5); pdf.seccion_titulo("Desglose Diario y Promedio en Calle por Vehiculo")
     
-    if not df_resumen.empty:
-        pdf.set_fill_color(225, 225, 225); pdf.set_text_color(50, 50, 50); pdf.set_font("Helvetica", "B", 8)
-        anchos = [95, 30, 35, 30]
-        for i, col in enumerate(df_resumen.columns): pdf.cell(anchos[i], 6, safestr(str(col).upper()), border=1, align="C", fill=True)
-        pdf.ln(); pdf.set_font("Helvetica", "", 8)
-        for _, fila in df_resumen.iterrows():
-            for i, item in enumerate(fila):
-                pdf.set_fill_color(255, 255, 255); pdf.set_text_color(0, 0, 0)
-                pdf.cell(anchos[i], 5, safestr(str(item)[:50]), border=1, align="C" if i > 0 else "L", fill=True)
+    if df_diario is not None and not df_diario.empty and df_semanal is not None and not df_semanal.empty:
+        tecnicos = sorted(df_diario['Vehículo / Placa'].astype(str).unique())
+        for tec in tecnicos:
+            if pdf.get_y() > 250: pdf.add_page()
+            
+            # Encabezado del Vehículo
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_fill_color(220, 230, 250); pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 7, safestr(f" VEHICULO / PLACA: {tec}"), border=1, ln=True, fill=True)
+            
+            df_tec_diario = df_diario[df_diario['Vehículo / Placa'] == tec].sort_values(by='Fecha')
+            
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_fill_color(240, 240, 240)
+            pdf.cell(30, 5, "Fecha", border=1, align="C", fill=True)
+            pdf.cell(50, 5, "Primera Salida", border=1, align="C", fill=True)
+            pdf.cell(50, 5, "Ultima Entrada", border=1, align="C", fill=True)
+            pdf.cell(60, 5, "Tiempo en Calle", border=1, align="C", fill=True)
             pdf.ln()
+            
+            pdf.set_font("Helvetica", "", 7)
+            for _, row in df_tec_diario.iterrows():
+                fecha_str = row['Fecha'].strftime('%d/%m/%Y') if hasattr(row['Fecha'], 'strftime') else str(row['Fecha'])
+                pdf.cell(30, 5, fecha_str, border=1, align="C")
+                pdf.cell(50, 5, safestr(row['Primera Salida']), border=1, align="C")
+                pdf.cell(50, 5, safestr(row['Última Entrada']), border=1, align="C")
+                pdf.cell(60, 5, safestr(row['Tiempo Diario']), border=1, align="C")
+                pdf.ln()
+            
+            df_tec_sem = df_semanal[df_semanal['Vehículo / Placa'] == tec]
+            if not df_tec_sem.empty:
+                row_sem = df_tec_sem.iloc[0]
+                pdf.set_font("Helvetica", "B", 7)
+                pdf.set_fill_color(250, 250, 250)
+                pdf.cell(100, 5, f"Dias Trabajados: {row_sem['Días Trabajados']} | Tiempo Total Semana: {row_sem['Tiempo Total Semana']}", border=1, align="R", fill=True)
+                pdf.set_text_color(0, 100, 0)
+                pdf.cell(90, 5, f"PROMEDIO DIARIO: {row_sem['Promedio Diario']}", border=1, align="C", fill=True)
+                pdf.set_text_color(0, 0, 0)
+                pdf.ln()
+            pdf.ln(4)
+    else:
+        pdf.cell(0, 10, "Sin datos disponibles.", border=0, ln=True)
     return finalizar_pdf(pdf)
 
 def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
@@ -422,7 +404,6 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
             elif col == 'Promedio Vel. (km/h)': w = w_prom
             elif str(col).upper() == 'TOTAL': w = w_total
             else: w = w_dia
-            # Aquí ya no quitamos 'Dia_' para que respete el nuevo formato de fechas
             pdf.cell(w, 6, safestr(str(col)[:20]), border=1, align="C", fill=True)
         pdf.ln()
         
@@ -534,13 +515,19 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 
             elif tipo_reporte == "📅 Reporte Semanal Automático":
                 with st.spinner("⚙️ Escaneando fechas y procesando consolidado semanal..."):
-                    res_sem, msg_sem, f_in, f_out = procesar_auditoria_semanal(df_gps_crudo)
+                    res_diario, res_sem, msg_sem, f_in, f_out = procesar_auditoria_semanal(df_gps_crudo)
                 if res_sem is not None:
                     st.success(f"✅ Análisis Semanal completado (Del {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}).")
+                    
+                    st.markdown("#### 📅 Desglose Diario por Vehículo")
+                    st.dataframe(res_diario, use_container_width=True, hide_index=True)
+                    
+                    st.markdown("#### 📈 Promedios y Consolidado")
                     st.dataframe(res_sem, use_container_width=True, hide_index=True)
+                    
                     col_s1, col_s2 = st.columns(2)
                     with col_s1:
-                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_sem, f_in, f_out), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
+                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
                 else: st.warning(f"⚠️ {msg_sem}")
 
     # --- PESTAÑA 2: TELEMETRÍA ---
@@ -681,7 +668,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         for file_det in archivos_detallados:
                             df_temp = read_file_robust(file_det)
                             if df_temp is not None and not df_temp.empty:
-                                # 🚨 ESCUDO ANTI-FLOAT AQUÍ TAMBIÉN
                                 col_placa_temp = next((c for c in df_temp.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
                                 if not col_placa_temp:
                                     for i in range(min(15, len(df_temp))):
@@ -708,7 +694,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                         dict_ralenti_secs[p] = dict_ralenti_secs.get(p, 0) + time_to_sec_robust(t)
                         
                         if df_gps_list:
-                            res_gps, msg_gps, f_in, f_out = procesar_auditoria_semanal(pd.concat(df_gps_list, ignore_index=True))
+                            res_diario, res_gps, msg_gps, f_in, f_out = procesar_auditoria_semanal(pd.concat(df_gps_list, ignore_index=True))
                             if res_gps is not None:
                                 df_act = df_base_local.copy()
                                 df_act['HORA_LIQ'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
