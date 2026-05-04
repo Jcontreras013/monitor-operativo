@@ -223,43 +223,6 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
 
     return pdf.output(dest='S').encode('latin-1')
 
-def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
-    
-    pdf.set_font("Arial", '', 10)
-    pdf.set_text_color(100, 100, 100)
-    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
-    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
-    pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
-    pdf.ln(10)
-    
-    if not df_promedios.empty:
-        pdf.set_x(15)
-        pdf.set_fill_color(220, 230, 250)
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Arial", 'B', 9)
-        pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
-        pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
-        pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
-        pdf.ln()
-        
-        pdf.set_font("Arial", '', 9)
-        for _, row in df_promedios.iterrows():
-            pdf.set_x(15)
-            tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
-            dias = str(row['Dias_Computados'])
-            hora = str(row['Hora_Promedio_Inicio'])
-            
-            pdf.cell(90, 7, tec, border=1, align='L')
-            pdf.cell(40, 7, dias, border=1, align='C')
-            pdf.cell(50, 7, hora, border=1, align='C')
-            pdf.ln()
-            
-    return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS
@@ -568,7 +531,6 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # === OPTIMIZACIÓN DE RENDIMIENTO: VECTORIZACIÓN CON NUMPY ===
 # ==============================================================================
-# Se remueve @st.cache_data para evitar FileNotFoundError en Streamlit Cloud al recibir io.BytesIO
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
@@ -1401,55 +1363,16 @@ def main():
             st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
             st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
             
-            # Definir la función para generar el PDF de Promedio de Arranque dentro del flujo de la app
-            def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", 'B', 14)
-                pdf.set_text_color(40, 50, 100)
-                pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                f_inicio_primera = st.date_input("Fecha Inicio:", value=hoy_date_valor - timedelta(days=6), key="f_ini_arranque")
+            with col_sel2:
+                f_fin_primera = st.date_input("Fecha Fin:", value=hoy_date_valor, key="f_fin_arranque")
                 
-                pdf.set_font("Arial", '', 10)
-                pdf.set_text_color(100, 100, 100)
-                inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
-                fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
-                pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
-                pdf.ln(10)
-                
-                if not df_promedios.empty:
-                    pdf.set_x(15)
-                    pdf.set_fill_color(220, 230, 250)
-                    pdf.set_text_color(0, 0, 0)
-                    pdf.set_font("Arial", 'B', 9)
-                    pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
-                    pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
-                    pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
-                    pdf.ln()
-                    
-                    pdf.set_font("Arial", '', 9)
-                    for _, row in df_promedios.iterrows():
-                        pdf.set_x(15)
-                        tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
-                        dias = str(row['Dias_Computados'])
-                        hora = str(row['Hora_Promedio_Inicio'])
-                        
-                        pdf.cell(90, 7, tec, border=1, align='L')
-                        pdf.cell(40, 7, dias, border=1, align='C')
-                        pdf.cell(50, 7, hora, border=1, align='C')
-                        pdf.ln()
-                        
-                return pdf.output(dest='S').encode('latin-1')
-            
-            rango_fechas_primera = st.date_input(
-                "Seleccione el Rango de Fechas:", 
-                value=(hoy_date_valor - timedelta(days=6), hoy_date_valor),
-                key="rango_primera_orden_input"
-            )
-            
-            if len(rango_fechas_primera) == 2:
-                f_inicio_primera, f_fin_primera = rango_fechas_primera
-                
-                if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True):
+            if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True):
+                if f_inicio_primera > f_fin_primera:
+                    st.warning("⚠️ La Fecha de Inicio no puede ser mayor que la Fecha Fin.")
+                else:
                     df_base_prom = df_base.copy()
                     if 'HORA_INI' in df_base_prom.columns:
                         df_base_prom['HORA_INI_DT'] = pd.to_datetime(df_base_prom['HORA_INI'], errors='coerce')
@@ -1483,48 +1406,46 @@ def main():
                             mask_tecnicos_validos = (promedios_inicio['TECNICO'].notna()) & (promedios_inicio['TECNICO'].str.strip() != '')
                             promedios_inicio = promedios_inicio[mask_tecnicos_validos]
 
-                            # Guardar en memoria para que no desaparezca la tabla al clickear Descargar PDF
                             st.session_state['df_promedios_inicio'] = promedios_inicio
                         else:
                             st.session_state['df_promedios_inicio'] = pd.DataFrame()
                             st.warning("⚠️ No se encontraron órdenes iniciadas en este rango de fechas.")
                             
-                # Dibujar la tabla si existe en memoria
-                if 'df_promedios_inicio' in st.session_state and not st.session_state['df_promedios_inicio'].empty:
-                    promedios_mostrar = st.session_state['df_promedios_inicio']
-                    
-                    st.dataframe(
-                        promedios_mostrar[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
-                        use_container_width=True, 
-                        hide_index=True,
-                        column_config={
-                            "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
-                            "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
-                            "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
-                        }
-                    )
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if es_movil: col_btn_p1, col_btn_p2 = st.columns(2)
-                    else: col_btn_p1, col_btn_p2 = st.columns([1, 2])
-                    
-                    with col_btn_p1:
-                        if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True):
-                            try:
-                                with st.spinner("Generando PDF..."):
-                                    st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(promedios_mostrar, f_inicio_primera, f_fin_primera)
-                            except Exception as e:
-                                st.error(f"Error generando PDF: {e}")
-                                
-                        if 'pdf_promedio_arranque' in st.session_state and st.session_state['pdf_promedio_arranque']:
-                            st.download_button(
-                                "📥 Descargar PDF (Promedio Semanal)", 
-                                data=st.session_state['pdf_promedio_arranque'], 
-                                file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", 
-                                mime="application/pdf", 
-                                type="primary", 
-                                use_container_width=True
-                            )
+            if 'df_promedios_inicio' in st.session_state and not st.session_state['df_promedios_inicio'].empty:
+                promedios_mostrar = st.session_state['df_promedios_inicio']
+                
+                st.dataframe(
+                    promedios_mostrar[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
+                        "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
+                        "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
+                    }
+                )
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                if es_movil: col_btn_p1, col_btn_p2 = st.columns(2)
+                else: col_btn_p1, col_btn_p2 = st.columns([1, 2])
+                
+                with col_btn_p1:
+                    if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True):
+                        try:
+                            with st.spinner("Generando PDF..."):
+                                st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(promedios_mostrar, f_inicio_primera, f_fin_primera)
+                        except Exception as e:
+                            st.error(f"Error generando PDF: {e}")
+                            
+                    if 'pdf_promedio_arranque' in st.session_state and st.session_state['pdf_promedio_arranque']:
+                        st.download_button(
+                            "📥 Descargar PDF (Promedio Semanal)", 
+                            data=st.session_state['pdf_promedio_arranque'], 
+                            file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", 
+                            mime="application/pdf", 
+                            type="primary", 
+                            use_container_width=True
+                        )
 
             st.markdown("---")
             st.markdown("### 📥 Exportación")
