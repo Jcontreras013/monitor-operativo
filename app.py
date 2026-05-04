@@ -756,25 +756,17 @@ def main():
                 mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
                 df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
                 
-                if not df_para_gantt_diario.empty:
-                    gantt_base_date_d = fecha_cal_sel
+            if not df_para_gantt_diario.empty:
                     ahora_hx_d = get_honduras_time()
                     
-                    def normalizar_para_gantt_d(dt_val):
-                        if pd.isnull(dt_val): return pd.NaT
-                        try:
-                            if isinstance(dt_val, str): dt_val = pd.to_datetime(dt_val)
-                            return datetime.combine(gantt_base_date_d, dt_val.time())
-                        except: return pd.NaT
-
-                    df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI'].apply(normalizar_para_gantt_d)
+                    df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
+                    hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
                     
-                    hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(gantt_base_date_d, dt_time(22, 0))
+                    df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
                     
-                    df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario.apply(
-                        lambda row: normalizar_para_gantt_d(row['HORA_LIQ']) if pd.notnull(row['HORA_LIQ']) else normalizar_para_gantt_d(hora_cierre_proyectada),
-                        axis=1
-                    )
+                    # Seguridad: Si una orden cruza la medianoche o falla la hora, ajustar para que el gráfico no explote
+                    mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
+                    df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
                     
                     df_para_gantt_diario['Inicio'] = df_para_gantt_diario['HORA_INI'].dt.strftime('%H:%M')
                     df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
@@ -1291,22 +1283,15 @@ def main():
                 df_para_gantt_final = df_gantt_limpio[~mask_supervisores].copy()
                 df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                 
-                if not df_para_gantt_final.empty:
-                    gantt_base_date = hoy_date_valor
+            if not df_para_gantt_final.empty:
                     ahora_hx = get_honduras_time()
                     
-                    def normalizar_para_gantt(dt_val):
-                        if pd.isnull(dt_val): return pd.NaT
-                        try:
-                            if isinstance(dt_val, str): dt_val = pd.to_datetime(dt_val)
-                            return datetime.combine(gantt_base_date, dt_val.time())
-                        except: return pd.NaT
-
-                    df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
-                    df_para_gantt_final['GANTT_END'] = df_para_gantt_final.apply(
-                        lambda row: normalizar_para_gantt(row['HORA_LIQ']) if pd.notnull(row['HORA_LIQ']) else normalizar_para_gantt(ahora_hx),
-                        axis=1
-                    )
+                    df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
+                    df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
+                    
+                    # Seguridad Plotly anti-barras negativas
+                    mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
+                    df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
                     
                     df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
                     df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
