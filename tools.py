@@ -6,17 +6,79 @@ import unicodedata
 import tempfile
 import os
 import numpy as np
-import streamlit as st 
+import streamlit as st
 import io
+from typing import Any, List, Optional, Tuple, Union, Dict
 
-def safestr(texto):
+# ==============================================================================
+# MOTOR SEGURO DE FECHAS, ZONA HORARIA Y UTILIDADES BASE
+# ==============================================================================
+def safestr(texto: Any) -> str:
     """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
     if pd.isna(texto):
         return ""
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
+def get_honduras_time() -> datetime:
+    """Ajusta la hora a UTC-6 internamente."""
+    return datetime.utcnow() - timedelta(hours=6)
+
+# Alias para mantener compatibilidad con las funciones de auditoría
+get_hn_time = get_honduras_time
+
+def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
+    """Motor blindado de conversión de fechas a partir de múltiples formatos entrantes."""
+    if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
+        return pd.NaT
+    
+    hoy = pd.Timestamp(get_honduras_time()).normalize()
+
+    if isinstance(val, dt_time):
+        return pd.Timestamp.combine(hoy.date(), val)
+    if isinstance(val, datetime):
+        if val.year <= 1970:
+            return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
+        return pd.Timestamp(val)
+    if isinstance(val, (int, float)):
+        if val == 0 or val == 0.0: return pd.NaT
+        if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
+        elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
+        else: return pd.NaT
+
+    # === LA CURA: Limpieza de formatos MaxCom (AM/PM) ===
+    str_val = str(val).strip()
+    str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
+    str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
+
+    try:
+        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$', str_val, re.I):
+            parsed_time = pd.to_datetime(str_val).time()
+            return pd.Timestamp.combine(hoy.date(), parsed_time)
+
+        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
+            parsed = pd.to_datetime(str_val, errors='coerce')
+        else:
+            parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+
+        if pd.notnull(parsed):
+            if parsed.year <= 1970:
+                return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
+            return parsed
+        return pd.NaT
+    except:
+        return pd.NaT
+
+def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFrame:
+    df = df_input.copy()
+    for col in columnas:
+        if col in df.columns:
+            df[col] = df[col].apply(parse_date_ultra_safe)
+            # CRÍTICO: Forzar formato de pandas para evitar errores de ploteo en el Gantt
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+    return df
+
 # ==============================================================================
-# 1. MAPEO UNIVERSAL DE COLUMNAS Y CONSTANTES
+# 1. MAPEO UNIVERSAL DE COLUMNAS
 # ==============================================================================
 COLUMNS_MAPPING = {
     'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'HORA INICIO ORDEN', 'FECHA ENTRADA', 'INICIO'],
@@ -311,6 +373,17 @@ class ReporteGenerencialPDF(FPDF):
             self.set_font("Helvetica", "", 7)
         self.ln(6)
 
+def finalizar_pdf(pdfobj):
+    """Guarda y retorna el archivo PDF de manera segura."""
+    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        pdfobj.output(tmppath)
+        with open(tmppath, "rb") as f: return f.read()
+    finally:
+        try: os.remove(tmppath)
+        except: pass
+
 def generar_graficos_temporales(dfbase):
     paths = {}
     try:
@@ -399,6 +472,9 @@ def calcular_aporte_meta(row):
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act): return 12.5   
     else: return 12.5   
 
+# ==============================================================================
+# REPORTES DE GERENCIA ORIGINALES
+# ==============================================================================
 def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
     df_sem = df_base[
         (df_base['HORA_LIQ'].dt.date >= fecha_inicio) & 
@@ -728,68 +804,6 @@ def logica_generar_pdf(dfbase):
             
     return finalizar_pdf(pdf)
 
-def finalizar_pdf(pdfobj):
-    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    try:
-        pdfobj.output(tmppath)
-        with open(tmppath, "rb") as f: return f.read()
-    finally:
-        try: os.remove(tmppath)
-        except: pass
-
-def es_offline_preciso(comentario):
-    txt = str(comentario).upper().strip()
-    if not txt or txt == 'NAN': return False
-    jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
-    if any(word in txt for word in jergasolucion): return False
-    keywordsfalla = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
-    return any(word in txt for word in keywordsfalla)
-
-def depurar_archivos_en_crudo(fileactividades, filedispositivos):
-    try:
-        xlact = pd.ExcelFile(fileactividades, engine='openpyxl')
-        sheetp = 'Prueba' if 'Prueba' in xlact.sheet_names else xlact.sheet_names[0]
-        dfpraw = pd.read_excel(xlact, sheet_name=sheetp)
-        sheethnom = 'HistoricoNoInstaladas' if 'HistoricoNoInstaladas' in xlact.sheet_names else None
-        dfhraw = pd.read_excel(xlact, sheet_name=sheethnom) if sheethnom else pd.DataFrame()
-        if filedispositivos.name.lower().endswith('.csv'):
-            dfdispfull = pd.read_csv(filedispositivos, sep=None, engine='python')
-        else:
-            dfdispfull = pd.read_excel(filedispositivos, engine='openpyxl')
-        dfdispref = pd.DataFrame()
-        coltec = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['TECNICO', 'USER', 'OPERADOR'])]
-        colmx = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['MX', 'VEHICULO', 'PLACA'])]
-        dfdispref['TECREF'] = dfdispfull[coltec[0]].astype(str).str.strip().str.upper() if coltec else "N/D"
-        dfdispref['MXREF'] = dfdispfull[colmx[0]].astype(str).str.strip() if colmx else "N/D"
-        dfp = procesar_dataframe_base(dfpraw)
-        dfp['TECKEY'] = dfp['TECNICO'].astype(str).str.strip().str.upper()
-        dffinal = dfp.merge(dfdispref.drop_duplicates('TECREF'), left_on='TECKEY', right_on='TECREF', how='left')
-        if 'MXREF' in dffinal.columns:
-            dffinal['MX'] = dffinal['MXREF'].combine_first(dffinal.get('MX', pd.Series(dtype=str)))
-        return dffinal.drop(columns=['TECKEY', 'TECREF', 'MXREF'], errors='ignore'), procesar_dataframe_base(dfhraw)
-    except Exception as e:
-        raise Exception(f"Error en cruce: {str(e)}")
-
-def procesar_dataframe_base(df):
-    df.columns = df.columns.astype(str).str.strip()
-    mapeocolumnas = {}
-    for nombreinterno, listaopciones in COLUMNS_MAPPING.items():
-        for opcion in listaopciones:
-            if opcion.upper() in [str(c).upper() for c in df.columns]:
-                realname = next(c for c in df.columns if str(c).upper() == opcion.upper())
-                mapeocolumnas[realname] = nombreinterno
-                break
-    df = df.rename(columns=mapeocolumnas)
-    for colv in COLUMNAS_VITALES_SISTEMA:
-        if colv not in df.columns: df[colv] = "N/D"
-    for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
-        df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
-    return df
-
-# ==============================================================================
-# ---> FUNCIÓN: GENERADOR DE REPORTE TRIMESTRAL DETALLADO (GERENCIAL) <---
-# ==============================================================================
 def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
@@ -929,20 +943,15 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
             pdf.cell(0, 10, "No hay registros de primera orden para esta fecha.", ln=True, align="C")
 
         return finalizar_pdf(pdf)
-
     except Exception as e:
         print(f"Error al generar PDF de Primera Orden: {e}")
         return None
 
-# ==============================================================================
-# FUNCIÓN PARA GENERAR PDF DE PENDIENTES GENERALES (DISPATCH)
-# ==============================================================================
 def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # --- ENCABEZADO DEL REPORTE ---
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, safestr("REPORTE DE PENDIENTES GENERALES (DISPATCH)"), border=0, ln=True, align="C")
@@ -952,7 +961,6 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
     pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {hoy_str}"), ln=True, align="C")
     pdf.ln(10)
     
-    # --- SECCIÓN: RESUMEN DE CARGA ---
     pdf.seccion_titulo("RESUMEN DE CARGA PARA EL SIGUIENTE TURNO")
     
     pdf.set_fill_color(240, 240, 240)
@@ -981,7 +989,6 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
 
     pdf.ln(10)
     
-    # --- SECCIÓN: DESGLOSE DE NUEVAS SIN ASIGNAR ---
     mask_sin_tec = (df_detalle['TECNICO'].isna()) | (df_detalle['TECNICO'].astype(str).str.strip() == '') | (df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
     df_no_asig = df_detalle[mask_sin_tec].copy()
 
@@ -1012,7 +1019,6 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.set_text_color(0, 100, 0)
         pdf.cell(0, 6, "Excelente. Todas las ordenes se encuentran asignadas a tecnicos.", ln=True)
 
-    # --- SECCIÓN 3: LA TABLA GRANDE (TODAS LAS ASIGNADAS CON KPI) ---
     df_asig = df_detalle[~mask_sin_tec].copy()
 
     if not df_asig.empty:
@@ -1023,7 +1029,6 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.set_text_color(50, 50, 50)
         pdf.set_font("Helvetica", "B", 7)
         
-        # Ajuste de anchos para sumar ~190mm
         pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
         pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
         pdf.cell(50, 6, "Actividad", border=1, align="C", fill=True)
@@ -1032,7 +1037,6 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.cell(10, 6, "Dias", border=1, align="C", fill=True)
         pdf.ln()
         
-        # ORDENAR POR DÍAS (MAYOR A MENOR) Y LUEGO POR TÉCNICO
         if 'DIAS_RETRASO' not in df_asig.columns:
             df_asig['DIAS_RETRASO'] = 0
         df_asig['DIAS_RETRASO'] = pd.to_numeric(df_asig['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
@@ -1064,18 +1068,17 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
             pdf.cell(55, 5, safestr(str(row.get('COLONIA', '')))[:40], border=1, align="L")
             pdf.cell(40, 5, safestr(str(row.get('TECNICO', '')))[:25], border=1, align="L")
             
-            # KPI COLORES SEMÁFORO
             if dias_retraso_val >= 7:
-                pdf.set_fill_color(211, 47, 47) # Rojo
+                pdf.set_fill_color(211, 47, 47) 
                 pdf.set_text_color(255, 255, 255)
             elif dias_retraso_val >= 4:
-                pdf.set_fill_color(245, 124, 0) # Naranja
+                pdf.set_fill_color(245, 124, 0) 
                 pdf.set_text_color(255, 255, 255)
             elif dias_retraso_val >= 1:
-                pdf.set_fill_color(251, 192, 45) # Amarillo
+                pdf.set_fill_color(251, 192, 45) 
                 pdf.set_text_color(0, 0, 0)
             else:
-                pdf.set_fill_color(56, 142, 60) # Verde
+                pdf.set_fill_color(56, 142, 60) 
                 pdf.set_text_color(255, 255, 255)
                 
             pdf.cell(10, 5, safestr(dias_retraso_str), border=1, align="C", fill=True)
@@ -1085,167 +1088,20 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
 
     return finalizar_pdf(pdf)
 
-# ==============================================================================
-# MOTOR SEGURO DE FECHAS Y ZONA HORARIA
-# ==============================================================================
-def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
-    from datetime import time as dt_time
-    if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
-        return pd.NaT
-    
-    hoy = pd.Timestamp(get_honduras_time()).normalize()
-
-    if isinstance(val, dt_time):
-        return pd.Timestamp.combine(hoy.date(), val)
-    if isinstance(val, datetime):
-        if val.year <= 1970:
-            return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-        return pd.Timestamp(val)
-    if isinstance(val, (int, float)):
-        if val == 0 or val == 0.0: return pd.NaT
-        if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
-        elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
-        else: return pd.NaT
-
-    # === LA CURA: Limpieza de formatos MaxCom (AM/PM) ===
-    str_val = str(val).strip()
-    str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
-    str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
-
-    try:
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$', str_val, re.I):
-            parsed_time = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), parsed_time)
-
-        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
-            parsed = pd.to_datetime(str_val, errors='coerce')
-        else:
-            parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
-
-        if pd.notnull(parsed):
-            if parsed.year <= 1970:
-                return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
-            return parsed
-        return pd.NaT
-    except:
-        return pd.NaT
-
-def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFrame:
-    df = df_input.copy()
-    for col in columnas:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_date_ultra_safe)
-            # CRÍTICO: Forzar formato de pandas para evitar errores de ploteo
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-    return df
-
-# ==============================================================================
-# FUNCIONES DE PROCESAMIENTO GERENCIAL Y DEPURALIZACIÓN
-# ==============================================================================
-def generar_tablas_gerenciales(df_crudo):
-    df = df_crudo.copy()
-    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_ultra_safe)
-    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_ultra_safe)
-    df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
-    df['FECHA'] = df['HORA_LIQ'].dt.date
-    totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
-    conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
-    tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
-    tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
-
-    df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
-    df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
-    tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
-    tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
-    tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
-
-    jornada = df.groupby(['TECNICO', 'FECHA']).agg(Hora_Apertura=('HORA_INI', 'min'), Hora_Cierre=('HORA_LIQ', 'max'), Total_Ordenes=('NUM', 'count')).reset_index()
-    jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
-    jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
-
-    resumen_jornada = jornada.groupby('TECNICO').agg(Promedio_Horas_Dia=('Horas_En_Calle', 'mean'), Dias_Laborados=('FECHA', 'nunique'), Max_Horas_Dia=('Horas_En_Calle', 'max')).reset_index()
-    resumen_jornada['Promedio_Horas_Dia'] = resumen_jornada['Promedio_Horas_Dia'].round(2)
-    resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
-
-    return tabla_produccion, tabla_eficiencia, resumen_jornada
-
-def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
-    try:
-        if isinstance(file_dispos, bytes):
-            file_dispos_obj = io.BytesIO(file_dispos)
-            file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
-        elif hasattr(file_dispos, 'read'): file_dispos.seek(0); file_dispos_obj = file_dispos
-        else: file_dispos_obj = file_dispos
-
-        if hasattr(file_activ, 'read'): file_activ.seek(0)
-        df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
-        df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
-        ahora_momento_ts = pd.Timestamp(get_honduras_time())
-        fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
-        mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-        df_act = df_act[(df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | (df_act['FECHA_APE'] >= fecha_limite_7d_ventana) | (df_act['HORA_LIQ'].isna()) | mask_vivas_loc].copy()
-        
-        df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
-        df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
-        
-        # --- FUNCIONES INTACTAS PARA AUDITORÍA DE GERENCIA ---
-        def alert_2h_logic_diamante(row_check): return False
-        def offline_seguro_diamante_logic(r_off): return False
-        def segmentar_plex_diamante_logic(r_seg): return 'RESIDENCIAL'
-        def format_duracion_diamante_human(r_dur): return "---"
-
-        # --- PROCESAMIENTO VECTORIZADO ULTRA-RÁPIDO ---
-        act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
-        est_upper = df_act['ESTADO'].fillna('').astype(str).str.upper().str.strip()
-        tec_upper = df_act['TECNICO'].fillna('').astype(str).str.upper().str.strip()
-        com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
-        cli_upper = df_act['CLIENTE'].fillna('').astype(str).str.upper()
-        
-        mins_diff = (ahora_momento_ts - df_act['HORA_INI']).dt.total_seconds() / 60
-        mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
-        mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
-
-        df_act['ALERTA_TIEMPO'] = (
-            (df_act['HORA_INI'].notnull()) & (df_act['HORA_LIQ'].isnull()) & 
-            (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
-        )
-        
-        mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
-        mask_est_abierto = est_upper != 'CERRADA'
-        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|FUERA DE SERVICIO|OFFLINE", regex=True)
-        mask_precisa = com_upper.apply(es_offline_preciso) 
-        
-        df_act['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
-        df_act['MINUTOS_CALC'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds() / 60
-        
-        texto_seg = act_upper + " " + cli_upper + " " + com_upper
-        df_act['SEGMENTO'] = np.where(texto_seg.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
-        
-        diff_temp = df_act['HORA_LIQ'] - df_act['HORA_INI']
-        df_act['TIEMPO_REAL'] = np.where(
-            df_act['HORA_INI'].isnull() | df_act['HORA_LIQ'].isnull(),
-            "---",
-            (diff_temp.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
-            ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
-        )
-        
-        return df_act, df_hst
-    except Exception as e:
-        if st: st.error(f"❌ Error fatal en el motor de depuración: {e}")
-        return None, None
-
 def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
+    pdf.alias_nb_pages()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
+    
+    pdf.set_font("Helvetica", 'B', 14)
     pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, f"REPORTE DE EFICIENCIA OPERATIVA Y TIEMPO PERDIDO - {fecha_sel.strftime('%d/%m/%Y')}", ln=True, align='C')
+    pdf.cell(0, 10, safestr(f"REPORTE DE EFICIENCIA OPERATIVA Y TIEMPO PERDIDO - {fecha_sel.strftime('%d/%m/%Y')}"), ln=True, align='C')
     pdf.ln(5)
     
     df_valido = df_dia.dropna(subset=['HORA_INI', 'TECNICO']).copy()
     
     if df_valido.empty:
-        pdf.set_font("Arial", '', 12)
+        pdf.set_font("Helvetica", '', 12)
         pdf.cell(0, 10, "No hay datos operativos para calcular tiempos.", ln=True, align='C')
         return finalizar_pdf(pdf)
 
@@ -1254,20 +1110,18 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     tecnicos = sorted(df_valido['TECNICO'].astype(str).unique())
     
     ahora_hx = get_honduras_time()
-    
     inicio_jornada = pd.Timestamp.combine(fecha_sel, dt_time(8, 0))
     fin_jornada = pd.Timestamp.combine(fecha_sel, dt_time(17, 0))
-    
     limite_evaluacion = min(ahora_hx, fin_jornada) if fecha_sel == ahora_hx.date() else fin_jornada
     
     for tec in tecnicos:
         df_tec = df_valido[df_valido['TECNICO'] == tec].sort_values(by='HORA_INI')
         
-        pdf.set_font("Arial", 'B', 10)
+        pdf.set_font("Helvetica", 'B', 10)
         pdf.set_fill_color(220, 230, 250)
-        pdf.cell(0, 8, f" TECNICO: {tec.encode('latin-1', 'ignore').decode('latin-1')}", border=1, ln=True, fill=True)
+        pdf.cell(0, 8, safestr(f" TECNICO: {tec}"), border=1, ln=True, fill=True)
         
-        pdf.set_font("Arial", 'B', 8)
+        pdf.set_font("Helvetica", 'B', 8)
         pdf.set_fill_color(240, 240, 240)
         pdf.cell(25, 6, "ORDEN", border=1, align='C', fill=True)
         pdf.cell(100, 6, "ACTIVIDAD", border=1, align='C', fill=True)
@@ -1280,11 +1134,10 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
         tiempo_muerto_acumulado = 0
         cursor_tiempo = inicio_jornada 
         
-        pdf.set_font("Arial", '', 8)
-        
+        pdf.set_font("Helvetica", '', 8)
         for _, row in df_tec.iterrows():
             num = str(row.get('NUM', 'N/D'))
-            act = str(row.get('ACTIVIDAD', '')).encode('latin-1', 'ignore').decode('latin-1')[:55]
+            act = str(row.get('ACTIVIDAD', ''))[:55]
             
             h_ini_dt = row['HORA_INI']
             h_liq_dt = row['HORA_LIQ']
@@ -1293,12 +1146,9 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
             h_fin_str = h_liq_dt.strftime('%H:%M') if pd.notnull(h_liq_dt) else "En curso"
             
             duracion_str = "---"
-            
             if pd.notnull(h_ini_dt):
-                if pd.notnull(h_liq_dt):
-                    fin_real = h_liq_dt
-                else:
-                    fin_real = ahora_hx if h_ini_dt.date() == ahora_hx.date() else fin_jornada
+                if pd.notnull(h_liq_dt): fin_real = h_liq_dt
+                else: fin_real = ahora_hx if h_ini_dt.date() == ahora_hx.date() else fin_jornada
                     
                 if fin_real > h_ini_dt:
                     mins_reales = (fin_real - h_ini_dt).total_seconds() / 60
@@ -1310,41 +1160,36 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
                 if h_ini_dt > cursor_tiempo and cursor_tiempo < limite_evaluacion:
                     gap_end = min(h_ini_dt, limite_evaluacion)
                     gap_mins = (gap_end - cursor_tiempo).total_seconds() / 60
-                    if gap_mins > 0:
-                        tiempo_muerto_acumulado += gap_mins
+                    if gap_mins > 0: tiempo_muerto_acumulado += gap_mins
                 
                 fin_orden_gap = h_liq_dt if pd.notnull(h_liq_dt) else ahora_hx
-                if pd.notnull(fin_orden_gap):
-                    cursor_tiempo = max(cursor_tiempo, fin_orden_gap)
+                if pd.notnull(fin_orden_gap): cursor_tiempo = max(cursor_tiempo, fin_orden_gap)
 
-            pdf.cell(25, 6, num, border=1, align='C')
-            pdf.cell(100, 6, act, border=1)
-            pdf.cell(25, 6, h_ini_str, border=1, align='C')
-            pdf.cell(25, 6, h_fin_str, border=1, align='C')
-            pdf.cell(25, 6, duracion_str, border=1, align='C')
+            pdf.cell(25, 6, safestr(num), border=1, align='C')
+            pdf.cell(100, 6, safestr(act), border=1)
+            pdf.cell(25, 6, safestr(h_ini_str), border=1, align='C')
+            pdf.cell(25, 6, safestr(h_fin_str), border=1, align='C')
+            pdf.cell(25, 6, safestr(duracion_str), border=1, align='C')
             pdf.ln()
             
         if cursor_tiempo < limite_evaluacion:
             gap_mins = (limite_evaluacion - cursor_tiempo).total_seconds() / 60
-            if gap_mins > 0:
-                tiempo_muerto_acumulado += gap_mins
+            if gap_mins > 0: tiempo_muerto_acumulado += gap_mins
         
         tiempo_perdido_mins = max(0, tiempo_muerto_acumulado - 60)
-        
         hrs_t, mins_t = divmod(total_minutos_trabajados, 60)
         hrs_p, mins_p = divmod(tiempo_perdido_mins, 60)
         
-        pdf.set_font("Arial", 'B', 8)
+        pdf.set_font("Helvetica", 'B', 8)
         pdf.cell(175, 6, "TOTAL TIEMPO TRABAJADO EN ORDENES (Incluye Extras):", border=1, align='R')
         pdf.set_text_color(0, 100, 0)
-        pdf.cell(25, 6, f"{int(hrs_t)}h {int(mins_t)}m", border=1, align='C')
+        pdf.cell(25, 6, safestr(f"{int(hrs_t)}h {int(mins_t)}m"), border=1, align='C')
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
         
         pdf.cell(175, 6, "TIEMPO PERDIDO / MUERTO (Base Brechas 8am-5pm - Almuerzo):", border=1, align='R')
-        if tiempo_perdido_mins > 0:
-            pdf.set_text_color(200, 0, 0)
-        pdf.cell(25, 6, f"{int(hrs_p)}h {int(mins_p)}m", border=1, align='C')
+        if tiempo_perdido_mins > 0: pdf.set_text_color(200, 0, 0)
+        pdf.cell(25, 6, safestr(f"{int(hrs_p)}h {int(mins_p)}m"), border=1, align='C')
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
         pdf.ln(5)
@@ -1352,62 +1197,61 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     return finalizar_pdf(pdf)
 
 def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
-    pdf = FPDF()
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
     
-    pdf.set_font("Arial", '', 10)
+    pdf.set_font("Helvetica", 'B', 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("PROMEDIO DE ARRANQUE DE JORNADA"), ln=True, align='C')
+    
+    pdf.set_font("Helvetica", '', 10)
     pdf.set_text_color(100, 100, 100)
     inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
     fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
-    pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
+    pdf.cell(0, 6, safestr(f"Periodo: {inicio_str} al {fin_str}"), ln=True, align='C')
     pdf.ln(10)
     
     if not df_promedios.empty:
         pdf.set_x(15)
         pdf.set_fill_color(220, 230, 250)
         pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Arial", 'B', 9)
+        pdf.set_font("Helvetica", 'B', 9)
         pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
         pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
         pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
         pdf.ln()
         
-        pdf.set_font("Arial", '', 9)
+        pdf.set_font("Helvetica", '', 9)
         for _, row in df_promedios.iterrows():
             pdf.set_x(15)
-            tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
+            tec = str(row['TECNICO'])[:45]
             dias = str(row['Dias_Computados'])
             hora = str(row['Hora_Promedio_Inicio'])
             
-            pdf.cell(90, 7, tec, border=1, align='L')
-            pdf.cell(40, 7, dias, border=1, align='C')
-            pdf.cell(50, 7, hora, border=1, align='C')
+            pdf.cell(90, 7, safestr(tec), border=1, align='L')
+            pdf.cell(40, 7, safestr(dias), border=1, align='C')
+            pdf.cell(50, 7, safestr(hora), border=1, align='C')
             pdf.ln()
             
     return finalizar_pdf(pdf)
 
-# ==============================================================================
-# REPORTES PDF: BIOMÉTRICO, RRHH Y PUNTOS TÉCNICOS
-# ==============================================================================
 def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
-    """Genera un reporte PDF profesional de Puntos por Técnico."""
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
+    pdf.alias_nb_pages()
     pdf.add_page()
     
     pdf.set_font("Helvetica", 'B', 16)
     pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, "REPORTE DE PRODUCCION Y PUNTOS POR TECNICO", ln=True, align='C')
+    pdf.cell(0, 10, safestr("REPORTE DE PRODUCCION Y PUNTOS POR TECNICO"), ln=True, align='C')
     
     pdf.set_font("Helvetica", '', 10)
     pdf.set_text_color(100, 100, 100)
     f_ini = fecha_inicio.strftime('%d/%m/%Y') if hasattr(fecha_inicio, 'strftime') else str(fecha_inicio)
     f_fin = fecha_fin.strftime('%d/%m/%Y') if hasattr(fecha_fin, 'strftime') else str(fecha_fin)
     f_emision = datetime.now().strftime('%d/%m/%Y %I:%M %p')
-    pdf.cell(0, 6, f"Periodo de Evaluacion: {f_ini} al {f_fin}", ln=True, align='C')
-    pdf.cell(0, 6, f"Fecha de Emision: {f_emision}", ln=True, align='C')
+    pdf.cell(0, 6, safestr(f"Periodo de Evaluacion: {f_ini} al {f_fin}"), ln=True, align='C')
+    pdf.cell(0, 6, safestr(f"Fecha de Emision: {f_emision}"), ln=True, align='C')
     pdf.ln(10)
     
     pdf.set_font("Helvetica", 'B', 9)
@@ -1423,8 +1267,8 @@ def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
     
     pdf.set_font("Helvetica", '', 8)
     for _, row in df.iterrows():
-        tec = safestr(row['👨‍🔧 Técnico'])
-        pdf.cell(w[0], 6, f" {tec[:35]}", border=1)
+        tec = str(row['👨‍🔧 Técnico'])
+        pdf.cell(w[0], 6, safestr(f" {tec[:35]}"), border=1)
         pdf.set_font("Helvetica", 'B', 9)
         pdf.cell(w[1], 6, safestr(row['⭐ TOTAL PUNTOS']), border=1, align='C')
         pdf.set_font("Helvetica", '', 8)
@@ -1437,17 +1281,17 @@ def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
     return finalizar_pdf(pdf)
 
 def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
-    """Genera el reporte PDF consolidado de Ausencias y Tardanzas."""
-    pdf = FPDF('L', 'mm', 'A4') 
+    pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
+    pdf.alias_nb_pages()
     pdf.add_page()
     
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 12, "REPORTE UNIFICADO RRHH: CONTROL DE ASISTENCIA", ln=True, align="C")
+    pdf.cell(0, 12, safestr("REPORTE UNIFICADO RRHH: CONTROL DE ASISTENCIA"), ln=True, align="C")
     
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, f"Fecha de emision: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}", ln=True, align="C")
+    pdf.cell(0, 6, safestr(f"Fecha de emision: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}"), ln=True, align="C")
     pdf.ln(10)
     
     def dibujar_tabla(pdf_obj, df, titulo):
@@ -1500,14 +1344,14 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
     return finalizar_pdf(pdf)
 
 def generar_pdf_infracciones(df_res):
-    """Crea un reporte PDF RESUMIDO de infracciones biométricas por empleado."""
-    pdf = FPDF('L', 'mm', 'A4')
+    pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
+    pdf.alias_nb_pages()
     pdf.add_page()
     
     pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(277, 10, "Resumen Consolidado de Infracciones Biometricas", ln=True, align='C')
+    pdf.cell(277, 10, safestr("Resumen Consolidado de Infracciones Biometricas"), ln=True, align='C')
     pdf.set_font("Helvetica", 'I', 10)
-    pdf.cell(277, 6, f"Generado el: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='C')
+    pdf.cell(277, 6, safestr(f"Generado el: {datetime.now().strftime('%d/%m/%Y')}"), ln=True, align='C')
     pdf.ln(10)
 
     df_res['Es_Tarde'] = df_res['Tardanza'] == 'Sí'
@@ -1528,7 +1372,7 @@ def generar_pdf_infracciones(df_res):
 
     if infractores.empty:
         pdf.set_font("Helvetica", '', 12)
-        pdf.cell(277, 10, "Excelente: No se registraron infracciones en este periodo.", ln=True, align='C')
+        pdf.cell(277, 10, safestr("Excelente: No se registraron infracciones en este periodo."), ln=True, align='C')
         return finalizar_pdf(pdf)
 
     pdf.set_font("Helvetica", 'B', 8)
@@ -1549,19 +1393,19 @@ def generar_pdf_infracciones(df_res):
 
     pdf.set_font("Helvetica", '', 8)
     for _, row in infractores.iterrows():
-        nombre_corto = safestr(row['Empleado'])[:35]
+        nombre_corto = str(row['Empleado'])[:35]
         p_tar = f"{int(row['Suma_Tar'] / row['Tardanzas'])} min" if row['Tardanzas'] > 0 else "---"
         p_alm = f"{int(row['Suma_Alm'] / row['Almuerzos'])} min" if row['Almuerzos'] > 0 else "---"
         p_brk = f"{int(row['Suma_Brk'] / row['Breaks'])} min" if row['Breaks'] > 0 else "---"
         
         pdf.cell(w_id, 8, safestr(row['ID']), border=1, align='C')
-        pdf.cell(w_emp, 8, f" {nombre_corto}", border=1)
+        pdf.cell(w_emp, 8, safestr(f" {nombre_corto}"), border=1)
         pdf.cell(w_tar, 8, str(int(row['Tardanzas'])), border=1, align='C')
-        pdf.cell(w_ptar, 8, p_tar, border=1, align='C')
+        pdf.cell(w_ptar, 8, safestr(p_tar), border=1, align='C')
         pdf.cell(w_alm, 8, str(int(row['Almuerzos'])), border=1, align='C')
-        pdf.cell(w_palm, 8, p_alm, border=1, align='C')
+        pdf.cell(w_palm, 8, safestr(p_alm), border=1, align='C')
         pdf.cell(w_brk, 8, str(int(row['Breaks'])), border=1, align='C')
-        pdf.cell(w_pbrk, 8, p_brk, border=1, align='C')
+        pdf.cell(w_pbrk, 8, safestr(p_brk), border=1, align='C')
         
         pdf.set_font("Helvetica", 'B', 9)
         pdf.cell(w_tot, 8, str(int(row['Total_Faltas'])), border=1, align='C')
@@ -1570,13 +1414,146 @@ def generar_pdf_infracciones(df_res):
 
     return finalizar_pdf(pdf)
 
-    # ==============================================================================
-# UTILIDADES Y PROCESAMIENTO: AUDITORIA DE VEHICULOS (TELEMETRIA Y TIEMPOS)
 # ==============================================================================
-def get_hn_time():
-    """Ajusta la hora del servidor en la nube a la zona horaria de Honduras"""
-    return datetime.utcnow() - timedelta(hours=6)
+# 5. UTILIDADES Y PROCESAMIENTO GENERAL
+# ==============================================================================
+def es_offline_preciso(comentario):
+    txt = str(comentario).upper().strip()
+    if not txt or txt == 'NAN': return False
+    jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
+    if any(word in txt for word in jergasolucion): return False
+    keywordsfalla = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
+    return any(word in txt for word in keywordsfalla)
 
+def depurar_archivos_en_crudo(fileactividades, filedispositivos):
+    try:
+        xlact = pd.ExcelFile(fileactividades, engine='openpyxl')
+        sheetp = 'Prueba' if 'Prueba' in xlact.sheet_names else xlact.sheet_names[0]
+        dfpraw = pd.read_excel(xlact, sheet_name=sheetp)
+        sheethnom = 'HistoricoNoInstaladas' if 'HistoricoNoInstaladas' in xlact.sheet_names else None
+        dfhraw = pd.read_excel(xlact, sheet_name=sheethnom) if sheethnom else pd.DataFrame()
+        if filedispositivos.name.lower().endswith('.csv'):
+            dfdispfull = pd.read_csv(filedispositivos, sep=None, engine='python')
+        else:
+            dfdispfull = pd.read_excel(filedispositivos, engine='openpyxl')
+        dfdispref = pd.DataFrame()
+        coltec = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['TECNICO', 'USER', 'OPERADOR'])]
+        colmx = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in['MX', 'VEHICULO', 'PLACA'])]
+        dfdispref['TECREF'] = dfdispfull[coltec[0]].astype(str).str.strip().str.upper() if coltec else "N/D"
+        dfdispref['MXREF'] = dfdispfull[colmx[0]].astype(str).str.strip() if colmx else "N/D"
+        dfp = procesar_dataframe_base(dfpraw)
+        dfp['TECKEY'] = dfp['TECNICO'].astype(str).str.strip().str.upper()
+        dffinal = dfp.merge(dfdispref.drop_duplicates('TECREF'), left_on='TECKEY', right_on='TECREF', how='left')
+        if 'MXREF' in dffinal.columns:
+            dffinal['MX'] = dffinal['MXREF'].combine_first(dffinal.get('MX', pd.Series(dtype=str)))
+        return dffinal.drop(columns=['TECKEY', 'TECREF', 'MXREF'], errors='ignore'), procesar_dataframe_base(dfhraw)
+    except Exception as e:
+        raise Exception(f"Error en cruce: {str(e)}")
+
+def procesar_dataframe_base(df):
+    df.columns = df.columns.astype(str).str.strip()
+    mapeocolumnas = {}
+    for nombreinterno, listaopciones in COLUMNS_MAPPING.items():
+        for opcion in listaopciones:
+            if opcion.upper() in [str(c).upper() for c in df.columns]:
+                realname = next(c for c in df.columns if str(c).upper() == opcion.upper())
+                mapeocolumnas[realname] = nombreinterno
+                break
+    df = df.rename(columns=mapeocolumnas)
+    for colv in COLUMNAS_VITALES_SISTEMA:
+        if colv not in df.columns: df[colv] = "N/D"
+    for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
+        df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
+    return df
+
+def generar_tablas_gerenciales(df_crudo):
+    df = df_crudo.copy()
+    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_ultra_safe)
+    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_ultra_safe)
+    df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
+    df['FECHA'] = df['HORA_LIQ'].dt.date
+    totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
+    conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
+    tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
+    tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
+
+    df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
+    df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
+    tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
+    tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
+    tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
+
+    jornada = df.groupby(['TECNICO', 'FECHA']).agg(Hora_Apertura=('HORA_INI', 'min'), Hora_Cierre=('HORA_LIQ', 'max'), Total_Ordenes=('NUM', 'count')).reset_index()
+    jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
+    jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
+
+    resumen_jornada = jornada.groupby('TECNICO').agg(Promedio_Horas_Dia=('Horas_En_Calle', 'mean'), Dias_Laborados=('FECHA', 'nunique'), Max_Horas_Dia=('Horas_En_Calle', 'max')).reset_index()
+    resumen_jornada['Promedio_Horas_Dia'] = resumen_jornada['Promedio_Horas_Dia'].round(2)
+    resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
+
+    return tabla_produccion, tabla_eficiencia, resumen_jornada
+
+def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
+    try:
+        if isinstance(file_dispos, bytes):
+            file_dispos_obj = io.BytesIO(file_dispos)
+            file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
+        elif hasattr(file_dispos, 'read'): file_dispos.seek(0); file_dispos_obj = file_dispos
+        else: file_dispos_obj = file_dispos
+
+        if hasattr(file_activ, 'read'): file_activ.seek(0)
+        df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
+        df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
+        ahora_momento_ts = pd.Timestamp(get_honduras_time())
+        fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
+        mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+        df_act = df_act[(df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | (df_act['FECHA_APE'] >= fecha_limite_7d_ventana) | (df_act['HORA_LIQ'].isna()) | mask_vivas_loc].copy()
+        
+        df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
+        df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
+
+        act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
+        est_upper = df_act['ESTADO'].fillna('').astype(str).str.upper().str.strip()
+        tec_upper = df_act['TECNICO'].fillna('').astype(str).str.upper().str.strip()
+        com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
+        cli_upper = df_act['CLIENTE'].fillna('').astype(str).str.upper()
+        
+        mins_diff = (ahora_momento_ts - df_act['HORA_INI']).dt.total_seconds() / 60
+        mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
+        mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
+
+        df_act['ALERTA_TIEMPO'] = (
+            (df_act['HORA_INI'].notnull()) & (df_act['HORA_LIQ'].isnull()) & 
+            (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
+        )
+        
+        mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
+        mask_est_abierto = est_upper != 'CERRADA'
+        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|FUERA DE SERVICIO|OFFLINE", regex=True)
+        mask_precisa = com_upper.apply(es_offline_preciso) 
+        
+        df_act['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
+        df_act['MINUTOS_CALC'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds() / 60
+        
+        texto_seg = act_upper + " " + cli_upper + " " + com_upper
+        df_act['SEGMENTO'] = np.where(texto_seg.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
+        
+        diff_temp = df_act['HORA_LIQ'] - df_act['HORA_INI']
+        df_act['TIEMPO_REAL'] = np.where(
+            df_act['HORA_INI'].isnull() | df_act['HORA_LIQ'].isnull(),
+            "---",
+            (diff_temp.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+            ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+        )
+        
+        return df_act, df_hst
+    except Exception as e:
+        if st: st.error(f"❌ Error fatal en el motor de depuración: {e}")
+        return None, None
+
+# ==============================================================================
+# 6. UTILIDADES Y PROCESAMIENTO: AUDITORIA DE VEHICULOS
+# ==============================================================================
 def forzar_columnas_unicas(df):
     if df is None or df.empty: return df
     df.columns = df.columns.astype(str).str.strip()
@@ -1590,7 +1567,6 @@ def forzar_columnas_unicas(df):
     return df
 
 def read_file_robust(uploaded_file):
-    import io
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
     df = None
@@ -2061,59 +2037,3 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
         pdf.cell(0, 6, f"Operacion Segura: Nadie supero los {limite_vel} km/h.", ln=True)
         
     return finalizar_pdf(pdf)
-
-# ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS Y ZONA HORARIA
-# ==============================================================================
-def get_honduras_time():
-    return datetime.utcnow() - timedelta(hours=6)
-
-def parse_date_ultra_safe(val):
-    if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
-        return pd.NaT
-    
-    hoy = pd.Timestamp(get_honduras_time()).normalize()
-
-    if isinstance(val, dt_time):
-        return pd.Timestamp.combine(hoy.date(), val)
-    if isinstance(val, datetime):
-        if val.year <= 1970:
-            return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-        return pd.Timestamp(val)
-    if isinstance(val, (int, float)):
-        if val == 0 or val == 0.0: return pd.NaT
-        if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
-        elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
-        else: return pd.NaT
-
-    # === LA CURA: Limpieza de formatos MaxCom (AM/PM) ===
-    str_val = str(val).strip()
-    str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
-    str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
-
-    try:
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$', str_val, re.I):
-            parsed_time = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), parsed_time)
-
-        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
-            parsed = pd.to_datetime(str_val, errors='coerce')
-        else:
-            parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
-
-        if pd.notnull(parsed):
-            if parsed.year <= 1970:
-                return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
-            return parsed
-        return pd.NaT
-    except:
-        return pd.NaT
-
-def procesar_fechas_seguro(df_input, columnas):
-    df = df_input.copy()
-    for col in columnas:
-        if col in df.columns:
-            df[col] = df[col].apply(parse_date_ultra_safe)
-            # CRÍTICO: Forzar formato de pandas para evitar errores de ploteo en el Gantt
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-    return df
