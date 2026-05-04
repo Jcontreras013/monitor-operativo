@@ -5,7 +5,7 @@ import unicodedata
 from datetime import date, datetime
 import re
 import io
-from fpdf import FPDF
+from tools import generar_pdf_evaluacion
 
 def normalizar_texto(texto):
     """Limpia el texto: quita tildes, espacios extras y pasa a mayúsculas."""
@@ -13,55 +13,6 @@ def normalizar_texto(texto):
     t = str(texto).strip().upper()
     t = ''.join(char for char in unicodedata.normalize('NFKD', t) if unicodedata.category(char) != 'Mn')
     return " ".join(t.split())
-
-def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
-    """Genera un reporte PDF profesional con FPDF."""
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
-    pdf.add_page()
-    
-    # Encabezado
-    pdf.set_font("Arial", 'B', 16)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, "REPORTE DE PRODUCCION Y PUNTOS POR TECNICO", ln=True, align='C')
-    
-    pdf.set_font("Arial", '', 10)
-    pdf.set_text_color(100, 100, 100)
-    f_ini = fecha_inicio.strftime('%d/%m/%Y')
-    f_fin = fecha_fin.strftime('%d/%m/%Y')
-    f_emision = datetime.now().strftime('%d/%m/%Y %I:%M %p')
-    pdf.cell(0, 6, f"Periodo de Evaluacion: {f_ini} al {f_fin}", ln=True, align='C')
-    pdf.cell(0, 6, f"Fecha de Emision: {f_emision}", ln=True, align='C')
-    pdf.ln(10)
-    
-    # Tabla - Encabezados
-    pdf.set_font("Arial", 'B', 9)
-    pdf.set_fill_color(230, 235, 245)
-    pdf.set_text_color(0, 0, 0)
-    
-    w = [65, 30, 35, 40, 40, 40]
-    headers = ['Nombre del Tecnico', 'TOTAL PUNTOS', 'INSFIBRA (2.5)', 'Traslados (2.5)', 'Cambio Fibra (2.0)', 'SOP Normal (1.0)']
-    
-    for i in range(len(headers)):
-        pdf.cell(w[i], 8, headers[i], border=1, align='C', fill=True)
-    pdf.ln()
-    
-    # Tabla - Datos
-    pdf.set_font("Arial", '', 8)
-    for _, row in df.iterrows():
-        # Limpieza para compatibilidad con FPDF (latin-1)
-        tec = str(row['👨‍🔧 Técnico']).encode('latin-1', 'ignore').decode('latin-1')
-        
-        pdf.cell(w[0], 6, f" {tec[:35]}", border=1)
-        pdf.set_font("Arial", 'B', 9)
-        pdf.cell(w[1], 6, str(row['⭐ TOTAL PUNTOS']), border=1, align='C')
-        pdf.set_font("Arial", '', 8)
-        pdf.cell(w[2], 6, str(row['🏠 INSFIBRA (2.5)']), border=1, align='C')
-        pdf.cell(w[3], 6, str(row['🚚 TRASLADOS (2.5)']), border=1, align='C')
-        pdf.cell(w[4], 6, str(row['🧵 CAMBIO FIBRA (2.0)']), border=1, align='C')
-        pdf.cell(w[5], 6, str(row['🔧 SOP NORMAL (1.0)']), border=1, align='C')
-        pdf.ln()
-
-    return pdf.output(dest='S').encode('latin-1')
 
 def procesar_evaluacion_puntos(archivo_registro, df_nube, fecha_inicio, fecha_fin):
     try:
