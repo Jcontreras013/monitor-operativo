@@ -11,6 +11,15 @@ from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+import sys
+import os
+# Forzar al sistema a buscar en la carpeta actual
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from tools import (
+    get_honduras_time,
+    # ... resto de tus importaciones de tools
+)
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
