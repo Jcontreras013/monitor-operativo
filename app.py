@@ -756,7 +756,7 @@ def main():
                 mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
                 df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
                 
-            if not df_para_gantt_diario.empty:
+                if not df_para_gantt_diario.empty:
                     ahora_hx_d = get_honduras_time()
                     
                     df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
@@ -764,7 +764,6 @@ def main():
                     
                     df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
                     
-                    # Seguridad: Si una orden cruza la medianoche o falla la hora, ajustar para que el gráfico no explote
                     mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
                     df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
                     
@@ -792,8 +791,8 @@ def main():
                     )
                     
                     fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
-                    hora_inicio_pantalla_d = datetime.combine(gantt_base_date_d, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
-                    hora_fin_pantalla_d = datetime.combine(gantt_base_date_d, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    hora_inicio_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
                     fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
@@ -1283,7 +1282,7 @@ def main():
                 df_para_gantt_final = df_gantt_limpio[~mask_supervisores].copy()
                 df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                 
-            if not df_para_gantt_final.empty:
+                if not df_para_gantt_final.empty:
                     ahora_hx = get_honduras_time()
                     
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
@@ -1324,8 +1323,8 @@ def main():
                     )
                     
                     fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
-                    hora_inicio_pantalla = datetime.combine(gantt_base_date, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
-                    hora_fin_pantalla = datetime.combine(gantt_base_date, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    hora_inicio_pantalla = datetime.combine(hoy_date_valor, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    hora_fin_pantalla = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt.update_xaxes(range=[hora_inicio_pantalla, hora_fin_pantalla], tickformat="%H:%M", title_text="Cronograma de Actividades")
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
