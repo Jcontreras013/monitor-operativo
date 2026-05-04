@@ -11,12 +11,17 @@ from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
-from fpdf import FPDF
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
+from ui_components import (
+    aplicar_estilos_nativos, 
+    mostrar_comentario_cierre, 
+    mostrar_detalle_avance, 
+    aplicar_estilos_df
+)
 
 try:
     from streamlit_option_menu import option_menu
@@ -37,7 +42,6 @@ except ImportError:
 try:
     import sys
     import os
-    # Forzar al sistema a buscar en la carpeta actual (Soluciona el bug de sesiones de usuario como Oscar)
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
         COLUMNS_MAPPING, 
@@ -50,7 +54,14 @@ try:
         generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
         generar_pdf_primera_orden,
-        generar_pdf_pendientes_dispatch
+        generar_pdf_pendientes_dispatch,
+        get_honduras_time,
+        parse_date_ultra_safe,
+        procesar_fechas_seguro,
+        generar_pdf_tiempos_muertos,
+        generar_pdf_promedio_arranque,
+        generar_tablas_gerenciales,
+        cargar_y_limpiar_crudos_diamante_monitor
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -76,265 +87,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-def aplicar_estilos_nativos():
-    """Inyecta CSS para hacer que Streamlit parezca una App Nativa en Móviles"""
-    hide_st_style = """
-        <style>
-        #MainMenu {visibility: hidden;} 
-        header {visibility: hidden;} 
-        footer {visibility: hidden;} 
-        
-        .block-container {
-            padding-top: 1rem !important; 
-            padding-bottom: 6rem !important; 
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-        }
-        
-        html, body {
-            max-width: 100%;
-            overflow-x: hidden;
-        }
-        </style>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    """
-    st.markdown(hide_st_style, unsafe_allow_html=True)
-
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 
 # ==============================================================================
-# GENERACIÓN DE PDF: TIEMPOS MUERTOS Y ARRANQUE DE JORNADA
+# 2. FUNCION DE SINCRONIZACIÓN
 # ==============================================================================
-def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, f"REPORTE DE EFICIENCIA OPERATIVA Y TIEMPO PERDIDO - {fecha_sel.strftime('%d/%m/%Y')}", ln=True, align='C')
-    pdf.ln(5)
-    
-    df_valido = df_dia.dropna(subset=['HORA_INI', 'TECNICO']).copy()
-    
-    if df_valido.empty:
-        pdf.set_font("Arial", '', 12)
-        pdf.cell(0, 10, "No hay datos operativos para calcular tiempos.", ln=True, align='C')
-        return pdf.output(dest='S').encode('latin-1')
-
-    df_valido['HORA_INI'] = pd.to_datetime(df_valido['HORA_INI'])
-    df_valido['HORA_LIQ'] = pd.to_datetime(df_valido['HORA_LIQ'])
-    tecnicos = sorted(df_valido['TECNICO'].astype(str).unique())
-    
-    ahora_hx = get_honduras_time()
-    
-    inicio_jornada = pd.Timestamp.combine(fecha_sel, dt_time(8, 0))
-    fin_jornada = pd.Timestamp.combine(fecha_sel, dt_time(17, 0))
-    
-    limite_evaluacion = min(ahora_hx, fin_jornada) if fecha_sel == ahora_hx.date() else fin_jornada
-    
-    for tec in tecnicos:
-        df_tec = df_valido[df_valido['TECNICO'] == tec].sort_values(by='HORA_INI')
-        
-        pdf.set_font("Arial", 'B', 10)
-        pdf.set_fill_color(220, 230, 250)
-        pdf.cell(0, 8, f" TECNICO: {tec.encode('latin-1', 'ignore').decode('latin-1')}", border=1, ln=True, fill=True)
-        
-        pdf.set_font("Arial", 'B', 8)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.cell(25, 6, "ORDEN", border=1, align='C', fill=True)
-        pdf.cell(100, 6, "ACTIVIDAD", border=1, align='C', fill=True)
-        pdf.cell(25, 6, "INICIO", border=1, align='C', fill=True)
-        pdf.cell(25, 6, "FIN", border=1, align='C', fill=True)
-        pdf.cell(25, 6, "DURACION", border=1, align='C', fill=True)
-        pdf.ln()
-        
-        total_minutos_trabajados = 0
-        tiempo_muerto_acumulado = 0
-        cursor_tiempo = inicio_jornada 
-        
-        pdf.set_font("Arial", '', 8)
-        
-        for _, row in df_tec.iterrows():
-            num = str(row.get('NUM', 'N/D'))
-            act = str(row.get('ACTIVIDAD', '')).encode('latin-1', 'ignore').decode('latin-1')[:55]
-            
-            h_ini_dt = row['HORA_INI']
-            h_liq_dt = row['HORA_LIQ']
-            
-            h_ini_str = h_ini_dt.strftime('%H:%M') if pd.notnull(h_ini_dt) else "N/D"
-            h_fin_str = h_liq_dt.strftime('%H:%M') if pd.notnull(h_liq_dt) else "En curso"
-            
-            duracion_str = "---"
-            
-            if pd.notnull(h_ini_dt):
-                if pd.notnull(h_liq_dt):
-                    fin_real = h_liq_dt
-                else:
-                    fin_real = ahora_hx if h_ini_dt.date() == ahora_hx.date() else fin_jornada
-                    
-                if fin_real > h_ini_dt:
-                    mins_reales = (fin_real - h_ini_dt).total_seconds() / 60
-                    if mins_reales > 0:
-                        total_minutos_trabajados += mins_reales
-                        hrs_d, mins_d = divmod(mins_reales, 60)
-                        duracion_str = f"{int(hrs_d)}h {int(mins_d)}m"
-
-                if h_ini_dt > cursor_tiempo and cursor_tiempo < limite_evaluacion:
-                    gap_end = min(h_ini_dt, limite_evaluacion)
-                    gap_mins = (gap_end - cursor_tiempo).total_seconds() / 60
-                    if gap_mins > 0:
-                        tiempo_muerto_acumulado += gap_mins
-                
-                fin_orden_gap = h_liq_dt if pd.notnull(h_liq_dt) else ahora_hx
-                if pd.notnull(fin_orden_gap):
-                    cursor_tiempo = max(cursor_tiempo, fin_orden_gap)
-
-            pdf.cell(25, 6, num, border=1, align='C')
-            pdf.cell(100, 6, act, border=1)
-            pdf.cell(25, 6, h_ini_str, border=1, align='C')
-            pdf.cell(25, 6, h_fin_str, border=1, align='C')
-            pdf.cell(25, 6, duracion_str, border=1, align='C')
-            pdf.ln()
-            
-        if cursor_tiempo < limite_evaluacion:
-            gap_mins = (limite_evaluacion - cursor_tiempo).total_seconds() / 60
-            if gap_mins > 0:
-                tiempo_muerto_acumulado += gap_mins
-        
-        tiempo_perdido_mins = max(0, tiempo_muerto_acumulado - 60)
-        
-        hrs_t, mins_t = divmod(total_minutos_trabajados, 60)
-        hrs_p, mins_p = divmod(tiempo_perdido_mins, 60)
-        
-        pdf.set_font("Arial", 'B', 8)
-        pdf.cell(175, 6, "TOTAL TIEMPO TRABAJADO EN ORDENES (Incluye Extras):", border=1, align='R')
-        pdf.set_text_color(0, 100, 0)
-        pdf.cell(25, 6, f"{int(hrs_t)}h {int(mins_t)}m", border=1, align='C')
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln()
-        
-        pdf.cell(175, 6, "TIEMPO PERDIDO / MUERTO (Base Brechas 8am-5pm - Almuerzo):", border=1, align='R')
-        if tiempo_perdido_mins > 0:
-            pdf.set_text_color(200, 0, 0)
-        pdf.cell(25, 6, f"{int(hrs_p)}h {int(mins_p)}m", border=1, align='C')
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln()
-        pdf.ln(5)
-
-    return pdf.output(dest='S').encode('latin-1')
-
-def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
-    
-    pdf.set_font("Arial", '', 10)
-    pdf.set_text_color(100, 100, 100)
-    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
-    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
-    pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
-    pdf.ln(10)
-    
-    if not df_promedios.empty:
-        pdf.set_x(15)
-        pdf.set_fill_color(220, 230, 250)
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Arial", 'B', 9)
-        pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
-        pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
-        pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
-        pdf.ln()
-        
-        pdf.set_font("Arial", '', 9)
-        for _, row in df_promedios.iterrows():
-            pdf.set_x(15)
-            tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
-            dias = str(row['Dias_Computados'])
-            hora = str(row['Hora_Promedio_Inicio'])
-            
-            pdf.cell(90, 7, tec, border=1, align='L')
-            pdf.cell(40, 7, dias, border=1, align='C')
-            pdf.cell(50, 7, hora, border=1, align='C')
-            pdf.ln()
-            
-    return pdf.output(dest='S').encode('latin-1')
-
-
-# ==============================================================================
-# 🛡️ MOTOR SEGURO DE FECHAS
-# ==============================================================================
-def get_honduras_time():
-    return datetime.utcnow() - timedelta(hours=6)
-
-def parse_date_ultra_safe(val):
-    if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
-        return pd.NaT
-    str_val = str(val).strip()
-    if str_val in ["0", "0.0", "1899-12-30 00:00:00"]:
-        return pd.NaT
-
-    hoy = pd.Timestamp(get_honduras_time()).normalize()
-
-    try:
-        if isinstance(val, dt_time): return pd.Timestamp.combine(hoy.date(), val)
-        if isinstance(val, datetime):
-            if val.year <= 1970: return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-            return pd.Timestamp(val)
-        if isinstance(val, (int, float)):
-            if val == 0 or val == 0.0: return pd.NaT
-            if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
-            else: return pd.NaT
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
-            parsed_time = pd.to_datetime(str_val).time()
-            return pd.Timestamp.combine(hoy.date(), parsed_time)
-        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val): parsed = pd.to_datetime(str_val, errors='coerce')
-        else: parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
-
-        if pd.notnull(parsed):
-            if parsed.year <= 1970: return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
-            return parsed
-        return pd.NaT
-    except: return pd.NaT
-
-def procesar_fechas_seguro(df_input, columnas):
-    df = df_input.copy()
-    for col in columnas:
-        if col in df.columns: df[col] = df[col].apply(parse_date_ultra_safe)
-    return df
-
-# ==============================================================================
-# FUNCIÓN DE PROCESAMIENTO GERENCIAL
-# ==============================================================================
-def generar_tablas_gerenciales(df_crudo):
-    df = df_crudo.copy()
-    df['HORA_INI'] = df['HORA_INI'].apply(parse_date_ultra_safe)
-    df['HORA_LIQ'] = df['HORA_LIQ'].apply(parse_date_ultra_safe)
-    df = df.dropna(subset=['HORA_INI', 'HORA_LIQ'])
-    df['FECHA'] = df['HORA_LIQ'].dt.date
-    totales_tec = df.groupby('TECNICO').size().reset_index(name='Total_Tecnico')
-    conteo_act = df.groupby(['TECNICO', 'ACTIVIDAD']).size().reset_index(name='Cantidad')
-    tabla_produccion = pd.merge(conteo_act, totales_tec, on='TECNICO')
-    tabla_produccion['Participacion_%'] = (tabla_produccion['Cantidad'] / tabla_produccion['Total_Tecnico'] * 100).round(1)
-
-    df['MINUTOS'] = (df['HORA_LIQ'] - df['HORA_INI']).dt.total_seconds() / 60
-    df.loc[df['MINUTOS'] <= 0, 'MINUTOS'] = None 
-    tabla_eficiencia = df.groupby(['TECNICO', 'ACTIVIDAD'])['MINUTOS'].mean().reset_index()
-    tabla_eficiencia.columns = ['TECNICO', 'ACTIVIDAD', 'Promedio_Minutos']
-    tabla_eficiencia['Promedio_Minutos'] = tabla_eficiencia['Promedio_Minutos'].round(1)
-
-    jornada = df.groupby(['TECNICO', 'FECHA']).agg(Hora_Apertura=('HORA_INI', 'min'), Hora_Cierre=('HORA_LIQ', 'max'), Total_Ordenes=('NUM', 'count')).reset_index()
-    jornada['Horas_En_Calle'] = (jornada['Hora_Cierre'] - jornada['Hora_Apertura']).dt.total_seconds() / 3600
-    jornada.loc[jornada['Horas_En_Calle'] <= 0, 'Horas_En_Calle'] = None
-
-    resumen_jornada = jornada.groupby('TECNICO').agg(Promedio_Horas_Dia=('Horas_En_Calle', 'mean'), Dias_Laborados=('FECHA', 'nunique'), Max_Horas_Dia=('Horas_En_Calle', 'max')).reset_index()
-    resumen_jornada['Promedio_Horas_Dia'] = resumen_jornada['Promedio_Horas_Dia'].round(2)
-    resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
-
-    return tabla_produccion, tabla_eficiencia, resumen_jornada
-
 def sincronizar_datos_nube(conn):
     try:
         with st.spinner("Descargando historial y limpiando duplicados..."):
@@ -417,222 +175,6 @@ def sincronizar_datos_nube(conn):
                 st.rerun()
             else: st.warning("La base de datos en la nube está vacía.")
     except Exception as e: st.error(f"Error al conectar con la nube: {e}")
-
-@st.dialog("Detalle de Gestión de la Orden")
-def mostrar_comentario_cierre(fila):
-    st.markdown(f"### 📋 Información Detallada: Orden N° {fila['NUM']}")
-    
-    col_modal_a, col_modal_b = st.columns(2)
-    with col_modal_a:
-        st.markdown("##### 👤 Datos del Cliente")
-        st.write(f"**N° Cuenta:** {fila.get('CLIENTE', 'N/D')}")
-        nombre_real = fila.get('NOMBRE', fila.get('SUSCRIPTOR', fila.get('NOMBRE CLIENTE', fila.get('NOMBRE_CLIENTE', 'N/D'))))
-        if nombre_real != 'N/D': st.write(f"**Nombre:** {nombre_real}")
-        st.write(f"**Ubicación (Colonia):** {fila.get('COLONIA', 'N/D')}")
-    
-    with col_modal_b:
-        st.markdown("##### 🚦 Datos de Operación")
-        st.write(f"**Estado Actual:** {fila['ESTADO']}")
-        st.write(f"**Técnico:** {fila['TECNICO']}")
-        if 'MX' in fila: st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
-        if 'GPS' in fila: st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
-
-    st.markdown("---")
-
-    st.markdown("##### ⏳ Tiempos Operativos")
-    col_t1, col_t2 = st.columns(2)
-    
-    with col_t1:
-        try:
-            h_ini = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
-        except:
-            h_ini = "N/D"
-        st.write(f"**Hora de Inicio:** {h_ini}")
-        
-    with col_t2:
-        try:
-            if str(fila.get('ESTADO', '')).upper() == 'CERRADA' and pd.notnull(fila.get('HORA_LIQ')):
-                h_liq = pd.to_datetime(fila.get('HORA_LIQ')).strftime('%H:%M')
-                st.write(f"**Hora de Cierre:** {h_liq}")
-                
-                if pd.notnull(fila.get('HORA_INI')):
-                    diff = pd.to_datetime(fila.get('HORA_LIQ')) - pd.to_datetime(fila.get('HORA_INI'))
-                    mins = diff.total_seconds() / 60
-                    hrs, rem_mins = divmod(max(0, mins), 60)
-                    st.write(f"**Tiempo de Gestión:** {int(hrs)}h {int(rem_mins)}m")
-            else:
-                st.write("**Hora de Cierre:** En Proceso (Abierta)")
-                
-                if pd.notnull(fila.get('HORA_INI')):
-                    ahora = get_honduras_time()
-                    diff = ahora - pd.to_datetime(fila.get('HORA_INI'))
-                    mins = diff.total_seconds() / 60
-                    hrs, rem_mins = divmod(max(0, mins), 60)
-                    st.write(f"**Tiempo Transcurrido:** {int(hrs)}h {int(rem_mins)}m ⏳")
-        except:
-            st.write("**Hora de Cierre:** N/D")
-
-    st.markdown("---")
-    
-    estatus_final_check = str(fila.get('ESTADO','')).upper().strip()
-    if estatus_final_check == 'CERRADA': 
-        st.success("✅ **COMENTARIO DE LIQUIDACIÓN / CIERRE FINAL:**")
-    else: 
-        st.markdown("**📝 COMENTARIO DE SEGUIMIENTO (EN PROCESO):**")
-        
-    texto_comentario_registrado = fila.get('COMENTARIO', '')
-    if pd.isnull(texto_comentario_registrado) or texto_comentario_registrado == "": 
-        texto_comentario_registrado = "No existen observaciones registradas para esta gestión."
-    st.info(texto_comentario_registrado)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.caption("📋 Copiar resumen (Clic en el ícono de las 2 páginas a la derecha):")
-    
-    try:
-        h_ini_copy = pd.to_datetime(fila.get('HORA_INI')).strftime('%H:%M') if pd.notnull(fila.get('HORA_INI')) else "N/D"
-    except:
-        h_ini_copy = "N/D"
-        
-    texto_copia = f"TECNICO={fila.get('TECNICO', 'N/D')}\nNUM={fila.get('NUM', 'N/D')}\nCOLONIA={fila.get('COLONIA', 'N/D')}\nESTADO={fila.get('ESTADO', 'N/D')}\nInicio={h_ini_copy}"
-    
-    st.code(texto_copia, language="text")
-
-    if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True): 
-        st.rerun()
-
-@st.dialog("Resumen de Operaciones", width="large")
-def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=None):
-    st.subheader(f"📊 Desglose: {segmento}")
-    if not asignadas_df.empty: p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Pendientes (Hoy)')
-    else: p = pd.DataFrame(columns=['ACTIVIDAD', 'Pendientes (Hoy)'])
-    if not cerradas_df.empty: c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
-    else: c = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas'])
-    resumen = pd.merge(p, c, on='ACTIVIDAD', how='outer').fillna(0)
-    if inicio_mora_df is not None:
-        if not inicio_mora_df.empty: m = inicio_mora_df.groupby('ACTIVIDAD').size().reset_index(name='Inicio (Mora)')
-        else: m = pd.DataFrame(columns=['ACTIVIDAD', 'Inicio (Mora)'])
-        resumen = pd.merge(m, resumen, on='ACTIVIDAD', how='outer').fillna(0)
-    else: resumen.rename(columns={'Pendientes (Hoy)': 'Asignadas'}, inplace=True)
-
-    if not resumen.empty:
-        for col in resumen.columns:
-            if col != 'ACTIVIDAD': resumen[col] = resumen[col].astype(int)
-        resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
-        resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
-        fila_total = {'Tipo': 'TOTAL GENERAL'}
-        for col in resumen.columns:
-            if col != 'Tipo': fila_total[col] = resumen[col].sum()
-        resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
-        col_config = {"Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium")}
-        if 'Inicio (Mora)' in resumen.columns:
-            col_config["Inicio (Mora)"] = st.column_config.NumberColumn("INICIO (MORA)", format="%d", width="small")
-            col_config["Pendientes (Hoy)"] = st.column_config.NumberColumn("PENDIENTES", format="%d", width="small")
-        else:
-            col_config["Asignadas"] = st.column_config.NumberColumn("ASIGNADAS (Total)", format="%d", width="small")
-        col_config["Cerradas"] = st.column_config.NumberColumn("CERRADAS", format="%d", width="small")
-        st.dataframe(resumen, use_container_width=True, hide_index=True, column_config=col_config)
-    else: st.info("No hay datos de operaciones para este segmento.")
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Cerrar Resumen", use_container_width=True): st.rerun()
-
-def aplicar_estilos_df(df_original_para_estilo):
-    df_visual_procesado = df_original_para_estilo.copy()
-    def row_styler_logic(fila_v):
-        estilos_fila = [''] * len(fila_v)
-        if fila_v.get('ES_OFFLINE') == True:
-            if 'NUM' in fila_v.index: estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #9b111e; color: white; font-weight: bold'
-        est_val = str(fila_v.get('ESTADO','')).upper().strip()
-        if est_val == 'CERRADA':
-            if 'TIEMPO_REAL' in fila_v.index:
-                idx_tr = fila_v.index.get_loc('TIEMPO_REAL')
-                minutos_trabajados = fila_v.get('MINUTOS_CALC', 0)
-                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
-                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
-        if fila_v.get('ALERTA_TIEMPO') == True:
-            if 'HORA_INI' in fila_v.index: estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
-        if 'DIAS_RETRASO' in fila_v.index:
-            idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
-            val_dias = fila_v['DIAS_RETRASO']
-            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #d32f2f; color: white; font-weight: bold' 
-            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #f57c00; color: white; font-weight: bold' 
-            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #fbc02d; color: black; font-weight: bold' 
-            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: #388e3c; color: white; font-weight: bold' 
-        return estilos_fila
-
-    if 'NUM' in df_visual_procesado.columns: df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
-    if 'HORA_INI' in df_visual_procesado.columns: df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
-    if 'HORA_LIQ' in df_visual_procesado.columns: df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
-    cols_a_mostrar = ['DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC']
-    columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
-    return df_visual_procesado[columnas_finales], row_styler_logic
-
-# ==============================================================================
-# === OPTIMIZACIÓN DE RENDIMIENTO: VECTORIZACIÓN CON NUMPY ===
-# ==============================================================================
-def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
-    try:
-        if isinstance(file_dispos, bytes):
-            file_dispos_obj = io.BytesIO(file_dispos)
-            file_dispos_obj.name = "FttxActiveDevice_cached.xlsx"
-        elif hasattr(file_dispos, 'read'): file_dispos.seek(0); file_dispos_obj = file_dispos
-        else: file_dispos_obj = file_dispos
-
-        if hasattr(file_activ, 'read'): file_activ.seek(0)
-        df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
-        df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
-        ahora_momento_ts = pd.Timestamp(get_honduras_time())
-        fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
-        mask_vivas_loc = df_act['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-        df_act = df_act[(df_act['HORA_LIQ'] >= fecha_limite_7d_ventana) | (df_act['FECHA_APE'] >= fecha_limite_7d_ventana) | (df_act['HORA_LIQ'].isna()) | mask_vivas_loc].copy()
-        
-        df_act['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_act['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
-        df_act.loc[df_act['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
-        
-        # --- FUNCIONES INTACTAS PARA AUDITORÍA DE GERENCIA ---
-        def alert_2h_logic_diamante(row_check): return False
-        def offline_seguro_diamante_logic(r_off): return False
-        def segmentar_plex_diamante_logic(r_seg): return 'RESIDENCIAL'
-        def format_duracion_diamante_human(r_dur): return "---"
-
-        # --- PROCESAMIENTO VECTORIZADO ULTRA-RÁPIDO ---
-        act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
-        est_upper = df_act['ESTADO'].fillna('').astype(str).str.upper().str.strip()
-        tec_upper = df_act['TECNICO'].fillna('').astype(str).str.upper().str.strip()
-        com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
-        cli_upper = df_act['CLIENTE'].fillna('').astype(str).str.upper()
-        
-        mins_diff = (ahora_momento_ts - df_act['HORA_INI']).dt.total_seconds() / 60
-        mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
-        mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
-
-        df_act['ALERTA_TIEMPO'] = (
-            (df_act['HORA_INI'].notnull()) & (df_act['HORA_LIQ'].isnull()) & 
-            (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
-        )
-        
-        mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
-        mask_est_abierto = est_upper != 'CERRADA'
-        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|FUERA DE SERVICIO|OFFLINE", regex=True)
-        mask_precisa = com_upper.apply(es_offline_preciso) 
-        
-        df_act['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
-        df_act['MINUTOS_CALC'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds() / 60
-        
-        texto_seg = act_upper + " " + cli_upper + " " + com_upper
-        df_act['SEGMENTO'] = np.where(texto_seg.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
-        
-        diff_temp = df_act['HORA_LIQ'] - df_act['HORA_INI']
-        df_act['TIEMPO_REAL'] = np.where(
-            df_act['HORA_INI'].isnull() | df_act['HORA_LIQ'].isnull(),
-            "---",
-            (diff_temp.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
-            ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
-        )
-        
-        return df_act, df_hst
-    except Exception as e:
-        st.error(f"❌ Error fatal en el motor de depuración: {e}")
-        return None, None
 
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
