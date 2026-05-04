@@ -6,7 +6,8 @@ import unicodedata
 import tempfile
 import os
 import numpy as np
-import streamlit as st # Importado para mantener la compatibilidad de errores visuales
+import streamlit as st 
+import io
 
 def safestr(texto):
     """Sanitizador CRÍTICO: Previene corrupción de PDFs eliminando caracteres especiales."""
