@@ -223,6 +223,45 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
 
     return pdf.output(dest='S').encode('latin-1')
 
+    
+    def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.set_text_color(100, 100, 100)
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+    pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
+    pdf.ln(10)
+    
+    if not df_promedios.empty:
+        pdf.set_x(15)
+        pdf.set_fill_color(220, 230, 250)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", 'B', 9)
+        pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
+        pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
+        pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Arial", '', 9)
+        for _, row in df_promedios.iterrows():
+            pdf.set_x(15)
+            tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
+            dias = str(row['Dias_Computados'])
+            hora = str(row['Hora_Promedio_Inicio'])
+            
+            pdf.cell(90, 7, tec, border=1, align='L')
+            pdf.cell(40, 7, dias, border=1, align='C')
+            pdf.cell(50, 7, hora, border=1, align='C')
+            pdf.ln()
+            
+    return pdf.output(dest='S').encode('latin-1')
+
 
 # ==============================================================================
 # 🛡️ MOTOR SEGURO DE FECHAS
