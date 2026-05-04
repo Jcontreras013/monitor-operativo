@@ -6,8 +6,8 @@ import io
 import os
 import tempfile
 import unicodedata
-from fpdf import FPDF
 import pdfplumber
+from tools import generar_pdf_unificado_rrhh, generar_pdf_infracciones
 
 # =========================================================
 # FUNCIONES ORIGINALES (CONSOLIDADO RRHH - NO TOCADAS)
@@ -20,7 +20,6 @@ def limpiar_nombre(raw):
     return " ".join(limpias[-4:])
 
 def extraer_tabla_limpia_pdf(archivo_pdf):
-    import pdfplumber
     todas_las_filas = []
     
     with pdfplumber.open(archivo_pdf) as pdf:
@@ -50,84 +49,6 @@ def extraer_tabla_limpia_pdf(archivo_pdf):
         cols[cols[cols == dup].index.values.tolist()] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
     df.columns = cols
     return df
-
-def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
-    from fpdf import FPDF
-    import tempfile
-    import os
-    import unicodedata
-    
-    def safestr(texto):
-        if pd.isna(texto): return ""
-        return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
-        
-    pdf = FPDF('L', 'mm', 'A4') 
-    pdf.add_page()
-    
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 12, "REPORTE UNIFICADO RRHH: CONTROL DE ASISTENCIA", ln=True, align="C")
-    
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, f"Fecha de emision: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}", ln=True, align="C")
-    pdf.ln(10)
-    
-    def dibujar_tabla(pdf_obj, df, titulo):
-        pdf_obj.set_font("Helvetica", "B", 12)
-        pdf_obj.set_text_color(40, 50, 100)
-        pdf_obj.cell(0, 10, safestr(titulo), ln=True)
-        
-        if df.empty:
-            pdf_obj.set_font("Helvetica", "I", 10)
-            pdf_obj.set_text_color(150, 0, 0)
-            pdf_obj.cell(0, 8, "No se registraron datos en esta categoria.", ln=True)
-            pdf_obj.ln(5)
-            return
-            
-        cols_deseadas = ['Nombre completo', 'Departamento', 'Fecha', 'Horario', 'Hora de inicio del trabajo', 'Hora final del trabajo']
-        cols_finales = [c for c in cols_deseadas if c in df.columns]
-        if not cols_finales: cols_finales = list(df.columns)[:6]
-            
-        df_sub = df[cols_finales]
-        pdf_obj.set_font("Helvetica", "B", 8)
-        pdf_obj.set_fill_color(230, 235, 245)
-        pdf_obj.set_text_color(0, 0, 0)
-        
-        ancho_total = 275 
-        w = ancho_total / len(cols_finales)
-        
-        for col in cols_finales:
-            pdf_obj.cell(w, 8, safestr(str(col))[:25], border=1, align="C", fill=True)
-        pdf_obj.ln()
-        
-        pdf_obj.set_font("Helvetica", "", 7)
-        for _, row in df_sub.iterrows():
-            if pdf_obj.get_y() > 185:
-                pdf_obj.add_page()
-                pdf_obj.set_font("Helvetica", "B", 8)
-                pdf_obj.set_fill_color(230, 235, 245)
-                for col in cols_finales:
-                    pdf_obj.cell(w, 8, safestr(str(col))[:25], border=1, align="C", fill=True)
-                pdf_obj.ln()
-                pdf_obj.set_font("Helvetica", "", 7)
-                
-            for col in cols_finales:
-                pdf_obj.cell(w, 6, safestr(str(row[col]))[:40], border=1, align="C")
-            pdf_obj.ln()
-        pdf_obj.ln(12)
-        
-    dibujar_tabla(pdf, df_ausencias, "1. DETALLE DE AUSENCIAS")
-    dibujar_tabla(pdf, df_tardanzas, "2. DETALLE DE LLEGADAS TARDE")
-    
-    fd, tmppath = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    try:
-        pdf.output(tmppath)
-        with open(tmppath, "rb") as f: return f.read()
-    finally:
-        try: os.remove(tmppath)
-        except: pass
 
 # =========================================================
 # NUEVAS FUNCIONES PARA EL CSV BIOMÉTRICO (DEPURADO)
@@ -261,89 +182,6 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
     
     return pd.DataFrame(resultados)
 
-def generar_pdf_infracciones(df_res):
-    """Crea un reporte PDF RESUMIDO por empleado con las columnas promedio."""
-    from fpdf import FPDF
-    pdf = FPDF('L', 'mm', 'A4') # Formato Horizontal para que quepa todo
-    pdf.add_page()
-    
-    # Título
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(277, 10, "Resumen Consolidado de Infracciones", ln=True, align='C')
-    pdf.set_font("Arial", 'I', 10)
-    pdf.cell(277, 6, f"Generado el: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='C')
-    pdf.ln(10)
-
-    # 1. Preparar los datos consolidados matemáticamente
-    df_res['Es_Tarde'] = df_res['Tardanza'] == 'Sí'
-    df_res['Tiene_Exc_Alm'] = df_res['Almuerzo (min)'] > 60
-    df_res['Tiene_Exc_Brk'] = df_res['Break (min)'] > 15
-
-    # Agrupar por ID y Empleado
-    resumen = df_res.groupby(['ID', 'Empleado']).agg(
-        Tardanzas=('Es_Tarde', 'sum'),
-        Suma_Tar=('Exceso_Tardanza_min', 'sum'),
-        Almuerzos=('Tiene_Exc_Alm', 'sum'),
-        Suma_Alm=('Exceso_Alm_min', 'sum'),
-        Breaks=('Tiene_Exc_Brk', 'sum'),
-        Suma_Brk=('Exceso_Brk_min', 'sum')
-    ).reset_index()
-
-    # Sumar el total de faltas y filtrar a los que se portaron bien
-    resumen['Total_Faltas'] = resumen['Tardanzas'] + resumen['Almuerzos'] + resumen['Breaks']
-    infractores = resumen[resumen['Total_Faltas'] > 0].sort_values(by='Total_Faltas', ascending=False)
-
-    if infractores.empty:
-        pdf.set_font("Arial", '', 12)
-        pdf.cell(277, 10, "Excelente: No se registraron infracciones en este periodo.", ln=True, align='C')
-        return pdf.output(dest='S').encode('latin-1')
-
-    # 2. Dibujar la Tabla
-    pdf.set_font("Arial", 'B', 8)
-    pdf.set_fill_color(220, 230, 241) 
-    
-    # Anchos de columna optimizados (Total = ~266mm)
-    w_id, w_emp, w_tar, w_ptar, w_alm, w_palm, w_brk, w_pbrk, w_tot = 15, 60, 22, 28, 25, 33, 25, 33, 25
-    
-    # Encabezados
-    pdf.cell(w_id, 8, "ID", border=1, fill=True, align='C')
-    pdf.cell(w_emp, 8, "Empleado", border=1, fill=True, align='C')
-    pdf.cell(w_tar, 8, "Tardanzas", border=1, fill=True, align='C')
-    pdf.cell(w_ptar, 8, "Prom. Tardanza", border=1, fill=True, align='C')
-    pdf.cell(w_alm, 8, "Exc. Almuerzo", border=1, fill=True, align='C')
-    pdf.cell(w_palm, 8, "Prom. Exc. Alm.", border=1, fill=True, align='C')
-    pdf.cell(w_brk, 8, "Exc. Break", border=1, fill=True, align='C')
-    pdf.cell(w_pbrk, 8, "Prom. Exc. Brk.", border=1, fill=True, align='C')
-    pdf.cell(w_tot, 8, "TOTAL FALTAS", border=1, fill=True, align='C')
-    pdf.ln()
-
-    # Filas de datos
-    pdf.set_font("Arial", '', 8)
-    for _, row in infractores.iterrows():
-        # Truncar el nombre si es muy largo
-        nombre_corto = str(row['Empleado'])[:35]
-        
-        # Matemáticas para evitar divisiones entre cero
-        p_tar = f"{int(row['Suma_Tar'] / row['Tardanzas'])} min" if row['Tardanzas'] > 0 else "---"
-        p_alm = f"{int(row['Suma_Alm'] / row['Almuerzos'])} min" if row['Almuerzos'] > 0 else "---"
-        p_brk = f"{int(row['Suma_Brk'] / row['Breaks'])} min" if row['Breaks'] > 0 else "---"
-        
-        pdf.cell(w_id, 8, str(row['ID']), border=1, align='C')
-        pdf.cell(w_emp, 8, f" {nombre_corto}", border=1)
-        pdf.cell(w_tar, 8, str(int(row['Tardanzas'])), border=1, align='C')
-        pdf.cell(w_ptar, 8, p_tar, border=1, align='C')
-        pdf.cell(w_alm, 8, str(int(row['Almuerzos'])), border=1, align='C')
-        pdf.cell(w_palm, 8, p_alm, border=1, align='C')
-        pdf.cell(w_brk, 8, str(int(row['Breaks'])), border=1, align='C')
-        pdf.cell(w_pbrk, 8, p_brk, border=1, align='C')
-        
-        # Resaltar el total en negrita
-        pdf.set_font("Arial", 'B', 9)
-        pdf.cell(w_tot, 8, str(int(row['Total_Faltas'])), border=1, align='C')
-        pdf.set_font("Arial", '', 8)
-        pdf.ln()
-
-    return pdf.output(dest='S').encode('latin-1')
 
 # =========================================================
 # INTERFAZ PRINCIPAL STREAMLIT
