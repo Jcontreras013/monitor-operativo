@@ -539,7 +539,6 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # === OPTIMIZACIÓN DE RENDIMIENTO: VECTORIZACIÓN CON NUMPY ===
 # ==============================================================================
-# Se remueve @st.cache_data para evitar FileNotFoundError en Streamlit Cloud al recibir io.BytesIO
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
@@ -704,7 +703,6 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
-        # REGLA DE CARGA DE ARCHIVOS: Todos los roles menos "monitoreo" pueden cargar archivos.
         mostrar_cargador = False
         if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
             mostrar_cargador = True
@@ -1170,77 +1168,6 @@ def main():
                 with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
                 with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
                 with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
-                    
-            # ==============================================================================
-            # --- NUEVA SECCIÓN: PROMEDIO SEMANAL DE PRIMERA ORDEN POR RANGO ---
-            # ==============================================================================
-            st.markdown("---")
-            st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
-            st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
-            
-            rango_fechas_primera = st.date_input(
-                "Seleccione el Rango de Fechas:", 
-                value=(hoy_date_valor - timedelta(days=6), hoy_date_valor),
-                key="rango_primera_orden_input"
-            )
-            
-            # Verificar que el usuario haya seleccionado inicio y fin
-            if len(rango_fechas_primera) == 2:
-                f_inicio_primera, f_fin_primera = rango_fechas_primera
-                
-                if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True):
-                    df_base_prom = df_base.copy()
-                    if 'HORA_INI' in df_base_prom.columns:
-                        df_base_prom['HORA_INI_DT'] = pd.to_datetime(df_base_prom['HORA_INI'], errors='coerce')
-                        df_base_prom = df_base_prom.dropna(subset=['HORA_INI_DT'])
-                        
-                        # Filtramos por el rango de fechas seleccionado
-                        mask_rango = (df_base_prom['HORA_INI_DT'].dt.date >= f_inicio_primera) & (df_base_prom['HORA_INI_DT'].dt.date <= f_fin_primera)
-                        df_rango = df_base_prom[mask_rango].copy()
-                        
-                        if not df_rango.empty:
-                            df_rango['Fecha_Sola'] = df_rango['HORA_INI_DT'].dt.date
-                            
-                            # Obtener la primera orden de CADA técnico por CADA día
-                            primeras_ordenes_rango = df_rango.sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO', 'Fecha_Sola'], keep='first')
-                            
-                            # Convertir la hora a segundos (desde la medianoche) para promediar matemáticamente
-                            primeras_ordenes_rango['Segundos_Inicio'] = primeras_ordenes_rango['HORA_INI_DT'].dt.hour * 3600 + \
-                                                                        primeras_ordenes_rango['HORA_INI_DT'].dt.minute * 60 + \
-                                                                        primeras_ordenes_rango['HORA_INI_DT'].dt.second
-                                                                        
-                            promedios_inicio = primeras_ordenes_rango.groupby('TECNICO').agg(
-                                Dias_Computados=('Fecha_Sola', 'nunique'),
-                                Promedio_Segundos=('Segundos_Inicio', 'mean')
-                            ).reset_index()
-                            
-                            # Función para convertir los segundos promedio de vuelta a formato HH:MM:SS
-                            def secs_to_time_str(s):
-                                if pd.isnull(s): return "N/D"
-                                h, r = divmod(int(s), 3600)
-                                m, sec = divmod(r, 60)
-                                return f"{h:02d}:{m:02d}:{sec:02d}"
-                                
-                            promedios_inicio['Hora_Promedio_Inicio'] = promedios_inicio['Promedio_Segundos'].apply(secs_to_time_str)
-                            promedios_inicio = promedios_inicio.sort_values('Promedio_Segundos')
-                            
-                            # Filtrar técnicos sin nombre
-                            mask_tecnicos_validos = (promedios_inicio['TECNICO'].notna()) & (promedios_inicio['TECNICO'].str.strip() != '')
-                            promedios_inicio = promedios_inicio[mask_tecnicos_validos]
-
-                            # Mostrar la tabla estilizada
-                            st.dataframe(
-                                promedios_inicio[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
-                                use_container_width=True, 
-                                hide_index=True,
-                                column_config={
-                                    "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
-                                    "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
-                                    "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
-                                }
-                            )
-                        else:
-                            st.warning("⚠️ No se encontraron órdenes iniciadas en este rango de fechas.")
             
             st.markdown("---")
 
@@ -1266,16 +1193,6 @@ def main():
                             if isinstance(dt_val, str): dt_val = pd.to_datetime(dt_val)
                             return datetime.combine(gantt_base_date_d, dt_val.time())
                         except: return pd.NaT
-                        
-                    def calc_tiempo_transcurrido_d(row):
-                        if pd.isnull(row['HORA_INI']): return "N/D"
-                        if pd.notnull(row['HORA_LIQ']):
-                            diff = row['HORA_LIQ'] - row['HORA_INI']
-                        else:
-                            diff = ahora_hx_d - row['HORA_INI']
-                        mins = diff.total_seconds() / 60
-                        hrs, rem_mins = divmod(max(0, mins), 60)
-                        return f"{int(hrs)}h {int(rem_mins)}m"
 
                     df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI'].apply(normalizar_para_gantt_d)
                     
@@ -1290,7 +1207,6 @@ def main():
                     df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
                         lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                     )
-                    df_para_gantt_diario['Duracion'] = df_para_gantt_diario.apply(calc_tiempo_transcurrido_d, axis=1)
                     
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
@@ -1303,16 +1219,9 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={
-                            "NUM": True, 
-                            "ACTIVIDAD": True, # <-- MUESTRA ACTIVIDAD
-                            "COLONIA": True, 
-                            "ESTADO": True, 
-                            "Inicio": True, 
-                            "Cierre": True, 
-                            "Duracion": True,
-                            "TECNICO": False,  # <-- OCULTA TÉCNICO
-                            "GANTT_START": False, 
-                            "GANTT_END": False
+                            "NUM": True, "COLONIA": True, "ESTADO": True, 
+                            "Inicio": True, "Cierre": True,
+                            "GANTT_START": False, "GANTT_END": False, "ACTIVIDAD": False
                         }, 
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                     )
@@ -1333,13 +1242,7 @@ def main():
                         plot_bgcolor="rgba(0,0,0,0.02)"
                     )
                     
-                    evento_d = st.plotly_chart(fig_gantt_d, use_container_width=True, on_select="rerun", selection_mode="points", key="g_diario")
-                    if evento_d and evento_d.selection.points:
-                        punto = evento_d.selection.points[0]
-                        if "customdata" in punto:
-                            num_orden = str(punto["customdata"][0])
-                            fila_sel = df_para_gantt_diario[df_para_gantt_diario['NUM'].astype(str) == num_orden].iloc[0]
-                            mostrar_comentario_cierre(fila_sel)
+                    st.plotly_chart(fig_gantt_d, use_container_width=True)
 
                     col_bpdf1, col_bpdf2 = st.columns([1, 2])
                     with col_bpdf1:
@@ -1459,6 +1362,69 @@ def main():
                         if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                 else: st.info("No hay registros de inicio de órdenes para esta fecha.")
             else: st.info("No hay registros de inicio de órdenes para esta fecha.")
+
+            # ==============================================================================
+            # --- NUEVA SECCIÓN: PROMEDIO SEMANAL DE PRIMERA ORDEN POR RANGO ---
+            # ==============================================================================
+            st.markdown("---")
+            st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
+            st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
+            
+            rango_fechas_primera = st.date_input(
+                "Seleccione el Rango de Fechas:", 
+                value=(hoy_date_valor - timedelta(days=6), hoy_date_valor),
+                key="rango_primera_orden_input"
+            )
+            
+            if len(rango_fechas_primera) == 2:
+                f_inicio_primera, f_fin_primera = rango_fechas_primera
+                
+                if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True):
+                    df_base_prom = df_base.copy()
+                    if 'HORA_INI' in df_base_prom.columns:
+                        df_base_prom['HORA_INI_DT'] = pd.to_datetime(df_base_prom['HORA_INI'], errors='coerce')
+                        df_base_prom = df_base_prom.dropna(subset=['HORA_INI_DT'])
+                        
+                        mask_rango = (df_base_prom['HORA_INI_DT'].dt.date >= f_inicio_primera) & (df_base_prom['HORA_INI_DT'].dt.date <= f_fin_primera)
+                        df_rango = df_base_prom[mask_rango].copy()
+                        
+                        if not df_rango.empty:
+                            df_rango['Fecha_Sola'] = df_rango['HORA_INI_DT'].dt.date
+                            primeras_ordenes_rango = df_rango.sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO', 'Fecha_Sola'], keep='first')
+                            
+                            primeras_ordenes_rango['Segundos_Inicio'] = primeras_ordenes_rango['HORA_INI_DT'].dt.hour * 3600 + \
+                                                                        primeras_ordenes_rango['HORA_INI_DT'].dt.minute * 60 + \
+                                                                        primeras_ordenes_rango['HORA_INI_DT'].dt.second
+                                                                        
+                            promedios_inicio = primeras_ordenes_rango.groupby('TECNICO').agg(
+                                Dias_Computados=('Fecha_Sola', 'nunique'),
+                                Promedio_Segundos=('Segundos_Inicio', 'mean')
+                            ).reset_index()
+                            
+                            def secs_to_time_str(s):
+                                if pd.isnull(s): return "N/D"
+                                h, r = divmod(int(s), 3600)
+                                m, sec = divmod(r, 60)
+                                return f"{h:02d}:{m:02d}:{sec:02d}"
+                                
+                            promedios_inicio['Hora_Promedio_Inicio'] = promedios_inicio['Promedio_Segundos'].apply(secs_to_time_str)
+                            promedios_inicio = promedios_inicio.sort_values('Promedio_Segundos')
+                            
+                            mask_tecnicos_validos = (promedios_inicio['TECNICO'].notna()) & (promedios_inicio['TECNICO'].str.strip() != '')
+                            promedios_inicio = promedios_inicio[mask_tecnicos_validos]
+
+                            st.dataframe(
+                                promedios_inicio[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
+                                use_container_width=True, 
+                                hide_index=True,
+                                column_config={
+                                    "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
+                                    "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
+                                    "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
+                                }
+                            )
+                        else:
+                            st.warning("⚠️ No se encontraron órdenes iniciadas en este rango de fechas.")
 
             st.markdown("### 📥 Exportación")
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
@@ -1734,16 +1700,6 @@ def main():
                             return datetime.combine(gantt_base_date, dt_val.time())
                         except: return pd.NaT
 
-                    def calc_tiempo_transcurrido(row):
-                        if pd.isnull(row['HORA_INI']): return "N/D"
-                        if pd.notnull(row['HORA_LIQ']):
-                            diff = row['HORA_LIQ'] - row['HORA_INI']
-                        else:
-                            diff = ahora_hx - row['HORA_INI']
-                        mins = diff.total_seconds() / 60
-                        hrs, rem_mins = divmod(max(0, mins), 60)
-                        return f"{int(hrs)}h {int(rem_mins)}m"
-
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].apply(normalizar_para_gantt)
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final.apply(
                         lambda row: normalizar_para_gantt(row['HORA_LIQ']) if pd.notnull(row['HORA_LIQ']) else normalizar_para_gantt(ahora_hx),
@@ -1754,7 +1710,6 @@ def main():
                     df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
                         lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                     )
-                    df_para_gantt_final['Duracion'] = df_para_gantt_final.apply(calc_tiempo_transcurrido, axis=1)
                     
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
@@ -1769,17 +1724,14 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={
-                            # REGLA DIAMANTE: Mantenemos el NUM como el elemento 0 para no quebrar el clic interactivo
                             "NUM": True, 
-                            "ACTIVIDAD": True, # <-- Muestra la Actividad
                             "COLONIA": True, 
                             "ESTADO": True, 
                             "Inicio": True,
                             "Cierre": True,
-                            "Duracion": True, 
-                            "TECNICO": False,  # <-- Oculta al Técnico
                             "GANTT_START": False, 
-                            "GANTT_END": False
+                            "GANTT_END": False,
+                            "ACTIVIDAD": False
                         }, 
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
@@ -1792,14 +1744,7 @@ def main():
                     fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
                     fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     
-                    evento_m = st.plotly_chart(fig_gantt, use_container_width=True, on_select="rerun", selection_mode="points", key="g_monitor")
-                    if evento_m and evento_m.selection.points:
-                        punto = evento_m.selection.points[0]
-                        if "customdata" in punto:
-                            num_orden = str(punto["customdata"][0])
-                            fila_sel = df_para_gantt_final[df_para_gantt_final['NUM'].astype(str) == num_orden].iloc[0]
-                            mostrar_comentario_cierre(fila_sel)
-
+                    st.plotly_chart(fig_gantt, use_container_width=True)
                 else:
                     st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
