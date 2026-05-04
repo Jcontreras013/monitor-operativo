@@ -36,6 +36,8 @@ except ImportError:
 
 try:
     import sys
+    import os
+    # Forzar al sistema a buscar en la carpeta actual (Soluciona el bug de sesiones de usuario como Oscar)
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
         COLUMNS_MAPPING, 
@@ -51,7 +53,7 @@ try:
         generar_pdf_pendientes_dispatch
     )
 except ImportError as e:
-    st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalles: {e}")
+    st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
 
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
@@ -102,7 +104,7 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 
 # ==============================================================================
-# GENERACIÓN DE PDF: TIEMPOS MUERTOS 
+# GENERACIÓN DE PDF: TIEMPOS MUERTOS Y ARRANQUE DE JORNADA
 # ==============================================================================
 def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
@@ -125,11 +127,9 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     
     ahora_hx = get_honduras_time()
     
-    # Límites estrictos de la jornada a auditar (8:00 AM a 5:00 PM)
     inicio_jornada = pd.Timestamp.combine(fecha_sel, dt_time(8, 0))
     fin_jornada = pd.Timestamp.combine(fecha_sel, dt_time(17, 0))
     
-    # El límite máximo de evaluación es las 5 PM o la hora actual (si sacan el reporte a mediodía)
     limite_evaluacion = min(ahora_hx, fin_jornada) if fecha_sel == ahora_hx.date() else fin_jornada
     
     for tec in tecnicos:
@@ -150,7 +150,7 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
         
         total_minutos_trabajados = 0
         tiempo_muerto_acumulado = 0
-        cursor_tiempo = inicio_jornada # El escáner arranca a las 8:00 AM
+        cursor_tiempo = inicio_jornada 
         
         pdf.set_font("Arial", '', 8)
         
@@ -167,11 +167,9 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
             duracion_str = "---"
             
             if pd.notnull(h_ini_dt):
-                # === 1. CÁLCULO DE TIEMPO REAL TRABAJADO (Para la tabla, incluye extras) ===
                 if pd.notnull(h_liq_dt):
                     fin_real = h_liq_dt
                 else:
-                    # Si sigue abierta, calculamos hasta este instante (o fin del día evaluado)
                     fin_real = ahora_hx if h_ini_dt.date() == ahora_hx.date() else fin_jornada
                     
                 if fin_real > h_ini_dt:
@@ -181,15 +179,12 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
                         hrs_d, mins_d = divmod(mins_reales, 60)
                         duracion_str = f"{int(hrs_d)}h {int(mins_d)}m"
 
-                # === 2. CÁLCULO DE BRECHAS/TIEMPO MUERTO (Escáner de inactividad) ===
-                # A. Buscar si hubo un hueco de inactividad antes de abrir esta orden
                 if h_ini_dt > cursor_tiempo and cursor_tiempo < limite_evaluacion:
                     gap_end = min(h_ini_dt, limite_evaluacion)
                     gap_mins = (gap_end - cursor_tiempo).total_seconds() / 60
                     if gap_mins > 0:
                         tiempo_muerto_acumulado += gap_mins
                 
-                # B. Mover el "escáner" hacia adelante al momento en que se liquida la orden
                 fin_orden_gap = h_liq_dt if pd.notnull(h_liq_dt) else ahora_hx
                 if pd.notnull(fin_orden_gap):
                     cursor_tiempo = max(cursor_tiempo, fin_orden_gap)
@@ -201,15 +196,11 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
             pdf.cell(25, 6, duracion_str, border=1, align='C')
             pdf.ln()
             
-        # === 3. BRECHA AL FINAL DE LA JORNADA ===
-        # Si la última orden terminó antes de las 5 PM, se cuenta el resto del día como inactivo
         if cursor_tiempo < limite_evaluacion:
             gap_mins = (limite_evaluacion - cursor_tiempo).total_seconds() / 60
             if gap_mins > 0:
                 tiempo_muerto_acumulado += gap_mins
         
-        # === 4. DESCONTAR ALMUERZO ===
-        # Restamos los 60 minutos de almuerzo de las brechas de inactividad encontradas
         tiempo_perdido_mins = max(0, tiempo_muerto_acumulado - 60)
         
         hrs_t, mins_t = divmod(total_minutos_trabajados, 60)
@@ -230,6 +221,44 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
         pdf.ln()
         pdf.ln(5)
 
+    return pdf.output(dest='S').encode('latin-1')
+
+def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.set_text_color(100, 100, 100)
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+    pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
+    pdf.ln(10)
+    
+    if not df_promedios.empty:
+        pdf.set_x(15)
+        pdf.set_fill_color(220, 230, 250)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", 'B', 9)
+        pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
+        pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
+        pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
+        pdf.ln()
+        
+        pdf.set_font("Arial", '', 9)
+        for _, row in df_promedios.iterrows():
+            pdf.set_x(15)
+            tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
+            dias = str(row['Dias_Computados'])
+            hora = str(row['Hora_Promedio_Inicio'])
+            
+            pdf.cell(90, 7, tec, border=1, align='L')
+            pdf.cell(40, 7, dias, border=1, align='C')
+            pdf.cell(50, 7, hora, border=1, align='C')
+            pdf.ln()
+            
     return pdf.output(dest='S').encode('latin-1')
 
 # ==============================================================================
@@ -539,6 +568,7 @@ def aplicar_estilos_df(df_original_para_estilo):
 # ==============================================================================
 # === OPTIMIZACIÓN DE RENDIMIENTO: VECTORIZACIÓN CON NUMPY ===
 # ==============================================================================
+# Se remueve @st.cache_data para evitar FileNotFoundError en Streamlit Cloud al recibir io.BytesIO
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
         if isinstance(file_dispos, bytes):
@@ -703,6 +733,7 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
+        # REGLA DE CARGA DE ARCHIVOS: Todos los roles menos "monitoreo" pueden cargar archivos.
         mostrar_cargador = False
         if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
             mostrar_cargador = True
@@ -1370,6 +1401,45 @@ def main():
             st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
             st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
             
+            # Definir la función para generar el PDF de Promedio de Arranque dentro del flujo de la app
+            def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 14)
+                pdf.set_text_color(40, 50, 100)
+                pdf.cell(0, 10, f"PROMEDIO DE ARRANQUE DE JORNADA", ln=True, align='C')
+                
+                pdf.set_font("Arial", '', 10)
+                pdf.set_text_color(100, 100, 100)
+                inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+                fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+                pdf.cell(0, 6, f"Periodo: {inicio_str} al {fin_str}", ln=True, align='C')
+                pdf.ln(10)
+                
+                if not df_promedios.empty:
+                    pdf.set_x(15)
+                    pdf.set_fill_color(220, 230, 250)
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.set_font("Arial", 'B', 9)
+                    pdf.cell(90, 8, "TECNICO", border=1, align='C', fill=True)
+                    pdf.cell(40, 8, "DIAS EVALUADOS", border=1, align='C', fill=True)
+                    pdf.cell(50, 8, "HORA PROMEDIO", border=1, align='C', fill=True)
+                    pdf.ln()
+                    
+                    pdf.set_font("Arial", '', 9)
+                    for _, row in df_promedios.iterrows():
+                        pdf.set_x(15)
+                        tec = str(row['TECNICO']).encode('latin-1', 'ignore').decode('latin-1')[:45]
+                        dias = str(row['Dias_Computados'])
+                        hora = str(row['Hora_Promedio_Inicio'])
+                        
+                        pdf.cell(90, 7, tec, border=1, align='L')
+                        pdf.cell(40, 7, dias, border=1, align='C')
+                        pdf.cell(50, 7, hora, border=1, align='C')
+                        pdf.ln()
+                        
+                return pdf.output(dest='S').encode('latin-1')
+            
             rango_fechas_primera = st.date_input(
                 "Seleccione el Rango de Fechas:", 
                 value=(hoy_date_valor - timedelta(days=6), hoy_date_valor),
@@ -1413,19 +1483,50 @@ def main():
                             mask_tecnicos_validos = (promedios_inicio['TECNICO'].notna()) & (promedios_inicio['TECNICO'].str.strip() != '')
                             promedios_inicio = promedios_inicio[mask_tecnicos_validos]
 
-                            st.dataframe(
-                                promedios_inicio[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
-                                use_container_width=True, 
-                                hide_index=True,
-                                column_config={
-                                    "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
-                                    "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
-                                    "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
-                                }
-                            )
+                            # Guardar en memoria para que no desaparezca la tabla al clickear Descargar PDF
+                            st.session_state['df_promedios_inicio'] = promedios_inicio
                         else:
+                            st.session_state['df_promedios_inicio'] = pd.DataFrame()
                             st.warning("⚠️ No se encontraron órdenes iniciadas en este rango de fechas.")
+                            
+                # Dibujar la tabla si existe en memoria
+                if 'df_promedios_inicio' in st.session_state and not st.session_state['df_promedios_inicio'].empty:
+                    promedios_mostrar = st.session_state['df_promedios_inicio']
+                    
+                    st.dataframe(
+                        promedios_mostrar[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
+                            "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
+                            "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
+                        }
+                    )
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if es_movil: col_btn_p1, col_btn_p2 = st.columns(2)
+                    else: col_btn_p1, col_btn_p2 = st.columns([1, 2])
+                    
+                    with col_btn_p1:
+                        if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True):
+                            try:
+                                with st.spinner("Generando PDF..."):
+                                    st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(promedios_mostrar, f_inicio_primera, f_fin_primera)
+                            except Exception as e:
+                                st.error(f"Error generando PDF: {e}")
+                                
+                        if 'pdf_promedio_arranque' in st.session_state and st.session_state['pdf_promedio_arranque']:
+                            st.download_button(
+                                "📥 Descargar PDF (Promedio Semanal)", 
+                                data=st.session_state['pdf_promedio_arranque'], 
+                                file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", 
+                                mime="application/pdf", 
+                                type="primary", 
+                                use_container_width=True
+                            )
 
+            st.markdown("---")
             st.markdown("### 📥 Exportación")
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
                 with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
