@@ -1,7 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from tools import get_honduras_time
+from datetime import datetime, timedelta
+
+def get_honduras_time():
+    """Ajusta la hora a UTC-6 internamente para los componentes visuales."""
+    return datetime.utcnow() - timedelta(hours=6)
 
 def aplicar_estilos_nativos():
     """Inyecta CSS para hacer que Streamlit parezca una App Nativa en Móviles"""
