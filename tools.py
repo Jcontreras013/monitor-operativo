@@ -18,8 +18,8 @@ def safestr(texto):
 # 1. MAPEO UNIVERSAL DE COLUMNAS Y CONSTANTES
 # ==============================================================================
 COLUMNS_MAPPING = {
-    'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'FECHA ENTRADA'],
-    'HORA_LIQ': ['HORA LIQUIDADO', 'HORA CIERRE', 'HORACIERREORDEN', 'FECHA LIQUIDADO'],
+    'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'HORA INICIO ORDEN', 'FECHA ENTRADA', 'INICIO'],
+    'HORA_LIQ': ['HORA LIQUIDADO', 'HORA CIERRE', 'HORACIERREORDEN', 'HORA CIERRE ORDEN', 'FECHA LIQUIDADO', 'LIQUIDADO'],
     'TECNICO': ['TÉCNICO', 'TECNICO', 'OPERADOR', 'USER NAME'],
     'ACTIVIDAD': ['NOMBRE ACTIVIDAD', 'TIPO ORDEN', 'ACTIVIDAD'],
     'FECHA_APE': ['FECHA APERTURA', 'APERTURA', 'DIASASIGNADA', 'Días'],
@@ -1087,45 +1087,55 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
 # ==============================================================================
 # MOTOR SEGURO DE FECHAS Y ZONA HORARIA
 # ==============================================================================
-def get_honduras_time():
-    return datetime.utcnow() - timedelta(hours=6)
-
-def parse_date_ultra_safe(val):
+def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
     from datetime import time as dt_time
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
         return pd.NaT
-    str_val = str(val).strip()
-    if str_val in ["0", "0.0", "1899-12-30 00:00:00"]:
-        return pd.NaT
-
+    
     hoy = pd.Timestamp(get_honduras_time()).normalize()
 
+    if isinstance(val, dt_time):
+        return pd.Timestamp.combine(hoy.date(), val)
+    if isinstance(val, datetime):
+        if val.year <= 1970:
+            return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
+        return pd.Timestamp(val)
+    if isinstance(val, (int, float)):
+        if val == 0 or val == 0.0: return pd.NaT
+        if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
+        elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
+        else: return pd.NaT
+
+    # === LA CURA: Limpieza de formatos MaxCom (AM/PM) ===
+    str_val = str(val).strip()
+    str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
+    str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
+
     try:
-        if isinstance(val, dt_time): return pd.Timestamp.combine(hoy.date(), val)
-        if isinstance(val, datetime):
-            if val.year <= 1970: return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
-            return pd.Timestamp(val)
-        if isinstance(val, (int, float)):
-            if val == 0 or val == 0.0: return pd.NaT
-            if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
-            elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
-            else: return pd.NaT
-        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', str_val):
+        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$', str_val, re.I):
             parsed_time = pd.to_datetime(str_val).time()
             return pd.Timestamp.combine(hoy.date(), parsed_time)
-        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val): parsed = pd.to_datetime(str_val, errors='coerce')
-        else: parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
+
+        if re.match(r'^\d{4}-\d{2}-\d{2}', str_val):
+            parsed = pd.to_datetime(str_val, errors='coerce')
+        else:
+            parsed = pd.to_datetime(str_val, dayfirst=True, errors='coerce')
 
         if pd.notnull(parsed):
-            if parsed.year <= 1970: return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
+            if parsed.year <= 1970:
+                return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
             return parsed
         return pd.NaT
-    except: return pd.NaT
+    except:
+        return pd.NaT
 
-def procesar_fechas_seguro(df_input, columnas):
+def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFrame:
     df = df_input.copy()
     for col in columnas:
-        if col in df.columns: df[col] = df[col].apply(parse_date_ultra_safe)
+        if col in df.columns:
+            df[col] = df[col].apply(parse_date_ultra_safe)
+            # CRÍTICO: Forzar formato de pandas para evitar errores de ploteo
+            df[col] = pd.to_datetime(df[col], errors='coerce')
     return df
 
 # ==============================================================================
