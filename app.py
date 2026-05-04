@@ -223,8 +223,7 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
 
     return pdf.output(dest='S').encode('latin-1')
 
-    
-    def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
+def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 14)
