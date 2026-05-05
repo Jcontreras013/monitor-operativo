@@ -2083,7 +2083,17 @@ def cargar_catalogo_tecnicos():
     return pd.DataFrame(datos)
 
 def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
-    """Cruza marcaciones biométricas contra el catálogo maestro de personal."""
+    """Cruza marcaciones biométricas contra el catálogo maestro de personal ignorando tildes."""
+    import unicodedata
+
+    def limpiar_para_cruce(texto):
+        """Quita tildes, dobles espacios y pasa a mayúsculas para un cruce perfecto."""
+        if pd.isnull(texto): return ""
+        t = str(texto).upper()
+        # Quita los acentos (é pasa a ser e)
+        t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+        return ' '.join(t.split())
+
     if df_catalogo.empty:
         return pd.DataFrame()
         
@@ -2096,13 +2106,14 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
         df_cat['Salida'] = "---"
         return df_cat[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Salida']]
 
-    # Normalizar nombres del biométrico eliminando dobles espacios
     df_bio = df_biometrico.copy()
-    df_bio['Empleado_Norm'] = df_bio['Empleado'].astype(str).str.upper().str.strip()
-    df_bio['Empleado_Norm'] = df_bio['Empleado_Norm'].apply(lambda x: ' '.join(x.split()))
     
-    # Cruce de DataFrames
-    resultado = pd.merge(df_cat, df_bio, left_on='Nombre', right_on='Empleado_Norm', how='left')
+    # 1. Crear columnas "invisibles" solo para que la computadora cruce (sin tildes)
+    df_cat['KEY_CRUCE'] = df_cat['Nombre'].apply(limpiar_para_cruce)
+    df_bio['KEY_CRUCE'] = df_bio['Empleado'].apply(limpiar_para_cruce)
+    
+    # 2. Cruce de DataFrames usando la columna limpia
+    resultado = pd.merge(df_cat, df_bio, on='KEY_CRUCE', how='left')
     
     def determinar_asistencia(row):
         if row['Estatus'] == 'VACACIONES': return '🌴 VACACIONES'
@@ -2114,5 +2125,5 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
     resultado['Entrada'] = resultado['Entrada'].fillna("---")
     resultado['Salida'] = resultado['Salida'].fillna("---")
     
-    # Retornar el orden final para la tabla
+    # Retornar el orden final para la tabla (se sigue mostrando el Nombre original con sus tildes bonitas)
     return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Salida']]
