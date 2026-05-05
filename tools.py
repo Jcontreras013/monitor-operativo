@@ -2083,14 +2083,13 @@ def cargar_catalogo_tecnicos():
     return pd.DataFrame(datos)
 
 def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
-    """Cruza marcaciones biométricas contra el catálogo maestro de personal ignorando tildes."""
+    """Cruza marcaciones biométricas contra el catálogo maestro de personal agrupando por áreas."""
     import unicodedata
 
     def limpiar_para_cruce(texto):
         """Quita tildes, dobles espacios y pasa a mayúsculas para un cruce perfecto."""
         if pd.isnull(texto): return ""
         t = str(texto).upper()
-        # Quita los acentos (é pasa a ser e)
         t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
         return ' '.join(t.split())
 
@@ -2099,20 +2098,26 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
         
     df_cat = df_catalogo.copy()
     
-    # Si no hay biométrico cargado aún, mostrar todos como pendientes/vacaciones
+    # Clasificador automático de Áreas (Plex, Residencial, Otras)
+    def categorizar_grupo(area):
+        a = str(area).upper()
+        if 'PLEX' in a: return 'PLEX'
+        elif 'FTTH' in a or 'HFC' in a: return 'RESIDENCIAL'
+        else: return 'OTRAS ÁREAS'
+        
+    df_cat['Grupo_Tabla'] = df_cat['Cargo/Área'].apply(categorizar_grupo)
+    
+    # Si no hay biométrico cargado aún
     if df_biometrico.empty:
         df_cat['Asistencia'] = df_cat['Estatus'].apply(lambda x: '🌴 VACACIONES' if x == 'VACACIONES' else '❌ NO MARCÓ')
         df_cat['Entrada'] = "---"
-        df_cat['Salida'] = "---"
-        return df_cat[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Salida']]
+        return df_cat[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Grupo_Tabla']]
 
     df_bio = df_biometrico.copy()
     
-    # 1. Crear columnas "invisibles" solo para que la computadora cruce (sin tildes)
     df_cat['KEY_CRUCE'] = df_cat['Nombre'].apply(limpiar_para_cruce)
     df_bio['KEY_CRUCE'] = df_bio['Empleado'].apply(limpiar_para_cruce)
     
-    # 2. Cruce de DataFrames usando la columna limpia
     resultado = pd.merge(df_cat, df_bio, on='KEY_CRUCE', how='left')
     
     def determinar_asistencia(row):
@@ -2123,7 +2128,6 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
         
     resultado['Asistencia'] = resultado.apply(determinar_asistencia, axis=1)
     resultado['Entrada'] = resultado['Entrada'].fillna("---")
-    resultado['Salida'] = resultado['Salida'].fillna("---")
     
-    # Retornar el orden final para la tabla (se sigue mostrando el Nombre original con sus tildes bonitas)
-    return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Salida']]
+    # Retornamos solo Entrada, Clasificación y el Grupo_Tabla invisible
+    return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Grupo_Tabla']]
