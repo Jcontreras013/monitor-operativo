@@ -454,7 +454,7 @@ def main():
         cli_up_g = df_base['CLIENTE'].fillna('').astype(str).str.upper()
         texto_g = act_upper_global + " " + com_up_g
 
-cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
+        cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
         cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
         # CORRECCIÓN: Priorizamos Niveles por encima de TV y Navegación
         cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
