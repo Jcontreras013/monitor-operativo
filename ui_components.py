@@ -163,11 +163,9 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
         if col not in resumen.columns:
             resumen[col] = 0
 
-    # 4. Calcular Totales con la RESTA solicitada (Asignadas - Cerradas)
+    # 4. Calcular Totales con la RESTA (Asignadas - Cerradas)
     resumen['MORA_Total'] = resumen['MORA_Asig'] - resumen['MORA_Cerr']
     resumen['HOY_Total'] = resumen['HOY_Asig'] - resumen['HOY_Cerr']
-    
-    # Ya NO calculamos el GRAN_TOTAL
     
     for col in resumen.columns:
         if col != 'ACTIVIDAD': resumen[col] = resumen[col].astype(int)
@@ -192,7 +190,7 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
         "HOY_Total": st.column_config.NumberColumn("🔵 Hoy (Total)", format="%d")
     }
 
-    # Ordenar las columnas para mostrar (Eliminada la columna GRAN_TOTAL)
+    # Ordenar las columnas para mostrar
     columnas_orden = ['Tipo', 'MORA_Asig', 'MORA_Cerr', 'MORA_Total', 'HOY_Asig', 'HOY_Cerr', 'HOY_Total']
     
     # Colorear la fila de Totales
@@ -206,3 +204,34 @@ def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=N
                  
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Cerrar Resumen", use_container_width=True): st.rerun()
+
+def aplicar_estilos_df(df_original_para_estilo):
+    df_visual_procesado = df_original_para_estilo.copy()
+    def row_styler_logic(fila_v):
+        estilos_fila = [''] * len(fila_v)
+        if fila_v.get('ES_OFFLINE') == True:
+            if 'NUM' in fila_v.index: estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #9b111e; color: white; font-weight: bold'
+        est_val = str(fila_v.get('ESTADO','')).upper().strip()
+        if est_val == 'CERRADA':
+            if 'TIEMPO_REAL' in fila_v.index:
+                idx_tr = fila_v.index.get_loc('TIEMPO_REAL')
+                minutos_trabajados = fila_v.get('MINUTOS_CALC', 0)
+                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
+                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
+        if fila_v.get('ALERTA_TIEMPO') == True:
+            if 'HORA_INI' in fila_v.index: estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
+        if 'DIAS_RETRASO' in fila_v.index:
+            idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
+            val_dias = fila_v['DIAS_RETRASO']
+            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #d32f2f; color: white; font-weight: bold' 
+            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #f57c00; color: white; font-weight: bold' 
+            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #fbc02d; color: black; font-weight: bold' 
+            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: #388e3c; color: white; font-weight: bold' 
+        return estilos_fila
+
+    if 'NUM' in df_visual_procesado.columns: df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
+    if 'HORA_INI' in df_visual_procesado.columns: df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
+    if 'HORA_LIQ' in df_visual_procesado.columns: df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
+    cols_a_mostrar = ['DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC']
+    columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
+    return df_visual_procesado[columnas_finales], row_styler_logic
