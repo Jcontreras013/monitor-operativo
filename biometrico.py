@@ -7,7 +7,17 @@ import os
 import tempfile
 import unicodedata
 import pdfplumber
-from tools import generar_pdf_unificado_rrhh, generar_pdf_infracciones
+
+# IMPORTANTE: Hemos agregado las nuevas funciones de tools aquí.
+from tools import (
+    generar_pdf_unificado_rrhh, 
+    generar_pdf_infracciones,
+    cargar_catalogo_tecnicos,
+    procesar_asistencia_vs_catalogo,
+    ReporteGenerencialPDF,
+    finalizar_pdf,
+    safestr
+)
 
 # =========================================================
 # FUNCIONES ORIGINALES (CONSOLIDADO RRHH - NO TOCADAS)
@@ -91,15 +101,13 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
         if es_campo:
             marcas_filtradas = []
             for m in marcas:
-                # fecha.weekday() -> Lunes=0, Martes=1, Miercoles=2, Jueves=3, Viernes=4, Sabado=5, Domingo=6
                 if fecha.weekday() == 5: # Sábado
-                    if m.hour <= 12: # Permite marcas hasta las 12:59 PM
+                    if m.hour <= 12: 
                         marcas_filtradas.append(m)
                 else: # Lunes a Viernes
-                    if m.hour <= 17: # Permite marcas hasta las 17:59 PM
+                    if m.hour <= 17: 
                         marcas_filtradas.append(m)
             
-            # Si después del filtro quedaron marcas, las usamos
             if marcas_filtradas:
                 marcas = marcas_filtradas
 
@@ -139,18 +147,15 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
         # 2. REGLA DE NEGOCIO: PERSONAL DE CAMPO (SANTA ELENA)
         if es_campo:
             salida_final = marcas[-1] if num_marcas > 1 else None
-            # Al ser de campo, almuerzo y break quedan en 0 automáticamente.
         else:
             # 3. REGLAS NORMALES DE OFICINA
             if num_marcas >= 3:
-                # Seguro vital: Si marcan después de las 5PM, NO es regreso de almuerzo
                 if marcas[1].hour < 17 and marcas[2].hour < 17:
                     alm_min = min_dif(marcas[1], marcas[2])
                     if alm_min > 60:
                         exceso_alm = alm_min - 60
                         
             if num_marcas >= 5:
-                # Seguro vital: Evitar que salidas finales cuenten como fin de break
                 if marcas[3].hour < 17 and marcas[4].hour < 17:
                     brk_min = min_dif(marcas[3], marcas[4])
                     if brk_min > 15:
@@ -158,7 +163,6 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
 
             salida_final = marcas[-1] if num_marcas > 1 else None
 
-        # Excepción de Negocio Adicional: CYNIA (Ignorar Break)
         if "CYNIA" in str(nombre).upper():
             brk_min = 0
             exceso_brk = 0
@@ -177,10 +181,66 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
             "Exceso_Brk_min": exceso_brk,           
             "Salida": salida_final.strftime('%H:%M') if salida_final else "-",
             "Marcaciones": num_marcas,
-            "Es_Campo": "Sí" if es_campo else "No" # Solo para referencia interna
+            "Es_Campo": "Sí" if es_campo else "No" 
         })
     
     return pd.DataFrame(resultados)
+
+
+# =========================================================
+# LÓGICA DE PDF PARA LAS AUSENCIAS
+# =========================================================
+def generar_pdf_ausencias(df_resultado):
+    """Genera el PDF visual de los técnicos que no marcaron o están de vacaciones"""
+    pdf = ReporteGenerencialPDF(orientation='P', unit='mm', format='A4')
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE DE ASISTENCIA DIARIA (Cruce Biometrico vs Catalogo)"), ln=True, align="C")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Generado el: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}"), ln=True, align="C")
+    pdf.ln(5)
+
+    # Filtrar para el PDF solo los que NO MARCARON o están de VACACIONES
+    df_faltas = df_resultado[df_resultado['Asistencia'].isin(['❌ NO MARCÓ', '🌴 VACACIONES'])]
+
+    if df_faltas.empty:
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_text_color(0, 100, 0)
+        pdf.cell(0, 10, safestr("Excelente: Todos los tecnicos registrados marcaron asistencia hoy."), ln=True, align="C")
+        return finalizar_pdf(pdf)
+
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 8)
+
+    w = [75, 40, 45, 30]
+    headers = ['Nombre del Tecnico', 'Clasificacion', 'Area / Asignacion', 'Estado']
+
+    for i, col in enumerate(headers):
+        pdf.cell(w[i], 8, safestr(col), border=1, align="C", fill=True)
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 8)
+    for _, row in df_faltas.iterrows():
+        pdf.cell(w[0], 6, safestr(str(row['Nombre']))[:45], border=1, align="L")
+        pdf.cell(w[1], 6, safestr(str(row['Clasificación']))[:20], border=1, align="C")
+        pdf.cell(w[2], 6, safestr(str(row['Cargo/Área']))[:25], border=1, align="C")
+
+        # Color según estado
+        if 'VACACIONES' in str(row['Asistencia']):
+            pdf.set_text_color(0, 100, 0) # Verde
+        else:
+            pdf.set_text_color(200, 0, 0) # Rojo
+
+        pdf.cell(w[3], 6, safestr(str(row['Asistencia'])), border=1, align="C")
+        pdf.set_text_color(0, 0, 0) # Restaurar negro
+        pdf.ln()
+
+    return finalizar_pdf(pdf)
 
 
 # =========================================================
@@ -189,8 +249,17 @@ def procesar_biometrico_mejorado(df_csv, dict_turnos):
 
 def vista_biometrico():
     st.title("🚨 Centro de Control Biométrico y RRHH")
-    tab_transacciones, tab_rrhh = st.tabs(["⏱️ Auditoría Diaria (CSV)", "📊 Consolidado RRHH (PDFs)"])
     
+    # 📌 SE AGREGA LA TERCERA PESTAÑA AQUÍ
+    tab_transacciones, tab_rrhh, tab_asistencia = st.tabs([
+        "⏱️ Auditoría Diaria (CSV)", 
+        "📊 Consolidado RRHH (PDFs)", 
+        "👥 Asistencia Técnicos"
+    ])
+    
+    # ---------------------------------------------------------
+    # PESTAÑA 1: TRANSACCIONES DIARIAS
+    # ---------------------------------------------------------
     with tab_transacciones:
         st.subheader("Análisis de Marcaciones Biométricas")
         st.write("Sube el archivo CSV exportado desde el sistema MaxCom.")
@@ -215,14 +284,10 @@ def vista_biometrico():
                     file_bio.seek(0)
                     df_raw = pd.read_csv(file_bio, sep=',', encoding='utf-8-sig', skiprows=skip_lines)
 
-                # ========================================================
-                # SECCIÓN 1: ASIGNAR TURNOS ANTES DE PROCESAR
-                # ========================================================
                 df_raw.columns = df_raw.columns.str.strip()
                 df_raw['Full Name'] = df_raw['Full Name'].fillna("Desconocido")
                 usuarios_unicos = df_raw[['ID', 'Full Name']].drop_duplicates().reset_index(drop=True)
                 
-                # --- PREASIGNACIÓN AUTOMÁTICA DE TURNOS SEGÚN REGLAS ---
                 def preasignar_turno(nombre):
                     nom = str(nombre).upper()
                     if "BARIKA" in nom or "JAIR" in nom: return "09:00 AM"
@@ -235,7 +300,6 @@ def vista_biometrico():
                 if 'memoria_turnos' in st.session_state:
                     previos = st.session_state['memoria_turnos']
                     usuarios_unicos = pd.merge(usuarios_unicos, previos[['ID', 'Turno']], on='ID', how='left', suffixes=('', '_y'))
-                    # Priorizar memoria, sino usar la preasignación automática
                     usuarios_unicos['Turno'] = usuarios_unicos['Turno_y'].fillna(usuarios_unicos['Turno'])
                     usuarios_unicos = usuarios_unicos.drop(columns=['Turno_y'], errors='ignore')
                     
@@ -253,9 +317,6 @@ def vista_biometrico():
                 st.session_state['memoria_turnos'] = turnos_editados
                 dict_turnos = dict(zip(turnos_editados['ID'], turnos_editados['Turno']))
 
-                # ========================================================
-                # SECCIÓN 2: PROCESAR LA TABLA CON LOS TURNOS ASIGNADOS
-                # ========================================================
                 if st.button("🚀 Extraer Infractores", type="primary"):
                     df_p = procesar_biometrico_mejorado(df_raw, dict_turnos)
                     
@@ -268,7 +329,6 @@ def vista_biometrico():
 
                     st.markdown("---")
                     
-                    # === CREAMOS LA VISTA CONSOLIDADA (CON LOS PROMEDIOS INCLUIDOS) ===
                     df_p['Es_Tarde'] = df_p['Tardanza'] == 'Sí'
                     df_p['Tiene_Exc_Alm'] = df_p['Almuerzo (min)'] > 60
                     df_p['Tiene_Exc_Brk'] = df_p['Break (min)'] > 15
@@ -286,7 +346,6 @@ def vista_biometrico():
                     agrupado = agrupado[agrupado['TOTAL FALTAS'] > 0].copy()
 
                     if not agrupado.empty:
-                        # Aplicando los promedios
                         agrupado['Prom. Tardanza'] = agrupado.apply(lambda x: f"{int(x['Suma_Tardanza']/x['Tardanzas'])} min" if x['Tardanzas'] > 0 else "---", axis=1)
                         agrupado['Prom. Exc. Almuerzo'] = agrupado.apply(lambda x: f"{int(x['Suma_Alm']/x['Exc_Almuerzo'])} min" if x['Exc_Almuerzo'] > 0 else "---", axis=1)
                         agrupado['Prom. Exc. Break'] = agrupado.apply(lambda x: f"{int(x['Suma_Brk']/x['Exc_Break'])} min" if x['Exc_Break'] > 0 else "---", axis=1)
@@ -297,7 +356,6 @@ def vista_biometrico():
                     else:
                         df_mostrar = pd.DataFrame()
 
-                    # Generar el nuevo PDF Horizontal
                     pdf_data = generar_pdf_infracciones(df_p)
                     st.download_button(
                         label="📥 Descargar Resumen de Infracciones (PDF)",
@@ -307,7 +365,6 @@ def vista_biometrico():
                         use_container_width=True
                     )
 
-                    # Mostramos las dos vistas usando Pestañas (Tabs)
                     t_consolidado, t_detalle = st.tabs(["📊 Tabla Consolidada", "📝 Detalle Diario"])
                     
                     with t_consolidado:
@@ -317,16 +374,17 @@ def vista_biometrico():
                             st.success("✅ Excelente. Nadie llegó tarde ni se pasó del almuerzo o break.")
                             
                     with t_detalle:
-                        # Ocultamos de la vista las columnas de suma matemática para que se vea limpio el detalle
                         columnas_a_esconder = ['Exceso_Tardanza_min', 'Exceso_Alm_min', 'Exceso_Brk_min', 'Es_Tarde', 'Tiene_Exc_Alm', 'Tiene_Exc_Brk', 'Es_Campo']
                         df_limpio_detalle = df_p.drop(columns=columnas_a_esconder, errors='ignore')
-                        # Mostrar solo los que tuvieron alguna falta para no saturar
                         df_solo_infracciones = df_limpio_detalle[(df_limpio_detalle['Tardanza'] == 'Sí') | (df_limpio_detalle['Almuerzo (min)'] > 60) | (df_limpio_detalle['Break (min)'] > 15)]
                         st.dataframe(df_solo_infracciones, use_container_width=True, hide_index=True)
 
             except Exception as e:
                 st.error(f"Error al procesar el archivo. Asegúrate de subir el reporte correcto. Detalles: {e}")
 
+    # ---------------------------------------------------------
+    # PESTAÑA 2: RRHH PDF CONSOLIDADOS
+    # ---------------------------------------------------------
     with tab_rrhh:
         st.subheader("📑 Generador de Reporte Unificado")
         st.markdown("Cargue los reportes oficiales para limpiar columnas vacías y unificar la información.")
@@ -374,6 +432,91 @@ def vista_biometrico():
                 if not st.session_state.get('df_t_prev', pd.DataFrame()).empty:
                     st.write("**Tardanzas:**")
                     st.dataframe(st.session_state['df_t_prev'].head(5), use_container_width=True)
+
+    # ---------------------------------------------------------
+    # PESTAÑA 3: ASISTENCIA TÉCNICOS (.TXT VS BIOMÉTRICO)
+    # ---------------------------------------------------------
+    with tab_asistencia:
+        st.subheader("📋 Control de Asistencia y Ausencias")
+        st.markdown("Arrastra el archivo exportado del biométrico (CSV) para cruzarlo con tu archivo maestro `personal_tecnico.txt`.")
+        
+        # 1. Cargar el catálogo
+        df_catalogo = cargar_catalogo_tecnicos()
+        
+        if df_catalogo.empty:
+            st.error("⚠️ No se pudo encontrar o leer el archivo `personal_tecnico.txt`. Asegúrate de que esté en la misma carpeta.")
+        else:
+            st.success(f"✅ Catálogo de personal cargado: **{len(df_catalogo)}** técnicos y supervisores registrados.")
+            
+            # 2. Subir biométrico
+            file_bio_asistencia = st.file_uploader("Arrastrar Biométrico del Día (CSV)", type=["csv", "txt"], key="bio_asis")
+
+            if file_bio_asistencia:
+                try:
+                    # Leer CSV igual que en la primera pestaña
+                    content = file_bio_asistencia.getvalue().decode('utf-8-sig', errors='ignore')
+                    lineas = content.splitlines()
+                    skip_lines = 0
+                    for i, linea in enumerate(lineas[:10]): 
+                        if 'Full Name' in linea or 'Empleado' in linea:
+                            skip_lines = i
+                            break
+                    
+                    file_bio_asistencia.seek(0)
+                    df_bio = pd.read_csv(file_bio_asistencia, sep=';', encoding='utf-8-sig', skiprows=skip_lines)
+                    if len(df_bio.columns) == 1:
+                        file_bio_asistencia.seek(0)
+                        df_bio = pd.read_csv(file_bio_asistencia, sep=',', encoding='utf-8-sig', skiprows=skip_lines)
+
+                    # Estandarizar nombre de columna para el backend
+                    if 'Full Name' in df_bio.columns:
+                        df_bio = df_bio.rename(columns={'Full Name': 'Empleado'})
+                        
+                    # Extraer primera y última marca si existen las horas
+                    if 'Time' in df_bio.columns and 'Empleado' in df_bio.columns:
+                        df_bio_agrupado = df_bio.groupby('Empleado').agg(
+                            Entrada=('Time', 'min'),
+                            Salida=('Time', 'max')
+                        ).reset_index()
+                    else:
+                        df_bio_agrupado = df_bio
+
+                    # 3. Cruzar con el TXT de Técnicos
+                    with st.spinner("Cruzando datos con el maestro de técnicos..."):
+                        df_resultado = procesar_asistencia_vs_catalogo(df_bio_agrupado, df_catalogo)
+                    
+                    # 4. Mostrar Resultados (Filtro por faltas)
+                    df_faltas = df_resultado[df_resultado['Asistencia'].isin(['❌ NO MARCÓ', '🌴 VACACIONES'])]
+                    
+                    st.markdown("### 🚨 Personal Técnico Faltante hoy:")
+                    
+                    if not df_faltas.empty:
+                        # Estilos para colorear las columnas en la interfaz
+                        def style_asistencia(val):
+                            color = '#d32f2f' if 'NO MARCÓ' in str(val) else ('#388e3c' if 'VACACIONES' in str(val) else '')
+                            return f'color: {color}; font-weight: bold'
+
+                        st.dataframe(df_faltas.style.map(style_asistencia, subset=['Asistencia']), use_container_width=True, hide_index=True)
+                        
+                        # 5. Generar y Descargar PDF
+                        pdf_bytes = generar_pdf_ausencias(df_resultado)
+                        st.download_button(
+                            label="📥 DESCARGAR REPORTE DE AUSENCIAS (PDF)",
+                            data=pdf_bytes,
+                            file_name=f"Ausencias_Tecnicos_{datetime.now().strftime('%d_%m_%Y')}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+                    else:
+                        st.success("🎉 ¡Excelente! Todos los técnicos programados marcaron asistencia el día de hoy.")
+                        
+                    # Mostrar tabla completa opcional
+                    with st.expander("Ver lista completa (Incluye los que sí asistieron)"):
+                        st.dataframe(df_resultado.style.map(style_asistencia, subset=['Asistencia']), use_container_width=True, hide_index=True)
+                        
+                except Exception as e:
+                    st.error(f"Error al cruzar los archivos: {e}")
 
 if __name__ == "__main__":
     try:
