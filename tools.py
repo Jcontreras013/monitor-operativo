@@ -2038,3 +2038,81 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
         pdf.cell(0, 6, f"Operacion Segura: Nadie supero los {limite_vel} km/h.", ln=True)
         
     return finalizar_pdf(pdf)
+def cargar_catalogo_tecnicos():
+    """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
+    path = "personal_tecnico.txt"
+    datos = []
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            for linea in f:
+                linea = linea.strip()
+                if not linea: continue
+                
+                # Separar por coma
+                partes = linea.split(',')
+                
+                # El nombre está en la primera parte, reemplazamos tabs por espacios y limpiamos dobles espacios
+                nombre_bruto = partes[0].replace('\t', ' ')
+                nombre = ' '.join(nombre_bruto.split()).upper()
+                
+                if len(partes) > 1:
+                    cargo_area = partes[1].strip().upper()
+                else:
+                    cargo_area = "N/D"
+                    
+                estatus = "ACTIVO"
+                if len(partes) > 2 and "VACACIONES" in partes[2].upper():
+                    estatus = "VACACIONES"
+                
+                # Regla del usuario: Clasificación de Técnico Principal
+                if cargo_area in ['PLEX', 'HFC', 'FTTH']:
+                    clasificacion = "TÉCNICO PRINCIPAL"
+                elif 'AYUDANTE' in cargo_area:
+                    clasificacion = "AYUDANTE"
+                elif 'SUPERVISOR' in cargo_area:
+                    clasificacion = "SUPERVISOR"
+                else:
+                    clasificacion = "OTRAS ÁREAS / SOPORTE"
+                    
+                datos.append({
+                    'Nombre': nombre,
+                    'Cargo/Área': cargo_area,
+                    'Clasificación': clasificacion,
+                    'Estatus': estatus
+                })
+    return pd.DataFrame(datos)
+
+def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
+    """Cruza marcaciones biométricas contra el catálogo maestro de personal."""
+    if df_catalogo.empty:
+        return pd.DataFrame()
+        
+    df_cat = df_catalogo.copy()
+    
+    # Si no hay biométrico cargado aún, mostrar todos como pendientes/vacaciones
+    if df_biometrico.empty:
+        df_cat['Asistencia'] = df_cat['Estatus'].apply(lambda x: '🌴 VACACIONES' if x == 'VACACIONES' else '❌ NO MARCÓ')
+        df_cat['Entrada'] = "---"
+        df_cat['Salida'] = "---"
+        return df_cat[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Salida']]
+
+    # Normalizar nombres del biométrico eliminando dobles espacios
+    df_bio = df_biometrico.copy()
+    df_bio['Empleado_Norm'] = df_bio['Empleado'].astype(str).str.upper().str.strip()
+    df_bio['Empleado_Norm'] = df_bio['Empleado_Norm'].apply(lambda x: ' '.join(x.split()))
+    
+    # Cruce de DataFrames
+    resultado = pd.merge(df_cat, df_bio, left_on='Nombre', right_on='Empleado_Norm', how='left')
+    
+    def determinar_asistencia(row):
+        if row['Estatus'] == 'VACACIONES': return '🌴 VACACIONES'
+        if pd.notnull(row.get('Entrada')) and row['Entrada'] != "---" and str(row['Entrada']).strip() != "": 
+            return '✅ MARCÓ'
+        return '❌ NO MARCÓ'
+        
+    resultado['Asistencia'] = resultado.apply(determinar_asistencia, axis=1)
+    resultado['Entrada'] = resultado['Entrada'].fillna("---")
+    resultado['Salida'] = resultado['Salida'].fillna("---")
+    
+    # Retornar el orden final para la tabla
+    return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Salida']]
