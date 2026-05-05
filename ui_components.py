@@ -116,65 +116,93 @@ def mostrar_comentario_cierre(fila):
 @st.dialog("Resumen de Operaciones", width="large")
 def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=None):
     st.subheader(f"📊 Desglose: {segmento}")
-    if not asignadas_df.empty: p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Pendientes (Hoy)')
-    else: p = pd.DataFrame(columns=['ACTIVIDAD', 'Pendientes (Hoy)'])
-    if not cerradas_df.empty: c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
-    else: c = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas'])
-    resumen = pd.merge(p, c, on='ACTIVIDAD', how='outer').fillna(0)
-    if inicio_mora_df is not None:
-        if not inicio_mora_df.empty: m = inicio_mora_df.groupby('ACTIVIDAD').size().reset_index(name='Inicio (Mora)')
-        else: m = pd.DataFrame(columns=['ACTIVIDAD', 'Inicio (Mora)'])
-        resumen = pd.merge(m, resumen, on='ACTIVIDAD', how='outer').fillna(0)
-    else: resumen.rename(columns={'Pendientes (Hoy)': 'Asignadas'}, inplace=True)
+    
+    hoy = get_honduras_time().date()
+    p_df = asignadas_df.copy()
+    c_df = cerradas_df.copy()
+    
+    # 1. Separar Mora y Hoy para Asignadas (Pendientes en ruta)
+    if 'DIAS_RETRASO' in p_df.columns:
+        p_mora = p_df[p_df['DIAS_RETRASO'] > 0]
+        p_hoy = p_df[p_df['DIAS_RETRASO'] == 0]
+    else:
+        p_df['FECHA_APE_DT'] = pd.to_datetime(p_df['FECHA_APE'], errors='coerce')
+        p_mora = p_df[p_df['FECHA_APE_DT'].dt.date < hoy]
+        p_hoy = p_df[p_df['FECHA_APE_DT'].dt.date == hoy]
+        
+    # 2. Separar Mora y Hoy para Cerradas
+    c_df['FECHA_APE_DT'] = pd.to_datetime(c_df['FECHA_APE'], errors='coerce')
+    c_mora = c_df[c_df['FECHA_APE_DT'].dt.date < hoy]
+    c_hoy = c_df[c_df['FECHA_APE_DT'].dt.date == hoy]
 
-    if not resumen.empty:
-        for col in resumen.columns:
-            if col != 'ACTIVIDAD': resumen[col] = resumen[col].astype(int)
-        resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
-        resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
-        fila_total = {'Tipo': 'TOTAL GENERAL'}
-        for col in resumen.columns:
-            if col != 'Tipo': fila_total[col] = resumen[col].sum()
-        resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
-        col_config = {"Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium")}
-        if 'Inicio (Mora)' in resumen.columns:
-            col_config["Inicio (Mora)"] = st.column_config.NumberColumn("INICIO (MORA)", format="%d", width="small")
-            col_config["Pendientes (Hoy)"] = st.column_config.NumberColumn("PENDIENTES", format="%d", width="small")
-        else:
-            col_config["Asignadas"] = st.column_config.NumberColumn("ASIGNADAS (Total)", format="%d", width="small")
-        col_config["Cerradas"] = st.column_config.NumberColumn("CERRADAS", format="%d", width="small")
-        st.dataframe(resumen, use_container_width=True, hide_index=True, column_config=col_config)
-    else: st.info("No hay datos de operaciones para este segmento.")
+    # 3. Agrupar por TIPO DE ACTIVIDAD
+    def get_counts(df, col_name):
+        if df.empty: return pd.DataFrame(columns=['ACTIVIDAD', col_name])
+        return df.groupby('ACTIVIDAD').size().reset_index(name=col_name)
+
+    pm = get_counts(p_mora, 'MORA_Asig')
+    cm = get_counts(c_mora, 'MORA_Cerr')
+    ph = get_counts(p_hoy, 'HOY_Asig')
+    ch = get_counts(c_hoy, 'HOY_Cerr')
+
+    # Unir todas las tablas
+    resumen = pd.DataFrame(columns=['ACTIVIDAD'])
+    for df_parcial in [pm, cm, ph, ch]:
+        if not df_parcial.empty:
+            resumen = pd.merge(resumen, df_parcial, on='ACTIVIDAD', how='outer')
+
+    if resumen.empty or len(resumen.columns) == 1:
+        st.info("No hay datos de operaciones para este segmento.")
+        if st.button("Cerrar Resumen", use_container_width=True): st.rerun()
+        return
+
+    resumen = resumen.fillna(0)
+    
+    # Asegurar que existan las columnas por si alguna categoría estaba en 0
+    for col in ['MORA_Asig', 'MORA_Cerr', 'HOY_Asig', 'HOY_Cerr']:
+        if col not in resumen.columns:
+            resumen[col] = 0
+
+    # 4. Calcular Totales Verticales y Horizontales
+    resumen['MORA_Total'] = resumen['MORA_Asig'] + resumen['MORA_Cerr']
+    resumen['HOY_Total'] = resumen['HOY_Asig'] + resumen['HOY_Cerr']
+    resumen['GRAN_TOTAL'] = resumen['MORA_Total'] + resumen['HOY_Total']
+    
+    for col in resumen.columns:
+        if col != 'ACTIVIDAD': resumen[col] = resumen[col].astype(int)
+        
+    resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
+    resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
+    
+    # Fila de Total General al final de la tabla
+    fila_total = {'Tipo': 'TOTAL GENERAL'}
+    for col in resumen.columns:
+        if col != 'Tipo': fila_total[col] = resumen[col].sum()
+    resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
+
+    # 5. Configuración visual para Streamlit
+    col_config = {
+        "Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium"),
+        "MORA_Asig": st.column_config.NumberColumn("🔴 Mora (Asig)", format="%d"),
+        "MORA_Cerr": st.column_config.NumberColumn("🔴 Mora (Cerr)", format="%d"),
+        "MORA_Total": st.column_config.NumberColumn("🔴 Mora (Total)", format="%d"),
+        "HOY_Asig": st.column_config.NumberColumn("🔵 Hoy (Asig)", format="%d"),
+        "HOY_Cerr": st.column_config.NumberColumn("🔵 Hoy (Cerr)", format="%d"),
+        "HOY_Total": st.column_config.NumberColumn("🔵 Hoy (Total)", format="%d"),
+        "GRAN_TOTAL": st.column_config.NumberColumn("📦 GRAN TOTAL", format="%d")
+    }
+
+    # Ordenar las columnas para mostrar
+    columnas_orden = ['Tipo', 'MORA_Asig', 'MORA_Cerr', 'MORA_Total', 'HOY_Asig', 'HOY_Cerr', 'HOY_Total', 'GRAN_TOTAL']
+    
+    # Colorear la fila de Totales
+    def highlight_total(row):
+        if row['Tipo'] == 'TOTAL GENERAL':
+            return ['background-color: #2D3748; color: white; font-weight: bold'] * len(row)
+        return [''] * len(row)
+
+    st.dataframe(resumen[columnas_orden].style.apply(highlight_total, axis=1), 
+                 use_container_width=True, hide_index=True, column_config=col_config)
+                 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Cerrar Resumen", use_container_width=True): st.rerun()
-
-def aplicar_estilos_df(df_original_para_estilo):
-    df_visual_procesado = df_original_para_estilo.copy()
-    def row_styler_logic(fila_v):
-        estilos_fila = [''] * len(fila_v)
-        if fila_v.get('ES_OFFLINE') == True:
-            if 'NUM' in fila_v.index: estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #9b111e; color: white; font-weight: bold'
-        est_val = str(fila_v.get('ESTADO','')).upper().strip()
-        if est_val == 'CERRADA':
-            if 'TIEMPO_REAL' in fila_v.index:
-                idx_tr = fila_v.index.get_loc('TIEMPO_REAL')
-                minutos_trabajados = fila_v.get('MINUTOS_CALC', 0)
-                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
-                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
-        if fila_v.get('ALERTA_TIEMPO') == True:
-            if 'HORA_INI' in fila_v.index: estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
-        if 'DIAS_RETRASO' in fila_v.index:
-            idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
-            val_dias = fila_v['DIAS_RETRASO']
-            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #d32f2f; color: white; font-weight: bold' 
-            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #f57c00; color: white; font-weight: bold' 
-            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #fbc02d; color: black; font-weight: bold' 
-            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: #388e3c; color: white; font-weight: bold' 
-        return estilos_fila
-
-    if 'NUM' in df_visual_procesado.columns: df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
-    if 'HORA_INI' in df_visual_procesado.columns: df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
-    if 'HORA_LIQ' in df_visual_procesado.columns: df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
-    cols_a_mostrar = ['DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC']
-    columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
-    return df_visual_procesado[columnas_finales], row_styler_logic
