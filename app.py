@@ -454,15 +454,16 @@ def main():
         cli_up_g = df_base['CLIENTE'].fillna('').astype(str).str.upper()
         texto_g = act_upper_global + " " + com_up_g
 
-        cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
+cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
         cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
-        cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
+        # CORRECCIÓN: Priorizamos Niveles por encima de TV y Navegación
         cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
+        cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
         cond_nav = texto_g.str.contains("NAV|INTERNET|LENT", regex=True)
 
         df_base['MOTIVO'] = np.select(
-            [cond_off, cond_ins, cond_tv, cond_niv, cond_nav],
-            ["🔴 Offline / Caída", "📦 Instalación / Cambio", "📺 Falla de TV", "⚡ Niveles Alterados", "🌐 Lentitud / Navegación"],
+            [cond_off, cond_ins, cond_niv, cond_tv, cond_nav],
+            ["🔴 Offline / Caída", "📦 Instalación / Cambio", "⚡ Niveles Alterados", "📺 Falla de TV", "🌐 Lentitud / Navegación"],
             default="🔧 Mantenimiento General"
         )
 
