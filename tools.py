@@ -1422,7 +1422,8 @@ def es_offline_preciso(comentario):
     if not txt or txt == 'NAN': return False
     jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
     if any(word in txt for word in jergasolucion): return False
-    keywordsfalla = ['OFFLINE', 'OFF LINE', 'SIN INTERNET', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE', 'FUERA DE SERVICIO', 'SIN SEÑAL']
+    # CORRECCIÓN: Dejamos estrictamente términos de equipo caído
+    keywordsfalla = ['OFFLINE', 'OFF LINE', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE']
     return any(word in txt for word in keywordsfalla)
 
 def depurar_archivos_en_crudo(fileactividades, filedispositivos):
@@ -1529,7 +1530,7 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
         
         mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
         mask_est_abierto = est_upper != 'CERRADA'
-        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|FUERA DE SERVICIO|OFFLINE", regex=True)
+        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
         mask_precisa = com_upper.apply(es_offline_preciso) 
         
         df_act['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
