@@ -1,18 +1,34 @@
+# --- Framework Web y UI ---
 streamlit
+extra-streamlit-components
+streamlit-option-menu
+streamlit-js-eval
+
+# --- Nueva API y Servidor ---
+fastapi
+uvicorn
+
+# --- Base de Datos y Procesamiento ---
+oracledb
 pandas
-plotly
+
+# --- Excel y Hojas de Cálculo ---
+# (Se mantienen mientras haces la transición a Oracle)
 openpyxl
-fpdf
-matplotlib
+xlrd==2.0.1
 st-gsheets-connection
 gspread
-streamlit-js-eval
+
+# --- Extracción Web y HTML ---
+beautifulsoup4
 lxml
 html5lib
-xlrd==2.0.1
-extra-streamlit-components
-beautifulsoup4
-pdfplumber
-streamlit-option-menu
+
+# --- Visualización ---
+plotly
+matplotlib
+
+# --- Manejo de PDFs ---
 fpdf2
+pdfplumber
 pymupdf
