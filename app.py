@@ -12,6 +12,9 @@ import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
+import os
+
+
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -205,7 +208,7 @@ def main():
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
         pass 
 
-    # === LÓGICA DE NAVEGACIÓN ===
+    # === LÓGICA DE NAVEGACIÓN (BLOQUEO ROL MONITOREO) ===
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
@@ -276,6 +279,7 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
+        # REGLA DE CARGA DE ARCHIVOS: Todos los roles menos "monitoreo" pueden cargar archivos.
         mostrar_cargador = False
         if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
             mostrar_cargador = True
@@ -452,6 +456,7 @@ def main():
 
         cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
         cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
+        # CORRECCIÓN: Priorizamos Niveles por encima de TV y Navegación
         cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
         cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
         cond_nav = texto_g.str.contains("NAV|INTERNET|LENT", regex=True)
@@ -542,9 +547,11 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         tab1, tab2 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos"])
+        
         with tab1:
             try: mostrar_auditoria(es_movil, conn)
             except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
+            
         with tab2:
             try:
                 import tiempot
@@ -553,6 +560,7 @@ def main():
                 st.warning("⚠️ Falta el archivo 'tiempot.py'. Asegúrate de crearlo en la misma carpeta.")
             except Exception as e:
                 st.error(f"Ocurrió un error al cargar el módulo de Tiempo Técnicos: {e}")
+                
         return
 
     if nav_menu_diamante == "🚫 NOINSTALADO":
@@ -690,109 +698,54 @@ def main():
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
-            
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-            
             df_vivas_espejo = df_monitor_filtrado[mask_vivas_espejo].copy()
             mask_tec_valido_esp = df_vivas_espejo['TECNICO'].notna() & (df_vivas_espejo['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_espejo['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            
             df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
             df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
 
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
-            
-            # ==============================================================================
-            # GRÁFICAS ESPEJO (MORA VS HOY) ADAPTADAS A LA FECHA SELECCIONADA
-            # ==============================================================================
-            st.markdown("### 📊 Indicadores de Avance Operativo Detallado")
-            
+            st.markdown("### 📊 Indicadores de Avance Operativo (Mora)")
             df_asignadas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_asignadas_espejo['FECHA_APE'], errors='coerce')
             df_cerradas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_espejo['FECHA_APE'], errors='coerce')
+            df_mora_pend_rep = df_asignadas_espejo[df_asignadas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+            df_mora_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+            df_inicio_mora_rep = pd.concat([df_mora_pend_rep, df_mora_cerr_rep]).drop_duplicates(subset=['NUM'])
             
-            def calcular_metricas_cierre(segmento):
-                if segmento == 'GLOBAL':
-                    p = df_asignadas_espejo
-                    c = df_cerradas_espejo
-                else:
-                    p = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == segmento]
-                    c = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == segmento]
-
-                # Mora: Aperturadas ANTES de la fecha seleccionada
-                p_mora = len(p[p['FECHA_APE_DT'].dt.date < fecha_cal_sel])
-                c_mora = len(c[c['FECHA_APE_DT'].dt.date < fecha_cal_sel])
-                
-                # Hoy: Aperturadas EN o DESPUÉS de la fecha seleccionada
-                p_hoy = len(p[p['FECHA_APE_DT'].dt.date >= fecha_cal_sel])
-                c_hoy = len(c[c['FECHA_APE_DT'].dt.date >= fecha_cal_sel])
-
-                tot_mora = p_mora + c_mora
-                tot_hoy = p_hoy + c_hoy
-                tot_global = tot_mora + tot_hoy
-                cerr_global = c_mora + c_hoy
-
-                pct_mora = (c_mora / tot_mora * 100) if tot_mora > 0 else 0
-                pct_hoy = (c_hoy / tot_hoy * 100) if tot_hoy > 0 else 0
-                pct_global = (cerr_global / tot_global * 100) if tot_global > 0 else 0
-
-                return {
-                    'tot_g': tot_global, 'cerr_g': cerr_global, 'pct_g': pct_global,
-                    'tot_m': tot_mora, 'cerr_m': c_mora, 'pct_m': pct_mora,
-                    'tot_h': tot_hoy, 'cerr_h': c_hoy, 'pct_h': pct_hoy,
-                    'df_p': p, 'df_c': c
-                }
-
-            stats_resi_c = calcular_metricas_cierre('RESIDENCIAL')
-            stats_plex_c = calcular_metricas_cierre('PLEX')
-            stats_global_c = calcular_metricas_cierre('GLOBAL')
+            df_plex_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'PLEX']
+            df_plex_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'PLEX']
+            df_plex_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'PLEX']
             
-            def renderizar_metrica_cierre(col_ui, stats, titulo, color_hex, key_btn):
-                with col_ui:
-                    fig = go.Figure(go.Pie(
-                        values=[stats['pct_g'], max(0, 100 - stats['pct_g'])] if stats['tot_g'] > 0 else [0, 100],
-                        labels=['Completado', 'Pendiente'], hole=0.8,
-                        marker=dict(colors=[color_hex, '#2D2F39']),
-                        textinfo='none', hoverinfo='none', direction='clockwise', sort=False
-                    ))
-                    
-                    texto_central = f"{stats['pct_g']:.0f}%" if stats['tot_g'] > 0 else "N/A"
-                    subtexto = f"Total: {stats['cerr_g']} de {stats['tot_g']}" if stats['tot_g'] > 0 else "Sin asignaciones"
-                    
-                    fig.update_layout(
-                        showlegend=False, height=150, margin=dict(l=5, r=5, t=30, b=5),
-                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                        title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 14, 'weight': 'bold'}},
-                        annotations=[
-                            dict(text=texto_central, x=0.5, y=0.42, font_size=26, font_color=color_hex, showarrow=False, font_weight="bold"),
-                            dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#6B7280", showarrow=False)
-                        ]
-                    )
-                    st.plotly_chart(fig, use_container_width=True, key=f"pie_c_{key_btn}")
-
-                    html_badges = f"""
-                    <div style="display:flex; justify-content:center; gap:8px; font-size:11px; margin-top:-15px; margin-bottom:10px;">
-                        <div style="background-color:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #fca5a5;">
-                            🔴 Mora: {stats['cerr_m']}/{stats['tot_m']} ({stats['pct_m']:.0f}%)
-                        </div>
-                        <div style="background-color:#dbeafe; color:#1d4ed8; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #93c5fd;">
-                            🔵 Hoy: {stats['cerr_h']}/{stats['tot_h']} ({stats['pct_h']:.0f}%)
-                        </div>
-                    </div>
-                    """
-                    st.markdown(html_badges, unsafe_allow_html=True)
-
-                    if st.button("🔍 Ver Desglose", use_container_width=True, key=f"btn_c_{key_btn}"):
-                        mostrar_detalle_avance(titulo.upper(), stats['df_p'], stats['df_c'])
+            df_resi_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'RESIDENCIAL']
+            
+            tot_mora_plex_rep = len(df_plex_m_inicio_rep)
+            avance_mora_plex_rep = (len(df_plex_m_cerr_rep) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
+            
+            tot_mora_resi_rep = len(df_resi_m_inicio_rep)
+            avance_mora_resi_rep = (len(df_resi_m_cerr_rep) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
+            
+            tot_mora_global_rep = len(df_inicio_mora_rep)
+            avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
+            
+            def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
+                color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
+                if total_ordenes == 0: color_v = "#4B5563"
+                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
+                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
+                return fig
 
             if es_movil:
-                renderizar_metrica_cierre(st.container(), stats_resi_c, "🏠 Residencial", "#EF4444", "resi")
-                renderizar_metrica_cierre(st.container(), stats_plex_c, "🏢 PLEX", "#F59E0B", "plex")
-                renderizar_metrica_cierre(st.container(), stats_global_c, "🌍 Global", "#10B981", "glob")
+                st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+                st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+                st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             else:
                 col_gr1, col_gr2, col_gr3 = st.columns(3)
-                renderizar_metrica_cierre(col_gr1, stats_resi_c, "🏠 Residencial", "#EF4444", "resi")
-                renderizar_metrica_cierre(col_gr2, stats_plex_c, "🏢 PLEX", "#F59E0B", "plex")
-                renderizar_metrica_cierre(col_gr3, stats_global_c, "🌍 Global", "#10B981", "glob")
+                with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+                with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+                with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             
             st.markdown("---")
 
@@ -926,10 +879,6 @@ def main():
             st.markdown("---")
             
             st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
-            df_mora_pend_rep = df_asignadas_espejo[df_asignadas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
-            df_mora_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
-            df_inicio_mora_rep = pd.concat([df_mora_pend_rep, df_mora_cerr_rep]).drop_duplicates(subset=['NUM'])
-            
             m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
             p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
             c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
@@ -1273,9 +1222,11 @@ def main():
         with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
             st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
             
+            # Preparar fechas para cálculo exacto
             df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
             
             def calcular_metricas(segmento):
+                """Calcula Mora, Día y Global para un segmento específico."""
                 if segmento == 'GLOBAL':
                     p = df_solo_asignadas_monitor
                     c = df_cerradas_hoy_monitor
@@ -1283,22 +1234,20 @@ def main():
                     p = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == segmento]
                     c = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == segmento]
 
-                if 'DIAS_RETRASO' in p.columns:
-                    p_mora = len(p[p['DIAS_RETRASO'] >= 1])
-                    p_hoy = len(p[p['DIAS_RETRASO'] < 1])
-                else:
-                    p['FECHA_APE_DT'] = pd.to_datetime(p['FECHA_APE'], errors='coerce')
-                    p_mora = len(p[p['FECHA_APE_DT'].dt.date < hoy_date_valor])
-                    p_hoy = len(p[p['FECHA_APE_DT'].dt.date >= hoy_date_valor])
+                # PENDIENTES (Usamos DIAS_RETRASO para respetar excepciones)
+                p_mora = len(p[p['DIAS_RETRASO'] > 0])
+                p_hoy = len(p[p['DIAS_RETRASO'] == 0])
 
+                # CERRADAS (Usamos la fecha de apertura vs Hoy)
                 c_mora = len(c[c['FECHA_APE_DT'].dt.date < hoy_date_valor])
-                c_hoy = len(c[c['FECHA_APE_DT'].dt.date >= hoy_date_valor])
+                c_hoy = len(c[c['FECHA_APE_DT'].dt.date == hoy_date_valor])
 
-                tot_mora = p_mora + c_mora
-                tot_hoy = p_hoy + c_hoy
+                # TOTALES
+                tot_mora, tot_hoy = p_mora + c_mora, p_hoy + c_hoy
                 tot_global = tot_mora + tot_hoy
                 cerr_global = c_mora + c_hoy
 
+                # PORCENTAJES
                 pct_mora = (c_mora / tot_mora * 100) if tot_mora > 0 else 0
                 pct_hoy = (c_hoy / tot_hoy * 100) if tot_hoy > 0 else 0
                 pct_global = (cerr_global / tot_global * 100) if tot_global > 0 else 0
@@ -1310,12 +1259,14 @@ def main():
                     'df_p': p, 'df_c': c
                 }
 
+            # Calcular los 3 segmentos
             stats_resi = calcular_metricas('RESIDENCIAL')
             stats_plex = calcular_metricas('PLEX')
             stats_global = calcular_metricas('GLOBAL')
 
             def renderizar_metrica(col_ui, stats, titulo, color_hex, key_btn):
                 with col_ui:
+                    # 1. Gráfica Principal (Global)
                     fig = go.Figure(go.Pie(
                         values=[stats['pct_g'], max(0, 100 - stats['pct_g'])] if stats['tot_g'] > 0 else [0, 100],
                         labels=['Completado', 'Pendiente'], hole=0.8,
@@ -1337,6 +1288,7 @@ def main():
                     )
                     st.plotly_chart(fig, use_container_width=True, key=f"pie_{key_btn}")
 
+                    # 2. Etiquetas de Desglose (Mora vs Hoy)
                     html_badges = f"""
                     <div style="display:flex; justify-content:center; gap:8px; font-size:11px; margin-top:-15px; margin-bottom:10px;">
                         <div style="background-color:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #fca5a5;">
@@ -1349,9 +1301,11 @@ def main():
                     """
                     st.markdown(html_badges, unsafe_allow_html=True)
 
+                    # 3. Botón de Detalle
                     if st.button("🔍 Ver Desglose", use_container_width=True, key=f"btn_{key_btn}"):
                         mostrar_detalle_avance(titulo.upper(), stats['df_p'], stats['df_c'])
 
+            # Renderizar en Pantalla
             if es_movil:
                 renderizar_metrica(st.container(), stats_resi, "🏠 Residencial", "#EF4444", "resi_m")
                 renderizar_metrica(st.container(), stats_plex, "🏢 PLEX", "#F59E0B", "plex_m")
@@ -1363,7 +1317,7 @@ def main():
                 renderizar_metrica(col3, stats_global, "🌍 Global", "#10B981", "glob")
 
             st.markdown("---")
-
+    
             # ==============================================================================
             # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
             # ==============================================================================
@@ -1385,6 +1339,7 @@ def main():
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
                     
+                    # Seguridad Plotly anti-barras negativas
                     mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                     df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
                     
