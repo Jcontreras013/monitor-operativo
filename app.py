@@ -706,6 +706,8 @@ def main():
             df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
 
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
+
+            
             st.markdown("### 📊 Indicadores de Avance Operativo (Mora)")
             df_asignadas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_asignadas_espejo['FECHA_APE'], errors='coerce')
             df_cerradas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_espejo['FECHA_APE'], errors='coerce')
