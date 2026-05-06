@@ -695,112 +695,59 @@ def main():
                         if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                     except Exception as e: st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
         
-with tab_diario:
+        with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
-            
             mask_vivas_espejo = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             mask_cerradas_espejo = (df_monitor_filtrado['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-            
             df_vivas_espejo = df_monitor_filtrado[mask_vivas_espejo].copy()
             mask_tec_valido_esp = df_vivas_espejo['TECNICO'].notna() & (df_vivas_espejo['TECNICO'].astype(str).str.strip() != '') & (~df_vivas_espejo['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            
             df_asignadas_espejo = df_vivas_espejo[mask_tec_valido_esp].copy()
             df_cerradas_espejo = df_monitor_filtrado[mask_cerradas_espejo].copy()
 
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
+
             
-            # ==============================================================================
-            # GRÁFICAS ESPEJO (MORA VS HOY) ADAPTADAS A LA FECHA SELECCIONADA
-            # ==============================================================================
-            st.markdown("### 📊 Indicadores de Avance Operativo Detallado")
-            
+            st.markdown("### 📊 Indicadores de Avance Operativo (Mora)")
             df_asignadas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_asignadas_espejo['FECHA_APE'], errors='coerce')
             df_cerradas_espejo['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_espejo['FECHA_APE'], errors='coerce')
+            df_mora_pend_rep = df_asignadas_espejo[df_asignadas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+            df_mora_cerr_rep = df_cerradas_espejo[df_cerradas_espejo['FECHA_APE_DT'].dt.date < fecha_cal_sel].copy()
+            df_inicio_mora_rep = pd.concat([df_mora_pend_rep, df_mora_cerr_rep]).drop_duplicates(subset=['NUM'])
             
-            def calcular_metricas_cierre(segmento):
-                if segmento == 'GLOBAL':
-                    p = df_asignadas_espejo
-                    c = df_cerradas_espejo
-                else:
-                    p = df_asignadas_espejo[df_asignadas_espejo['SEGMENTO'] == segmento]
-                    c = df_cerradas_espejo[df_cerradas_espejo['SEGMENTO'] == segmento]
-
-                # Mora: Aperturadas ANTES de la fecha seleccionada
-                p_mora = len(p[p['FECHA_APE_DT'].dt.date < fecha_cal_sel])
-                c_mora = len(c[c['FECHA_APE_DT'].dt.date < fecha_cal_sel])
-                
-                # Hoy: Aperturadas EN o DESPUÉS de la fecha seleccionada
-                p_hoy = len(p[p['FECHA_APE_DT'].dt.date >= fecha_cal_sel])
-                c_hoy = len(c[c['FECHA_APE_DT'].dt.date >= fecha_cal_sel])
-
-                tot_mora = p_mora + c_mora
-                tot_hoy = p_hoy + c_hoy
-                tot_global = tot_mora + tot_hoy
-                cerr_global = c_mora + c_hoy
-
-                pct_mora = (c_mora / tot_mora * 100) if tot_mora > 0 else 0
-                pct_hoy = (c_hoy / tot_hoy * 100) if tot_hoy > 0 else 0
-                pct_global = (cerr_global / tot_global * 100) if tot_global > 0 else 0
-
-                return {
-                    'tot_g': tot_global, 'cerr_g': cerr_global, 'pct_g': pct_global,
-                    'tot_m': tot_mora, 'cerr_m': c_mora, 'pct_m': pct_mora,
-                    'tot_h': tot_hoy, 'cerr_h': c_hoy, 'pct_h': pct_hoy,
-                    'df_p': p, 'df_c': c
-                }
-
-            stats_resi_c = calcular_metricas_cierre('RESIDENCIAL')
-            stats_plex_c = calcular_metricas_cierre('PLEX')
-            stats_global_c = calcular_metricas_cierre('GLOBAL')
+            df_plex_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'PLEX']
+            df_plex_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'PLEX']
+            df_plex_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'PLEX']
             
-            def renderizar_metrica_cierre(col_ui, stats, titulo, color_hex, key_btn):
-                with col_ui:
-                    fig = go.Figure(go.Pie(
-                        values=[stats['pct_g'], max(0, 100 - stats['pct_g'])] if stats['tot_g'] > 0 else [0, 100],
-                        labels=['Completado', 'Pendiente'], hole=0.8,
-                        marker=dict(colors=[color_hex, '#2D2F39']),
-                        textinfo='none', hoverinfo='none', direction='clockwise', sort=False
-                    ))
-                    
-                    texto_central = f"{stats['pct_g']:.0f}%" if stats['tot_g'] > 0 else "N/A"
-                    subtexto = f"Total: {stats['cerr_g']} de {stats['tot_g']}" if stats['tot_g'] > 0 else "Sin asignaciones"
-                    
-                    fig.update_layout(
-                        showlegend=False, height=150, margin=dict(l=5, r=5, t=30, b=5),
-                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                        title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 14, 'weight': 'bold'}},
-                        annotations=[
-                            dict(text=texto_central, x=0.5, y=0.42, font_size=26, font_color=color_hex, showarrow=False, font_weight="bold"),
-                            dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#6B7280", showarrow=False)
-                        ]
-                    )
-                    st.plotly_chart(fig, use_container_width=True, key=f"pie_c_{key_btn}")
-
-                    html_badges = f"""
-                    <div style="display:flex; justify-content:center; gap:8px; font-size:11px; margin-top:-15px; margin-bottom:10px;">
-                        <div style="background-color:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #fca5a5;">
-                            🔴 Mora: {stats['cerr_m']}/{stats['tot_m']} ({stats['pct_m']:.0f}%)
-                        </div>
-                        <div style="background-color:#dbeafe; color:#1d4ed8; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #93c5fd;">
-                            🔵 Hoy: {stats['cerr_h']}/{stats['tot_h']} ({stats['pct_h']:.0f}%)
-                        </div>
-                    </div>
-                    """
-                    st.markdown(html_badges, unsafe_allow_html=True)
-
-                    if st.button("🔍 Ver Desglose", use_container_width=True, key=f"btn_c_{key_btn}"):
-                        mostrar_detalle_avance(titulo.upper(), stats['df_p'], stats['df_c'])
+            df_resi_m_pend_rep = df_mora_pend_rep[df_mora_pend_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_cerr_rep = df_mora_cerr_rep[df_mora_cerr_rep['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_inicio_rep = df_inicio_mora_rep[df_inicio_mora_rep['SEGMENTO'] == 'RESIDENCIAL']
+            
+            tot_mora_plex_rep = len(df_plex_m_inicio_rep)
+            avance_mora_plex_rep = (len(df_plex_m_cerr_rep) / tot_mora_plex_rep * 100) if tot_mora_plex_rep > 0 else 0
+            
+            tot_mora_resi_rep = len(df_resi_m_inicio_rep)
+            avance_mora_resi_rep = (len(df_resi_m_cerr_rep) / tot_mora_resi_rep * 100) if tot_mora_resi_rep > 0 else 0
+            
+            tot_mora_global_rep = len(df_inicio_mora_rep)
+            avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
+            
+            def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
+                color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
+                if total_ordenes == 0: color_v = "#4B5563"
+                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
+                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
+                return fig
 
             if es_movil:
-                renderizar_metrica_cierre(st.container(), stats_resi_c, "🏠 Residencial", "#EF4444", "resi")
-                renderizar_metrica_cierre(st.container(), stats_plex_c, "🏢 PLEX", "#F59E0B", "plex")
-                renderizar_metrica_cierre(st.container(), stats_global_c, "🌍 Global", "#10B981", "glob")
+                st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+                st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+                st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             else:
                 col_gr1, col_gr2, col_gr3 = st.columns(3)
-                renderizar_metrica_cierre(col_gr1, stats_resi_c, "🏠 Residencial", "#EF4444", "resi")
-                renderizar_metrica_cierre(col_gr2, stats_plex_c, "🏢 PLEX", "#F59E0B", "plex")
-                renderizar_metrica_cierre(col_gr3, stats_global_c, "🌍 Global", "#10B981", "glob")
+                with col_gr1: st.plotly_chart(crear_velocimetro_rep(avance_mora_resi_rep, "🏠 Mora Residencial", len(df_resi_m_inicio_rep)), use_container_width=True)
+                with col_gr2: st.plotly_chart(crear_velocimetro_rep(avance_mora_plex_rep, "🏢 Mora PLEX", len(df_plex_m_inicio_rep)), use_container_width=True)
+                with col_gr3: st.plotly_chart(crear_velocimetro_rep(avance_mora_global_rep, "🌍 Mora Global", len(df_inicio_mora_rep)), use_container_width=True)
             
             st.markdown("---")
 
