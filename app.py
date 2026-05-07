@@ -13,6 +13,7 @@ from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import os
+import settings    
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -182,6 +183,7 @@ def sincronizar_datos_nube(conn):
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
+    settings.inicializar_configuracion()
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
     
@@ -239,7 +241,7 @@ def main():
             elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
             elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
             else: 
-                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
+                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "⚙️ Configuración"])
         else:
             selected_nav = option_menu(
                 menu_title=None,
@@ -261,7 +263,7 @@ def main():
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
+                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos", "⚙️ Configuración"])
             else:
                 st.markdown("### 🖥️ Menú de Control")
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
@@ -490,6 +492,8 @@ def main():
 
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
+        
+        if st.session_state.config_mostrar_filtros:
         with filtro_container:
             if not es_movil: st.markdown("---")
             st.markdown("### 🎛️ Filtros Múltiples")
@@ -542,6 +546,11 @@ def main():
     # ==============================================================================
     # 4. RENDERIZADO DE PANTALLAS
     # ==============================================================================
+  
+    if nav_menu_diamante == "⚙️ Configuración":
+        settings.mostrar_configuracion()
+        return
+    
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         tab1, tab2 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos"])
         
@@ -1085,6 +1094,7 @@ def main():
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
+        if st.session_state.config_mostrar_kpis:
         if es_movil:
             st.markdown(f"""
             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
@@ -1338,7 +1348,8 @@ def main():
             # ==============================================================================
             # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
             # ==============================================================================
-            if not es_movil:
+           
+           if not es_movil and st.session_state.config_mostrar_gantt:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>", unsafe_allow_html=True)
                 
                 mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
