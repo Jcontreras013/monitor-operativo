@@ -780,7 +780,7 @@ def main():
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                        fig_gantt_d = px.timeline(
+                    fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
                         x_end="GANTT_END", 
