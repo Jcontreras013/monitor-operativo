@@ -46,8 +46,7 @@ def mostrar_comentario_cierre(fila):
     with col_modal_b:
         st.markdown("##### 🚦 Datos de Operación")
         st.write(f"**Estado Actual:** {fila['ESTADO']}")
-        # CAMBIO: Se reemplaza Técnico por Actividad
-        st.write(f"**Actividad:** {fila.get('ACTIVIDAD', 'N/D')}")
+        st.write(f"**Técnico:** {fila['TECNICO']}")
         if 'MX' in fila: st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
         if 'GPS' in fila: st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
 
@@ -107,8 +106,7 @@ def mostrar_comentario_cierre(fila):
     except:
         h_ini_copy = "N/D"
         
-    # CAMBIO: Se ajusta el texto de copia para mostrar ACTIVIDAD en lugar de TECNICO
-    texto_copia = f"ACTIVIDAD={fila.get('ACTIVIDAD', 'N/D')}\nNUM={fila.get('NUM', 'N/D')}\nCOLONIA={fila.get('COLONIA', 'N/D')}\nESTADO={fila.get('ESTADO', 'N/D')}\nInicio={h_ini_copy}"
+    texto_copia = f"TECNICO={fila.get('TECNICO', 'N/D')}\nNUM={fila.get('NUM', 'N/D')}\nCOLONIA={fila.get('COLONIA', 'N/D')}\nESTADO={fila.get('ESTADO', 'N/D')}\nInicio={h_ini_copy}"
     
     st.code(texto_copia, language="text")
 
