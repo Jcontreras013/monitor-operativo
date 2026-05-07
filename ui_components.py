@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px # Asegúrate de importar esto para el gráfico
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
@@ -32,64 +31,6 @@ def aplicar_estilos_nativos():
     """
     st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# ==========================================
-# NUEVA FUNCIÓN: Gráfico Timeline
-# ==========================================
-def dibujar_timeline_tecnicos(df):
-    """
-    Genera un gráfico de Gantt/Timeline para visualizar el trabajo de los técnicos.
-    Muestra la Actividad en lugar del Nombre en el tooltip.
-    """
-    # 1. Asegurarnos de que las columnas de tiempo sean datetime
-    df['Inicio'] = pd.to_datetime(df['HORA_INI'], errors='coerce')
-    df['Cierre'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce')
-    
-    # Rellenar 'Cierre' con la hora actual si está vacía para que la barra se dibuje
-    ahora = get_honduras_time()
-    df['Cierre'] = df['Cierre'].fillna(ahora)
-
-    # 2. Eliminar filas sin hora de inicio
-    df_plot = df.dropna(subset=['Inicio']).copy()
-
-    if df_plot.empty:
-        st.warning("No hay suficientes datos de tiempo para generar el gráfico.")
-        return
-
-    # 3. Crear el texto personalizado para el tooltip (HOVER)
-    # Aquí cambiamos TECNICO por ACTIVIDAD
-    df_plot['texto_hover'] = (
-        "ACTIVIDAD=" + df_plot['ACTIVIDAD'].astype(str) + "<br>" +
-        "NUM=" + df_plot['NUM'].astype(str) + "<br>" +
-        "COLONIA=" + df_plot['COLONIA'].astype(str) + "<br>" +
-        "ESTADO=" + df_plot['ESTADO'].astype(str) + "<br>" +
-        "Inicio=" + df_plot['Inicio'].dt.strftime('%H:%M') + "<br>" +
-        "Cierre=" + df_plot['Cierre'].dt.strftime('%H:%M')
-    )
-
-    # 4. Crear el gráfico con Plotly Express
-    fig = px.timeline(
-        df_plot, 
-        x_start="Inicio", 
-        x_end="Cierre", 
-        y="TECNICO", # Seguimos agrupando por técnico en el eje Y
-        color="ESTADO",
-        custom_data=["texto_hover"] # Pasamos nuestra columna personalizada
-    )
-
-    # 5. Aplicar el tooltip personalizado
-    fig.update_traces(hovertemplate="%{customdata[0]}<extra></extra>")
-    
-    # 6. Ajustes de diseño
-    fig.update_yaxes(autorange="reversed") # Para que el primer técnico salga arriba
-    fig.update_layout(
-        height=500,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend_title_text='Estado'
-    )
-
-    # 7. Mostrar en Streamlit
-    st.plotly_chart(fig, use_container_width=True)
-
 @st.dialog("Detalle de Gestión de la Orden")
 def mostrar_comentario_cierre(fila):
     st.markdown(f"### 📋 Información Detallada: Orden N° {fila['NUM']}")
@@ -105,7 +46,8 @@ def mostrar_comentario_cierre(fila):
     with col_modal_b:
         st.markdown("##### 🚦 Datos de Operación")
         st.write(f"**Estado Actual:** {fila['ESTADO']}")
-        st.write(f"**Técnico:** {fila['TECNICO']}")
+        # CAMBIO: Se reemplaza Técnico por Actividad
+        st.write(f"**Actividad:** {fila.get('ACTIVIDAD', 'N/D')}")
         if 'MX' in fila: st.write(f"**Vehículo:** {fila.get('MX', 'S/N')}")
         if 'GPS' in fila: st.write(f"**GPS:** {fila.get('GPS', 'S/N')}")
 
@@ -165,7 +107,7 @@ def mostrar_comentario_cierre(fila):
     except:
         h_ini_copy = "N/D"
         
-    # Cambié TECNICO por ACTIVIDAD aquí también por si copian el texto
+    # CAMBIO: Se ajusta el texto de copia para mostrar ACTIVIDAD en lugar de TECNICO
     texto_copia = f"ACTIVIDAD={fila.get('ACTIVIDAD', 'N/D')}\nNUM={fila.get('NUM', 'N/D')}\nCOLONIA={fila.get('COLONIA', 'N/D')}\nESTADO={fila.get('ESTADO', 'N/D')}\nInicio={h_ini_copy}"
     
     st.code(texto_copia, language="text")
@@ -214,17 +156,15 @@ def aplicar_estilos_df(df_original_para_estilo):
         estilos_fila = [''] * len(fila_v)
         if fila_v.get('ES_OFFLINE') == True:
             if 'NUM' in fila_v.index: estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #9b111e; color: white; font-weight: bold'
-        
-        # Omitimos la validación por minutos_calc y la basamos en otros factores
         est_val = str(fila_v.get('ESTADO','')).upper().strip()
         if est_val == 'CERRADA':
-             if 'TIEMPO_REAL' in fila_v.index:
-                # Si necesitas colorear por tiempo real, ajusta la lógica aquí sin usar la columna eliminada
-                pass
-
+            if 'TIEMPO_REAL' in fila_v.index:
+                idx_tr = fila_v.index.get_loc('TIEMPO_REAL')
+                minutos_trabajados = fila_v.get('MINUTOS_CALC', 0)
+                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
+                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
         if fila_v.get('ALERTA_TIEMPO') == True:
             if 'HORA_INI' in fila_v.index: estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
-        
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
@@ -237,12 +177,6 @@ def aplicar_estilos_df(df_original_para_estilo):
     if 'NUM' in df_visual_procesado.columns: df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
     if 'HORA_INI' in df_visual_procesado.columns: df_visual_procesado['HORA_INI'] = pd.to_datetime(df_visual_procesado['HORA_INI'], errors='coerce').dt.strftime('%H:%M').fillna("---")
     if 'HORA_LIQ' in df_visual_procesado.columns: df_visual_procesado['HORA_LIQ'] = pd.to_datetime(df_visual_procesado['HORA_LIQ'], errors='coerce').dt.strftime('%H:%M').fillna("---")
-    
-    # ACTUALIZACIÓN DE COLUMNAS: Quitamos MINUTOS_CALC y agregamos SOP y requestedOlt
-    cols_a_mostrar = [
-        'DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 
-        'TECNICO', 'ACTIVIDAD', 'SOP', 'requestedOlt', 'MOTIVO', 'CLIENTE', 
-        'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE'
-    ]
+    cols_a_mostrar = ['DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC']
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
