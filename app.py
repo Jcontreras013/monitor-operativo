@@ -778,15 +778,18 @@ def main():
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
                     # === CAMBIO APLICADO: INFO_HOVER PARA EL TOOLTIP ===
+# === 1. CREACIÓN DEL TEXTO DEL TOOLTIP (DENTRO DE CENTRO DE REPORTES) ===
                     df_para_gantt_diario['INFO_HOVER'] = (
                         "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
                         "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
                         "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
                         "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
                         "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
-                        "Cierre=" + df_para_gantt_diario['Cierre'].astype(str)
+                        "Cierre=" + df_para_gantt_diario['Cierre'].astype(str) + "<br>" +
+                        "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str) # Agregamos tiempo total
                     )
 
+                    # === 2. GENERACIÓN DEL GRÁFICO CON CUSTOM_DATA ===
                     fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
@@ -794,8 +797,18 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        custom_data=["INFO_HOVER"], # === INYECCION CUSTOM_DATA ===
+                        custom_data=["INFO_HOVER"], # Inyectamos el texto personalizado
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
+                    )
+                    
+                    # === 3. CONFIGURACIÓN DEL HOVERTEMPLATE ===
+                    fig_gantt_d.update_traces(
+                        textposition='inside', 
+                        insidetextanchor='middle', 
+                        marker_line_color='white', 
+                        marker_line_width=1.5, 
+                        opacity=0.9,
+                        hovertemplate="%{customdata[0]}<extra></extra>" # Fuerza a mostrar solo nuestro texto
                     )
                     
                     fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
