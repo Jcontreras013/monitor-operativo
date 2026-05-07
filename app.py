@@ -780,7 +780,7 @@ def main():
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                    fig_gantt_d = px.timeline(
+fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
                         x_end="GANTT_END", 
@@ -788,9 +788,11 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={
+                            "TECNICO": False, # Oculta el técnico de la primera línea
+                            "ACTIVIDAD": True, # Muestra la actividad en la primera línea
                             "NUM": True, "COLONIA": True, "ESTADO": True, 
                             "Inicio": True, "Cierre": True,
-                            "GANTT_START": False, "GANTT_END": False, "ACTIVIDAD": False
+                            "GANTT_START": False, "GANTT_END": False
                         }, 
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                     )
