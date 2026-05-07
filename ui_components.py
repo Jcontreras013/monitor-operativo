@@ -113,38 +113,99 @@ def mostrar_comentario_cierre(fila):
     if st.button("Cerrar Detalles y Volver al Monitor", use_container_width=True): 
         st.rerun()
 
+# =========================================================================================
+# LÓGICA RECONSTRUIDA DE 6 COLUMNAS
+# =========================================================================================
 @st.dialog("Resumen de Operaciones", width="large")
 def mostrar_detalle_avance(segmento, asignadas_df, cerradas_df, inicio_mora_df=None):
     st.subheader(f"📊 Desglose: {segmento}")
-    if not asignadas_df.empty: p = asignadas_df.groupby('ACTIVIDAD').size().reset_index(name='Pendientes (Hoy)')
-    else: p = pd.DataFrame(columns=['ACTIVIDAD', 'Pendientes (Hoy)'])
-    if not cerradas_df.empty: c = cerradas_df.groupby('ACTIVIDAD').size().reset_index(name='Cerradas')
-    else: c = pd.DataFrame(columns=['ACTIVIDAD', 'Cerradas'])
-    resumen = pd.merge(p, c, on='ACTIVIDAD', how='outer').fillna(0)
-    if inicio_mora_df is not None:
-        if not inicio_mora_df.empty: m = inicio_mora_df.groupby('ACTIVIDAD').size().reset_index(name='Inicio (Mora)')
-        else: m = pd.DataFrame(columns=['ACTIVIDAD', 'Inicio (Mora)'])
-        resumen = pd.merge(m, resumen, on='ACTIVIDAD', how='outer').fillna(0)
-    else: resumen.rename(columns={'Pendientes (Hoy)': 'Asignadas'}, inplace=True)
 
-    if not resumen.empty:
-        for col in resumen.columns:
-            if col != 'ACTIVIDAD': resumen[col] = resumen[col].astype(int)
-        resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
-        resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
-        fila_total = {'Tipo': 'TOTAL GENERAL'}
-        for col in resumen.columns:
-            if col != 'Tipo': fila_total[col] = resumen[col].sum()
-        resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
-        col_config = {"Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium")}
-        if 'Inicio (Mora)' in resumen.columns:
-            col_config["Inicio (Mora)"] = st.column_config.NumberColumn("INICIO (MORA)", format="%d", width="small")
-            col_config["Pendientes (Hoy)"] = st.column_config.NumberColumn("PENDIENTES", format="%d", width="small")
-        else:
-            col_config["Asignadas"] = st.column_config.NumberColumn("ASIGNADAS (Total)", format="%d", width="small")
-        col_config["Cerradas"] = st.column_config.NumberColumn("CERRADAS", format="%d", width="small")
-        st.dataframe(resumen, use_container_width=True, hide_index=True, column_config=col_config)
-    else: st.info("No hay datos de operaciones para este segmento.")
+    hoy_date = get_honduras_time().date()
+
+    # Validamos que tengamos la columna de fechas real para hacer cortes
+    if not cerradas_df.empty and 'FECHA_APE_DT' not in cerradas_df.columns:
+        cerradas_df['FECHA_APE_DT'] = pd.to_datetime(cerradas_df['FECHA_APE'], errors='coerce')
+
+    # Separación de datos: Mora vs Día Actual
+    if 'DIAS_RETRASO' in asignadas_df.columns:
+        p_mora = asignadas_df[asignadas_df['DIAS_RETRASO'] > 0]
+        p_hoy = asignadas_df[asignadas_df['DIAS_RETRASO'] <= 0]
+    else:
+        p_mora = asignadas_df
+        p_hoy = pd.DataFrame(columns=asignadas_df.columns)
+
+    if 'FECHA_APE_DT' in cerradas_df.columns:
+        c_mora = cerradas_df[cerradas_df['FECHA_APE_DT'].dt.date < hoy_date]
+        c_hoy = cerradas_df[cerradas_df['FECHA_APE_DT'].dt.date == hoy_date]
+    else:
+        c_mora = cerradas_df
+        c_hoy = pd.DataFrame(columns=cerradas_df.columns)
+
+    # Función rápida para agrupar y contar por actividad
+    def agrupar(df, col_name):
+        if df.empty: return pd.DataFrame(columns=['ACTIVIDAD', col_name])
+        return df.groupby('ACTIVIDAD').size().reset_index(name=col_name)
+
+    # 1. Armamos bloque de MORA
+    if inicio_mora_df is not None:
+        grp_mora_ini = agrupar(inicio_mora_df, 'Mora inicial')
+    else:
+        grp_mora_ini = agrupar(pd.concat([p_mora, c_mora]), 'Mora inicial')
+
+    grp_c_mora = agrupar(c_mora, 'Cerradas')
+
+    # 2. Armamos bloque de HOY
+    grp_a_hoy = agrupar(pd.concat([p_hoy, c_hoy]), 'Asignadas hoy')
+    grp_c_hoy = agrupar(c_hoy, 'Cerradas hoy')
+
+    # Extraemos todas las actividades únicas para tener el cascarón de la tabla
+    dfs = [grp_mora_ini, grp_c_mora, grp_a_hoy, grp_c_hoy]
+    actividades = set()
+    for df in dfs:
+        if not df.empty: actividades.update(df['ACTIVIDAD'].unique())
+
+    resumen = pd.DataFrame({'ACTIVIDAD': list(actividades)})
+
+    # Unimos todo
+    for df in dfs:
+        if not df.empty: resumen = pd.merge(resumen, df, on='ACTIVIDAD', how='left')
+
+    resumen = resumen.fillna(0)
+    
+    cols_calc = ['Mora inicial', 'Cerradas', 'Asignadas hoy', 'Cerradas hoy']
+    for col in cols_calc:
+        if col not in resumen.columns: resumen[col] = 0
+        resumen[col] = resumen[col].astype(int)
+
+    # Las dos restas mágicas
+    resumen['Total_M'] = resumen['Mora inicial'] - resumen['Cerradas']
+    resumen['Total_H'] = resumen['Asignadas hoy'] - resumen['Cerradas hoy']
+
+    # Estética
+    resumen.rename(columns={'ACTIVIDAD': 'Tipo'}, inplace=True)
+    resumen = resumen.sort_values(by='Tipo').reset_index(drop=True)
+
+    # Fila de Totales
+    fila_total = {'Tipo': 'TOTAL GENERAL'}
+    for col in ['Mora inicial', 'Cerradas', 'Total_M', 'Asignadas hoy', 'Cerradas hoy', 'Total_H']:
+        fila_total[col] = resumen[col].sum()
+
+    resumen = pd.concat([resumen, pd.DataFrame([fila_total])], ignore_index=True)
+
+    # Nombres exactos que se mostrarán en pantalla
+    col_config = {
+        "Tipo": st.column_config.TextColumn("TIPO DE ORDEN", width="medium"),
+        "Mora inicial": st.column_config.NumberColumn("Mora inicial", format="%d"),
+        "Cerradas": st.column_config.NumberColumn("Cerradas", format="%d"),
+        "Total_M": st.column_config.NumberColumn("Total", format="%d"),
+        "Asignadas hoy": st.column_config.NumberColumn("Asignadas hoy", format="%d"),
+        "Cerradas hoy": st.column_config.NumberColumn("Cerradas hoy", format="%d"),
+        "Total_H": st.column_config.NumberColumn("Total", format="%d")
+    }
+
+    cols_orden = ['Tipo', 'Mora inicial', 'Cerradas', 'Total_M', 'Asignadas hoy', 'Cerradas hoy', 'Total_H']
+    st.dataframe(resumen[cols_orden], use_container_width=True, hide_index=True, column_config=col_config)
+    
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Cerrar Resumen", use_container_width=True): st.rerun()
 
