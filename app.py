@@ -1362,7 +1362,8 @@ def main():
                         "COLONIA=" + df_para_gantt_final['COLONIA'].astype(str) + "<br>" +
                         "ESTADO=" + df_para_gantt_final['ESTADO'].astype(str) + "<br>" +
                         "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
-                        "Cierre=" + df_para_gantt_final['Cierre'].astype(str)
+                        "Cierre=" + df_para_gantt_final['Cierre'].astype(str) + "<br>" +
+                        "Tiempo Total=" + df_para_gantt_final['TIEMPO_REAL'].astype(str)
                     )
 
                     st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
