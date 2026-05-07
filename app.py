@@ -493,7 +493,7 @@ def main():
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
         
-        if st.session_state.config_mostrar_filtros:
+    if st.session_state.config_mostrar_filtros:
         with filtro_container:
             if not es_movil: st.markdown("---")
             st.markdown("### 🎛️ Filtros Múltiples")
