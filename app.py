@@ -788,8 +788,7 @@ def main():
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
                         hover_data={
-                            "TECNICO": False, # Oculta el técnico de la primera línea
-                            "ACTIVIDAD": True, # Muestra la actividad en la primera línea
+                            "ACTIVIDAD": True, 
                             "NUM": True, "COLONIA": True, "ESTADO": True, 
                             "Inicio": True, "Cierre": True,
                             "GANTT_START": False, "GANTT_END": False
