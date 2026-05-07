@@ -713,11 +713,43 @@ def main():
             tot_mora_global_rep = len(df_inicio_mora_rep)
             avance_mora_global_rep = (len(df_mora_cerr_rep) / tot_mora_global_rep * 100) if tot_mora_global_rep > 0 else 0
             
-            def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
+def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
                 color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
-                if total_ordenes == 0: color_v = "#4B5563"
-                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
-                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight=\"bold\")])
+                if total_ordenes == 0: 
+                    color_v = "#4B5563"
+                    
+                fig = go.Figure(go.Pie(
+                    values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], 
+                    labels=['Completado', 'Pendiente'], 
+                    hole=0.8, 
+                    marker=dict(colors=[color_v, '#2D2F39']), 
+                    textinfo='none', 
+                    hoverinfo='none', 
+                    direction='clockwise', 
+                    sort=False
+                ))
+                
+                fig.update_layout(
+                    showlegend=False, 
+                    height=160, 
+                    margin=dict(l=5, r=5, t=30, b=5), 
+                    paper_bgcolor="rgba(0,0,0,0)", 
+                    plot_bgcolor="rgba(0,0,0,0)", 
+                    title={
+                        'text': titulo, 'y': 1.0, 'x': 0.5, 
+                        'xanchor': 'center', 'yanchor': 'top', 
+                        'font': {'color': '#94A3B8', 'size': 14}
+                    }, 
+                    annotations=[dict(
+                        text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", 
+                        x=0.5, 
+                        y=0.5, 
+                        font_size=24, 
+                        font_color=color_v, 
+                        showarrow=False, 
+                        font_weight="bold" # ¡Aquí estaba el error, ya está corregido sin las barras!
+                    )]
+                )
                 return fig
 
             if es_movil:
