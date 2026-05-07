@@ -12,9 +12,6 @@ import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
-import os
-
-
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -212,7 +209,7 @@ def main():
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
-            [data-testid="collapsedControl"] { display: none; }
+            [data-testid=\"collapsedControl\"] { display: none; }
             .bottom-menu-container {
                 position: fixed; bottom: 0; left: 0; width: 100%; z-index: 9999;
                 background-color: #1A1D24; padding-bottom: 10px; padding-top: 5px;
@@ -279,7 +276,6 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
-        # REGLA DE CARGA DE ARCHIVOS: Todos los roles menos "monitoreo" pueden cargar archivos.
         mostrar_cargador = False
         if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
             mostrar_cargador = True
@@ -322,9 +318,6 @@ def main():
 
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
 
-    # ==============================================================================
-    # 2. CARGA Y PROCESAMIENTO DE DATOS
-    # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
@@ -447,16 +440,12 @@ def main():
             df_base.loc[mask_no_criticas_g, 'ALERTA_TIEMPO'] = False
             df_base.loc[~mask_solo_sop_g, 'ALERTA_TIEMPO'] = False
             
-        def extraer_motivo_falla(row): return "🔧 Mantenimiento General"
-        def extraer_segmento_global(row): return "RESIDENCIAL"
-
         com_up_g = df_base['COMENTARIO'].fillna('').astype(str).str.upper()
         cli_up_g = df_base['CLIENTE'].fillna('').astype(str).str.upper()
         texto_g = act_upper_global + " " + com_up_g
 
         cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
         cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
-        # CORRECCIÓN: Priorizamos Niveles por encima de TV y Navegación
         cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
         cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
         cond_nav = texto_g.str.contains("NAV|INTERNET|LENT", regex=True)
@@ -481,9 +470,6 @@ def main():
     hoy_date_valor = ahora_local.date()
     df_base_activa = df_base.copy()
 
-    # ==============================================================================
-    # 3. FILTROS Y NAVEGACIÓN PRINCIPAL
-    # ==============================================================================
     filtro_actividad = []
     filtro_estado = []
     filtro_motivo = []
@@ -542,9 +528,6 @@ def main():
     else: 
         df_monitor_filtrado = df_base_activa.copy()
 
-    # ==============================================================================
-    # 4. RENDERIZADO DE PANTALLAS
-    # ==============================================================================
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         tab1, tab2 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos"])
         
@@ -630,10 +613,10 @@ def main():
                 st.markdown("<br>", unsafe_allow_html=True)
                 if es_movil: col_kpi1, col_kpi2 = st.columns(2)
                 else: col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
-                with col_kpi1: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #3B82F6; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">ASIGNADAS</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_a}</div></div>""", unsafe_allow_html=True)
-                with col_kpi2: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #F59E0B; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">SIN ASIGNAR</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_n}</div></div>""", unsafe_allow_html=True)
+                with col_kpi1: st.markdown(f"""<div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #3B82F6; text-align: center;\"><div style=\"color: #94A3B8; font-size: 0.8rem; font-weight: bold;\">ASIGNADAS</div><div style=\"color: #FFFFFF; font-size: 2rem; font-weight: bold;\">{tot_a}</div></div>""", unsafe_allow_html=True)
+                with col_kpi2: st.markdown(f"""<div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #F59E0B; text-align: center;\"><div style=\"color: #94A3B8; font-size: 0.8rem; font-weight: bold;\">SIN ASIGNAR</div><div style=\"color: #FFFFFF; font-size: 2rem; font-weight: bold;\">{tot_n}</div></div>""", unsafe_allow_html=True)
                 if not es_movil:
-                    with col_kpi3: st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #10B981; text-align: center;"><div style="color: #94A3B8; font-size: 0.8rem; font-weight: bold;">TOTAL</div><div style="color: #FFFFFF; font-size: 2rem; font-weight: bold;">{tot_g}</div></div>""", unsafe_allow_html=True)
+                    with col_kpi3: st.markdown(f"""<div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 8px; border-left: 5px solid #10B981; text-align: center;\"><div style=\"color: #94A3B8; font-size: 0.8rem; font-weight: bold;\">TOTAL</div><div style=\"color: #FFFFFF; font-size: 2rem; font-weight: bold;\">{tot_g}</div></div>""", unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
                 if es_movil:
@@ -734,7 +717,7 @@ def main():
                 color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
                 if total_ordenes == 0: color_v = "#4B5563"
                 fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
-                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
+                fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight=\"bold\")])
                 return fig
 
             if es_movil:
@@ -749,37 +732,37 @@ def main():
             
             st.markdown("---")
 
-            # ==============================================================================
-            # ⏳ GANTT EN PESTAÑA CIERRE DIARIO
-            # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
-                
                 mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
                 df_gantt_diario = df_base[mask_ini_dia].copy()
-                
                 mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
                 df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
                 
                 if not df_para_gantt_diario.empty:
                     ahora_hx_d = get_honduras_time()
-                    
                     df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
                     hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
-                    
                     df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
                     
                     mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
                     df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
                     
-                    df_para_gantt_diario['Inicio'] = df_para_gantt_diario['HORA_INI'].dt.strftime('%H:%M')
-                    df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
-                        lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
-                    )
-                    
+                    df_para_gantt_diario['Inicio_Format'] = df_para_gantt_diario['HORA_INI'].dt.strftime('%H:%M')
+                    df_para_gantt_diario['Cierre_Format'] = df_para_gantt_diario['HORA_LIQ'].apply(lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)")
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
+                    # === CAMBIO: TOOLTIP PERSONALIZADO (ACTIVIDAD EN VEZ DE TECNICO) ===
+                    df_para_gantt_diario['INFO_HOVER'] = (
+                        "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
+                        "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
+                        "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
+                        "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
+                        "Inicio=" + df_para_gantt_diario['Inicio_Format'].astype(str) + "<br>" +
+                        "Cierre=" + df_para_gantt_diario['Cierre_Format'].astype(str)
+                    )
+
                     fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
@@ -787,12 +770,7 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        hover_data={
-                            "ACTIVIDAD": True, 
-                            "NUM": True, "COLONIA": True, "ESTADO": True, 
-                            "Inicio": True, "Cierre": True,
-                            "GANTT_START": False, "GANTT_END": False
-                        }, 
+                        custom_data=["INFO_HOVER"],
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                     )
                     
@@ -801,7 +779,14 @@ def main():
                     hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
-                    fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
+                    fig_gantt_d.update_traces(
+                        textposition='inside', 
+                        insidetextanchor='middle', 
+                        marker_line_color='white', 
+                        marker_line_width=1.5, 
+                        opacity=0.9,
+                        hovertemplate="%{customdata[0]}<extra></extra>"
+                    )
                     
                     fig_gantt_d.update_layout(
                         showlegend=True, 
@@ -819,25 +804,15 @@ def main():
                         if st.button("📄 GENERAR PDF TIEMPOS Y TIEMPO PERDIDO", use_container_width=True):
                             with st.spinner("Calculando rendimientos de 8 horas..."):
                                 st.session_state['pdf_tiempos_muertos'] = generar_pdf_tiempos_muertos(df_para_gantt_diario, fecha_cal_sel)
-                                
                         if 'pdf_tiempos_muertos' in st.session_state and st.session_state['pdf_tiempos_muertos']:
-                            st.download_button(
-                                label=f"📥 Descargar PDF (Eficiencia {fecha_cal_sel.strftime('%d-%m')})", 
-                                data=st.session_state['pdf_tiempos_muertos'], 
-                                file_name=f"Eficiencia_Tiempos_{fecha_cal_sel}.pdf", 
-                                mime="application/pdf", 
-                                type="primary", 
-                                use_container_width=True
-                            )
+                            st.download_button(label=f"📥 Descargar PDF (Eficiencia {fecha_cal_sel.strftime('%d-%m')})", data=st.session_state['pdf_tiempos_muertos'], file_name=f"Eficiencia_Tiempos_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                     st.markdown("---")
-                else:
-                    st.info("No hay actividades registradas en esta fecha para generar el Gantt.")
+                else: st.info("No hay actividades registradas en esta fecha para generar el Gantt.")
 
             if not df_cerradas_espejo.empty:
                 st.markdown("### 📊 Desglose de Producción")
                 if es_movil: cs_col, ci_col = st.columns(2)
                 else: cs_col, ci_col, cp_col, co_col = st.columns(4)
-                
                 with cs_col:
                     st.write("**SOP**")
                     df_sop = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
@@ -861,9 +836,7 @@ def main():
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
                         st.write(f"**Total: {df_ins_grouped['Cant'].sum()}**")
                     else: st.write("Sin datos")
-                
                 if es_movil: cp_col, co_col = st.columns(2)
-
                 with cp_col:
                     st.write("**Plex**")
                     df_plex = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('PLEX|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
@@ -876,16 +849,13 @@ def main():
                     df_otros = df_cerradas_espejo[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
-
             st.markdown("---")
-            
             st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
             m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
             p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
             c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
             resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
             resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
-            
             if not resumen_global_rep.empty:
                 resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
                 resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
@@ -899,12 +869,10 @@ def main():
                 resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
                 st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
             else: st.info("No hay datos de mora consolidada para esta fecha.")
-
             st.markdown("### ⏱️ Tiempos de Atención Promedio")
             if not df_cerradas_espejo.empty:
                 df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
                 st.dataframe(df_pivot_diario, use_container_width=True)
-
             st.markdown("### 🌅 Primera Orden del Día por Técnico")
             df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
             if 'HORA_INI' in df_universo_diario.columns:
@@ -912,18 +880,14 @@ def main():
                 df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI_DT'])
                 mask_fecha_ini = df_universo_diario['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cal_sel).date()
                 df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
-                
                 if not df_primera.empty:
                     df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
                     df_primera_mostrar = df_primera_mostrar.sort_values(by='HORA_INI_DT')
                     df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
                     df_primera_mostrar = df_primera_mostrar.drop(columns=['HORA_INI_DT'])
-                    df_primera_mostrar = df_primera_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
-                    st.dataframe(df_primera_mostrar, use_container_width=True, hide_index=True)
-
+                    st.dataframe(df_primera_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']], use_container_width=True, hide_index=True)
                     st.markdown("<br>", unsafe_allow_html=True)
-                    if es_movil: col_btn1, col_btn2 = st.columns(2)
-                    else: col_btn1, col_btn2 = st.columns([1, 2])
+                    col_btn1, col_btn2 = st.columns(2) if es_movil else st.columns([1, 2])
                     with col_btn1:
                         if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
                             try:
@@ -932,98 +896,43 @@ def main():
                         if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
                 else: st.info("No hay registros de inicio de órdenes para esta fecha.")
             else: st.info("No hay registros de inicio de órdenes para esta fecha.")
-
-            # ==============================================================================
-            # --- NUEVA SECCIÓN: PROMEDIO SEMANAL DE PRIMERA ORDEN POR RANGO ---
-            # ==============================================================================
             st.markdown("---")
             st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
-            st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
-            
             col_sel1, col_sel2 = st.columns(2)
-            with col_sel1:
-                f_inicio_primera = st.date_input("Fecha Inicio:", value=hoy_date_valor - timedelta(days=6), key="f_ini_arranque")
-            with col_sel2:
-                f_fin_primera = st.date_input("Fecha Fin:", value=hoy_date_valor, key="f_fin_arranque")
-                
+            with col_sel1: f_inicio_primera = st.date_input("Fecha Inicio:", value=hoy_date_valor - timedelta(days=6), key="f_ini_arranque")
+            with col_sel2: f_fin_primera = st.date_input("Fecha Fin:", value=hoy_date_valor, key="f_fin_arranque")
             if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True):
-                if f_inicio_primera > f_fin_primera:
-                    st.warning("⚠️ La Fecha de Inicio no puede ser mayor que la Fecha Fin.")
+                if f_inicio_primera > f_fin_primera: st.warning("⚠️ La Fecha de Inicio no puede ser mayor que la Fecha Fin.")
                 else:
                     df_base_prom = df_base.copy()
                     if 'HORA_INI' in df_base_prom.columns:
                         df_base_prom['HORA_INI_DT'] = pd.to_datetime(df_base_prom['HORA_INI'], errors='coerce')
                         df_base_prom = df_base_prom.dropna(subset=['HORA_INI_DT'])
-                        
                         mask_rango = (df_base_prom['HORA_INI_DT'].dt.date >= f_inicio_primera) & (df_base_prom['HORA_INI_DT'].dt.date <= f_fin_primera)
                         df_rango = df_base_prom[mask_rango].copy()
-                        
                         if not df_rango.empty:
                             df_rango['Fecha_Sola'] = df_rango['HORA_INI_DT'].dt.date
                             primeras_ordenes_rango = df_rango.sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO', 'Fecha_Sola'], keep='first')
-                            
-                            primeras_ordenes_rango['Segundos_Inicio'] = primeras_ordenes_rango['HORA_INI_DT'].dt.hour * 3600 + \
-                                                                        primeras_ordenes_rango['HORA_INI_DT'].dt.minute * 60 + \
-                                                                        primeras_ordenes_rango['HORA_INI_DT'].dt.second
-                                                                        
-                            promedios_inicio = primeras_ordenes_rango.groupby('TECNICO').agg(
-                                Dias_Computados=('Fecha_Sola', 'nunique'),
-                                Promedio_Segundos=('Segundos_Inicio', 'mean')
-                            ).reset_index()
-                            
+                            primeras_ordenes_rango['Segundos_Inicio'] = primeras_ordenes_rango['HORA_INI_DT'].dt.hour * 3600 + primeras_ordenes_rango['HORA_INI_DT'].dt.minute * 60 + primeras_ordenes_rango['HORA_INI_DT'].dt.second
+                            promedios_inicio = primeras_ordenes_rango.groupby('TECNICO').agg(Dias_Computados=('Fecha_Sola', 'nunique'), Promedio_Segundos=('Segundos_Inicio', 'mean')).reset_index()
                             def secs_to_time_str(s):
                                 if pd.isnull(s): return "N/D"
-                                h, r = divmod(int(s), 3600)
-                                m, sec = divmod(r, 60)
-                                return f"{h:02d}:{m:02d}:{sec:02d}"
-                                
+                                h, r = divmod(int(s), 3600); m, sec = divmod(r, 60); return f"{h:02d}:{m:02d}:{sec:02d}"
                             promedios_inicio['Hora_Promedio_Inicio'] = promedios_inicio['Promedio_Segundos'].apply(secs_to_time_str)
                             promedios_inicio = promedios_inicio.sort_values('Promedio_Segundos')
-                            
                             mask_tecnicos_validos = (promedios_inicio['TECNICO'].notna()) & (promedios_inicio['TECNICO'].str.strip() != '')
-                            promedios_inicio = promedios_inicio[mask_tecnicos_validos]
-
-                            st.session_state['df_promedios_inicio'] = promedios_inicio
-                        else:
-                            st.session_state['df_promedios_inicio'] = pd.DataFrame()
-                            st.warning("⚠️ No se encontraron órdenes iniciadas en este rango de fechas.")
-                            
+                            st.session_state['df_promedios_inicio'] = promedios_inicio[mask_tecnicos_validos]
+                        else: st.session_state['df_promedios_inicio'] = pd.DataFrame(); st.warning("⚠️ No se encontraron órdenes iniciadas en este rango de fechas.")
             if 'df_promedios_inicio' in st.session_state and not st.session_state['df_promedios_inicio'].empty:
-                promedios_mostrar = st.session_state['df_promedios_inicio']
-                
-                st.dataframe(
-                    promedios_mostrar[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
-                        "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"),
-                        "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")
-                    }
-                )
-                
+                st.dataframe(st.session_state['df_promedios_inicio'][['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], use_container_width=True, hide_index=True, column_config={"TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"), "Dias_Computados": st.column_config.NumberColumn("📅 Días Evaluados", format="%d"), "Hora_Promedio_Inicio": st.column_config.TextColumn("⏰ Hora Promedio de Arranque")})
                 st.markdown("<br>", unsafe_allow_html=True)
-                if es_movil: col_btn_p1, col_btn_p2 = st.columns(2)
-                else: col_btn_p1, col_btn_p2 = st.columns([1, 2])
-                
+                col_btn_p1, col_btn_p2 = st.columns(2) if es_movil else st.columns([1, 2])
                 with col_btn_p1:
                     if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True):
                         try:
-                            with st.spinner("Generando PDF..."):
-                                st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(promedios_mostrar, f_inicio_primera, f_fin_primera)
-                        except Exception as e:
-                            st.error(f"Error generando PDF: {e}")
-                            
-                    if 'pdf_promedio_arranque' in st.session_state and st.session_state['pdf_promedio_arranque']:
-                        st.download_button(
-                            "📥 Descargar PDF (Promedio Semanal)", 
-                            data=st.session_state['pdf_promedio_arranque'], 
-                            file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", 
-                            mime="application/pdf", 
-                            type="primary", 
-                            use_container_width=True
-                        )
-
+                            with st.spinner("Generando PDF..."): st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(st.session_state['df_promedios_inicio'], f_inicio_primera, f_fin_primera)
+                        except Exception as e: st.error(f"Error generando PDF: {e}")
+                    if 'pdf_promedio_arranque' in st.session_state and st.session_state['pdf_promedio_arranque']: st.download_button("📥 Descargar PDF (Promedio Semanal)", data=st.session_state['pdf_promedio_arranque'], file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", mime="application/pdf", type="primary", use_container_width=True)
             st.markdown("---")
             st.markdown("### 📥 Exportación")
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
@@ -1033,530 +942,196 @@ def main():
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
         return
 
-    # ==============================================================================
-    # 7. MONITOR OPERATIVO EN VIVO 
-    # ==============================================================================
     if nav_menu_diamante == "⚡ Monitor en Vivo":
-        
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
-
         df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
-
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
-        
         if 'TECNICO' in df_todas_pendientes_monitor.columns:
             mask_josue_kpi = df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
             df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
-            
         df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO'] < 0, 'DIAS_RETRASO'] = 0
-
-        df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(
-            lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
-        )
-
+        df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia")))
         st.title("⚡ Monitor Operativo Maxcom")
-
         mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+        df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy() if check_no_asignadas else df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
         
-        if check_no_asignadas:
-            df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy()
-        else:
-            df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
-
-        vivas_count_asignadas = len(df_solo_asignadas_monitor)
-        cerradas_hoy = len(df_cerradas_hoy_monitor)
-        tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
-        offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
-
         if es_movil:
             st.markdown(f"""
-            <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #3B82F6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">ASIGNADAS</div>
-                    <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{vivas_count_asignadas}</div>
+            <div style=\"display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;\">
+                <div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #3B82F6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);\">
+                    <div style=\"color: #94A3B8; font-size: 0.7rem; font-weight: bold;\">ASIGNADAS</div>
+                    <div style=\"color: #FFFFFF; font-size: 1.8rem; font-weight: bold;\">{len(df_solo_asignadas_monitor)}</div>
                 </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #10B981; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CERRADAS</div>
-                    <div style="color: #10B981; font-size: 1.8rem; font-weight: bold;">{cerradas_hoy}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #F59E0B; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">EN RUTA</div>
-                    <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{tecs_activos}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #EF4444; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CAÍDAS</div>
-                    <div style="color: #EF4444; font-size: 1.8rem; font-weight: bold;">{offline_criticos_asignadas}</div>
+                <div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #10B981; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);\">
+                    <div style=\"color: #94A3B8; font-size: 0.7rem; font-weight: bold;\">CERRADAS</div>
+                    <div style=\"color: #10B981; font-size: 1.8rem; font-weight: bold;\">{len(df_cerradas_hoy_monitor)}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
         else:
             html_kpis = f"""
-            <div style="display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px;">
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
-                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">PENDIENTES ASIGNADAS</div>
-                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{vivas_count_asignadas}</div>
+            <div style=\"display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px;\">
+                <div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);\">
+                    <div style=\"color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px;\">PENDIENTES ASIGNADAS</div>
+                    <div style=\"color: #FFFFFF; font-size: 2.2rem; font-weight: 700;\">{len(df_solo_asignadas_monitor)}</div>
                 </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #10B981; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
-                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CERRADAS HOY</div>
-                    <div style="color: #10B981; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{cerradas_hoy}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
-                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TÉCNICOS EN RUTA</div>
-                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{tecs_activos}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #EF4444; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
-                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
-                    <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
+                <div style=\"background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #10B981; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);\">
+                    <div style=\"color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px;\">CERRADAS HOY</div>
+                    <div style=\"color: #10B981; font-size: 2.2rem; font-weight: 700;\">{len(df_cerradas_hoy_monitor)}</div>
                 </div>
             </div>
             """
             st.markdown(html_kpis, unsafe_allow_html=True)
 
         with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=not es_movil):
-            if es_movil:
-                st.caption("📅 Resumen de Retraso")
+            col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
+            with col_tab_1:
                 res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
-                res_retraso_v.columns = ['Dias', 'Cant']
-                sum_total_asignadas_v = res_retraso_v['Cant'].sum()
-                res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
-                def style_dias_apply(row):
-                    v = row['Dias']
-                    bg_color, font_color = '', 'white'
-                    if v == ">= 7 Dia": bg_color = '#d32f2f'
-                    elif v == "= 4 a 6 Dias": bg_color = '#f57c00'
-                    elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
-                    elif v == "= 0 Dia": bg_color = '#388e3c'
-                    return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
-                st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-            else:
-                col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
-                with col_tab_1:
-                    st.caption("📅 Resumen de Retraso")
-                    res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
-                    res_retraso_v.columns = ['Dias', 'Cant']
-                    sum_total_asignadas_v = res_retraso_v['Cant'].sum()
-                    res_retraso_v['%'] = res_retraso_v['Cant'].apply(lambda x: f"{(x/sum_total_asignadas_v*100):.0f}%" if sum_total_asignadas_v > 0 else "0%")
-                    def style_dias_apply(row):
-                        v = row['Dias']
-                        bg_color, font_color = '', 'white'
-                        if v == ">= 7 Dia": bg_color = '#d32f2f'
-                        elif v == "= 4 a 6 Dias": bg_color = '#f57c00'
-                        elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
-                        elif v == "= 0 Dia": bg_color = '#388e3c'
-                        return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
-                    st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                    st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
+                res_retraso_v.columns = ['Dias', 'Cant']; sum_total_v = res_retraso_v['Cant'].sum()
+                def style_dias(row):
+                    bg = '#d32f2f' if row['Dias'] == ">= 7 Dia" else ('#f57c00' if row['Dias'] == "= 4 a 6 Dias" else ('#fbc02d' if row['Dias'] == "= 1 a 3 Dias" else '#388e3c'))
+                    return [f'background-color: {bg}; color: {"black" if row["Dias"] == "= 1 a 3 Dias" else "white"}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
+                st.dataframe(res_retraso_v.style.apply(style_dias, axis=1), hide_index=True, use_container_width=True)
 
-            g_tab_list = []
-            sub_tab_list = []
-            for idx, r in df_todas_pendientes_monitor.iterrows():
-                act = str(r.get('ACTIVIDAD', '')).upper()
-                com = str(r.get('COMENTARIO', '')).upper()
-                txt = act + " " + com
-                is_off = r.get('ES_OFFLINE', False)
-                if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
-                    g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
-                elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
-                    g_tab_list.append("INS")
-                    if re.search("ADIC", txt): sub_tab_list.append("Adición")
-                    elif re.search("CAMBIO|MIGRACI", txt): sub_tab_list.append("Cambio / Migración")
-                    elif re.search("RECUP", txt): sub_tab_list.append("Recuperado")
-                    else: sub_tab_list.append("Nueva")
+            g_tab_list, sub_tab_list = [], []
+            for _, r in df_todas_pendientes_monitor.iterrows():
+                act, com = str(r.get('ACTIVIDAD', '')).upper(), str(r.get('COMENTARIO', '')).upper(); txt = act + " " + com
+                if not re.search(\"SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP\", txt): g_tab_list.append(\"OTROS\"); sub_tab_list.append(act if act != \"\" else \"N/A\")
+                elif re.search(\"INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP\", txt) and not re.search(\"SOP|FALLA|MANT\", act):
+                    g_tab_list.append(\"INS\"); sub_tab_list.append(\"Adición\" if \"ADIC\" in txt else (\"Cambio / Migración\" if re.search(\"CAMBIO|MIGRACI\", txt) else (\"Recuperado\" if \"RECUP\" in txt else \"Nueva\")))
                 else:
-                    g_tab_list.append("SOP")
-                    if is_off: sub_tab_list.append("ONT/ONU Offline")
-                    elif re.search("NIVEL|DB", com): sub_tab_list.append("Niveles alterados")
-                    elif re.search("FIBRA|FTTH", act): sub_tab_list.append("FTTH / FIBRA")
-                    elif re.search("NAV|INTERNET", act): sub_tab_list.append("Navegación / Internet")
-                    elif re.search("TV|CABLE", act): sub_tab_list.append("Sin señal de TV")
-                    else: sub_tab_list.append("SOP General")
-                    
-            df_tablero = df_todas_pendientes_monitor.copy()
-            df_tablero['G_TAB'] = g_tab_list
-            df_tablero['SUB_TAB'] = sub_tab_list
+                    g_tab_list.append(\"SOP\"); sub_tab_list.append(\"ONT/ONU Offline\" if r.get('ES_OFFLINE', False) else (\"Niveles alterados\" if re.search(\"NIVEL|DB\", com) else (\"FTTH / FIBRA\" if re.search(\"FIBRA|FTTH\", act) else (\"Navegación / Internet\" if re.search(\"NAV|INTERNET\", act) else (\"Sin señal de TV\" if re.search(\"TV|CABLE\", act) else \"SOP General\")))))
+            df_tablero = df_todas_pendientes_monitor.copy(); df_tablero['G_TAB'], df_tablero['SUB_TAB'] = g_tab_list, sub_tab_list
             
-            if es_movil:
-                st.caption("🛠️ SOP / Mantenimiento")
-                df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
-                res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
-                res_sop.columns = ['SOP', 'Cant']
-                st.dataframe(res_sop, hide_index=True, use_container_width=True)
-                
-                st.caption("📦 Instalaciones")
-                df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
-                res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
-                res_ins.columns = ['Instalaciones', 'Cant']
-                cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
-                for c in cats_ins:
-                    if c not in res_ins['Instalaciones'].values: res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
-                st.dataframe(res_ins, hide_index=True, use_container_width=True)
-            else:
-                with col_tab_2:
-                    st.caption("🛠️ SOP / Mantenimiento")
-                    df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
-                    res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
-                    res_sop.columns = ['SOP', 'Cant']
-                    st.dataframe(res_sop, hide_index=True, use_container_width=True)
-                    st.write(f"**Total General SOP: {df_sop.shape[0]}**")
-                    st.metric("Exceden 2 Horas ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
+            with col_tab_2:
+                df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']; res_sop = df_sop['SUB_TAB'].value_counts().reset_index(); res_sop.columns = ['SOP', 'Cant']
+                st.dataframe(res_sop, hide_index=True, use_container_width=True); st.write(f\"**Total General SOP: {df_sop.shape[0]}**\")
+            with col_tab_3:
+                df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']; res_ins = df_ins['SUB_TAB'].value_counts().reset_index(); res_ins.columns = ['Instalaciones', 'Cant']
+                st.dataframe(res_ins, hide_index=True, use_container_width=True); st.write(f\"**Total General INS: {df_ins.shape[0]}**\")
+            with col_tab_4:
+                df_otr = df_tablero[df_tablero['G_TAB'] == 'OTROS']; res_otr = df_otr['SUB_TAB'].value_counts().reset_index(); res_otr.columns = ['Otros', 'Cant']
+                st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True); st.write(f\"**Total Otros: {df_otr.shape[0]}**\")
 
-                with col_tab_3:
-                    st.caption("📦 Instalaciones")
-                    df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
-                    res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
-                    res_ins.columns = ['Instalaciones', 'Cant']
-                    cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
-                    for c in cats_ins:
-                        if c not in res_ins['Instalaciones'].values: res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
-                    st.dataframe(res_ins, hide_index=True, use_container_width=True)
-                    st.write(f"**Total General INS: {df_ins.shape[0]}**")
-
-                with col_tab_4:
-                    st.caption("⚙️ Otros")
-                    df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
-                    res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
-                    res_otr.columns = ['Otros', 'Cant']
-                    st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
-                    st.write(f"**Total Otros: {df_otros.shape[0]}**")
-
-        with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
-            st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
-            
-            # Preparar fechas para cálculo exacto
-            df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
-            
-            def calcular_metricas(segmento):
-                """Calcula Mora, Día y Global para un segmento específico."""
-                if segmento == 'GLOBAL':
-                    p = df_solo_asignadas_monitor
-                    c = df_cerradas_hoy_monitor
-                else:
-                    p = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == segmento]
-                    c = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == segmento]
-
-                # PENDIENTES (Usamos DIAS_RETRASO para respetar excepciones)
-                p_mora = len(p[p['DIAS_RETRASO'] > 0])
-                p_hoy = len(p[p['DIAS_RETRASO'] == 0])
-
-                # CERRADAS (Usamos la fecha de apertura vs Hoy)
-                c_mora = len(c[c['FECHA_APE_DT'].dt.date < hoy_date_valor])
-                c_hoy = len(c[c['FECHA_APE_DT'].dt.date == hoy_date_valor])
-
-                # TOTALES
-                tot_mora, tot_hoy = p_mora + c_mora, p_hoy + c_hoy
-                tot_global = tot_mora + tot_hoy
-                cerr_global = c_mora + c_hoy
-
-                # PORCENTAJES
-                pct_mora = (c_mora / tot_mora * 100) if tot_mora > 0 else 0
-                pct_hoy = (c_hoy / tot_hoy * 100) if tot_hoy > 0 else 0
-                pct_global = (cerr_global / tot_global * 100) if tot_global > 0 else 0
-
-                return {
-                    'tot_g': tot_global, 'cerr_g': cerr_global, 'pct_g': pct_global,
-                    'tot_m': tot_mora, 'cerr_m': c_mora, 'pct_m': pct_mora,
-                    'tot_h': tot_hoy, 'cerr_h': c_hoy, 'pct_h': pct_hoy,
-                    'df_p': p, 'df_c': c
-                }
-
-            # Calcular los 3 segmentos
-            stats_resi = calcular_metricas('RESIDENCIAL')
-            stats_plex = calcular_metricas('PLEX')
-            stats_global = calcular_metricas('GLOBAL')
-
-            def renderizar_metrica(col_ui, stats, titulo, color_hex, key_btn):
-                with col_ui:
-                    # 1. Gráfica Principal (Global)
-                    fig = go.Figure(go.Pie(
-                        values=[stats['pct_g'], max(0, 100 - stats['pct_g'])] if stats['tot_g'] > 0 else [0, 100],
-                        labels=['Completado', 'Pendiente'], hole=0.8,
-                        marker=dict(colors=[color_hex, '#2D2F39']),
-                        textinfo='none', hoverinfo='none', direction='clockwise', sort=False
-                    ))
-                    
-                    texto_central = f"{stats['pct_g']:.0f}%" if stats['tot_g'] > 0 else "N/A"
-                    subtexto = f"Total: {stats['cerr_g']} de {stats['tot_g']}" if stats['tot_g'] > 0 else "Sin asignaciones"
-                    
-                    fig.update_layout(
-                        showlegend=False, height=150, margin=dict(l=5, r=5, t=30, b=5),
-                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                        title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 14, 'weight': 'bold'}},
-                        annotations=[
-                            dict(text=texto_central, x=0.5, y=0.42, font_size=26, font_color=color_hex, showarrow=False, font_weight="bold"),
-                            dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#6B7280", showarrow=False)
-                        ]
-                    )
-                    st.plotly_chart(fig, use_container_width=True, key=f"pie_{key_btn}")
-
-                    # 2. Etiquetas de Desglose (Mora vs Hoy)
-                    html_badges = f"""
-                    <div style="display:flex; justify-content:center; gap:8px; font-size:11px; margin-top:-15px; margin-bottom:10px;">
-                        <div style="background-color:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #fca5a5;">
-                            🔴 Mora: {stats['cerr_m']}/{stats['tot_m']} ({stats['pct_m']:.0f}%)
-                        </div>
-                        <div style="background-color:#dbeafe; color:#1d4ed8; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #93c5fd;">
-                            🔵 Hoy: {stats['cerr_h']}/{stats['tot_h']} ({stats['pct_h']:.0f}%)
-                        </div>
-                    </div>
-                    """
-                    st.markdown(html_badges, unsafe_allow_html=True)
-
-                    # 3. Botón de Detalle
-                    if st.button("🔍 Ver Desglose", use_container_width=True, key=f"btn_{key_btn}"):
-                        mostrar_detalle_avance(titulo.upper(), stats['df_p'], stats['df_c'])
-
-            # Renderizar en Pantalla
-            if es_movil:
-                renderizar_metrica(st.container(), stats_resi, "🏠 Residencial", "#EF4444", "resi_m")
-                renderizar_metrica(st.container(), stats_plex, "🏢 PLEX", "#F59E0B", "plex_m")
-                renderizar_metrica(st.container(), stats_global, "🌍 Global", "#10B981", "glob_m")
-            else:
-                col1, col2, col3 = st.columns(3)
-                renderizar_metrica(col1, stats_resi, "🏠 Residencial", "#EF4444", "resi")
-                renderizar_metrica(col2, stats_plex, "🏢 PLEX", "#F59E0B", "plex")
-                renderizar_metrica(col3, stats_global, "🌍 Global", "#10B981", "glob")
-
-            st.markdown("---")
-    
-            # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
-            # ==============================================================================
+        with st.expander(\"📊 CONSOLIDADO POR SEGMENTO Y AVANCE\", expanded=False):
             if not es_movil:
-                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>", unsafe_allow_html=True)
+                col1, col2, col3 = st.columns(3)
+                df_m_pend = df_solo_asignadas_monitor[df_solo_asignadas_monitor['DIAS_RETRASO'] > 0].copy()
+                df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
+                df_m_cerr = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['FECHA_APE_DT'].dt.date < hoy_date_valor].copy()
+                df_m_total = pd.concat([df_m_pend, df_m_cerr]).drop_duplicates(subset=['NUM'])
                 
-                mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
-                
-                df_gantt_limpio = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
-                
-                mask_supervisores = df_gantt_limpio['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                df_para_gantt_final = df_gantt_limpio[~mask_supervisores].copy()
-                df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
+                def crear_vel(v, t, total=0):
+                    c = \"#EF4444\" if v < 60 else (\"#F59E0B\" if v < 90 else \"#10B981\"); fig = go.Figure(go.Pie(values=[v, max(0, 100-v)] if total>0 else [0,100], hole=0.8, marker=dict(colors=[c if total>0 else '#4B5563', '#2D2F39']), textinfo='none', hoverinfo='none', sort=False))
+                    fig.update_layout(showlegend=False, height=140, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor=\"rgba(0,0,0,0)\", plot_bgcolor=\"rgba(0,0,0,0)\", title={'text': t, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 13}}, annotations=[dict(text=f\"{v:.0f}%\" if total>0 else \"N/A\", x=0.5, y=0.5, font_size=22, font_color=c if total>0 else '#4B5563', showarrow=False, font_weight=\"bold\")]); return fig
+
+                for i, (seg, col) in enumerate(zip(['RESIDENCIAL', 'PLEX'], [col1, col2])):
+                    df_s_p, df_s_c, df_s_i = df_m_pend[df_m_pend['SEGMENTO']==seg], df_m_cerr[df_m_cerr['SEGMENTO']==seg], df_m_total[df_m_total['SEGMENTO']==seg]
+                    av = (len(df_s_c)/len(df_s_i)*100) if len(df_s_i)>0 else 0
+                    with col: st.plotly_chart(crear_vel(av, f\"Mora {seg}\", len(df_s_i)), use_container_width=True, key=f\"p{i}\"); if st.button(f\"🔍 Ver {seg}\", use_container_width=True, key=f\"b{i}\"): mostrar_detalle_avance(f\"MORA {seg}\", df_s_p, df_s_c, df_s_i)
+                av_g = (len(df_m_cerr)/len(df_m_total)*100) if len(df_m_total)>0 else 0
+                with col3: st.plotly_chart(crear_vel(av_g, \"Mora Global\", len(df_m_total)), use_container_width=True, key=\"pg\"); if st.button(\"🔍 Mora Global\", use_container_width=True, key=\"bg\"): mostrar_detalle_avance(\"MORA GLOBAL\", df_m_pend, df_m_cerr, df_m_total)
+
+            st.markdown(\"---\")
+
+            if not es_movil:
+                st.markdown(\"<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>\", unsafe_allow_html=True)
+                df_gantt_limpio = df_monitor_filtrado[((df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) | ((df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor))].copy()
+                df_para_gantt_final = df_gantt_limpio[~df_gantt_limpio['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False) & df_gantt_limpio['HORA_INI'].notnull()].copy()
                 
                 if not df_para_gantt_final.empty:
                     ahora_hx = get_honduras_time()
-                    
                     df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                     df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
-                    
-                    # Seguridad Plotly anti-barras negativas
                     mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                     df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
-                    
-                    df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
-                    df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
-                        lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
-                    )
-                    
+                    df_para_gantt_final['Inicio_Format'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
+                    df_para_gantt_final['Cierre_Format'] = df_para_gantt_final['HORA_LIQ'].apply(lambda x: x.strftime('%H:%M') if pd.notnull(x) else \"En curso (Abierta)\")
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
-                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                    st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
+                    # === CAMBIO: TOOLTIP PERSONALIZADO (ACTIVIDAD EN VEZ DE TECNICO) ===
+                    df_para_gantt_final['INFO_HOVER'] = (
+                        \"ACTIVIDAD=\" + df_para_gantt_final['ACTIVIDAD'].astype(str) + \"<br>\" +
+                        \"NUM=\" + df_para_gantt_final['NUM'].astype(str) + \"<br>\" +
+                        \"COLONIA=\" + df_para_gantt_final['COLONIA'].astype(str) + \"<br>\" +
+                        \"ESTADO=\" + df_para_gantt_final['ESTADO'].astype(str) + \"<br>\" +
+                        \"Inicio=\" + df_para_gantt_final['Inicio_Format'].astype(str) + \"<br>\" +
+                        \"Cierre=\" + df_para_gantt_final['Cierre_Format'].astype(str)
+                    )
+
+                    st.markdown(\"<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>\", unsafe_allow_html=True)
                     
                     fig_gantt = px.timeline(
                         df_para_gantt_final, 
-                        x_start="GANTT_START", 
-                        x_end="GANTT_END", 
-                        y="TECNICO", 
-                        color="ACTIVIDAD", 
-                        text="ACTIVIDAD",  
-                        hover_data={
-                            "NUM": True, 
-                            "COLONIA": True, 
-                            "ESTADO": True, 
-                            "Inicio": True,
-                            "Cierre": True,
-                            "GANTT_START": False, 
-                            "GANTT_END": False,
-                            "ACTIVIDAD": False
-                        }, 
+                        x_start=\"GANTT_START\", 
+                        x_end=\"GANTT_END\", 
+                        y=\"TECNICO\", 
+                        color=\"ACTIVIDAD\", 
+                        text=\"ACTIVIDAD\",  
+                        custom_data=[\"INFO_HOVER\"],
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
                     
-                    fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
-                    hora_inicio_pantalla = datetime.combine(hoy_date_valor, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
-                    hora_fin_pantalla = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    fig_gantt.update_xaxes(range=[hora_inicio_pantalla, hora_fin_pantalla], tickformat="%H:%M", title_text="Cronograma de Actividades")
-                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
-                    fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
-                    
+                    fig_gantt.update_yaxes(autorange=\"reversed\", title_text=\"\", type=\"category\")
+                    h_ini_p = datetime.combine(hoy_date_valor, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    h_fin_p = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                    fig_gantt.update_xaxes(range=[h_ini_p, h_fin_p], tickformat=\"%H:%M\", title_text=\"Cronograma de Actividades\")
+                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9, hovertemplate=\"%{customdata[0]}<extra></extra>\")
+                    fig_gantt.update_layout(showlegend=True, margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor=\"rgba(0,0,0,0)\", plot_bgcolor=\"rgba(0,0,0,0.02)\")
                     st.plotly_chart(fig_gantt, use_container_width=True)
-                else:
-                    st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
+                else: st.info(\"No hay actividades aperturadas hoy para mostrar en la línea de tiempo.\")
 
-        st.markdown("---")
+        st.markdown(\"---\")
         
-        # ==============================================================================
-        # EXPANDER: PANEL DE CONTROL DETALLADO Y TABS DE ABAJO
-        # ==============================================================================
-        with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
-            if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
-                st.session_state.st_btn_v_active = "PENDIENTE"
-                
+        with st.expander(\"🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO\", expanded=True):
+            if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == \"CONSOL\": st.session_state.st_btn_v_active = \"PENDIENTE\"
             if es_movil:
-                st.write("Filtros:")
-                if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
-                    st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                col_m1, col_m2 = st.columns(2)
-                if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
-                    st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
-                    st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
+                if st.button(\"⏳ ASIGNADAS\", use_container_width=True, type=\"primary\" if st.session_state.st_btn_v_active == \"PENDIENTE\" else \"secondary\"): st.session_state.st_btn_v_active = \"PENDIENTE\"; st.rerun()
+                c_m1, c_m2 = st.columns(2)
+                if c_m1.button(\"✅ CERRADAS\", use_container_width=True, type=\"primary\" if st.session_state.st_btn_v_active == \"C_HOY\" else \"secondary\"): st.session_state.st_btn_v_active = \"C_HOY\"; st.rerun()
+                if c_m2.button(\"❌ ANULADAS\", use_container_width=True, type=\"primary\" if st.session_state.st_btn_v_active == \"A_HOY\" else \"secondary\"): st.session_state.st_btn_v_active = \"A_HOY\"; st.rerun()
             else:
-                col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
-                if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
-                    st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
-                    st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
-                    st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
+                c_bt1, c_bt2, c_bt3 = st.columns(3)
+                if c_bt1.button(\"⏳ ASIGNADAS ACTIVAS\", use_container_width=True, type=\"primary\" if st.session_state.st_btn_v_active == \"PENDIENTE\" else \"secondary\"): st.session_state.st_btn_v_active = \"PENDIENTE\"; st.rerun()
+                if c_bt2.button(\"✅ CERRADAS HOY\", use_container_width=True, type=\"primary\" if st.session_state.st_btn_v_active == \"C_HOY\" else \"secondary\"): st.session_state.st_btn_v_active = \"C_HOY\"; st.rerun()
+                if c_bt3.button(\"❌ ANULADAS HOY\", use_container_width=True, type=\"primary\" if st.session_state.st_btn_v_active == \"A_HOY\" else \"secondary\"): st.session_state.st_btn_v_active = \"A_HOY\"; st.rerun()
 
-            status_final_btn = st.session_state.st_btn_v_active
+            btn_act = st.session_state.st_btn_v_active
+            if btn_act == \"PENDIENTE\": df_v_tab = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True] if check_criticos_diamante else df_solo_asignadas_monitor
+            elif btn_act == \"C_HOY\": df_v_tab = df_cerradas_hoy_monitor
+            else: df_v_tab = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
 
-            if status_final_btn == "PENDIENTE": 
-                if check_criticos_diamante:
-                    df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
-                else:
-                    df_v_tabla_monitor = df_solo_asignadas_monitor
-            elif status_final_btn == "C_HOY": 
-                df_v_tabla_monitor = df_cerradas_hoy_monitor
-            else: 
-                df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
-
-            t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
-            
-            with t_panel_v:
-                if not df_v_tabla_monitor.empty:
+            t_pan, t_grp, t_ana = st.tabs([\"📋 PANEL OPERATIVO\", \"📊 PRODUCTIVIDAD\", \"📈 ANALÍTICA\"])
+            with t_pan:
+                if not df_v_tab.empty:
                     if es_movil:
-                        st.markdown("<br>", unsafe_allow_html=True)
-                        for idx, row in df_v_tabla_monitor.iterrows():
-                            color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
-                            estado_txt = str(row.get('ESTADO', 'N/D')).upper()
-                            bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
-                            
-                            st.markdown(f"""
-                            <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <span style="color: white; font-weight: bold; font-size: 16px;">ORD-{row.get('NUM', 'N/D')}</span>
-                                    <span style="background: {bg_estado}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">{estado_txt}</span>
-                                </div>
-                                <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
-                                    👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
-                                    📍 {str(row.get('COLONIA', 'N/D'))[:30]}
-                                </div>
-                                <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
-                                    🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
-                                    👨‍🔧 {str(row.get('TECNICO', ''))[:20]}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            if st.button(f"👁️ Ver Detalle de Orden {row.get('NUM')}", key=f"btn_mobile_{row.get('NUM')}_{idx}", use_container_width=True):
-                                mostrar_comentario_cierre(row)
-                            st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
+                        for idx, row in df_v_tab.iterrows():
+                            cb = \"#EF4444\" if row.get('ES_OFFLINE') else (\"#F59E0B\" if row.get('ALERTA_TIEMPO') else \"#3B82F6\")
+                            st.markdown(f\"\"\"<div style=\"background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {cb};\"><div style=\"display: flex; justify-content: space-between;\"><span style=\"color: white; font-weight: bold;\">ORD-{row.get('NUM','N/D')}</span></div><div style=\"color: #94A3B8; font-size: 13px;\">👤 <b>{str(row.get('NOMBRE','N/D'))[:25]}</b><br>📍 {str(row.get('COLONIA','N/D'))[:30]}</div><div style=\"color: #E2E8F0; font-size: 12px;\">🛠️ {str(row.get('ACTIVIDAD',''))}<br>👨‍🔧 {str(row.get('TECNICO',''))[:20]}</div></div>\"\"\", unsafe_allow_html=True)
+                            if st.button(f\"👁️ Ver Orden {row.get('NUM')}\", key=f\"btn_m_{row.get('NUM')}_{idx}\", use_container_width=True): mostrar_comentario_cierre(row)
                     else:
-                        df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
-                        
-                        evento_monitor_diam = st.dataframe(
-                            df_estilo_v.style.apply(row_styler, axis=1),
-                            column_config={
-                                "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
-                                "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
-                                "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
-                                "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                "ES_OFFLINE": None,
-                                "MINUTOS_CALC": None
-                            }, 
-                            use_container_width=True, 
-                            height=600, 
-                            hide_index=True, 
-                            on_select="rerun", 
-                            selection_mode="single-row"
-                        )
-                        
-                        if evento_monitor_diam.selection.rows:
-                            mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
-                else:
-                    st.warning("No hay registros disponibles para mostrar.")
+                        df_est, r_styler = aplicar_estilos_df(df_v_tab)
+                        ev = st.dataframe(df_est.style.apply(r_styler, axis=1), use_container_width=True, height=600, hide_index=True, on_select=\"rerun\", selection_mode=\"single-row\")
+                        if ev.selection.rows: mostrar_comentario_cierre(df_v_tab.iloc[ev.selection.rows[0]])
+                else: st.warning(\"No hay registros disponibles.\")
+            with t_grp:
+                st.subheader(\"📈 Órdenes Cerradas por Hora (Hoy)\")
+                df_prod_v = df_base[df_base['HORA_LIQ'].dt.date == hoy_date_valor].copy()
+                if not df_prod_v.empty:
+                    df_prod_v['Hr_C'] = df_prod_v['HORA_LIQ'].dt.hour; count_h = df_prod_v.groupby('Hr_C').size().reset_index(name='Ord')
+                    st.plotly_chart(px.bar(count_h, x='Hr_C', y='Ord', labels={'Hr_C':'Hora','Ord':'Cant'}, template=\"plotly_dark\", height=300), use_container_width=True)
+                else: st.info(\"Sin datos de cierres.\")
+            with t_ana:
+                st.markdown(\"### 📈 Rendimiento\")
+                plt.style.use('dark_background'); f1, a1 = plt.subplots(figsize=(6, 4)); c_seg = df_v_tab['SEGMENTO'].value_counts()
+                if not c_seg.empty: c_seg.plot(kind='bar', color=['#1f6feb', '#2ea043'], ax=a1); st.pyplot(f1)
+                st.markdown(\"---\"); f3, a3 = plt.subplots(figsize=(10, 3)); df_off = df_v_tab[df_v_tab['ES_OFFLINE'] == True]
+                if not df_off.empty and 'HORA_INI' in df_off.columns:
+                    tend = df_off.dropna(subset=['HORA_INI']).groupby(df_off['HORA_INI'].dt.date).size()
+                    if not tend.empty: tend.plot(kind='line', marker='o', color='#f85149', ax=a3); st.pyplot(f3)
 
-            with t_graphs_v:
-                st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
-                df_productividad_v = df_base[df_base['HORA_LIQ'].dt.date == hoy_date_valor].copy()
-                if not df_productividad_v.empty:
-                    df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ'].dt.hour
-                    conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
-                    fig_barras_v = px.bar(
-                        conteo_horario_v, x='Hr_C', y='Ord', 
-                        labels={'Hr_C':'Hora del Día','Ord':'Cant. Cerradas'}, 
-                        template="plotly_dark", height=300
-                    )
-                    st.plotly_chart(fig_barras_v, use_container_width=True)
-                else:
-                    st.info("Sin datos de cierres para generar gráfico horario.")
-
-            with t_analitica_v:
-                st.markdown("### 📈 Análisis de Rendimiento Operativo")
-                plt.style.use('dark_background')
-                
-                if es_movil:
-                    fig1, ax1 = plt.subplots(figsize=(6, 4))
-                    conteo_seg = df_v_tabla_monitor['SEGMENTO'].value_counts()
-                    if not conteo_seg.empty:
-                        conteo_seg.plot(kind='bar', color=['#1f6feb', '#2ea043'], ax=ax1)
-                        ax1.set_title("Volumen por Segmento", fontsize=12, fontweight='bold')
-                        ax1.set_ylabel("Cant.")
-                        ax1.tick_params(axis='x', rotation=0)
-                        st.pyplot(fig1)
-                else:
-                    col_m1, col_m2 = st.columns(2)
-                    with col_m1:
-                        fig1, ax1 = plt.subplots(figsize=(6, 4))
-                        conteo_seg = df_v_tabla_monitor['SEGMENTO'].value_counts()
-                        if not conteo_seg.empty:
-                            conteo_seg.plot(kind='bar', color=['#1f6feb', '#2ea043'], ax=ax1)
-                            ax1.set_title("Volumen de Órdenes por Segmento", fontsize=12, fontweight='bold')
-                            ax1.set_ylabel("Cantidad de Órdenes")
-                            ax1.tick_params(axis='x', rotation=0)
-                            ax1.spines['top'].set_visible(False)
-                            ax1.spines['right'].set_visible(False)
-                            st.pyplot(fig1)
-
-                    with col_m2:
-                        fig2, ax2 = plt.subplots(figsize=(6, 4))
-                        tiempos_validos = df_v_tabla_monitor[df_v_tabla_monitor['MINUTOS_CALC'] > 0]['MINUTOS_CALC']
-                        if not tiempos_validos.empty:
-                            ax2.hist(tiempos_validos, bins=15, color='#a371f7', edgecolor='white', alpha=0.8)
-                            ax2.set_title("Distribución de Tiempos de Resolución", fontsize=12, fontweight='bold')
-                            ax2.set_xlabel("Minutos de Trabajo")
-                            ax2.set_ylabel("Frecuencia")
-                            ax2.spines['top'].set_visible(False)
-                            ax2.spines['right'].set_visible(False)
-                            st.pyplot(fig2)
-
-                st.markdown("---")
-
-                fig3, ax3 = plt.subplots(figsize=(10, 3))
-                df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
-                if not df_offline.empty and 'HORA_INI' in df_offline.columns:
-                    tendencia = df_offline.dropna(subset=['HORA_INI']).groupby(df_offline['HORA_INI'].dt.date).size()
-                    if not tendencia.empty:
-                        tendencia.plot(kind='line', marker='o', color='#f85149', linewidth=2, markersize=8, ax=ax3)
-                        ax3.set_title("Tendencia de Fallas Críticas (Offline) por Día", fontsize=12, fontweight='bold')
-                        ax3.set_ylabel("Cantidad de Fallas")
-                        ax3.grid(True, linestyle='--', alpha=0.3)
-                        ax3.spines['top'].set_visible(False)
-                        ax3.spines['right'].set_visible(False)
-                        st.pyplot(fig3)
-                    else:
-                        st.info("Datos insuficientes de fechas para la tendencia Offline.")
-                else:
-                    st.success("¡Excelente! No hay fallas Offline registradas en esta vista.")
-
-if __name__ == "__main__": 
+if __name__ == \"__main__\": 
     verificar_autenticacion()
-    if st.session_state.get('autenticado'):
-        main()
-    else:
-        mostrar_pantalla_login()
+    if st.session_state.get('autenticado'): main()
+    else: mostrar_pantalla_login()
