@@ -480,7 +480,7 @@ def main():
     hoy_date_valor = ahora_local.date()
     df_base_activa = df_base.copy()
 
-    # ==============================================================================
+# ==============================================================================
     # 3. FILTROS Y NAVEGACIÓN PRINCIPAL
     # ==============================================================================
     filtro_actividad = []
@@ -491,41 +491,44 @@ def main():
     tec_filtro_monitor = "Todos"
 
     if nav_menu_diamante == "⚡ Monitor en Vivo":
-        filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
         
-    if st.session_state.config_mostrar_filtros:
-        with filtro_container:
-            if not es_movil: st.markdown("---")
-            st.markdown("### 🎛️ Filtros Múltiples")
+      
+        if st.session_state.get('config_mostrar_filtros', True):
+            filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
             
-            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
-            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
-            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
-            
-            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
-            
-            st.divider() 
-            st.markdown("### 🔍 Filtros en Vivo")
-            
-            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-            
-            if 'ES_OFFLINE' not in df_base_activa.columns:
-                df_base_activa['ES_OFFLINE'] = False
-            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-            
-            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-            
-            mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-            total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
-            
-            check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
-            check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
-            
-            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            with filtro_container:
+                if not es_movil: st.markdown("---")
+                st.markdown("### 🎛️ Filtros Múltiples")
+                
+                lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
+                lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+                lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
+                
+                filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+                filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+                filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+                
+                st.divider() 
+                st.markdown("### 🔍 Filtros en Vivo")
+                
+                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                
+                if 'ES_OFFLINE' not in df_base_activa.columns:
+                    df_base_activa['ES_OFFLINE'] = False
+                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+                
+                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+                
+                mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
+                
+                check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
+                check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+                
+                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
 
+        # Aplicación de los filtros (estén visibles o no)
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
         if len(filtro_estado) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
