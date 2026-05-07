@@ -14,8 +14,6 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import os
 
-
-
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
@@ -456,7 +454,6 @@ def main():
 
         cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
         cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
-        # CORRECCIÓN: Priorizamos Niveles por encima de TV y Navegación
         cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
         cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
         cond_nav = texto_g.str.contains("NAV|INTERNET|LENT", regex=True)
@@ -780,6 +777,16 @@ def main():
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
+                    # === CAMBIO APLICADO: INFO_HOVER PARA EL TOOLTIP ===
+                    df_para_gantt_diario['INFO_HOVER'] = (
+                        "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
+                        "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
+                        "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
+                        "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
+                        "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
+                        "Cierre=" + df_para_gantt_diario['Cierre'].astype(str)
+                    )
+
                     fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
@@ -787,11 +794,7 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        hover_data={
-                            "NUM": True, "COLONIA": True, "ESTADO": True, 
-                            "Inicio": True, "Cierre": True,
-                            "GANTT_START": False, "GANTT_END": False, "ACTIVIDAD": False
-                        }, 
+                        custom_data=["INFO_HOVER"], # === INYECCION CUSTOM_DATA ===
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                     )
                     
@@ -800,7 +803,8 @@ def main():
                     hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
-                    fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
+                    # === CAMBIO APLICADO: HOVERTEMPLATE ===
+                    fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9, hovertemplate="%{customdata[0]}<extra></extra>")
                     
                     fig_gantt_d.update_layout(
                         showlegend=True, 
@@ -1351,6 +1355,16 @@ def main():
                     df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                     
+                    # === CAMBIO APLICADO: AQUI CREAMOS EL INFO_HOVER PARA EL TOOLTIP (MONITOR) ===
+                    df_para_gantt_final['INFO_HOVER'] = (
+                        "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
+                        "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
+                        "COLONIA=" + df_para_gantt_final['COLONIA'].astype(str) + "<br>" +
+                        "ESTADO=" + df_para_gantt_final['ESTADO'].astype(str) + "<br>" +
+                        "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
+                        "Cierre=" + df_para_gantt_final['Cierre'].astype(str)
+                    )
+
                     st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                     
                     fig_gantt = px.timeline(
@@ -1360,16 +1374,7 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        hover_data={
-                            "NUM": True, 
-                            "COLONIA": True, 
-                            "ESTADO": True, 
-                            "Inicio": True,
-                            "Cierre": True,
-                            "GANTT_START": False, 
-                            "GANTT_END": False,
-                            "ACTIVIDAD": False
-                        }, 
+                        custom_data=["INFO_HOVER"], # === INYECCIÓN DEL CUSTOM_DATA ===
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
                     
@@ -1378,7 +1383,10 @@ def main():
                     hora_fin_pantalla = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt.update_xaxes(range=[hora_inicio_pantalla, hora_fin_pantalla], tickformat="%H:%M", title_text="Cronograma de Actividades")
-                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9)
+                    
+                    # === CAMBIO APLICADO: AQUI APLICAMOS EL HOVERTEMPLATE ===
+                    fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9, hovertemplate="%{customdata[0]}<extra></extra>")
+                    
                     fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                     
                     st.plotly_chart(fig_gantt, use_container_width=True)
@@ -1558,4 +1566,4 @@ if __name__ == "__main__":
     if st.session_state.get('autenticado'):
         main()
     else:
-        mostrar_pantalla_login()S
+        mostrar_pantalla_login()
