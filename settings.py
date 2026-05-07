@@ -1,13 +1,14 @@
 import streamlit as st
 
 def inicializar_configuracion():
-    """Define los valores por defecto en la memoria de la sesión."""
-    if 'config_mostrar_tablero' not in st.session_state:
-        st.session_state.config_mostrar_tablero = True
-    if 'config_mostrar_consolidado' not in st.session_state:
-        st.session_state.config_mostrar_consolidado = True
-    if 'config_mostrar_panel' not in st.session_state:
-        st.session_state.config_mostrar_panel = True
+    if 'config_ver_filtros' not in st.session_state:
+        st.session_state.config_ver_filtros = True
+    if 'config_ver_tablero' not in st.session_state:
+        st.session_state.config_ver_tablero = True
+    if 'config_ver_consolidado' not in st.session_state:
+        st.session_state.config_ver_consolidado = True
+    if 'config_ver_panel' not in st.session_state:
+        st.session_state.config_ver_panel = True
 
 def mostrar_configuracion():
     st.title("⚙️ Configuración y Documentación")
@@ -16,23 +17,12 @@ def mostrar_configuracion():
     
     with tab_conf:
         st.subheader("Personalización del Monitor en Vivo")
-        st.write("Apaga o enciende las secciones que deseas ver en tu pantalla principal. Los cambios se guardan automáticamente.")
+        st.write("Apaga o enciende las secciones que deseas ver en tu pantalla principal.")
         
-        # Toggles conectados a la memoria para ocultar los expanders
-        st.session_state.config_mostrar_tablero = st.toggle(
-            "📊 Mostrar: Tablero de Carga Actual (Pendientes)", 
-            value=st.session_state.config_mostrar_tablero
-        )
-        
-        st.session_state.config_mostrar_consolidado = st.toggle(
-            "📊 Mostrar: Consolidado por Segmento (Mora vs Al Día)", 
-            value=st.session_state.config_mostrar_consolidado
-        )
-        
-        st.session_state.config_mostrar_panel = st.toggle(
-            "🎛️ Mostrar: Panel de Control y Análisis Detallado", 
-            value=st.session_state.config_mostrar_panel
-        )
+        st.session_state.config_ver_filtros = st.toggle("🔍 Mostrar: Filtros Rápidos", value=st.session_state.config_ver_filtros)
+        st.session_state.config_ver_tablero = st.toggle("📊 Mostrar: Tablero de Carga Actual", value=st.session_state.config_ver_tablero)
+        st.session_state.config_ver_consolidado = st.toggle("📈 Mostrar: Consolidado por Segmento", value=st.session_state.config_ver_consolidado)
+        st.session_state.config_ver_panel = st.toggle("🎛️ Mostrar: Panel de Control y Análisis", value=st.session_state.config_ver_panel)
 
     with tab_doc:
         st.subheader("📚 Guía Rápida del Sistema MaxCom")
