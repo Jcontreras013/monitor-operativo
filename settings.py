@@ -1,12 +1,12 @@
 import streamlit as st
 
 def inicializar_configuracion():
-    if 'config_ver_filtros' not in st.session_state:
-        st.session_state.config_ver_filtros = True
     if 'config_ver_tablero' not in st.session_state:
         st.session_state.config_ver_tablero = True
     if 'config_ver_consolidado' not in st.session_state:
         st.session_state.config_ver_consolidado = True
+    if 'config_ver_gantt' not in st.session_state:
+        st.session_state.config_ver_gantt = True
     if 'config_ver_panel' not in st.session_state:
         st.session_state.config_ver_panel = True
 
@@ -19,11 +19,12 @@ def mostrar_configuracion():
         st.subheader("Personalización del Monitor en Vivo")
         st.write("Apaga o enciende las secciones que deseas ver en tu pantalla principal.")
         
-        st.session_state.config_ver_filtros = st.toggle("🔍 Mostrar: Filtros Rápidos", value=st.session_state.config_ver_filtros)
-        st.session_state.config_ver_tablero = st.toggle("📊 Mostrar: Tablero de Carga Actual", value=st.session_state.config_ver_tablero)
-        st.session_state.config_ver_consolidado = st.toggle("📈 Mostrar: Consolidado por Segmento", value=st.session_state.config_ver_consolidado)
-        st.session_state.config_ver_panel = st.toggle("🎛️ Mostrar: Panel de Control y Análisis", value=st.session_state.config_ver_panel)
+        st.session_state.config_ver_tablero = st.toggle("📊 Mostrar: Tablero de Carga Actual (Pendientes)", value=st.session_state.config_ver_tablero)
+        st.session_state.config_ver_consolidado = st.toggle("📊 Mostrar: Consolidado por Segmento (Mora vs Al Día)", value=st.session_state.config_ver_consolidado)
+        st.session_state.config_ver_gantt = st.toggle("⏳ Mostrar: Línea de Tiempo Operativa (Gantt)", value=st.session_state.config_ver_gantt)
+        st.session_state.config_ver_panel = st.toggle("🎛️ Mostrar: Panel de Control y Análisis Detallado", value=st.session_state.config_ver_panel)
 
+    
     with tab_doc:
         st.subheader("📚 Guía Rápida del Sistema MaxCom")
         
