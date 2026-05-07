@@ -13,7 +13,6 @@ from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import os
-import settings    
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -183,7 +182,6 @@ def sincronizar_datos_nube(conn):
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
-    settings.inicializar_configuracion()
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
     
@@ -241,7 +239,7 @@ def main():
             elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
             elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"
             else: 
-                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "⚙️ Configuración"])
+                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS"])
         else:
             selected_nav = option_menu(
                 menu_title=None,
@@ -263,7 +261,7 @@ def main():
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos", "⚙️ Configuración"])
+                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos"])
             else:
                 st.markdown("### 🖥️ Menú de Control")
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
@@ -279,7 +277,6 @@ def main():
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_boton_logout()
 
-        # REGLA DE CARGA DE ARCHIVOS: Todos los roles menos "monitoreo" pueden cargar archivos.
         mostrar_cargador = False
         if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
             mostrar_cargador = True
@@ -480,7 +477,7 @@ def main():
     hoy_date_valor = ahora_local.date()
     df_base_activa = df_base.copy()
 
-# ==============================================================================
+    # ==============================================================================
     # 3. FILTROS Y NAVEGACIÓN PRINCIPAL
     # ==============================================================================
     filtro_actividad = []
@@ -491,44 +488,39 @@ def main():
     tec_filtro_monitor = "Todos"
 
     if nav_menu_diamante == "⚡ Monitor en Vivo":
-        
-      
-        if st.session_state.get('config_mostrar_filtros', True):
-            filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
+        filtro_container = st.expander("🎛️ Filtros Rápidos y Búsqueda", expanded=False) if es_movil else sidebar_top
+        with filtro_container:
+            if not es_movil: st.markdown("---")
+            st.markdown("### 🎛️ Filtros Múltiples")
             
-            with filtro_container:
-                if not es_movil: st.markdown("---")
-                st.markdown("### 🎛️ Filtros Múltiples")
-                
-                lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
-                lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
-                lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
-                
-                filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-                filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-                filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
-                
-                st.divider() 
-                st.markdown("### 🔍 Filtros en Vivo")
-                
-                m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                
-                if 'ES_OFFLINE' not in df_base_activa.columns:
-                    df_base_activa['ES_OFFLINE'] = False
-                mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
-                
-                total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
-                
-                mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-                total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
-                
-                check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
-                check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
-                
-                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
-                tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            lista_actividades = sorted(df_base_activa['ACTIVIDAD'].dropna().unique().tolist())
+            lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
+            lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
+            
+            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+            
+            st.divider() 
+            st.markdown("### 🔍 Filtros en Vivo")
+            
+            m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+            
+            if 'ES_OFFLINE' not in df_base_activa.columns:
+                df_base_activa['ES_OFFLINE'] = False
+            mascara_offline_segura = df_base_activa['ES_OFFLINE'] == True
+            
+            total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
+            
+            mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
+            
+            check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
+            check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+            
+            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
 
-        # Aplicación de los filtros (estén visibles o no)
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
         if len(filtro_estado) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].isin(filtro_estado)]
@@ -549,11 +541,6 @@ def main():
     # ==============================================================================
     # 4. RENDERIZADO DE PANTALLAS
     # ==============================================================================
-  
-    if nav_menu_diamante == "⚙️ Configuración":
-        settings.mostrar_configuracion()
-        return
-    
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
         tab1, tab2 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos"])
         
@@ -789,8 +776,6 @@ def main():
                     df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                     df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
                     
-                    # === CAMBIO APLICADO: INFO_HOVER PARA EL TOOLTIP ===
-# === 1. CREACIÓN DEL TEXTO DEL TOOLTIP (DENTRO DE CENTRO DE REPORTES) ===
                     df_para_gantt_diario['INFO_HOVER'] = (
                         "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
                         "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
@@ -798,10 +783,9 @@ def main():
                         "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
                         "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
                         "Cierre=" + df_para_gantt_diario['Cierre'].astype(str) + "<br>" +
-                        "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str) # Agregamos tiempo total
+                        "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
                     )
 
-                    # === 2. GENERACIÓN DEL GRÁFICO CON CUSTOM_DATA ===
                     fig_gantt_d = px.timeline(
                         df_para_gantt_diario, 
                         x_start="GANTT_START", 
@@ -809,18 +793,8 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        custom_data=["INFO_HOVER"], # Inyectamos el texto personalizado
+                        custom_data=["INFO_HOVER"], 
                         height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
-                    )
-                    
-                    # === 3. CONFIGURACIÓN DEL HOVERTEMPLATE ===
-                    fig_gantt_d.update_traces(
-                        textposition='inside', 
-                        insidetextanchor='middle', 
-                        marker_line_color='white', 
-                        marker_line_width=1.5, 
-                        opacity=0.9,
-                        hovertemplate="%{customdata[0]}<extra></extra>" # Fuerza a mostrar solo nuestro texto
                     )
                     
                     fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
@@ -828,7 +802,6 @@ def main():
                     hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
                     
                     fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
-                    # === CAMBIO APLICADO: HOVERTEMPLATE ===
                     fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9, hovertemplate="%{customdata[0]}<extra></extra>")
                     
                     fig_gantt_d.update_layout(
@@ -1097,7 +1070,6 @@ def main():
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
 
-    if st.session_state.config_mostrar_kpis:
         if es_movil:
             st.markdown(f"""
             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
@@ -1249,110 +1221,63 @@ def main():
                     st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
                     st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
-        with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
-            st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
+        with st.expander("📊 CONSOLIDADO POR SEGMENTO Y AVANCE", expanded=False):
+            st.markdown("<h4 style='text-align: center; color: #1F2937;'>Control de Gestión Operativa (Evacuación de Mora Inicial)</h4><br>", unsafe_allow_html=True)
+            if not es_movil: col1, col2, col3 = st.columns(3)
             
-            # Preparar fechas para cálculo exacto
+            df_mora_pendiente_actual = df_solo_asignadas_monitor[df_solo_asignadas_monitor['DIAS_RETRASO'] > 0].copy()
             df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
+            df_mora_cerrada_hoy = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['FECHA_APE_DT'].dt.date < hoy_date_valor].copy()
+            df_inicio_mora_total = pd.concat([df_mora_pendiente_actual, df_mora_cerrada_hoy]).drop_duplicates(subset=['NUM'])
+
+            df_plex_m_pend = df_mora_pendiente_actual[df_mora_pendiente_actual['SEGMENTO'] == 'PLEX']
+            df_plex_m_cerr = df_mora_cerrada_hoy[df_mora_cerrada_hoy['SEGMENTO'] == 'PLEX']
+            df_plex_m_inicio = df_inicio_mora_total[df_inicio_mora_total['SEGMENTO'] == 'PLEX']
             
-            def calcular_metricas(segmento):
-                """Calcula Mora, Día y Global para un segmento específico."""
-                if segmento == 'GLOBAL':
-                    p = df_solo_asignadas_monitor
-                    c = df_cerradas_hoy_monitor
-                else:
-                    p = df_solo_asignadas_monitor[df_solo_asignadas_monitor['SEGMENTO'] == segmento]
-                    c = df_cerradas_hoy_monitor[df_cerradas_hoy_monitor['SEGMENTO'] == segmento]
+            df_resi_m_pend = df_mora_pendiente_actual[df_mora_pendiente_actual['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_cerr = df_mora_cerrada_hoy[df_mora_cerrada_hoy['SEGMENTO'] == 'RESIDENCIAL']
+            df_resi_m_inicio = df_inicio_mora_total[df_inicio_mora_total['SEGMENTO'] == 'RESIDENCIAL']
 
-                # PENDIENTES (Usamos DIAS_RETRASO para respetar excepciones)
-                p_mora = len(p[p['DIAS_RETRASO'] > 0])
-                p_hoy = len(p[p['DIAS_RETRASO'] == 0])
+            tot_mora_plex = len(df_plex_m_inicio)
+            av_mora_plex = (len(df_plex_m_cerr) / tot_mora_plex * 100) if tot_mora_plex > 0 else 0
+            tot_mora_resi = len(df_resi_m_inicio)
+            av_mora_resi = (len(df_resi_m_cerr) / tot_mora_resi * 100) if tot_mora_resi > 0 else 0
+            tot_mora_global = len(df_inicio_mora_total)
+            av_mora_global = (len(df_mora_cerrada_hoy) / tot_mora_global * 100) if tot_mora_global > 0 else 0
 
-                # CERRADAS (Usamos la fecha de apertura vs Hoy)
-                c_mora = len(c[c['FECHA_APE_DT'].dt.date < hoy_date_valor])
-                c_hoy = len(c[c['FECHA_APE_DT'].dt.date == hoy_date_valor])
+            def crear_velocimetro_6cols(valor, titulo, es_mora=False, total_ordenes=0):
+                if es_mora: color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981")
+                else: color_v = "#EF4444" if valor < 50 else ("#F59E0B" if valor < 80 else "#10B981") 
+                if total_ordenes == 0: color_v = "#4B5563"
+                fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
+                texto_central = f"{valor:.0f}%" if total_ordenes > 0 else "N/A"
+                fig.update_layout(showlegend=False, height=140, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 13}}, annotations=[dict(text=texto_central, x=0.5, y=0.5, font_size=22, font_color=color_v, showarrow=False, font_weight="bold")])
+                return fig
 
-                # TOTALES
-                tot_mora, tot_hoy = p_mora + c_mora, p_hoy + c_hoy
-                tot_global = tot_mora + tot_hoy
-                cerr_global = c_mora + c_hoy
-
-                # PORCENTAJES
-                pct_mora = (c_mora / tot_mora * 100) if tot_mora > 0 else 0
-                pct_hoy = (c_hoy / tot_hoy * 100) if tot_hoy > 0 else 0
-                pct_global = (cerr_global / tot_global * 100) if tot_global > 0 else 0
-
-                return {
-                    'tot_g': tot_global, 'cerr_g': cerr_global, 'pct_g': pct_global,
-                    'tot_m': tot_mora, 'cerr_m': c_mora, 'pct_m': pct_mora,
-                    'tot_h': tot_hoy, 'cerr_h': c_hoy, 'pct_h': pct_hoy,
-                    'df_p': p, 'df_c': c
-                }
-
-            # Calcular los 3 segmentos
-            stats_resi = calcular_metricas('RESIDENCIAL')
-            stats_plex = calcular_metricas('PLEX')
-            stats_global = calcular_metricas('GLOBAL')
-
-            def renderizar_metrica(col_ui, stats, titulo, color_hex, key_btn):
-                with col_ui:
-                    # 1. Gráfica Principal (Global)
-                    fig = go.Figure(go.Pie(
-                        values=[stats['pct_g'], max(0, 100 - stats['pct_g'])] if stats['tot_g'] > 0 else [0, 100],
-                        labels=['Completado', 'Pendiente'], hole=0.8,
-                        marker=dict(colors=[color_hex, '#2D2F39']),
-                        textinfo='none', hoverinfo='none', direction='clockwise', sort=False
-                    ))
-                    
-                    texto_central = f"{stats['pct_g']:.0f}%" if stats['tot_g'] > 0 else "N/A"
-                    subtexto = f"Total: {stats['cerr_g']} de {stats['tot_g']}" if stats['tot_g'] > 0 else "Sin asignaciones"
-                    
-                    fig.update_layout(
-                        showlegend=False, height=150, margin=dict(l=5, r=5, t=30, b=5),
-                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                        title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 14, 'weight': 'bold'}},
-                        annotations=[
-                            dict(text=texto_central, x=0.5, y=0.42, font_size=26, font_color=color_hex, showarrow=False, font_weight="bold"),
-                            dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#6B7280", showarrow=False)
-                        ]
-                    )
-                    st.plotly_chart(fig, use_container_width=True, key=f"pie_{key_btn}")
-
-                    # 2. Etiquetas de Desglose (Mora vs Hoy)
-                    html_badges = f"""
-                    <div style="display:flex; justify-content:center; gap:8px; font-size:11px; margin-top:-15px; margin-bottom:10px;">
-                        <div style="background-color:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #fca5a5;">
-                            🔴 Mora: {stats['cerr_m']}/{stats['tot_m']} ({stats['pct_m']:.0f}%)
-                        </div>
-                        <div style="background-color:#dbeafe; color:#1d4ed8; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #93c5fd;">
-                            🔵 Hoy: {stats['cerr_h']}/{stats['tot_h']} ({stats['pct_h']:.0f}%)
-                        </div>
-                    </div>
-                    """
-                    st.markdown(html_badges, unsafe_allow_html=True)
-
-                    # 3. Botón de Detalle
-                    if st.button("🔍 Ver Desglose", use_container_width=True, key=f"btn_{key_btn}"):
-                        mostrar_detalle_avance(titulo.upper(), stats['df_p'], stats['df_c'])
-
-            # Renderizar en Pantalla
             if es_movil:
-                renderizar_metrica(st.container(), stats_resi, "🏠 Residencial", "#EF4444", "resi_m")
-                renderizar_metrica(st.container(), stats_plex, "🏢 PLEX", "#F59E0B", "plex_m")
-                renderizar_metrica(st.container(), stats_global, "🌍 Global", "#10B981", "glob_m")
+                st.plotly_chart(crear_velocimetro_6cols(av_mora_resi, "🏠 Mora Resi", es_mora=True, total_ordenes=tot_mora_resi), use_container_width=True, key="p4m")
+                if st.button("🔍 Ver Mora Resi", use_container_width=True, key="b4m"): mostrar_detalle_avance("MORA RESIDENCIAL", df_resi_m_pend, df_resi_m_cerr, df_resi_m_inicio)
+                st.plotly_chart(crear_velocimetro_6cols(av_mora_plex, "🏢 Mora PLEX", es_mora=True, total_ordenes=tot_mora_plex), use_container_width=True, key="p5m")
+                if st.button("🔍 Ver Mora PLEX", use_container_width=True, key="b5m"): mostrar_detalle_avance("MORA PLEX", df_plex_m_pend, df_plex_m_cerr, df_plex_m_inicio)
+                st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=tot_mora_global), use_container_width=True, key="p6m")
+                if st.button("🔍 Mora Global", use_container_width=True, key="b6m"): mostrar_detalle_avance("MORA GLOBAL", df_mora_pendiente_actual, df_mora_cerrada_hoy, df_inicio_mora_total)
             else:
-                col1, col2, col3 = st.columns(3)
-                renderizar_metrica(col1, stats_resi, "🏠 Residencial", "#EF4444", "resi")
-                renderizar_metrica(col2, stats_plex, "🏢 PLEX", "#F59E0B", "plex")
-                renderizar_metrica(col3, stats_global, "🌍 Global", "#10B981", "glob")
+                with col1:
+                    st.plotly_chart(crear_velocimetro_6cols(av_mora_resi, "🏠 Mora Resi", es_mora=True, total_ordenes=tot_mora_resi), use_container_width=True, key="p4")
+                    if st.button("🔍 Ver Mora", use_container_width=True, key="b4"): mostrar_detalle_avance("MORA RESIDENCIAL", df_resi_m_pend, df_resi_m_cerr, df_resi_m_inicio)
+                with col2:
+                    st.plotly_chart(crear_velocimetro_6cols(av_mora_plex, "🏢 Mora PLEX", es_mora=True, total_ordenes=tot_mora_plex), use_container_width=True, key="p5")
+                    if st.button("🔍 Ver Mora", use_container_width=True, key="b5"): mostrar_detalle_avance("MORA PLEX", df_plex_m_pend, df_plex_m_cerr, df_plex_m_inicio)
+                with col3:
+                    st.plotly_chart(crear_velocimetro_6cols(av_mora_global, "🌍 Mora Global", es_mora=True, total_ordenes=tot_mora_global), use_container_width=True, key="p6")
+                    if st.button("🔍 Mora Global", use_container_width=True, key="b6"): mostrar_detalle_avance("MORA GLOBAL", df_mora_pendiente_actual, df_mora_cerrada_hoy, df_inicio_mora_total)
 
             st.markdown("---")
-    
+
             # ==============================================================================
             # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
             # ==============================================================================
-           
-        if not es_movil and st.session_state.config_mostrar_gantt:
+            if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>", unsafe_allow_html=True)
                 
                 mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
@@ -1402,7 +1327,7 @@ def main():
                         y="TECNICO", 
                         color="ACTIVIDAD", 
                         text="ACTIVIDAD",  
-                        custom_data=["INFO_HOVER"], # === INYECCIÓN DEL CUSTOM_DATA ===
+                        custom_data=["INFO_HOVER"], 
                         height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                     )
                     
