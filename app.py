@@ -1330,7 +1330,7 @@ def main():
             # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
             # ==============================================================================
             if not es_movil:
-                # 👇 AQUÍ AGREGAMOS EL EXPANDER 👇
+            if st.session_state.get('config_ver_gantt', True):
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                     
                     mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
