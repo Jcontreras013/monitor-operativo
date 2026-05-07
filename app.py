@@ -1349,7 +1349,7 @@ def main():
             # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
             # ==============================================================================
            
-                if not es_movil and st.session_state.config_mostrar_gantt:
+        if not es_movil and st.session_state.config_mostrar_gantt:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Línea de Tiempo Operativa (Gantt)</h4><br>", unsafe_allow_html=True)
                 
                 mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
