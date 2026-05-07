@@ -1128,7 +1128,7 @@ def main():
             """
             st.markdown(html_kpis, unsafe_allow_html=True)
 
-        if st.session_state.get('config_mostrar_tablero', True):
+        if st.session_state.get('config_ver_tablero', True):
             with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=not es_movil):
                 if es_movil:
                     st.caption("📅 Resumen de Retraso")
@@ -1236,7 +1236,7 @@ def main():
                         st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
                         st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
-        if st.session_state.get('config_mostrar_consolidado', True):
+        if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
                 
@@ -1399,7 +1399,7 @@ def main():
                         st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
             st.markdown("---")
-            
+        if st.session_state.get('config_ver_panel', True):
             with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
                 if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
                     st.session_state.st_btn_v_active = "PENDIENTE"
