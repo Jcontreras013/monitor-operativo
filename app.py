@@ -800,16 +800,17 @@ def main():
                             "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
                         )
 
-                        fig_gantt_d = px.timeline(
-                            df_para_gantt_diario, 
+                        fig_gantt = px.timeline(
+                            df_para_gantt_final, 
                             x_start="GANTT_START", 
                             x_end="GANTT_END", 
                             y="TECNICO", 
                             color="ACTIVIDAD", 
                             text="ACTIVIDAD",  
                             custom_data=["INFO_HOVER"], 
-                            height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
-                        )
+                            color_discrete_sequence=['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#84cc16', '#eab308', '#6366f1'], # 🎨 PALETA DE COLORES SÓLIDOS
+                            height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
+                    )
                         
                         fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
                         hora_inicio_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
