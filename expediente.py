@@ -11,7 +11,7 @@ from fpdf import FPDF
 # ==============================================================================
 # CONFIGURACIÓN: API KEY PARA GUARDAR FOTOS EN LA NUBE GRATUITA
 # ==============================================================================
-API_KEY_FREEIMAGE = "AQUI_TU_API_KEY_DE_FREEIMAGE"
+API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
 
 # ==============================================================================
 # 1. LÓGICA DE PDF INDEPENDIENTE (Blindada y sin depender de tools.py)
