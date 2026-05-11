@@ -32,3 +32,6 @@ matplotlib
 fpdf2
 pdfplumber
 pymupdf
+
+#--guardado de imagenes--
+requests
