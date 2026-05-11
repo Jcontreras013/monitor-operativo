@@ -4,18 +4,148 @@ import requests
 import base64
 from datetime import datetime
 import os
-from tools import generar_pdf_memorandum # <--- AQUÍ IMPORTAMOS LA LÓGICA DE TOOLS
+import tempfile
+import textwrap
+from fpdf import FPDF
 
 # ==============================================================================
 # CONFIGURACIÓN: API KEY PARA GUARDAR FOTOS EN LA NUBE GRATUITA
 # ==============================================================================
 API_KEY_FREEIMAGE = "AQUI_TU_API_KEY_DE_FREEIMAGE"
 
+# ==============================================================================
+# 1. LÓGICA DE PDF INDEPENDIENTE (Blindada y sin depender de tools.py)
+# ==============================================================================
+class MemoPDF(FPDF):
+    def header(self):
+        # Intenta colocar el logo si existe en la carpeta
+        if os.path.exists('logo.png'):
+            try:
+                self.image('logo.png', 10, 6, 35)
+            except: pass
+            
+        self.set_y(10)
+        self.set_x(50)
+        self.set_text_color(0, 0, 0)
+        self.set_font("Helvetica", "B", 10)
+        self.cell(0, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
+        self.set_font("Helvetica", "", 8)
+        self.set_x(50)
+        self.cell(0, 5, "Reporte Oficial de Incidencias en Ruta", ln=True, align="R")
+        self.set_draw_color(200, 200, 200)
+        self.line(10, 22, 200, 22)
+        self.ln(10)
+        
+    def footer(self):
+        self.set_y(-15)
+        self.set_text_color(150, 150, 150)
+        self.set_font("Helvetica", "I", 8)
+        self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
+
+def sanitizar(texto):
+    """Limpia tildes y caracteres raros para que el PDF no explote"""
+    import unicodedata
+    if pd.isna(texto): return "N/D"
+    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+
+def generar_pdf_memo(row):
+    """Genera el PDF del memorándum y descarga la evidencia de internet temporalmente"""
+    pdf = MemoPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(180, 0, 0) # Rojo oscuro para llamados de atención
+    pdf.cell(0, 10, "MEMORANDUM: LLAMADO DE ATENCION", ln=True, align="C")
+    pdf.ln(5)
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(0, 0, 0)
+    
+    # --- CUADRO DE DATOS DEL EMPLEADO ---
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(35, 8, " Tecnico:", border=1, fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(155, 8, f" {sanitizar(row.get('TECNICO', ''))}", border=1, ln=True)
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(35, 8, " Tipo de Falta:", border=1, fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(155, 8, f" {sanitizar(row.get('TIPO_FALTA', ''))}", border=1, ln=True)
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(35, 8, " Fecha Suceso:", border=1, fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(155, 8, f" {sanitizar(row.get('FECHA_INCIDENCIA', ''))}", border=1, ln=True)
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(35, 8, " Registrado Por:", border=1, fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(155, 8, f" {sanitizar(row.get('SUPERVISOR', 'Sistema'))} el {sanitizar(row.get('FECHA_REGISTRO', ''))}", border=1, ln=True)
+    
+    pdf.ln(8)
+    
+    # --- DETALLE DE LOS HECHOS ---
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 8, "Detalle de los Hechos:", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    
+    lineas = textwrap.wrap(str(row.get('COMENTARIO', '')), width=95)
+    for linea in lineas:
+        pdf.cell(0, 6, sanitizar(linea), ln=True)
+        
+    pdf.ln(8)
+    
+    # --- EVIDENCIA FOTOGRÁFICA ---
+    url_foto = str(row.get('URL_FOTO', ''))
+    if url_foto.startswith('http'):
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 8, "Evidencia Fotografica / Captura del Sistema:", ln=True)
+        pdf.set_text_color(0, 0, 0)
+        try:
+            req = requests.get(url_foto, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            if req.status_code == 200:
+                fd, tmppath = tempfile.mkstemp(suffix=".png")
+                os.close(fd)
+                with open(tmppath, 'wb') as f:
+                    f.write(req.content)
+                
+                # Si no cabe en la hoja actual, saltamos a la siguiente
+                if pdf.get_y() > 160:
+                    pdf.add_page()
+                
+                pdf.image(tmppath, x=15, w=170)
+                os.remove(tmppath)
+            else:
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.cell(0, 6, "(No se pudo descargar la evidencia web. El servidor rechazo la peticion.)", ln=True)
+        except:
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.cell(0, 6, "(Error al leer la evidencia grafica. URL corrupta.)", ln=True)
+            
+    # Guardamos en RAM y retornamos bytes
+    fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    try:
+        pdf.output(pdf_path)
+        with open(pdf_path, "rb") as f:
+            return f.read()
+    finally:
+        try: os.remove(pdf_path)
+        except: pass
+
+
+# ==============================================================================
+# 2. INTERFAZ GRÁFICA EN STREAMLIT
+# ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     st.title("📁 Gestión de Expedientes Disciplinarios")
     st.markdown("---")
     
-    # --- 1. FORMULARIO DE REGISTRO ---
+    # --- FORMULARIO DE REGISTRO ---
     with st.expander("➕ Registrar Nueva Incidencia / Falta", expanded=True):
         with st.form("form_incidencia", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -36,7 +166,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                 archivo_evidencia = st.file_uploader("🖼️ Captura de Pantalla (Evidencia):", type=['png', 'jpg', 'jpeg'], help="Sube el pantallazo del GPS o Cepheus. Pesa cero en tu GitHub.")
 
             comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, instrucciones ignoradas, etc.)...")
-            
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
             
             if btn_guardar:
@@ -53,11 +182,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 if res.status_code == 200:
                                     url_imagen_subida = res.json()["image"]["url"]
                                 else:
-                                    st.warning(f"No se pudo subir la imagen. Código de error: {res.status_code}. Revisa tu API Key. El registro se guardará solo con texto.")
+                                    st.warning(f"No se pudo subir la foto (Error {res.status_code}). Se guardará el reporte sin imagen.")
                             except Exception as e:
                                 st.error(f"Error técnico al subir imagen: {e}. Se guardará sin foto.")
 
-                    # Agregamos automáticamente quién hizo el registro
                     supervisor_actual = st.session_state.get('usuario', 'Sistema')
                     
                     nueva_fila = pd.DataFrame([{
@@ -83,10 +211,8 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # --- 2. VISOR DE EXPEDIENTES (HISTORIAL) ---
+    # --- HISTORIAL Y VISOR ---
     st.subheader("📜 Historial Disciplinario Activo")
-    st.caption("Filtre por técnico para ver su bitácora de faltas y evidencias. Use esto para fundamentar llamados de atención.")
-    
     try:
         with st.spinner("Cargando expedientes..."):
             df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
@@ -105,11 +231,13 @@ def mostrar_modulo_expedientes(conn, df_base):
                     with st.container():
                         st.markdown("""<div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border-left: 4px solid #EF4444; margin-bottom: 10px;">""", unsafe_allow_html=True)
                         c1, c2 = st.columns([3, 1])
+                        
                         with c1:
                             st.markdown(f"### 👨‍🔧 {row['TECNICO']}")
                             st.markdown(f"**🚫 Falta Reportada:** {row['TIPO_FALTA']}")
-                            st.caption(f"**📅 Sucedió el:** {row['FECHA_INCIDENCIA']} | **⏳ Registrado en Sistema:** {row['FECHA_REGISTRO']} | **✍️ Por:** {row.get('SUPERVISOR', 'N/D')}")
+                            st.caption(f"**📅 Sucedió el:** {row['FECHA_INCIDENCIA']} | **⏳ Registrado:** {row['FECHA_REGISTRO']} | **✍️ Por:** {row.get('SUPERVISOR', 'N/D')}")
                             st.info(f"**Detalle del Reporte:**\n\n{row['COMENTARIO']}")
+                            
                         with c2:
                             url = str(row.get('URL_FOTO', ''))
                             if url.startswith('http'):
@@ -117,23 +245,27 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 st.markdown(f"[🔍 Abrir Imagen Completa en Pestaña Nueva]({url})")
                             else:
                                 st.markdown("<br><br>", unsafe_allow_html=True)
-                                st.caption("📸 *No se adjuntó captura de pantalla para este incidente.*")
+                                st.caption("📸 *No se adjuntó evidencia para este incidente.*")
                                 
-                            # --- EL BOTÓN PARA GENERAR EL PDF USANDO TOOLS.PY ---
-                            pdf_bytes = generar_pdf_memorandum(row)
-                            nombre_archivo = f"Memorandum_{str(row.get('TECNICO', ''))[:10]}_{str(row.get('FECHA_INCIDENCIA', '')).replace('/', '')}.pdf".replace(" ", "_")
-                            
-                            st.download_button(
-                                label="📄 Descargar Memo",
-                                data=pdf_bytes,
-                                file_name=nombre_archivo,
-                                mime="application/pdf",
-                                key=f"btn_pdf_{idx}",
-                                use_container_width=True,
-                                type="primary"
-                            )
+                            # --- BOTÓN DE DESCARGA PDF BLINDADO ---
+                            try:
+                                pdf_bytes = generar_pdf_memo(row)
+                                nombre_archivo = f"Memo_{str(row.get('TECNICO', ''))[:10]}_{str(row.get('FECHA_INCIDENCIA', '')).replace('/', '')}.pdf".replace(" ", "_")
+                                
+                                st.download_button(
+                                    label="📄 Descargar Memo",
+                                    data=pdf_bytes,
+                                    file_name=nombre_archivo,
+                                    mime="application/pdf",
+                                    key=f"btn_pdf_{idx}",
+                                    use_container_width=True,
+                                    type="primary"
+                                )
+                            except Exception as e:
+                                st.error(f"❌ No se pudo crear el PDF de este reporte: {e}")
+                                
                         st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("La base de datos de expedientes está limpia. No hay registros previos.")
     except Exception as e:
-        st.warning(f"⚠️ Error al cargar los expedientes: {e}")
+        st.warning(f"⚠️ Error al cargar los expedientes desde Google Sheets: {e}")
