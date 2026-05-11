@@ -14,11 +14,10 @@ from fpdf import FPDF
 API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
 
 # ==============================================================================
-# 1. LÓGICA DE PDF INDEPENDIENTE (Blindada y sin depender de tools.py)
+# 1. LÓGICA DE PDF INDEPENDIENTE (Blindada)
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
-        # Intenta colocar el logo si existe en la carpeta
         if os.path.exists('logo.png'):
             try:
                 self.image('logo.png', 10, 6, 35)
@@ -55,14 +54,13 @@ def generar_pdf_memo(row):
     pdf.add_page()
     
     pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(180, 0, 0) # Rojo oscuro para llamados de atención
+    pdf.set_text_color(180, 0, 0)
     pdf.cell(0, 10, "MEMORANDUM: LLAMADO DE ATENCION", ln=True, align="C")
     pdf.ln(5)
     
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(0, 0, 0)
     
-    # --- CUADRO DE DATOS DEL EMPLEADO ---
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(35, 8, " Tecnico:", border=1, fill=True)
     pdf.set_font("Helvetica", "", 10)
@@ -85,7 +83,6 @@ def generar_pdf_memo(row):
     
     pdf.ln(8)
     
-    # --- DETALLE DE LOS HECHOS ---
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 8, "Detalle de los Hechos:", ln=True)
@@ -98,7 +95,6 @@ def generar_pdf_memo(row):
         
     pdf.ln(8)
     
-    # --- EVIDENCIA FOTOGRÁFICA ---
     url_foto = str(row.get('URL_FOTO', ''))
     if url_foto.startswith('http'):
         pdf.set_font("Helvetica", "B", 11)
@@ -113,7 +109,6 @@ def generar_pdf_memo(row):
                 with open(tmppath, 'wb') as f:
                     f.write(req.content)
                 
-                # Si no cabe en la hoja actual, saltamos a la siguiente
                 if pdf.get_y() > 160:
                     pdf.add_page()
                 
@@ -126,7 +121,6 @@ def generar_pdf_memo(row):
             pdf.set_font("Helvetica", "I", 9)
             pdf.cell(0, 6, "(Error al leer la evidencia grafica. URL corrupta.)", ln=True)
             
-    # Guardamos en RAM y retornamos bytes
     fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     try:
@@ -142,6 +136,10 @@ def generar_pdf_memo(row):
 # 2. INTERFAZ GRÁFICA EN STREAMLIT
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
+    # Detectamos el rol del usuario actual
+    rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
+    es_admin = (str(rol_usuario).strip().lower() == 'admin')
+
     st.title("📁 Gestión de Expedientes Disciplinarios")
     st.markdown("---")
     
@@ -163,7 +161,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             with col2:
                 fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=datetime.now())
-                archivo_evidencia = st.file_uploader("🖼️ Captura de Pantalla (Evidencia):", type=['png', 'jpg', 'jpeg'], help="Sube el pantallazo del GPS o Cepheus. Pesa cero en tu GitHub.")
+                archivo_evidencia = st.file_uploader("🖼️ Captura de Pantalla (Evidencia):", type=['png', 'jpg', 'jpeg'], help="Sube el pantallazo del GPS o Cepheus.")
 
             comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, instrucciones ignoradas, etc.)...")
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
@@ -247,7 +245,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 st.markdown("<br><br>", unsafe_allow_html=True)
                                 st.caption("📸 *No se adjuntó evidencia para este incidente.*")
                                 
-                            # --- BOTÓN DE DESCARGA PDF BLINDADO ---
                             try:
                                 pdf_bytes = generar_pdf_memo(row)
                                 nombre_archivo = f"Memo_{str(row.get('TECNICO', ''))[:10]}_{str(row.get('FECHA_INCIDENCIA', '')).replace('/', '')}.pdf".replace(" ", "_")
@@ -264,8 +261,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                             except Exception as e:
                                 st.error(f"❌ No se pudo crear el PDF de este reporte: {e}")
                                 
+                            # --- BOTÓN DE ELIMINAR RESTRINGIDO A ROL ADMIN ---
+                            if es_admin:
+                                if st.button("🗑️ Eliminar Reporte", key=f"btn_del_{idx}", help="Solo visible para Administradores"):
+                                    with st.spinner("Eliminando de la base de datos..."):
+                                        try:
+                                            df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                                            mask_borrar = (df_db['FECHA_REGISTRO'] == row['FECHA_REGISTRO']) & (df_db['TECNICO'] == row['TECNICO'])
+                                            df_actualizado = df_db[~mask_borrar]
+                                            
+                                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_actualizado)
+                                            st.success("Registro eliminado correctamente.")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error al eliminar: {e}")
+                                        
                         st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("La base de datos de expedientes está limpia. No hay registros previos.")
     except Exception as e:
-        st.warning(f"⚠️ Error al cargar los expedientes desde Google Sheets: {e}")
+        st.warning(f"⚠️ Error al cargar los expedientes: {e}")
