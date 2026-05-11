@@ -4,6 +4,10 @@ import requests
 import base64
 from datetime import datetime
 import os
+import io
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
 
 # ==============================================================================
 # CONFIGURACIÓN: API KEY PARA GUARDAR FOTOS EN LA NUBE GRATUITA
