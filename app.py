@@ -243,8 +243,7 @@ def main():
             )
             if selected_nav == "Monitor": nav_menu_diamante = "⚡ Monitor en Vivo"
             elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
-            elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"    
-            elif nav_menu_diamante == "📁 Expedientes": expediente.mostrar_modulo_expedientes(conn, df_base)        
+            elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"   
             else: 
                 nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "⚙️ Configuración", "📁 Expedientes"])
         else:
@@ -268,7 +267,7 @@ def main():
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos", "⚙️ Configuración"])
+                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
             else:
                 st.markdown("### 🖥️ Menú de Control")
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
@@ -490,6 +489,11 @@ def main():
     # ==============================================================================
     if nav_menu_diamante == "⚙️ Configuración":
         settings.mostrar_configuracion()
+        return
+
+    # LÓGICA DE LA NUEVA OPCIÓN DEL MENÚ DE EXPEDIENTES
+    if nav_menu_diamante == "📁 Expedientes":
+        expediente.mostrar_modulo_expedientes(conn, df_base)
         return
 
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
@@ -760,7 +764,7 @@ def main():
             
             st.markdown("---")
 
-# ==============================================================================
+            # ==============================================================================
             # ⏳ GANTT EN PESTAÑA CIERRE DIARIO
             # ==============================================================================
             if not es_movil:
