@@ -1683,6 +1683,7 @@ def procesar_auditoria_semanal(df_input):
     try:
         df = df_input.copy()
         
+        # 1. Búsqueda inteligente de columnas
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         if not col_placa:
             for i in range(min(15, len(df))):
@@ -1702,23 +1703,45 @@ def procesar_auditoria_semanal(df_input):
         if not col_salida:
             col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
         
+        # === NUEVO: Buscar columna explícita de FECHA ===
+        col_fecha = next((c for c in df.columns if re.search(r'(?i)^FECHA', str(c).strip())), None)
+        
         if not (col_placa and col_ingreso and col_salida): return None, None, "Columnas no detectadas.", None, None
             
         df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
         df['_P'] = df['_P'].astype(str).str.strip()
         df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
         
+        # 2. Limpieza de AM/PM
         df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
         df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
         
-        df['_I'] = pd.to_datetime(df['_I'], format='mixed', dayfirst=True, errors='coerce')
-        df['_S'] = pd.to_datetime(df['_S'], format='mixed', dayfirst=True, errors='coerce')
+        df['_I_dt'] = pd.to_datetime(df['_I'], format='mixed', dayfirst=True, errors='coerce')
+        df['_S_dt'] = pd.to_datetime(df['_S'], format='mixed', dayfirst=True, errors='coerce')
         
-        df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
+        # === NUEVO: Fusión de Fecha y Hora para no perder días ===
+        if col_fecha:
+            df['_F_real'] = pd.to_datetime(df[col_fecha], format='mixed', dayfirst=True, errors='coerce').dt.date
+            
+            def fusionar_fecha_hora(f_real, dt_time_parsed):
+                if pd.isnull(dt_time_parsed): return pd.NaT
+                if pd.notnull(f_real):
+                    return pd.Timestamp.combine(f_real, dt_time_parsed.time())
+                return dt_time_parsed
+
+            df['_I'] = df.apply(lambda row: fusionar_fecha_hora(row['_F_real'], row['_I_dt']), axis=1)
+            df['_S'] = df.apply(lambda row: fusionar_fecha_hora(row['_F_real'], row['_S_dt']), axis=1)
+            df['Fecha'] = df['_F_real'].fillna(df['_I'].dt.date)
+        else:
+            df['_I'] = df['_I_dt']
+            df['_S'] = df['_S_dt']
+            df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
+        
         df = df.dropna(subset=['Fecha'])
         
         if df.empty: return None, None, "No hay fechas válidas en el archivo.", None, None
         
+        # 3. Resto de la lógica (Intacta)
         fecha_maxima = df['Fecha'].max()
         if pd.notnull(fecha_maxima):
             fecha_minima_valida = fecha_maxima - timedelta(days=7)
