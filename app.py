@@ -273,9 +273,6 @@ def main():
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
                 nav_menu_diamante = "⚡ Monitor en Vivo"
 
-        if nav_menu_diamante == "📁 Expedientes":
-        expediente.mostrar_modulo_expedientes(conn, df_base)
-
         
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
