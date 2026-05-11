@@ -14,7 +14,7 @@ from fpdf import FPDF
 API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
 
 # ==============================================================================
-# 1. LÓGICA DE PDF INDEPENDIENTE (Blindada)
+# 1. LÓGICA DE PDF INDEPENDIENTE (Soporte Multi-Imagen)
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
@@ -48,7 +48,7 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 def generar_pdf_memo(row):
-    """Genera el PDF del memorándum y descarga la evidencia de internet temporalmente"""
+    """Genera el PDF del memorándum soportando múltiples imágenes"""
     pdf = MemoPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -95,31 +95,40 @@ def generar_pdf_memo(row):
         
     pdf.ln(8)
     
-    url_foto = str(row.get('URL_FOTO', ''))
-    if url_foto.startswith('http'):
+    # Procesar múltiples URLs separadas por coma
+    urls_crudo = str(row.get('URL_FOTO', '')).split(',')
+    urls_validas = [u.strip() for u in urls_crudo if u.strip().startswith('http')]
+    
+    if urls_validas:
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(40, 50, 100)
-        pdf.cell(0, 8, "Evidencia Fotografica / Captura del Sistema:", ln=True)
+        pdf.cell(0, 8, "Evidencia Fotografica / Capturas del Sistema:", ln=True)
         pdf.set_text_color(0, 0, 0)
-        try:
-            req = requests.get(url_foto, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-            if req.status_code == 200:
-                fd, tmppath = tempfile.mkstemp(suffix=".png")
-                os.close(fd)
-                with open(tmppath, 'wb') as f:
-                    f.write(req.content)
-                
-                if pdf.get_y() > 160:
-                    pdf.add_page()
-                
-                pdf.image(tmppath, x=15, w=170)
-                os.remove(tmppath)
-            else:
+        
+        for index, url_foto in enumerate(urls_validas):
+            try:
+                req = requests.get(url_foto, headers={'User-Agent': 'Mozilla/5.0'}, timeout=8)
+                if req.status_code == 200:
+                    fd, tmppath = tempfile.mkstemp(suffix=".png")
+                    os.close(fd)
+                    with open(tmppath, 'wb') as f:
+                        f.write(req.content)
+                    
+                    # Si ya estamos muy abajo en la hoja, saltamos a la siguiente antes de pegar la foto
+                    if pdf.get_y() > 140:
+                        pdf.add_page()
+                        pdf.set_font("Helvetica", "I", 9)
+                        pdf.cell(0, 6, f"(Continuacion de evidencias - Pag. {pdf.page_no()})", ln=True)
+                    
+                    pdf.image(tmppath, x=15, w=170)
+                    pdf.ln(5) # Añadir un pequeño margen debajo de la imagen
+                    os.remove(tmppath)
+                else:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.cell(0, 6, f"(No se pudo descargar la evidencia {index+1}. Error {req.status_code})", ln=True)
+            except:
                 pdf.set_font("Helvetica", "I", 9)
-                pdf.cell(0, 6, "(No se pudo descargar la evidencia web. El servidor rechazo la peticion.)", ln=True)
-        except:
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.cell(0, 6, "(Error al leer la evidencia grafica. URL corrupta.)", ln=True)
+                pdf.cell(0, 6, f"(Error de red al leer la evidencia grafica {index+1}.)", ln=True)
             
     fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
@@ -136,7 +145,6 @@ def generar_pdf_memo(row):
 # 2. INTERFAZ GRÁFICA EN STREAMLIT
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
-    # Detectamos el rol del usuario actual
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
 
@@ -153,7 +161,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 if "Todos" in lista_tecnicos:
                     lista_tecnicos.remove("Todos")
                     
-                tecnico_sel = st.selectbox("👤 Seleccione al Técnico:", options=lista_tecnicos, help="Solo aparecerán los técnicos cargados en la base operativa del día.")
+                tecnico_sel = st.selectbox("👤 Seleccione al Técnico:", options=lista_tecnicos, help="Aparecerán los técnicos de la base actual.")
                 tipo_falta = st.selectbox("🚫 Tipo de Falta:", 
                                         ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
                                          "Tiempos Muertos", "Mala Documentación", "Insubordinación", 
@@ -161,29 +169,34 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             with col2:
                 fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=datetime.now())
-                archivo_evidencia = st.file_uploader("🖼️ Captura de Pantalla (Evidencia):", type=['png', 'jpg', 'jpeg'], help="Sube el pantallazo del GPS o Cepheus.")
+                
+                # MODIFICACIÓN: Aceptar múltiples archivos
+                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Puedes seleccionar varias imágenes a la vez.")
 
-            comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, instrucciones ignoradas, etc.)...")
+            comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, etc.)...")
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
             
             if btn_guardar:
                 if tecnico_sel and comentario:
-                    url_imagen_subida = ""
+                    urls_imagenes_subidas = []
                     
-                    if archivo_evidencia is not None:
-                        with st.spinner("☁️ Subiendo evidencia a la nube segura..."):
-                            try:
-                                img_bytes = archivo_evidencia.getvalue()
-                                img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-                                payload = {"key": API_KEY_FREEIMAGE, "action": "upload", "source": img_base64, "format": "json"}
-                                res = requests.post("https://freeimage.host/api/1/upload", data=payload)
-                                if res.status_code == 200:
-                                    url_imagen_subida = res.json()["image"]["url"]
-                                else:
-                                    st.warning(f"No se pudo subir la foto (Error {res.status_code}). Se guardará el reporte sin imagen.")
-                            except Exception as e:
-                                st.error(f"Error técnico al subir imagen: {e}. Se guardará sin foto.")
+                    if archivos_evidencia:
+                        with st.spinner(f"☁️ Subiendo {len(archivos_evidencia)} evidencia(s) a la nube..."):
+                            for archivo in archivos_evidencia:
+                                try:
+                                    img_bytes = archivo.getvalue()
+                                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                                    payload = {"key": API_KEY_FREEIMAGE, "action": "upload", "source": img_base64, "format": "json"}
+                                    res = requests.post("https://freeimage.host/api/1/upload", data=payload)
+                                    if res.status_code == 200:
+                                        urls_imagenes_subidas.append(res.json()["image"]["url"])
+                                    else:
+                                        st.warning(f"No se pudo subir una foto (Error {res.status_code}).")
+                                except Exception as e:
+                                    st.error(f"Error al subir imagen: {e}")
 
+                    # Convertir la lista de URLs en un solo texto separado por comas
+                    string_urls_final = ", ".join(urls_imagenes_subidas)
                     supervisor_actual = st.session_state.get('usuario', 'Sistema')
                     
                     nueva_fila = pd.DataFrame([{
@@ -192,7 +205,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         "TIPO_FALTA": tipo_falta,
                         "FECHA_INCIDENCIA": fecha_incidencia.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
-                        "URL_FOTO": url_imagen_subida,
+                        "URL_FOTO": string_urls_final, # Guardamos todas las URLs juntas
                         "SUPERVISOR": supervisor_actual 
                     }])
                     
@@ -201,11 +214,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_exp_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                             df_final = pd.concat([df_exp_db, nueva_fila], ignore_index=True)
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-                            st.success(f"✅ ¡Incidencia registrada exitosamente para el expediente de {tecnico_sel}!")
+                            st.success(f"✅ ¡Incidencia registrada exitosamente para {tecnico_sel} con {len(urls_imagenes_subidas)} foto(s)!")
                         except Exception as e:
                             st.error(f"❌ Error al conectar con Google Sheets. Detalle: {e}")
                 else:
-                    st.warning("⚠️ El nombre del técnico y el comentario detallado son obligatorios para abrir un expediente.")
+                    st.warning("⚠️ El nombre del técnico y el comentario son obligatorios.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -223,7 +236,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             df_mostrar = df_view if filtro == "Ver Todos" else df_view[df_view['TECNICO'] == filtro]
             
             if df_mostrar.empty:
-                 st.info(f"No hay incidencias registradas en el historial de {filtro}.")
+                 st.info(f"No hay incidencias registradas para {filtro}.")
             else:
                 for idx, row in df_mostrar.iloc[::-1].iterrows():
                     with st.container():
@@ -237,13 +250,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                             st.info(f"**Detalle del Reporte:**\n\n{row['COMENTARIO']}")
                             
                         with c2:
-                            url = str(row.get('URL_FOTO', ''))
-                            if url.startswith('http'):
-                                st.image(url, use_container_width=True, caption="Evidencia Adjunta")
-                                st.markdown(f"[🔍 Abrir Imagen Completa en Pestaña Nueva]({url})")
+                            # Procesamos las múltiples URLs para mostrarlas en la web
+                            urls_crudo = str(row.get('URL_FOTO', '')).split(',')
+                            urls_validas = [u.strip() for u in urls_crudo if u.strip().startswith('http')]
+                            
+                            if urls_validas:
+                                for i, url in enumerate(urls_validas):
+                                    st.image(url, use_container_width=True, caption=f"Evidencia {i+1}")
+                                    st.markdown(f"[🔍 Ver Original {i+1}]({url})")
                             else:
                                 st.markdown("<br><br>", unsafe_allow_html=True)
-                                st.caption("📸 *No se adjuntó evidencia para este incidente.*")
+                                st.caption("📸 *No hay evidencia visual.*")
                                 
                             try:
                                 pdf_bytes = generar_pdf_memo(row)
@@ -259,25 +276,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     type="primary"
                                 )
                             except Exception as e:
-                                st.error(f"❌ No se pudo crear el PDF de este reporte: {e}")
+                                st.error(f"❌ Error al crear PDF: {e}")
                                 
-                            # --- BOTÓN DE ELIMINAR RESTRINGIDO A ROL ADMIN ---
                             if es_admin:
-                                if st.button("🗑️ Eliminar Reporte", key=f"btn_del_{idx}", help="Solo visible para Administradores"):
-                                    with st.spinner("Eliminando de la base de datos..."):
+                                if st.button("🗑️ Eliminar", key=f"btn_del_{idx}", help="Acción exclusiva de Administrador"):
+                                    with st.spinner("Eliminando..."):
                                         try:
                                             df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                                             mask_borrar = (df_db['FECHA_REGISTRO'] == row['FECHA_REGISTRO']) & (df_db['TECNICO'] == row['TECNICO'])
                                             df_actualizado = df_db[~mask_borrar]
-                                            
                                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_actualizado)
-                                            st.success("Registro eliminado correctamente.")
+                                            st.success("Eliminado correctamente.")
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Error al eliminar: {e}")
                                         
                         st.markdown("</div>", unsafe_allow_html=True)
         else:
-            st.info("La base de datos de expedientes está limpia. No hay registros previos.")
+            st.info("La base de datos de expedientes está limpia.")
     except Exception as e:
-        st.warning(f"⚠️ Error al cargar los expedientes: {e}")
+        st.warning(f"⚠️ Error al cargar los expedientes: Asegúrese de tener la pestaña 'Expedientes' creada en Google Sheets.")
