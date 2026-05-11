@@ -244,6 +244,7 @@ def main():
             if selected_nav == "Monitor": nav_menu_diamante = "⚡ Monitor en Vivo"
             elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
             elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"    
+            elif nav_menu_diamante == "📁 Expedientes": expediente.mostrar_modulo_expedientes(conn, df_base)        
             else: 
                 nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "⚙️ Configuración", "📁 Expedientes"])
         else:
