@@ -2168,3 +2168,67 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
     
     # Retornamos solo Entrada, Clasificación y el Grupo_Tabla invisible
     return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Grupo_Tabla']]
+
+def generar_pdf_memorandum(row):
+    import textwrap
+    import requests
+    import tempfile
+    import os
+    
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("MEMORANDUM: LLAMADO DE ATENCION"), border=0, ln=True, align="C")
+    pdf.ln(5)
+    
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 6, "Para: Recursos Humanos / Gerencia", ln=True)
+    pdf.cell(0, 6, safestr(f"Tecnico Implicado: {row.get('TECNICO', '')}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Fecha de Incidencia: {row.get('FECHA_INCIDENCIA', '')}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Tipo de Falta: {row.get('TIPO_FALTA', '')}"), ln=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("Detalle de los hechos:")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(0, 0, 0)
+    
+    comentario = str(row.get('COMENTARIO', ''))
+    comentario_lineas = textwrap.wrap(comentario, width=100)
+    for linea in comentario_lineas:
+        pdf.cell(0, 5, safestr(linea), ln=True)
+        
+    pdf.ln(10)
+    
+    url_foto = str(row.get('URL_FOTO', ''))
+    if url_foto.startswith('http'):
+        pdf.seccion_titulo("Evidencia Fotografica / Captura de Pantalla:")
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url_foto, headers=headers, timeout=5)
+            if response.status_code == 200:
+                fd, tmppath = tempfile.mkstemp(suffix=".png")
+                os.close(fd)
+                with open(tmppath, 'wb') as f:
+                    f.write(response.content)
+                
+                # Si no hay espacio en la hoja para la foto, creamos una página nueva
+                if pdf.get_y() > 170:
+                    pdf.add_page()
+                    
+                pdf.image(tmppath, x=15, w=180)
+                os.remove(tmppath) # Borramos la foto local para no dejar rastro
+            else:
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.cell(0, 5, "(Nota: No se pudo descargar la evidencia grafica desde el servidor).", ln=True)
+        except Exception as e:
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.cell(0, 5, safestr(f"(Error al procesar imagen: {e})"), ln=True)
+    else:
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.cell(0, 5, "(No se adjunto evidencia grafica en este reporte).", ln=True)
+        
+    return finalizar_pdf(pdf)
