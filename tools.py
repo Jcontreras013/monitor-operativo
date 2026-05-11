@@ -1703,53 +1703,67 @@ def procesar_auditoria_semanal(df_input):
         if not col_salida:
             col_salida = next((c for c in df.columns if re.search(r'(?i)SALIDA', str(c)) and not re.search(r'(?i)LAT|LON', str(c))), None)
         
-        # === NUEVO: Buscar columna explícita de FECHA ===
         col_fecha = next((c for c in df.columns if re.search(r'(?i)^FECHA', str(c).strip())), None)
         
-        if not (col_placa and col_ingreso and col_salida): return None, None, "Columnas no detectadas.", None, None
+        if not (col_placa and col_ingreso and col_salida): 
+            return None, None, "Columnas no detectadas.", None, None
             
         df = df.rename(columns={col_placa: '_P', col_ingreso: '_I', col_salida: '_S'})
         df['_P'] = df['_P'].astype(str).str.strip()
         df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
         
-        # 2. Limpieza de AM/PM
-        df['_I'] = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
-        df['_S'] = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
+        # 2. Limpieza de strings AM/PM
+        raw_I = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
+        raw_S = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
         
-        df['_I_dt'] = pd.to_datetime(df['_I'], format='mixed', dayfirst=True, errors='coerce')
-        df['_S_dt'] = pd.to_datetime(df['_S'], format='mixed', dayfirst=True, errors='coerce')
+        # 3. PARSEO INTELIGENTE DE FECHAS (La cura al bug de los meses/días invertidos)
+        dt_I_eu = pd.to_datetime(raw_I, format='mixed', dayfirst=True, errors='coerce')
+        dt_I_us = pd.to_datetime(raw_I, format='mixed', dayfirst=False, errors='coerce')
         
-        # === NUEVO: Fusión de Fecha y Hora para no perder días ===
+        # Si el parseo Europeo (DD/MM) distribuye las fechas en meses distintos (> 20 días)
+        # pero el US (MM/DD) las mantiene juntitas en la misma semana, entonces el GPS usó formato US.
+        if pd.notnull(dt_I_eu.max()) and pd.notnull(dt_I_us.max()):
+            if (dt_I_eu.max() - dt_I_eu.min()).days > 20 and (dt_I_us.max() - dt_I_us.min()).days <= 20:
+                df['_I'] = dt_I_us
+                df['_S'] = pd.to_datetime(raw_S, format='mixed', dayfirst=False, errors='coerce')
+            else:
+                df['_I'] = dt_I_eu
+                df['_S'] = pd.to_datetime(raw_S, format='mixed', dayfirst=True, errors='coerce')
+        else:
+            df['_I'] = dt_I_eu
+            df['_S'] = pd.to_datetime(raw_S, format='mixed', dayfirst=True, errors='coerce')
+
+        # Si existe una columna FECHA explícita, la usamos para sobrescribir y proteger
         if col_fecha:
-            df['_F_real'] = pd.to_datetime(df[col_fecha], format='mixed', dayfirst=True, errors='coerce').dt.date
-            
+            dt_F_eu = pd.to_datetime(df[col_fecha], format='mixed', dayfirst=True, errors='coerce')
+            dt_F_us = pd.to_datetime(df[col_fecha], format='mixed', dayfirst=False, errors='coerce')
+            if pd.notnull(dt_F_eu.max()) and pd.notnull(dt_F_us.max()):
+                if (dt_F_eu.max() - dt_F_eu.min()).days > 20 and (dt_F_us.max() - dt_F_us.min()).days <= 20:
+                    df['_F_real'] = dt_F_us.dt.date
+                else:
+                    df['_F_real'] = dt_F_eu.dt.date
+            else:
+                df['_F_real'] = dt_F_eu.dt.date
+
             def fusionar_fecha_hora(f_real, dt_time_parsed):
                 if pd.isnull(dt_time_parsed): return pd.NaT
-                if pd.notnull(f_real):
-                    return pd.Timestamp.combine(f_real, dt_time_parsed.time())
+                if pd.notnull(f_real): return pd.Timestamp.combine(f_real, dt_time_parsed.time())
                 return dt_time_parsed
 
-            df['_I'] = df.apply(lambda row: fusionar_fecha_hora(row['_F_real'], row['_I_dt']), axis=1)
-            df['_S'] = df.apply(lambda row: fusionar_fecha_hora(row['_F_real'], row['_S_dt']), axis=1)
-            df['Fecha'] = df['_F_real'].fillna(df['_I'].dt.date)
+            df['_I'] = df.apply(lambda row: fusionar_fecha_hora(row.get('_F_real'), row['_I']), axis=1)
+            df['_S'] = df.apply(lambda row: fusionar_fecha_hora(row.get('_F_real'), row['_S']), axis=1)
+            df['Fecha'] = df.get('_F_real', df['_I'].dt.date).fillna(df['_I'].dt.date).fillna(df['_S'].dt.date)
         else:
-            df['_I'] = df['_I_dt']
-            df['_S'] = df['_S_dt']
             df['Fecha'] = df['_I'].dt.date.fillna(df['_S'].dt.date)
         
         df = df.dropna(subset=['Fecha'])
-        
         if df.empty: return None, None, "No hay fechas válidas en el archivo.", None, None
         
-        # 3. Resto de la lógica (Intacta)
-        fecha_maxima = df['Fecha'].max()
-        if pd.notnull(fecha_maxima):
-            fecha_minima_valida = fecha_maxima - timedelta(days=7)
-            df = df[df['Fecha'] > fecha_minima_valida].copy()
-
+        # --- ELIMINADO EL FILTRO ESTRICTO DE 7 DÍAS QUE BORRABA LA DATA ---
         f_inicio = df['Fecha'].min()
         f_fin = df['Fecha'].max()
 
+        # 4. Agrupación por Vehículo Y Fecha
         diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_segs(row):
