@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import tempfile
 import textwrap
+import time
 from fpdf import FPDF
 
 # ==============================================================================
@@ -14,7 +15,7 @@ from fpdf import FPDF
 API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
 
 # ==============================================================================
-# 1. LÓGICA DE PDF INDEPENDIENTE (Soporte Multi-Imagen)
+# 1. LÓGICA DE PDF INDEPENDIENTE
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
@@ -42,13 +43,11 @@ class MemoPDF(FPDF):
         self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
 
 def sanitizar(texto):
-    """Limpia tildes y caracteres raros para que el PDF no explote"""
     import unicodedata
     if pd.isna(texto): return "N/D"
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 def generar_pdf_memo(row):
-    """Genera el PDF del memorándum soportando múltiples imágenes"""
     pdf = MemoPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -95,7 +94,6 @@ def generar_pdf_memo(row):
         
     pdf.ln(8)
     
-    # Procesar múltiples URLs separadas por coma
     urls_crudo = str(row.get('URL_FOTO', '')).split(',')
     urls_validas = [u.strip() for u in urls_crudo if u.strip().startswith('http')]
     
@@ -171,10 +169,9 @@ def mostrar_modulo_expedientes(conn, df_base):
                 archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Sube capturas del GPS, Cepheus o chats.")
 
             st.markdown("---")
-            # --- AGREGADO: SELECTOR DE SUPERVISOR ---
-            supervisor_sel = st.selectbox("✍️ Nombre del Supervisor que Registra la Falta:", options=["Jaison Contreras", "Andrés Alvarado", "Óscar Nuñez" , "Harin Sevilla"])
-            
+            supervisor_sel = st.selectbox("✍️ Nombre del Supervisor que Registra la Falta:", options=["Jaison Contreras", "Andrés Alvarado", "Óscar (Monitoreo)"])
             comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, instrucciones ignoradas)...")
+            
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
             
             if btn_guardar:
@@ -205,15 +202,33 @@ def mostrar_modulo_expedientes(conn, df_base):
                         "FECHA_INCIDENCIA": fecha_incidencia.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
                         "URL_FOTO": string_urls_final, 
-                        "SUPERVISOR": supervisor_sel  # <- Ahora usa el nombre exacto seleccionado
+                        "SUPERVISOR": supervisor_sel
                     }])
                     
-                    with st.spinner("💾 Guardando en la base de datos central..."):
+                    with st.spinner("💾 Guardando y sincronizando con base central..."):
                         try:
+                            # Leemos la base actual
                             df_exp_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                            
+                            # Concatenamos la nueva fila
                             df_final = pd.concat([df_exp_db, nueva_fila], ignore_index=True)
+                            
+                            # CRÍTICO: Forzamos el orden de las columnas para evitar errores de Google Sheets
+                            columnas_ideales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
+                            for col in columnas_ideales:
+                                if col not in df_final.columns:
+                                    df_final[col] = "" # Creamos la columna si no existe
+                            df_final = df_final[columnas_ideales] # Ordenamos
+                            
+                            # Actualizamos Google Sheets
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-                            st.success(f"✅ ¡Incidencia registrada exitosamente para {tecnico_sel} por el supervisor {supervisor_sel}!")
+                            
+                            st.success(f"✅ ¡Incidencia guardada para {tecnico_sel}! Actualizando pantalla...")
+                            
+                            # FORZAMOS LA RECARGA DE LA PÁGINA PARA MOSTRAR EL HISTORIAL AL INSTANTE
+                            time.sleep(1.5)
+                            st.rerun()
+                            
                         except Exception as e:
                             st.error(f"❌ Error al conectar con Google Sheets. Detalle: {e}")
                 else:
@@ -285,6 +300,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                             df_actualizado = df_db[~mask_borrar]
                                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_actualizado)
                                             st.success("Eliminado correctamente.")
+                                            time.sleep(1.5)
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Error al eliminar: {e}")
