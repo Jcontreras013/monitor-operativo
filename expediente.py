@@ -230,11 +230,11 @@ def mostrar_modulo_expedientes(conn, df_base):
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0).dropna(subset=['TECNICO'], how='all')
         
         if not df_view.empty:
-            # BOTÓN DE REPORTE CONSOLIDADO
-            col_rep1, col_rep2 = st.columns([2,1])
-            with col_rep1:
+            # BOTÓN DE REPORTE CONSOLIDADO (Ajustado pequeño y a la derecha)
+            col_vacia, col_boton = st.columns([3, 1]) # El 75% izquierdo vacío, el 25% derecho con el botón
+            with col_boton:
                 pdf_cons = generar_pdf_consolidado(df_view)
-                st.download_button("📊 DESCARGAR REPORTE CONSOLIDADO ", data=pdf_cons, file_name=f"Consolidado_Faltas_{get_honduras_time().strftime('%d%m%Y')}.pdf", mime="application/pdf", use_container_width=True, type="primary")
+                st.download_button("📊 Reporte Gerencial", data=pdf_cons, file_name=f"Consolidado_Faltas_{get_honduras_time().strftime('%d%m%Y')}.pdf", mime="application/pdf", use_container_width=True, type="primary")
             
             filtro = st.selectbox("🔍 Filtrar Historial:", options=["Ver Todos"] + sorted(df_view['TECNICO'].unique().tolist()))
             df_mostrar = df_view if filtro == "Ver Todos" else df_view[df_view['TECNICO'] == filtro]
