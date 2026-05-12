@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import tempfile
 import textwrap
@@ -10,9 +10,13 @@ import time
 from fpdf import FPDF
 
 # ==============================================================================
-# CONFIGURACIÓN: API KEY PARA GUARDAR FOTOS EN LA NUBE GRATUITA
+# CONFIGURACIÓN
 # ==============================================================================
 API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
+
+def get_honduras_time():
+    """Fuerza la hora exacta de Honduras (UTC-6) sin importar dónde esté el servidor"""
+    return datetime.utcnow() - timedelta(hours=6)
 
 # ==============================================================================
 # 1. LÓGICA DE PDF INDEPENDIENTE
@@ -137,19 +141,24 @@ def generar_pdf_memo(row):
         try: os.remove(pdf_path)
         except: pass
 
-
 # ==============================================================================
 # 2. INTERFAZ GRÁFICA EN STREAMLIT
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
+    # Detecta el rol y el usuario que inició sesión para firmar automáticamente
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
+    
+    # Extrae el nombre del usuario de varias posibles variables de sesión
+    supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', st.session_state.get('usuario_actual', 'Supervisor')))
 
     st.title("📁 Gestión de Expedientes Disciplinarios")
     st.markdown("---")
     
     # --- FORMULARIO DE REGISTRO ---
     with st.expander("➕ Registrar Nueva Incidencia / Falta", expanded=True):
+        st.info(f"✍️ Reporte generado y firmado automáticamente por: **{supervisor_actual}**")
+        
         with st.form("form_incidencia", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
@@ -165,13 +174,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                                          "Pérdida de Herramientas", "Sin Datos Móviles", "Falla de Protocolo de Seguridad", "Otro"])
             
             with col2:
-                fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=datetime.now())
-                # ¡AQUÍ ESTÁ LA MAGIA! accept_multiple_files=True permite seleccionar varias imágenes
-                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Sube múltiples capturas del GPS, Cepheus o chats.")
+                # Usamos la hora exacta de Honduras como default
+                fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=get_honduras_time().date())
+                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
-            st.markdown("---")
-            supervisor_sel = st.selectbox("✍️ Nombre del Supervisor que Registra la Falta:", options=["Jaison Contreras", "Andrés Alvarado", "Óscar (Monitoreo)"])
-            comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, instrucciones ignoradas)...")
+            comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, etc.)...")
             
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
             
@@ -180,7 +187,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     urls_imagenes_subidas = []
                     
                     if archivos_evidencia:
-                        with st.spinner(f"☁️ Subiendo {len(archivos_evidencia)} evidencia(s) a la nube..."):
+                        with st.spinner(f"☁️ Subiendo {len(archivos_evidencia)} evidencia(s)..."):
                             for archivo in archivos_evidencia:
                                 try:
                                     img_bytes = archivo.getvalue()
@@ -189,51 +196,42 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     res = requests.post("https://freeimage.host/api/1/upload", data=payload)
                                     if res.status_code == 200:
                                         urls_imagenes_subidas.append(res.json()["image"]["url"])
-                                    else:
-                                        st.warning(f"No se pudo subir una foto (Error {res.status_code}).")
-                                    # PAUSA DE 1 SEGUNDO PARA QUE LA NUBE NO NOS BLOQUEE POR SUBIR MUCHAS FOTOS
-                                    time.sleep(1)
+                                    time.sleep(1) # Pausa de seguridad
                                 except Exception as e:
                                     st.error(f"Error al subir imagen: {e}")
 
                     string_urls_final = ", ".join(urls_imagenes_subidas)
                     
+                    # ⚠️ HORA DE HONDURAS APLICADA AQUÍ ⚠️
+                    hora_registro_hn = get_honduras_time().strftime("%d/%m/%Y %H:%M:%S")
+                    
                     nueva_fila = pd.DataFrame([{
-                        "FECHA_REGISTRO": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                        "FECHA_REGISTRO": hora_registro_hn,
                         "TECNICO": tecnico_sel,
                         "TIPO_FALTA": tipo_falta,
                         "FECHA_INCIDENCIA": fecha_incidencia.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
                         "URL_FOTO": string_urls_final, 
-                        "SUPERVISOR": supervisor_sel
+                        "SUPERVISOR": supervisor_actual # Firma automática sin selector manual
                     }])
                     
-                    with st.spinner("💾 Guardando y sincronizando con base central..."):
+                    with st.spinner("💾 Guardando y sincronizando..."):
                         try:
-                            # Leemos la base actual
                             df_exp_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                            
-                            # Concatenamos la nueva fila
                             df_final = pd.concat([df_exp_db, nueva_fila], ignore_index=True)
                             
-                            # CRÍTICO: Forzamos el orden de las columnas para evitar errores de Google Sheets
                             columnas_ideales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
                             for col in columnas_ideales:
                                 if col not in df_final.columns:
-                                    df_final[col] = "" # Creamos la columna si no existe
-                            df_final = df_final[columnas_ideales] # Ordenamos
+                                    df_final[col] = "" 
+                            df_final = df_final[columnas_ideales]
                             
-                            # Actualizamos Google Sheets
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-                            
-                            st.success(f"✅ ¡Incidencia guardada para {tecnico_sel}! Actualizando pantalla...")
-                            
-                            # FORZAMOS LA RECARGA DE LA PÁGINA PARA MOSTRAR EL HISTORIAL AL INSTANTE
+                            st.success(f"✅ ¡Incidencia guardada para {tecnico_sel}!")
                             time.sleep(1.5)
                             st.rerun()
-                            
                         except Exception as e:
-                            st.error(f"❌ Error al conectar con Google Sheets. Detalle: {e}")
+                            st.error(f"❌ Error de base de datos: {e}")
                 else:
                     st.warning("⚠️ El nombre del técnico y el comentario son obligatorios.")
 
