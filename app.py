@@ -774,8 +774,8 @@ def main():
                     mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
                     df_gantt_diario = df_base[mask_ini_dia].copy()
                     
-                    mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                    df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
+                    #mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
+                    #df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
                     
                     if not df_para_gantt_diario.empty:
                         ahora_hx_d = get_honduras_time()
@@ -1350,10 +1350,7 @@ def main():
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
                         mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
                         
-                        df_gantt_limpio = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
-                        
-                        mask_supervisores = df_gantt_limpio['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                        df_para_gantt_final = df_gantt_limpio[~mask_supervisores].copy()
+                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy() # <--- AHORA PASA DIRECTO
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
