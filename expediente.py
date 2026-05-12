@@ -166,7 +166,8 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             with col2:
                 fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=datetime.now())
-                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Sube capturas del GPS, Cepheus o chats.")
+                # ¡AQUÍ ESTÁ LA MAGIA! accept_multiple_files=True permite seleccionar varias imágenes
+                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Sube múltiples capturas del GPS, Cepheus o chats.")
 
             st.markdown("---")
             supervisor_sel = st.selectbox("✍️ Nombre del Supervisor que Registra la Falta:", options=["Jaison Contreras", "Andrés Alvarado", "Óscar (Monitoreo)"])
@@ -190,6 +191,8 @@ def mostrar_modulo_expedientes(conn, df_base):
                                         urls_imagenes_subidas.append(res.json()["image"]["url"])
                                     else:
                                         st.warning(f"No se pudo subir una foto (Error {res.status_code}).")
+                                    # PAUSA DE 1 SEGUNDO PARA QUE LA NUBE NO NOS BLOQUEE POR SUBIR MUCHAS FOTOS
+                                    time.sleep(1)
                                 except Exception as e:
                                     st.error(f"Error al subir imagen: {e}")
 
