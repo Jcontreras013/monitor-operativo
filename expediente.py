@@ -114,14 +114,13 @@ def generar_pdf_memo(row):
                     with open(tmppath, 'wb') as f:
                         f.write(req.content)
                     
-                    # Si ya estamos muy abajo en la hoja, saltamos a la siguiente antes de pegar la foto
                     if pdf.get_y() > 140:
                         pdf.add_page()
                         pdf.set_font("Helvetica", "I", 9)
                         pdf.cell(0, 6, f"(Continuacion de evidencias - Pag. {pdf.page_no()})", ln=True)
                     
                     pdf.image(tmppath, x=15, w=170)
-                    pdf.ln(5) # Añadir un pequeño margen debajo de la imagen
+                    pdf.ln(5) 
                     os.remove(tmppath)
                 else:
                     pdf.set_font("Helvetica", "I", 9)
@@ -161,7 +160,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 if "Todos" in lista_tecnicos:
                     lista_tecnicos.remove("Todos")
                     
-                tecnico_sel = st.selectbox("👤 Seleccione al Técnico:", options=lista_tecnicos, help="Aparecerán los técnicos de la base actual.")
+                tecnico_sel = st.selectbox("👤 Seleccione al Técnico Implicado:", options=lista_tecnicos)
                 tipo_falta = st.selectbox("🚫 Tipo de Falta:", 
                                         ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
                                          "Tiempos Muertos", "Mala Documentación", "Insubordinación", 
@@ -169,11 +168,13 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             with col2:
                 fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=datetime.now())
-                
-                # MODIFICACIÓN: Aceptar múltiples archivos
-                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Puedes seleccionar varias imágenes a la vez.")
+                archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, help="Sube capturas del GPS, Cepheus o chats.")
 
-            comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, etc.)...")
+            st.markdown("---")
+            # --- AGREGADO: SELECTOR DE SUPERVISOR ---
+            supervisor_sel = st.selectbox("✍️ Nombre del Supervisor que Registra la Falta:", options=["Jaison Contreras", "Andrés Alvarado", "Óscar Nuñez" , "Harin Sevilla"])
+            
+            comentario = st.text_area("📝 Comentario Detallado:", placeholder="Describa con precisión lo sucedido (horas, ubicaciones, instrucciones ignoradas)...")
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
             
             if btn_guardar:
@@ -195,9 +196,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 except Exception as e:
                                     st.error(f"Error al subir imagen: {e}")
 
-                    # Convertir la lista de URLs en un solo texto separado por comas
                     string_urls_final = ", ".join(urls_imagenes_subidas)
-                    supervisor_actual = st.session_state.get('usuario', 'Sistema')
                     
                     nueva_fila = pd.DataFrame([{
                         "FECHA_REGISTRO": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
@@ -205,8 +204,8 @@ def mostrar_modulo_expedientes(conn, df_base):
                         "TIPO_FALTA": tipo_falta,
                         "FECHA_INCIDENCIA": fecha_incidencia.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
-                        "URL_FOTO": string_urls_final, # Guardamos todas las URLs juntas
-                        "SUPERVISOR": supervisor_actual 
+                        "URL_FOTO": string_urls_final, 
+                        "SUPERVISOR": supervisor_sel  # <- Ahora usa el nombre exacto seleccionado
                     }])
                     
                     with st.spinner("💾 Guardando en la base de datos central..."):
@@ -214,7 +213,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_exp_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                             df_final = pd.concat([df_exp_db, nueva_fila], ignore_index=True)
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-                            st.success(f"✅ ¡Incidencia registrada exitosamente para {tecnico_sel} con {len(urls_imagenes_subidas)} foto(s)!")
+                            st.success(f"✅ ¡Incidencia registrada exitosamente para {tecnico_sel} por el supervisor {supervisor_sel}!")
                         except Exception as e:
                             st.error(f"❌ Error al conectar con Google Sheets. Detalle: {e}")
                 else:
@@ -250,7 +249,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                             st.info(f"**Detalle del Reporte:**\n\n{row['COMENTARIO']}")
                             
                         with c2:
-                            # Procesamos las múltiples URLs para mostrarlas en la web
                             urls_crudo = str(row.get('URL_FOTO', '')).split(',')
                             urls_validas = [u.strip() for u in urls_crudo if u.strip().startswith('http')]
                             
