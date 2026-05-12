@@ -12,7 +12,7 @@ from fpdf import FPDF
 # ==============================================================================
 # CONFIGURACIÓN
 # ==============================================================================
-API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
+API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 
 def get_honduras_time():
     """Retorna la hora exacta de Honduras (UTC-6)"""
@@ -195,32 +195,64 @@ def mostrar_modulo_expedientes(conn, df_base):
                 lista_tecs.insert(0, "Seleccionar...")
                 tecnico_sel = st.selectbox("👤 Técnico:", options=lista_tecs)
                 ayudante_manual = st.text_input("👷 O nombre del Ayudante:")
-                tipo_falta = st.selectbox("🚫 Tipo de Falta:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Insubordinación", "Otro"])
+                tipo_falta = st.selectbox("🚫 Tipo de Falta:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Insubordinación", "Pérdida de Herramientas", "Sin Datos Móviles", "Otro"])
             with c2:
                 fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date())
                 archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
             comentario = st.text_area("📝 Detalle:")
+            
             if st.form_submit_button("💾 Guardar Registro", use_container_width=True):
-                nombre_final = ayudante_manual.strip().upper() if ayudante_manual.strip() != "" else tecnico_sel.upper()
-                if nombre_final in ["SELECCIONAR...", ""]: st.warning("⚠️ Seleccione o escriba un nombre.")
-                elif not comentario: st.warning("⚠️ Detalle obligatorio.")
+                
+                # --- LA MAGIA ESTÁ AQUÍ ---
+                # Si escribieron un nombre en la casilla del ayudante, forzamos la etiqueta (AYUDANTE)
+                if ayudante_manual.strip() != "":
+                    nombre_final = f"{ayudante_manual.strip().upper()} (AYUDANTE)"
+                else:
+                    nombre_final = tecnico_sel.upper()
+                # --------------------------
+
+                if nombre_final in ["SELECCIONAR...", ""]: 
+                    st.warning("⚠️ Seleccione un técnico o escriba el nombre del ayudante.")
+                elif not comentario: 
+                    st.warning("⚠️ El detalle de los hechos es obligatorio.")
                 else:
                     urls = []
                     if archivos:
-                        for a in archivos:
-                            try:
-                                res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
-                                if res.status_code == 200: urls.append(res.json()["image"]["url"])
-                                time.sleep(1)
-                            except: pass
-                    nueva_fila = pd.DataFrame([{"FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"), "TECNICO": nombre_final, "TIPO_FALTA": tipo_falta, "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"), "COMENTARIO": comentario, "URL_FOTO": ", ".join(urls), "SUPERVISOR": supervisor_actual}])
+                        with st.spinner("Subiendo evidencias..."):
+                            for a in archivos:
+                                try:
+                                    res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
+                                    if res.status_code == 200: urls.append(res.json()["image"]["url"])
+                                    time.sleep(1)
+                                except: pass
+                                
+                    nueva_fila = pd.DataFrame([{
+                        "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"), 
+                        "TECNICO": nombre_final, # Aquí se guarda el nombre ya procesado con la etiqueta
+                        "TIPO_FALTA": tipo_falta, 
+                        "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"), 
+                        "COMENTARIO": comentario, 
+                        "URL_FOTO": ", ".join(urls), 
+                        "SUPERVISOR": supervisor_actual
+                    }])
+                    
                     try:
-                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                        df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
-                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-                        st.success("✅ Guardado.")
-                        time.sleep(1); st.rerun()
-                    except Exception as e: st.error(f"Error: {e}")
+                        with st.spinner("Guardando en la base central..."):
+                            df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                            df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
+                            
+                            # Forzar el orden correcto
+                            cols_ideales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
+                            for col in cols_ideales:
+                                if col not in df_final.columns: df_final[col] = "" 
+                            df_final = df_final[cols_ideales]
+                            
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+                            st.success(f"✅ ¡Guardado con éxito el reporte para {nombre_final}!")
+                            time.sleep(1.5)
+                            st.rerun()
+                    except Exception as e: 
+                        st.error(f"Error: {e}")
 
     st.markdown("---")
     
@@ -230,8 +262,7 @@ def mostrar_modulo_expedientes(conn, df_base):
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0).dropna(subset=['TECNICO'], how='all')
         
         if not df_view.empty:
-            # BOTÓN DE REPORTE CONSOLIDADO (Ajustado pequeño y a la derecha)
-            col_vacia, col_boton = st.columns([3, 1]) # El 75% izquierdo vacío, el 25% derecho con el botón
+            col_vacia, col_boton = st.columns([3, 1]) 
             with col_boton:
                 pdf_cons = generar_pdf_consolidado(df_view)
                 st.download_button("📊 Reporte Gerencial", data=pdf_cons, file_name=f"Consolidado_Faltas_{get_honduras_time().strftime('%d%m%Y')}.pdf", mime="application/pdf", use_container_width=True, type="primary")
@@ -244,6 +275,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     st.markdown("""<div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border-left: 4px solid #EF4444; margin-bottom: 10px;">""", unsafe_allow_html=True)
                     c1, c2 = st.columns([3, 1])
                     with c1:
+                        # Si es ayudante, el nombre destacará automáticamente aquí
                         st.markdown(f"### 👨‍🔧 {row['TECNICO']}")
                         st.markdown(f"**🚫 Falta:** {row['TIPO_FALTA']} | **📅 Fecha:** {row['FECHA_INCIDENCIA']}")
                         st.caption(f"**✍️ Por:** {row.get('SUPERVISOR', 'N/D')} | **⏳ Reg:** {row['FECHA_REGISTRO']}")
@@ -252,12 +284,13 @@ def mostrar_modulo_expedientes(conn, df_base):
                         urls = str(row.get('URL_FOTO', '')).split(',')
                         for i, u in enumerate([u.strip() for u in urls if u.strip().startswith('http')]):
                             st.image(u, use_container_width=True, caption=f"Evidencia {i+1}")
-                        st.download_button("📄 PDF Individual", data=generar_pdf_memo(row), file_name=f"Memo_{row['TECNICO']}.pdf", key=f"memo_{idx}", use_container_width=True)
+                        st.download_button("📄 PDF Individual", data=generar_pdf_memo(row), file_name=f"Memo_{str(row['TECNICO']).replace(' ', '_')}.pdf", key=f"memo_{idx}", use_container_width=True)
                         if es_admin:
                             if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                                 df_upd = df_view[~((df_view['FECHA_REGISTRO'] == row['FECHA_REGISTRO']) & (df_view['TECNICO'] == row['TECNICO']))]
                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_upd)
                                 st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
-        else: st.info("No hay registros.")
-    except: st.warning("Cree la pestaña 'Expedientes' en Google Sheets.")
+        else: st.info("No hay registros disciplinarios creados.")
+    except Exception as e: 
+        st.warning("Cree la pestaña 'Expedientes' en Google Sheets para poder almacenar la información.")
