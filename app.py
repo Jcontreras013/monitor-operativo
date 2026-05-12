@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
-import os
 import expediente
 
 
@@ -245,7 +244,7 @@ def main():
             elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
             elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"   
             else: 
-                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "⚙️ Configuración", "📁 Expedientes"])
+                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"])
         else:
             selected_nav = option_menu(
                 menu_title=None,
@@ -267,7 +266,7 @@ def main():
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']:
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📚 Histórico", "🚫 NOINSTALADO", "📅 REPROGRAMADAS", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
+                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
             else:
                 st.markdown("### 🖥️ Menú de Control")
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
@@ -514,29 +513,28 @@ def main():
                 
         return
 
-    if nav_menu_diamante == "🚫 NOINSTALADO":
-        st.title("🚫 Órdenes NOINSTALADO (Cerradas Hoy)")
-        mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
-        st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
-        return
+    if nav_menu_diamante == "📅 Reprog / No Inst":
+        st.title("📅 Reprogramadas y No Instalados")
+        tab_reprog, tab_noinst = st.tabs(["📅 Reprogramadas (Futuras)", "🚫 NOINSTALADO (Hoy)"])
+        
+        with tab_reprog:
+            st.subheader("📅 Órdenes Agendadas a Futuro")
+            df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
+            mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
+            df_reprog = df_base[mask_reprog].copy()
+            st.metric("Total Agendadas a Futuro", len(df_reprog))
+            if not df_reprog.empty:
+                cols_visibles = ['DIAS_RETRASO_REAL', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO', 'FECHA_APE']
+                cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
+                def highlight_reprog(row): return ['background-color: #1a2a3a; color: #58a6ff; font-weight: bold' if col == 'DIAS_RETRASO_REAL' else '' for col in row.index]
+                st.dataframe(df_reprog[cols_finales].style.apply(highlight_reprog, axis=1), use_container_width=True, height=600, hide_index=True)
+            else: st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
 
-    if nav_menu_diamante == "📅 REPROGRAMADAS":
-        st.title("📅 Órdenes Reprogramadas (Futuras)")
-        df_base['DIAS_RETRASO_REAL'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
-        mask_reprog = (df_base['DIAS_RETRASO_REAL'] < 0) & (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False))
-        df_reprog = df_base[mask_reprog].copy()
-        st.metric("Total Agendadas a Futuro", len(df_reprog))
-        if not df_reprog.empty:
-            cols_visibles = ['DIAS_RETRASO_REAL', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO', 'FECHA_APE']
-            cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
-            def highlight_reprog(row): return ['background-color: #1a2a3a; color: #58a6ff; font-weight: bold' if col == 'DIAS_RETRASO_REAL' else '' for col in row.index]
-            st.dataframe(df_reprog[cols_finales].style.apply(highlight_reprog, axis=1), use_container_width=True, height=600, hide_index=True)
-        else: st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
-        return
-
-    if nav_menu_diamante == "📚 Histórico":
-        from historico import main_historico
-        main_historico(st.session_state.df_hist)
+        with tab_noinst:
+            st.subheader("🚫 Órdenes Cerradas como NOINSTALADO Hoy")
+            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
+            st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
+            
         return
 
     # ==============================================================================
@@ -772,10 +770,7 @@ def main():
                 
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                     mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
-                    df_gantt_diario = df_base[mask_ini_dia].copy()
-                    
-                    #mask_supervisores_d = df_gantt_diario['TECNICO'].astype(str).str.upper().str.contains('SAUCEDA|CAMPOS|RAFAEL', na=False)
-                    #df_para_gantt_diario = df_gantt_diario[~mask_supervisores_d].copy()
+                    df_para_gantt_diario = df_base[mask_ini_dia].copy()
                     
                     if not df_para_gantt_diario.empty:
                         ahora_hx_d = get_honduras_time()
@@ -1350,7 +1345,7 @@ def main():
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
                         mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
                         
-                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy() # <--- AHORA PASA DIRECTO
+                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
