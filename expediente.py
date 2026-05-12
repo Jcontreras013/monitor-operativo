@@ -15,7 +15,6 @@ from fpdf import FPDF
 API_KEY_FREEIMAGE = "6d207e02198a847aa98d0a2a901485a5"
 
 def get_honduras_time():
-    """Fuerza la hora exacta de Honduras (UTC-6) sin importar dónde esté el servidor"""
     return datetime.utcnow() - timedelta(hours=6)
 
 # ==============================================================================
@@ -65,7 +64,7 @@ def generar_pdf_memo(row):
     pdf.set_text_color(0, 0, 0)
     
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(35, 8, " Tecnico:", border=1, fill=True)
+    pdf.cell(35, 8, " Implicado:", border=1, fill=True)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(155, 8, f" {sanitizar(row.get('TECNICO', ''))}", border=1, ln=True)
     
@@ -145,11 +144,9 @@ def generar_pdf_memo(row):
 # 2. INTERFAZ GRÁFICA EN STREAMLIT
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
-    # Detecta el rol y el usuario que inició sesión para firmar automáticamente
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
     
-    # Extrae el nombre del usuario de varias posibles variables de sesión
     supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', st.session_state.get('usuario_actual', 'Supervisor')))
 
     st.title("📁 Gestión de Expedientes Disciplinarios")
@@ -166,15 +163,21 @@ def mostrar_modulo_expedientes(conn, df_base):
                 lista_tecnicos = sorted(df_base['TECNICO'].dropna().unique().tolist()) if 'TECNICO' in df_base.columns else []
                 if "Todos" in lista_tecnicos:
                     lista_tecnicos.remove("Todos")
+                
+                # Agregamos la opción por defecto vacía para forzar a elegir o escribir
+                lista_tecnicos.insert(0, "Seleccionar Técnico de la lista...")
                     
-                tecnico_sel = st.selectbox("👤 Seleccione al Técnico Implicado:", options=lista_tecnicos)
+                tecnico_sel = st.selectbox("👤 Seleccione al Técnico (Si aplica):", options=lista_tecnicos)
+                
+                # LA NUEVA CASILLA PARA AYUDANTES
+                ayudante_manual = st.text_input("👷 O escriba el nombre del Ayudante (Si no está en la lista):", placeholder="Ej. Carlos Martínez (Ayudante)")
+                
                 tipo_falta = st.selectbox("🚫 Tipo de Falta:", 
                                         ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
                                          "Tiempos Muertos", "Mala Documentación", "Insubordinación", 
                                          "Pérdida de Herramientas", "Sin Datos Móviles", "Falla de Protocolo de Seguridad", "Otro"])
             
             with col2:
-                # Usamos la hora exacta de Honduras como default
                 fecha_incidencia = st.date_input("📅 Fecha del Suceso:", value=get_honduras_time().date())
                 archivos_evidencia = st.file_uploader("🖼️ Capturas de Pantalla (Evidencias):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
@@ -183,7 +186,14 @@ def mostrar_modulo_expedientes(conn, df_base):
             btn_guardar = st.form_submit_button("💾 Guardar en Expediente Oficial", use_container_width=True)
             
             if btn_guardar:
-                if tecnico_sel and comentario:
+                # LÓGICA DE PRIORIDAD: Si escribió algo en la casilla manual, usamos eso. Si no, usamos el de la lista.
+                nombre_final = ayudante_manual.strip() if ayudante_manual.strip() != "" else tecnico_sel
+                
+                if (nombre_final == "Seleccionar Técnico de la lista...") or (nombre_final == ""):
+                    st.warning("⚠️ Debes seleccionar un Técnico de la lista O escribir el nombre del Ayudante.")
+                elif not comentario:
+                    st.warning("⚠️ El comentario detallado es obligatorio.")
+                else:
                     urls_imagenes_subidas = []
                     
                     if archivos_evidencia:
@@ -196,23 +206,21 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     res = requests.post("https://freeimage.host/api/1/upload", data=payload)
                                     if res.status_code == 200:
                                         urls_imagenes_subidas.append(res.json()["image"]["url"])
-                                    time.sleep(1) # Pausa de seguridad
+                                    time.sleep(1)
                                 except Exception as e:
                                     st.error(f"Error al subir imagen: {e}")
 
                     string_urls_final = ", ".join(urls_imagenes_subidas)
-                    
-                    # ⚠️ HORA DE HONDURAS APLICADA AQUÍ ⚠️
                     hora_registro_hn = get_honduras_time().strftime("%d/%m/%Y %H:%M:%S")
                     
                     nueva_fila = pd.DataFrame([{
                         "FECHA_REGISTRO": hora_registro_hn,
-                        "TECNICO": tecnico_sel,
+                        "TECNICO": nombre_final.upper(), # Usamos el nombre detectado (técnico o ayudante)
                         "TIPO_FALTA": tipo_falta,
                         "FECHA_INCIDENCIA": fecha_incidencia.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
                         "URL_FOTO": string_urls_final, 
-                        "SUPERVISOR": supervisor_actual # Firma automática sin selector manual
+                        "SUPERVISOR": supervisor_actual 
                     }])
                     
                     with st.spinner("💾 Guardando y sincronizando..."):
@@ -227,13 +235,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_final = df_final[columnas_ideales]
                             
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-                            st.success(f"✅ ¡Incidencia guardada para {tecnico_sel}!")
+                            st.success(f"✅ ¡Incidencia guardada para {nombre_final.upper()}!")
                             time.sleep(1.5)
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Error de base de datos: {e}")
-                else:
-                    st.warning("⚠️ El nombre del técnico y el comentario son obligatorios.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -246,7 +252,7 @@ def mostrar_modulo_expedientes(conn, df_base):
         if not df_view.empty:
             df_view = df_view.dropna(subset=['TECNICO', 'TIPO_FALTA'], how='all')
             lista_tecs_hist = ["Ver Todos"] + sorted(df_view['TECNICO'].astype(str).unique().tolist())
-            filtro = st.selectbox("🔍 Buscar Expediente de Técnico:", options=lista_tecs_hist)
+            filtro = st.selectbox("🔍 Buscar Expediente de Técnico/Ayudante:", options=lista_tecs_hist)
             
             df_mostrar = df_view if filtro == "Ver Todos" else df_view[df_view['TECNICO'] == filtro]
             
