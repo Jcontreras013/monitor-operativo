@@ -61,60 +61,47 @@ def sanitizar(texto):
 # 2. GENERADORES DE DOCUMENTOS PDF
 # ==============================================================================
 def generar_pdf_consolidado(df):
-    pdf = MemoPDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_text_color(40, 50, 100)
+    pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, "REPORTE CONSOLIDADO DE EXPEDIENTES", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y %H:%M:%S')}", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 10); pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y %H:%M:%S')}", ln=True, align="C")
     pdf.ln(10)
-    
     if df.empty:
-        pdf.set_font("Helvetica", "I", 12)
-        pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
+        pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 10, "Resumen por Clasificación:", ln=True)
-        col_cat = 'CATEGORIA' if 'CATEGORIA' in df.columns else 'TIPO_FALTA'
-        for cat, total in df[col_cat].value_counts().items():
-            pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 7, f"- {cat}: {total}", ln=True)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
+        for cat, total in df['TIPO_FALTA'].value_counts().items():
+            pdf.set_font("Helvetica", "", 11); pdf.cell(0, 7, f"- {cat}: {total}", ln=True)
         pdf.ln(10)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 10, "Desglose de Eventos:", ln=True)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos:", ln=True)
         for _, row in df.iterrows():
             pdf.set_font("Helvetica", "B", 9)
-            cat_tag = row.get('CATEGORIA', 'REPORTE')
-            pdf.cell(0, 5, sanitizar(f"[{row.get('FECHA_INCIDENCIA','')}] {row.get('TECNICO','')} - {cat_tag}"), ln=True)
+            pdf.cell(0, 5, sanitizar(f"[{row.get('FECHA_INCIDENCIA','')}] {row.get('TECNICO','')}"), ln=True)
             pdf.set_font("Helvetica", "I", 8)
             pdf.cell(0, 4, f"   {sanitizar(row.get('TIPO_FALTA',''))}: {sanitizar(str(row.get('COMENTARIO',''))[:100])}...", ln=True)
             pdf.ln(2)
-            
-    fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd)
-    pdf.output(path)
+    fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
-    os.remove(path)
-    return data
+    os.remove(path); return data
 
 def generar_pdf_memo(row_dict):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     
-    # --- AQUÍ ESTÁ LA LÓGICA DE INCIDENCIA MÉDICA ---
-    es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() == "INCIDENCIA MÉDICA"
+    # Verificamos si es una Incidencia Médica para cambiar título y color
+    es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
+    
     if es_medica:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204) # Color Azul
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204) # Azul
         titulo = "CONSTANCIA DE INCIDENCIA MEDICA"
     else:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0) # Color Rojo
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0) # Rojo
         titulo = "MEMORANDUM: LLAMADO DE ATENCION"
         
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Tipo de Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Supervisor:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
     
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
     for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
@@ -134,27 +121,24 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES (CÓDIGO BASE RESTAURADO)
+# 3. INTERFAZ DE EXPEDIENTES (ESTRUCTURA ORIGINAL DE 7 COLUMNAS)
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
-    # --- AQUÍ ESTÁ EL NOMBRE DEL SUPERVISOR AUTOMÁTICO ---
+    # Toma el nombre del usuario logueado
     supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', 'Supervisor'))
-    
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    with st.expander("➕ Crear Nuevo Registro (Lista Unificada)", expanded=True):
+    with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         with st.form("form_incidencia_txt", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 lista_nombres = cargar_personal("personal_tecnico.txt")
                 colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres)
-                categoria_reg = st.radio("🏷️ Tipo:", ["Falta Disciplinaria", "Incidencia Operativa"], horizontal=True)
                 
-                # --- AQUÍ ESTÁ "INCIDENCIA MÉDICA" ---
                 tipo_falta = st.selectbox("🚫 Motivo:", [
                     "Exceso de Velocidad", 
                     "Llegada Tarde", 
@@ -180,26 +164,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
                                 if res.status_code == 200: urls.append(res.json()["image"]["url"])
                         
+                        # ESTRUCTURA EXACTA ORIGINAL DE 7 COLUMNAS
                         nueva_fila = pd.DataFrame([{
                             "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             "TECNICO": colaborador_sel,
-                            "CATEGORIA": categoria_reg,
                             "TIPO_FALTA": tipo_falta,
                             "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
                             "COMENTARIO": comentario,
                             "URL_FOTO": ", ".join(urls),
-                            "SUPERVISOR": supervisor_actual  # Se guarda el nombre
+                            "SUPERVISOR": supervisor_actual
                         }])
 
-                        # --- EXACTAMENTE TU CÓDIGO BASE ---
+                        st.cache_data.clear() # Limpia la caché antes de leer para tener los datos frescos
                         df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         
                         if not df_db.empty:
+                            # Ignoramos filas totalmente vacías
                             df_db = df_db.dropna(subset=['TECNICO'], how='all')
-                        
-                        cols = ["FECHA_REGISTRO", "TECNICO", "CATEGORIA", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
-                        for c in cols:
-                            if c not in df_db.columns: df_db[c] = ""
                         
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                         df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
@@ -207,7 +188,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                         
                         st.cache_data.clear()
-                        st.success(f"✅ ¡Guardado en la fila correspondiente para {colaborador_sel}!")
+                        st.success(f"✅ ¡Guardado con éxito para {colaborador_sel}!")
                         time.sleep(1.5); st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error al guardar: {e}")
@@ -215,20 +196,25 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     st.subheader("📜 Historial de Expedientes")
     try:
+        st.cache_data.clear()
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-        df_view = df_view.dropna(subset=['TECNICO'])
+        
+        # Filtro de limpieza para visualizar
+        df_view = df_view[df_view['TECNICO'].notna()]
+        df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != ""]
+        
         if not df_view.empty:
-            df_view['TECNICO'] = df_view['TECNICO'].str.upper().str.strip()
+            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             filtro = st.selectbox("🔍 Buscar Colaborador:", options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist()))
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
             for idx, row in df_mostrar.iloc[::-1].iterrows():
-                es_m = str(row.get('TIPO_FALTA')).upper() == "INCIDENCIA MÉDICA"
+                es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
                 c_tag = "#3B82F6" if es_m else "#EF4444"
                 
                 with st.container():
                     st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
-                        <h3 style="margin:0; color:white;">{row['TECNICO']} <span style="font-size:12px; background:{c_tag}; padding:2px 8px; border-radius:10px;">{str(row.get('CATEGORIA','')).upper()}</span></h3>
+                        <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
                         <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
                         <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')}</p>
                         <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
