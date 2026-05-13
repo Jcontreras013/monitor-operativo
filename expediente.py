@@ -18,6 +18,29 @@ def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
 
 # ==============================================================================
+# LECTOR DEL ARCHIVO DE PERSONAL (NUEVO)
+# ==============================================================================
+def cargar_nombres_personal():
+    """Lee el archivo personal_tecnico.txt y extrae SOLO los nombres limpios"""
+    nombres = []
+    try:
+        with open("personal_tecnico.txt", "r", encoding="utf-8") as file:
+            for linea in file:
+                if linea.strip():
+                    # Separar por la coma y tomar solo la primera parte (el nombre)
+                    nombre_crudo = linea.split(",")[0]
+                    # Cambiar tabulaciones por espacios y limpiar extremos
+                    nombre_limpio = nombre_crudo.replace("\t", " ").strip().upper()
+                    # Quitar espacios dobles por si acaso
+                    nombre_limpio = " ".join(nombre_limpio.split())
+                    nombres.append(nombre_limpio)
+    except Exception as e:
+        st.error(f"⚠️ No se pudo leer el archivo 'personal_tecnico.txt'. Verifica que esté en la misma carpeta. Error: {e}")
+    
+    # Devolver la lista ordenada alfabéticamente y sin duplicados
+    return sorted(list(set(nombres)))
+
+# ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
 class MemoPDF(FPDF):
@@ -46,7 +69,6 @@ def sanitizar(texto):
 # ==============================================================================
 @st.cache_data(show_spinner=False)
 def generar_pdf_consolidado_general(df_dict_list):
-    """Reporte de toda la empresa"""
     df = pd.DataFrame(df_dict_list)
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
@@ -67,7 +89,6 @@ def generar_pdf_consolidado_general(df_dict_list):
 
 @st.cache_data(show_spinner=False)
 def generar_pdf_consolidado_tecnico(df_dict_list, nombre_tecnico):
-    """Reporte específico de un solo técnico unificando todas sus faltas"""
     df = pd.DataFrame(df_dict_list)
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
@@ -94,7 +115,6 @@ def generar_pdf_consolidado_tecnico(df_dict_list, nombre_tecnico):
 
 @st.cache_data(show_spinner=False)
 def generar_pdf_memo(row_dict):
-    """Reporte individual de un evento"""
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0); pdf.cell(0, 10, "MEMORANDUM: LLAMADO DE ATENCION", ln=True, align="C"); pdf.ln(5)
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
@@ -133,9 +153,13 @@ def mostrar_modulo_expedientes(conn, df_base):
         with st.form("form_incidencia_unificado", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                lista_tecs = sorted(df_base['TECNICO'].dropna().unique().tolist()) if ('TECNICO' in df_base.columns and not df_base.empty) else []
-                tecnico_sel = st.selectbox("👤 Seleccionar Técnico (Si es Ayudante usar cuadro abajo):", options=["---"] + lista_tecs)
-                nombre_ayudante = st.text_input("👷 Escriba nombre del AYUDANTE / SAC (Prioridad):")
+                # AQUÍ USAMOS LA FUNCIÓN PARA CARGAR LA LISTA DESDE EL .TXT
+                lista_personal = cargar_nombres_personal()
+                
+                # UN SOLO SELECTOR PARA TODO EL PERSONAL (Técnicos, Supervisores, Ayudantes, etc.)
+                tecnico_sel = st.selectbox("👤 Seleccionar Colaborador:", options=["---"] + lista_personal)
+                
+                # Eliminé el campo de texto de 'Ayudante' para simplificar todo a este menú desplegable.
                 tipo_falta = st.selectbox("🚫 Tipo de Falta:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Insubordinación", "Otro"])
             with c2:
                 fecha_inc = st.date_input("📅 Fecha del suceso:", value=get_honduras_time().date())
@@ -144,15 +168,8 @@ def mostrar_modulo_expedientes(conn, df_base):
             comentario = st.text_area("📝 Detalle detallado de los hechos:")
             
             if st.form_submit_button("💾 GUARDAR REGISTRO"):
-                # UNIFICACIÓN DE NOMBRES AL GUARDAR (Todo a mayúsculas y sin espacios extra)
-                final_name = ""
-                if nombre_ayudante.strip() != "":
-                    final_name = f"{nombre_ayudante.strip().upper()} (AYUDANTE)"
-                elif tecnico_sel != "---":
-                    final_name = tecnico_sel.strip().upper()
-                
-                if final_name == "":
-                    st.error("❌ Error: Debe escribir un nombre o seleccionar uno de la lista.")
+                if tecnico_sel == "---":
+                    st.error("❌ Error: Debe seleccionar un colaborador de la lista.")
                 elif not comentario:
                     st.error("❌ Error: El comentario es obligatorio.")
                 else:
@@ -166,10 +183,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     time.sleep(1)
                                 except: pass
                     
-                    # 7 COLUMNAS EXACTAS, IGUAL QUE EN TU CÓDIGO ORIGINAL
+                    # CÓDIGO EXACTO DE GUARDADO A GOOGLE SHEETS
                     nueva_fila = pd.DataFrame([{
                         "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                        "TECNICO": final_name,
+                        "TECNICO": tecnico_sel, # Ya viene limpio y en mayúsculas del txt
                         "TIPO_FALTA": tipo_falta,
                         "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
@@ -191,13 +208,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                             df_final = df_final[cols]
                             
-                            # Evitar el error de "nan"
                             df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
                             
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                             
                             st.cache_data.clear() # LIMPIEZA TOTAL DE MEMORIA
-                            st.success(f"✅ ¡REGISTRADO EXITOSAMENTE!: {final_name}")
+                            st.success(f"✅ ¡REGISTRADO EXITOSAMENTE!: {tecnico_sel}")
                             time.sleep(1.5)
                             st.rerun()
                     except Exception as e:
@@ -207,11 +223,10 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.subheader("📜 Historial Unificado y Reportes")
     
     try:
-        # LEEMOS Y UNIFICAMOS EL HISTORIAL PARA EL FILTRO
+        # CÓDIGO DE HISTORIAL QUE MANDASTE (Funcional y Unificado)
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if not df_view.empty and 'TECNICO' in df_view.columns:
-            # 1. UNIFICACIÓN DE NOMBRES PARA BÚSQUEDA Y AGRUPACIÓN
             df_view = df_view.dropna(subset=['TECNICO'])
             df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != '']
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.strip().str.upper()
@@ -223,7 +238,6 @@ def mostrar_modulo_expedientes(conn, df_base):
             opciones_filtro = ["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist())
             filtro = st.selectbox("🔍 Buscar por Nombre (Unificado automáticamente):", options=opciones_filtro)
             
-            # 2. REPORTE DINÁMICO (General o Por Técnico)
             c_v, c_b = st.columns([3, 1])
             with c_b:
                 if filtro == "VER TODOS":
@@ -234,7 +248,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                     pdf_tec = generar_pdf_consolidado_tecnico(df_tec.to_dict(orient="records"), filtro)
                     st.download_button(f"📊 Reporte de {filtro}", data=pdf_tec, file_name=f"Historial_{filtro.replace(' ','_')}.pdf", mime="application/pdf", use_container_width=True, type="primary")
             
-            # 3. MOSTRAR LISTADO DE FALTAS
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
             for idx, row in df_mostrar.iloc[::-1].iterrows():
