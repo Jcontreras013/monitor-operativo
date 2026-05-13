@@ -8,6 +8,7 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
+import numpy as np
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
@@ -17,36 +18,26 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
 
-# ⚠️ Le quitamos el @st.cache_data para que lea el archivo EN VIVO siempre
 def cargar_personal(filepath="personal_tecnico.txt"):
+    """Carga los nombres desde el TXT ignorando roles y asegurando mayúsculas."""
     try:
-        if not os.path.exists(filepath): 
-            return []
-            
-        # Intentamos leer el archivo. Si tiene caracteres raros de Windows, usamos latin-1
+        if not os.path.exists(filepath): return []
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 lineas = f.readlines()
         except UnicodeDecodeError:
             with open(filepath, 'r', encoding='latin-1') as f:
                 lineas = f.readlines()
-                
         nombres = []
         for linea in lineas:
             linea = linea.strip()
             if linea:
-                # Corta en la coma para ignorar el puesto
                 nombre_crudo = linea.split(',')[0]
-                # Limpia tabulaciones y espacios extra
                 nombre_limpio = " ".join(nombre_crudo.replace('\t', ' ').split()).upper()
-                if nombre_limpio: 
-                    nombres.append(nombre_limpio)
-                    
+                if nombre_limpio: nombres.append(nombre_limpio)
         return sorted(list(set(nombres)))
-    except Exception as e:
-        print(f"Error al leer personal: {e}")
-        return []
-        
+    except: return []
+
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
@@ -72,85 +63,57 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF
+# 2. GENERADOR DE PDF
 # ==============================================================================
 def generar_pdf_memo(row_dict):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    
-    # Lógica especial para Incidencia Médica
     es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() == "INCIDENCIA MÉDICA"
-    
     if es_medica:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204) # Azul para salud
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204)
         titulo = "CONSTANCIA DE INCIDENCIA MÉDICA"
     else:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0) # Rojo para faltas
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
         titulo = "MEMORANDUM: LLAMADO DE ATENCION"
-        
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
-    
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Clasificación:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
-    
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Supervisor:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle del Registro:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
     for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
-    
-    # Carga de evidencias
-    urls = str(row_dict.get('URL_FOTO', '')).split(',')
-    for u in [x.strip() for x in urls if x.strip().startswith('http')]:
-        try:
-            r = requests.get(u, timeout=8)
-            if r.status_code == 200:
-                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                with open(tp, 'wb') as f: f.write(r.content)
-                if pdf.get_y() > 140: pdf.add_page()
-                pdf.image(tp, x=15, w=170); pdf.ln(5); os.remove(tp)
-        except: pass
-
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: d = f.read()
     os.remove(path); return d
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES
+# 3. INTERFAZ DE EXPEDIENTES (SOLUCIÓN GUARDADO INFINITO)
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
-    # Detectamos quién está usando el sistema para la columna SUPERVISOR
-    supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', 'SUPERVISOR CONTROL'))
-    rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
-    es_admin = (str(rol_usuario).strip().lower() == 'admin')
+    # Nombre del supervisor automático
+    supervisor_actual = st.session_state.get('usuario', 'SUPERVISOR CONTROL')
+    es_admin = (str(st.session_state.get('rol_actual', 'monitoreo')).strip().lower() == 'admin')
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    with st.expander("➕ Crear Nuevo Registro (Lista Unificada)", expanded=True):
-        with st.form("form_incidencia_txt", clear_on_submit=True):
+    with st.expander("➕ Crear Nuevo Registro (Desde A8 en adelante)", expanded=True):
+        with st.form("form_registro_continuo", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 lista_nombres = cargar_personal("personal_tecnico.txt")
                 colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres)
-                
-                # Lista de tipos con la nueva Incidencia Médica
                 tipo_falta = st.selectbox("🚫 Motivo/Tipo:", [
-                    "Exceso de Velocidad", 
-                    "Llegada Tarde", 
-                    "Abandono de Ruta", 
-                    "Tiempos Muertos", 
-                    "Mala Documentación", 
-                    "Insubordinación", 
-                    "Incidencia Médica", 
-                    "Otro"
+                    "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
+                    "Tiempos Muertos", "Mala Documentación", "Insubordinación", 
+                    "Incidencia Médica", "Otro"
                 ])
-                st.caption(f"✍️ Supervisor responsable: **{supervisor_actual}**")
-            
+                st.info(f"✍️ Firma el registro: **{supervisor_actual}**")
             with c2:
-                fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date())
+                fecha_inc = st.date_input("📅 Fecha del suceso:", value=get_honduras_time().date())
                 archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
             
-            comentario = st.text_area("📝 Descripción de los hechos:")
+            comentario = st.text_area("📝 Descripción detallada:")
             
-            if st.form_submit_button("💾 GUARDAR EN EXPEDIENTE"):
+            if st.form_submit_button("💾 GUARDAR REGISTRO"):
                 if colaborador_sel == "---" or not comentario:
                     st.error("⚠️ Complete el nombre y el comentario.")
                 else:
@@ -168,27 +131,31 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
                             "COMENTARIO": comentario,
                             "URL_FOTO": ", ".join(urls),
-                            "SUPERVISOR": supervisor_actual # Se guarda el nombre de quien inició sesión
+                            "SUPERVISOR": supervisor_actual
                         }])
 
-                        # LÓGICA DE LIMPIEZA PARA FILA A7
+                        # LÓGICA DE GUARDADO INFINITO (A8, A9, A10...)
                         df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         
+                        # Limpiamos filas que Google Sheets manda como "vacías" pero Python detecta
                         if not df_db.empty:
-                            # Eliminamos filas fantasmas
-                            df_db = df_db.dropna(subset=['TECNICO'], how='all')
+                            # Reemplazamos celdas que son solo espacios por valores nulos reales
+                            df_db = df_db.replace(r'^\s*$', np.nan, regex=True)
+                            # Mantenemos solo las filas donde hay un técnico escrito
+                            df_db = df_db.dropna(subset=['TECNICO'])
                         
                         cols = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
                         for c in cols:
                             if c not in df_db.columns: df_db[c] = ""
                         
+                        # Al concatenar ahora, Python lo pone justo después del último dato real
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                         df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
                         
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                         
                         st.cache_data.clear()
-                        st.success(f"✅ Registro guardado por {supervisor_actual} para {colaborador_sel}.")
+                        st.success(f"✅ ¡Guardado con éxito! Se registró a {colaborador_sel} en la siguiente fila disponible.")
                         time.sleep(1.5); st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error al guardar: {e}")
@@ -197,30 +164,18 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.subheader("📜 Historial de Expedientes")
     try:
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        # Limpieza visual del historial
         if not df_view.empty:
-            df_view = df_view.dropna(subset=['TECNICO'])
+            df_view = df_view.replace(r'^\s*$', np.nan, regex=True).dropna(subset=['TECNICO'])
             df_view['TECNICO'] = df_view['TECNICO'].str.upper().str.strip()
-            
             filtro = st.selectbox("🔍 Buscar Colaborador:", options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist()))
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
             for idx, row in df_mostrar.iloc[::-1].iterrows():
-                # Estilo visual diferente si es médica
                 es_m = str(row.get('TIPO_FALTA')).upper() == "INCIDENCIA MÉDICA"
                 color_borde = "#3B82F6" if es_m else "#EF4444"
-                etiqueta = "🏥 MÉDICA" if es_m else "🚫 FALTA"
-                
                 with st.container():
-                    st.markdown(f"""
-                    <div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {color_borde}; margin-bottom: 10px; border: 1px solid #2D2F39;">
-                        <h3 style="margin:0; color:white;">{row['TECNICO']} <span style="font-size:12px; background:{color_borde}; padding:2px 8px; border-radius:10px;">{etiqueta}</span></h3>
-                        <p style="color:#94A3B8;"><b>Tipo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
-                        <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')}</p>
-                        <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    nombre_btn = "📄 Descargar Constancia Médica" if es_m else "📄 Descargar Memorandum"
-                    st.download_button(nombre_btn, data=generar_pdf_memo(row.to_dict()), file_name=f"Reporte_{idx}.pdf", key=f"p_{idx}", use_container_width=True)
+                    st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {color_borde}; margin-bottom: 10px; border: 1px solid #2D2F39;"><h3 style="margin:0; color:white;">{row['TECNICO']} <span style="font-size:12px; background:{color_borde}; padding:2px 8px; border-radius:10px;">{row['TIPO_FALTA']}</span></h3><p style="color:#94A3B8;"><b>Registrado por:</b> {row.get('SUPERVISOR', 'N/D')} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p><div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div></div>""", unsafe_allow_html=True)
+                    st.download_button(f"📄 Descargar {'Constancia' if es_m else 'Memorandum'}", data=generar_pdf_memo(row.to_dict()), file_name=f"Reporte_{idx}.pdf", key=f"p_{idx}", use_container_width=True)
         else: st.info("No hay registros aún.")
     except: st.warning("⚠️ Cargando historial...")
