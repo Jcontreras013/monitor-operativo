@@ -18,7 +18,7 @@ def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
 
 # ==============================================================================
-# 1. LÓGICA DE PDF (Clase Base)
+# 1. LÓGICA DE PDF (Con Caché y títulos dinámicos)
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
@@ -29,7 +29,7 @@ class MemoPDF(FPDF):
         self.set_font("Helvetica", "B", 10)
         self.cell(0, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
         self.set_font("Helvetica", "", 8); self.set_x(50)
-        self.cell(0, 5, "Reporte Disciplinario Oficial", ln=True, align="R")
+        self.cell(0, 5, "Reporte Oficial de Gestión de Personal", ln=True, align="R")
         self.set_draw_color(200, 200, 200); self.line(10, 22, 200, 22); self.ln(10)
         
     def footer(self):
@@ -41,12 +41,8 @@ def sanitizar(texto):
     if pd.isna(texto) or texto is None: return "N/D"
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
-# ==============================================================================
-# 2. GENERADORES DE PDF (Con Caché para que sea rápido)
-# ==============================================================================
 @st.cache_data(show_spinner=False)
 def generar_pdf_consolidado_general(df_dict_list):
-    """Reporte de toda la empresa"""
     df = pd.DataFrame(df_dict_list)
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
@@ -58,7 +54,7 @@ def generar_pdf_consolidado_general(df_dict_list):
     else:
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen Estadistico:", ln=True)
         pdf.set_fill_color(230, 230, 230); pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(140, 8, " Tipo de Falta", border=1, fill=True); pdf.cell(50, 8, " Total", border=1, ln=True, align="C", fill=True)
+        pdf.cell(140, 8, " Tipo de Evento", border=1, fill=True); pdf.cell(50, 8, " Total", border=1, ln=True, align="C", fill=True)
         for f, t in df['TIPO_FALTA'].value_counts().items():
             pdf.set_font("Helvetica", "", 10); pdf.cell(140, 7, f" {sanitizar(f)}", border=1); pdf.cell(50, 7, str(t), border=1, ln=True, align="C")
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
@@ -67,7 +63,6 @@ def generar_pdf_consolidado_general(df_dict_list):
 
 @st.cache_data(show_spinner=False)
 def generar_pdf_consolidado_tecnico(df_dict_list, nombre_tecnico):
-    """Reporte específico de un solo técnico unificando todas sus faltas"""
     df = pd.DataFrame(df_dict_list)
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
@@ -75,7 +70,7 @@ def generar_pdf_consolidado_tecnico(df_dict_list, nombre_tecnico):
     pdf.set_font("Helvetica", "", 10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y %H:%M:%S')}", ln=True, align="C"); pdf.ln(5)
     
-    pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen de Faltas:", ln=True)
+    pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen del Colaborador:", ln=True)
     for f, t in df['TIPO_FALTA'].value_counts().items():
         pdf.set_font("Helvetica", "", 10); pdf.cell(0, 6, f"- {sanitizar(f)}: {t} reportes", ln=True)
         
@@ -94,12 +89,16 @@ def generar_pdf_consolidado_tecnico(df_dict_list, nombre_tecnico):
 
 @st.cache_data(show_spinner=False)
 def generar_pdf_memo(row_dict):
-    """Reporte individual de un evento"""
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0); pdf.cell(0, 10, "MEMORANDUM: LLAMADO DE ATENCION", ln=True, align="C"); pdf.ln(5)
+    
+    # Detectar si dice "Falta Disciplinaria" en el texto unido para poner el título correcto
+    es_falta = "Falta Disciplinaria" in str(row_dict.get('TIPO_FALTA', ''))
+    titulo = "MEMORANDUM: LLAMADO DE ATENCION" if es_falta else "REPORTE DE INCIDENCIA OPERATIVA"
+    
+    pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0); pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(35, 8, " Implicado:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(155, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(35, 8, " Tipo Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(155, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(35, 8, " Clasificacion:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(155, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
     for l in textwrap.wrap(str(row_dict.get('COMENTARIO')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
     
@@ -136,7 +135,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                 lista_tecs = sorted(df_base['TECNICO'].dropna().unique().tolist()) if ('TECNICO' in df_base.columns and not df_base.empty) else []
                 tecnico_sel = st.selectbox("👤 Seleccionar Técnico (Si es Ayudante usar cuadro abajo):", options=["---"] + lista_tecs)
                 nombre_ayudante = st.text_input("👷 Escriba nombre del AYUDANTE / SAC (Prioridad):")
-                tipo_falta = st.selectbox("🚫 Tipo de Falta:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Insubordinación", "Otro"])
+                
+                # AQUI REGRESA EL BOTON QUE PEDISTE
+                categoria_reg = st.radio("🏷️ Clasificación:", ["Falta Disciplinaria", "Incidencia Operativa"], horizontal=True)
+                tipo_falta = st.selectbox("🚫 Motivo Específico:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Insubordinación", "Otro"])
             with c2:
                 fecha_inc = st.date_input("📅 Fecha del suceso:", value=get_honduras_time().date())
                 archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
@@ -144,7 +146,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             comentario = st.text_area("📝 Detalle detallado de los hechos:")
             
             if st.form_submit_button("💾 GUARDAR REGISTRO"):
-                # UNIFICACIÓN DE NOMBRES AL GUARDAR (Todo a mayúsculas y sin espacios extra)
+                # UNIFICACIÓN DE NOMBRES AL GUARDAR
                 final_name = ""
                 if nombre_ayudante.strip() != "":
                     final_name = f"{nombre_ayudante.strip().upper()} (AYUDANTE)"
@@ -166,11 +168,14 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     time.sleep(1)
                                 except: pass
                     
-                    # 7 COLUMNAS EXACTAS, IGUAL QUE EN TU CÓDIGO ORIGINAL
+                    # EL TRUCO: UNIR CATEGORIA Y FALTA EN UNA SOLA COLUMNA PARA RESPETAR TU EXCEL
+                    falta_combinada = f"{categoria_reg} - {tipo_falta}"
+                    
+                    # LAS MISMAS 7 COLUMNAS EXACTAS DE AYER QUE FUNCIONABAN PERFECTO
                     nueva_fila = pd.DataFrame([{
                         "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                         "TECNICO": final_name,
-                        "TIPO_FALTA": tipo_falta,
+                        "TIPO_FALTA": falta_combinada, # Aquí va guardada la opción
                         "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
                         "COMENTARIO": comentario,
                         "URL_FOTO": ", ".join(urls),
@@ -179,24 +184,22 @@ def mostrar_modulo_expedientes(conn, df_base):
                     
                     try:
                         with st.spinner("Guardando en la Base de Datos..."):
+                            # TU CÓDIGO EXACTO DE LECTURA Y ESCRITURA BLINDADA DE AYER
                             df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                             
                             cols = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
-                            if df_db.empty or len(df_db.columns) == 0:
-                                df_db = pd.DataFrame(columns=cols)
-                            else:
-                                for c in cols:
-                                    if c not in df_db.columns: df_db[c] = ""
+                            for c in cols:
+                                if c not in df_db.columns: df_db[c] = ""
                             
-                            df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
+                            df_final = pd.concat([df_db, nueva_fila], ignore_index=True).astype(str)
                             df_final = df_final[cols]
                             
-                            # Evitar el error de "nan"
-                            df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
+                            # Limpieza rápida para que los nulos no estorben
+                            df_final = df_final.replace("nan", "")
                             
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                             
-                            st.cache_data.clear() # LIMPIEZA TOTAL DE MEMORIA
+                            st.cache_data.clear()
                             st.success(f"✅ ¡REGISTRADO EXITOSAMENTE!: {final_name}")
                             time.sleep(1.5)
                             st.rerun()
@@ -207,13 +210,14 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.subheader("📜 Historial Unificado y Reportes")
     
     try:
-        # LEEMOS Y UNIFICAMOS EL HISTORIAL PARA EL FILTRO
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if not df_view.empty and 'TECNICO' in df_view.columns:
-            # 1. UNIFICACIÓN DE NOMBRES PARA BÚSQUEDA Y AGRUPACIÓN
+            # 1. UNIFICACIÓN DE NOMBRES PARA BÚSQUEDA
             df_view = df_view.dropna(subset=['TECNICO'])
             df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != '']
+            df_view = df_view[df_view['TECNICO'].astype(str).str.upper() != 'NAN']
+            
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.strip().str.upper()
             
             if df_view.empty:
@@ -232,17 +236,25 @@ def mostrar_modulo_expedientes(conn, df_base):
                 else:
                     df_tec = df_view[df_view['TECNICO'] == filtro]
                     pdf_tec = generar_pdf_consolidado_tecnico(df_tec.to_dict(orient="records"), filtro)
-                    st.download_button(f"📊 Reporte de {filtro}", data=pdf_tec, file_name=f"Historial_{filtro.replace(' ','_')}.pdf", mime="application/pdf", use_container_width=True, type="primary")
+                    st.download_button(f"📊 Reporte Consolidado de {filtro}", data=pdf_tec, file_name=f"Historial_{filtro.replace(' ','_')}.pdf", mime="application/pdf", use_container_width=True, type="primary")
             
             # 3. MOSTRAR LISTADO DE FALTAS
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
             for idx, row in df_mostrar.iloc[::-1].iterrows():
+                # Detectar color del marco dependiendo si dice "Falta Disciplinaria" en el texto
+                es_falta_tarjeta = "Falta Disciplinaria" in str(row.get('TIPO_FALTA', ''))
+                color_tag = "#EF4444" if es_falta_tarjeta else "#3B82F6"
+                etiqueta = "FALTA" if es_falta_tarjeta else "INCIDENCIA"
+                
                 with st.container():
                     st.markdown(f"""
-                    <div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border-left: 5px solid #EF4444; margin-bottom: 10px; border: 1px solid #2D2F39;">
-                        <h3 style="margin:0; color:white;">👨‍🔧 {row['TECNICO']}</h3>
-                        <p style="margin:5px 0; color:#94A3B8;"><b>Falta:</b> {row.get('TIPO_FALTA', 'N/D')} | <b>Fecha:</b> {row.get('FECHA_INCIDENCIA', 'N/D')}</p>
+                    <div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border-left: 5px solid {color_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 style="margin:0; color:white;">👨‍🔧 {row['TECNICO']}</h3>
+                            <span style="background:{color_tag}; color:white; padding:3px 12px; border-radius:15px; font-size:11px; font-weight:bold;">{etiqueta}</span>
+                        </div>
+                        <p style="margin:5px 0; color:#94A3B8;"><b>Clasificación:</b> {row.get('TIPO_FALTA', 'N/D')} | <b>Fecha:</b> {row.get('FECHA_INCIDENCIA', 'N/D')}</p>
                         <div style="background:#0F1115; padding:10px; border-radius:5px; margin:10px 0; color:white;">{row.get('COMENTARIO', '')}</div>
                         <p style="font-size:0.8rem; color:#64748B;">Registrado por {row.get('SUPERVISOR','N/D')} el {row.get('FECHA_REGISTRO', 'N/D')}</p>
                     </div>
