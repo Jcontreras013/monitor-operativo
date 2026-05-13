@@ -73,7 +73,6 @@ def generar_pdf_consolidado(df):
         pdf.ln(5)
         for _, row in df.iterrows():
             pdf.set_font("Helvetica", "B", 9)
-            # Incluimos Fecha y Hora de registro en el consolidado
             pdf.cell(0, 5, sanitizar(f"[{row.get('FECHA_REGISTRO','')}] - {row.get('TECNICO','')}"), ln=True)
             pdf.set_font("Helvetica", "I", 8)
             pdf.cell(0, 4, f"   Motivo: {sanitizar(row.get('TIPO_FALTA',''))} | Suceso: {row.get('FECHA_INCIDENCIA','')}", ln=True)
@@ -95,7 +94,6 @@ def generar_pdf_memo(row_dict):
         
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     
-    # Bloque de información con Fecha y Hora
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(45, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Motivo:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
@@ -195,7 +193,6 @@ def mostrar_modulo_expedientes(conn, df_base):
         if not df_view.empty:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             
-            # --- BOTÓN DE REPORTE GERENCIAL ---
             col_vacia, col_boton = st.columns([3, 1])
             with col_boton:
                 st.download_button("📊 Reporte Gerencial", data=generar_pdf_consolidado(df_view), file_name="Reporte_General_Expedientes.pdf", mime="application/pdf", use_container_width=True)
@@ -215,9 +212,19 @@ def mostrar_modulo_expedientes(conn, df_base):
                         <div style="background:#0F1115; padding:10px; border-radius:5px; color:white; margin-top: 10px;">{row['COMENTARIO']}</div>
                     </div>""", unsafe_allow_html=True)
                     
+                    # --- AQUÍ ESTÁ EL VISOR DE IMÁGENES ---
+                    urls_foto = str(row.get('URL_FOTO', '')).split(',')
+                    urls_validas = [u.strip() for u in urls_foto if u.strip().startswith('http')]
+                    
+                    if urls_validas:
+                        with st.expander("🖼️ Ver Evidencia Adjunta"):
+                            for url in urls_validas:
+                                st.image(url, use_container_width=True)
+                    # --------------------------------------
+                    
                     c_p, c_d = st.columns(2)
                     with c_p:
-                        st.download_button(f"📄 Descargar {'Constancia' if es_m else 'Documento'}", data=generar_pdf_memo(row.to_dict()), file_name=f"Reporte_{idx}.pdf", key=f"p_{idx}", use_container_width=True)
+                        st.download_button(f"📄 Descargar {'Constancia Medica' if es_m else 'Documento'}", data=generar_pdf_memo(row.to_dict()), file_name=f"Reporte_{idx}.pdf", key=f"p_{idx}", use_container_width=True)
                     with c_d:
                         if es_admin:
                             if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
