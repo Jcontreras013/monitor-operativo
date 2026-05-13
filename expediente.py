@@ -142,7 +142,6 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.title("📁 Gestión de Expedientes y Reportes")
     st.info("💡 **Aviso:** Puedes registrar a Técnicos, Ayudantes, personal de SAC o Supervisores. Solo escríbelo en el recuadro correspondiente.")
     
-    # --- REGISTRO ---
     with st.expander("➕ Registrar Nueva Incidencia / Falta", expanded=True):
         with st.form("form_expediente_final", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -150,7 +149,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                 lista_tecs = sorted(df_base['TECNICO'].dropna().unique().tolist()) if ('TECNICO' in df_base.columns and not df_base.empty) else []
                 tecnico_sel = st.selectbox("👤 Seleccionar de la lista (Técnicos Base):", options=["---"] + lista_tecs)
                 nombre_manual = st.text_input("👷 O escribir nombre del colaborador (Ayudante / SAC / Otro):", placeholder="Ej. Juan Perez (SAC)")
-                
                 categoria_reg = st.radio("🏷️ Clasificación del Registro:", ["Falta Disciplinaria", "Incidencia Operativa"], horizontal=True)
                 
             with c2:
@@ -178,77 +176,71 @@ def mostrar_modulo_expedientes(conn, df_base):
                                         urls.append(res.json()["image"]["url"])
                                     time.sleep(1)
 
-                        # 1. Crear el nuevo registro asegurando que TODO sea texto puro
+                        # AQUI ESTA LA MAGIA: ORDEN EXACTO COMO TU GOOGLE SHEETS
                         nueva_fila = pd.DataFrame([{
                             "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             "TECNICO": str(nombre_final),
-                            "CATEGORIA": str(categoria_reg),
                             "TIPO_FALTA": str(tipo_evento),
                             "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
                             "COMENTARIO": str(comentario),
                             "URL_FOTO": ", ".join(urls),
-                            "SUPERVISOR": str(supervisor_actual)
+                            "SUPERVISOR": str(supervisor_actual),
+                            "CATEGORIA": str(categoria_reg) # Categoria va al final para no dañar tu archivo
                         }])
 
-                        # 2. Leer Base de Datos Actual Directo de Google Sheets
                         with st.spinner("Conectando con Google Sheets para guardar..."):
                             df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                             
-                            cols_obligatorias = ["FECHA_REGISTRO", "TECNICO", "CATEGORIA", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
+                            # Columnas exactamente en este orden
+                            cols_obligatorias = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR", "CATEGORIA"]
                             
-                            if df_db.empty and len(df_db.columns) == 0:
+                            if df_db.empty or len(df_db.columns) == 0:
                                 df_db = pd.DataFrame(columns=cols_obligatorias)
                             else:
                                 for col in cols_obligatorias:
-                                    if col not in df_db.columns: df_db[col] = ""
+                                    if col not in df_db.columns: 
+                                        df_db[col] = ""
 
-                            # 3. LIMPIEZA EXTREMA: Borrar filas donde TECNICO esté en blanco
-                            # Esto evita que los datos se guarden en la fila 2000 y no los veas
                             if 'TECNICO' in df_db.columns:
+                                df_db = df_db.dropna(subset=['TECNICO'])
                                 df_db = df_db[df_db['TECNICO'].astype(str).str.strip() != '']
-                                df_db = df_db[df_db['TECNICO'].notna()]
-                                df_db = df_db[df_db['TECNICO'].astype(str).str.lower() != 'nan']
                             
-                            # 4. Unir y Sanitizar TODO antes de enviar a Google
                             df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                             df_final = df_final[cols_obligatorias]
                             
-                            # REGLA DE ORO PARA GOOGLE SHEETS: Cero valores Nulos (NaN)
+                            # LIMPIEZA EXTREMA
                             df_final = df_final.fillna("")
                             df_final = df_final.astype(str)
                             df_final = df_final.replace(["nan", "NaN", "None", "null"], "")
-
-                            # 5. Escribir en Google Sheets
-                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                             
-                            # 6. Forzar borrado de memoria (Caché)
+                            # ESTO ES LO QUE ARREGLA EL FALLO SILENCIOSO
+                            df_final = df_final.reset_index(drop=True)
+
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                             st.cache_data.clear()
                             
                             st.success(f"✅ ¡Se ha guardado exitosamente a {nombre_final}!")
-                            time.sleep(2)
-                            st.rerun() # Recarga la página para mostrar el nuevo dato
+                            time.sleep(1.5)
+                            st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al intentar escribir en la Base de Datos: {str(e)}")
+                        st.error(f"❌ Error al intentar escribir: {str(e)}")
 
     st.markdown("---")
     st.subheader("📜 Historial de Expedientes")
     
     try:
-        # Aquí también leemos forzando que no use caché (ttl=0)
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
-        # Limpiamos filas basura para la visualización
         if not df_view.empty and 'TECNICO' in df_view.columns:
+            df_view = df_view.dropna(subset=['TECNICO'])
             df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != '']
-            df_view = df_view[df_view['TECNICO'].notna()]
-            df_view = df_view[df_view['TECNICO'].astype(str).str.lower() != 'nan']
-            
-            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             
             if df_view.empty:
                 st.info("No hay registros disciplinarios o incidencias guardadas aún.")
                 return
-
+                
+            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
+            
             c_v, c_b = st.columns([3, 1])
             with c_b:
                 pdf_data_consolidado = generar_pdf_consolidado(df_view.to_dict(orient="records"))
@@ -260,7 +252,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
             for idx, row in df_mostrar.iloc[::-1].iterrows():
-                color_tag = "#EF4444" if row.get('CATEGORIA') == "Falta Disciplinaria" else "#3B82F6"
+                color_tag = "#EF4444" if row.get('CATEGORIA', '') == "Falta Disciplinaria" else "#3B82F6"
                 
                 with st.container():
                     st.markdown(f"""
@@ -277,18 +269,18 @@ def mostrar_modulo_expedientes(conn, df_base):
                     
                     c_p, c_d = st.columns(2)
                     with c_p:
-                        nombre_doc = "Memo" if row.get('CATEGORIA') == "Falta Disciplinaria" else "Incidencia"
+                        nombre_doc = "Memo" if row.get('CATEGORIA', '') == "Falta Disciplinaria" else "Incidencia"
                         pdf_individual_data = generar_pdf_memo(row.to_dict())
                         st.download_button(f"📄 Descargar {nombre_doc}", data=pdf_individual_data, file_name=f"Documento_{idx}.pdf", key=f"pdf_{idx}", use_container_width=True)
                     with c_d:
                         if es_admin and st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                             df_new = df_view.drop(idx)
-                            # Misma limpieza al eliminar
                             df_new = df_new.fillna("").astype(str).replace(["nan", "NaN", "None"], "")
+                            df_new = df_new.reset_index(drop=True)
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_new)
                             st.cache_data.clear()
                             st.rerun()
         else:
             st.info("No hay registros disciplinarios o incidencias guardadas.")
     except Exception as e:
-        st.error(f"⚠️ Error al leer el historial: {e}")
+        st.error(f"⚠️ Error al cargar el historial: {e}")
