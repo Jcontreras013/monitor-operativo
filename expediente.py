@@ -15,19 +15,18 @@ from fpdf import FPDF
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 
 def get_honduras_time():
-    """Retorna la hora exacta de Honduras (UTC-6). Corregido el warning de utcnow()"""
+    """Retorna la hora exacta de Honduras (UTC-6)"""
     return datetime.now(timezone.utc) - timedelta(hours=6)
 
 # ==============================================================================
-# 1. LÓGICA DE PDF (PROTECCIÓN DE LOGIC Y FUNCIONALIDAD)
+# 1. LÓGICA DE PDF (CACHÉ OPTIMIZADO)
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
         if os.path.exists('logo.png'):
             try:
                 self.image('logo.png', 10, 6, 35)
-            except:
-                pass
+            except: pass
         self.set_y(10)
         self.set_x(50)
         self.set_text_color(0, 0, 0)
@@ -48,11 +47,9 @@ class MemoPDF(FPDF):
 
 def sanitizar(texto):
     import unicodedata
-    if pd.isna(texto) or texto is None: 
-        return "N/D"
+    if pd.isna(texto) or texto is None: return "N/D"
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
-# CACHÉ AÑADIDO: Evita que Streamlit genere 100 PDFs en cada recarga de página
 @st.cache_data(show_spinner=False)
 def generar_pdf_memo(row_dict):
     pdf = MemoPDF()
@@ -61,7 +58,6 @@ def generar_pdf_memo(row_dict):
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(180, 0, 0)
     
-    # Título basado en la clasificación
     es_falta = str(row_dict.get('CATEGORIA', '')).upper() == "FALTA DISCIPLINARIA"
     titulo = "MEMORANDUM: LLAMADO DE ATENCION" if es_falta else "REPORTE DE INCIDENCIA OPERATIVA"
     pdf.cell(0, 10, titulo, ln=True, align="C")
@@ -106,12 +102,9 @@ def generar_pdf_memo(row_dict):
     os.remove(path)
     return data
 
-# ==============================================================================
-# 2. GENERADOR DE REPORTE CONSOLIDADO (GERENCIA)
-# ==============================================================================
 @st.cache_data(show_spinner=False)
 def generar_pdf_consolidado(df_dict_list):
-    df = pd.DataFrame(df_dict_list) # Reconstruimos para poder procesar
+    df = pd.DataFrame(df_dict_list)
     pdf = MemoPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -139,7 +132,7 @@ def generar_pdf_consolidado(df_dict_list):
     os.remove(path); return data
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES
+# 3. INTERFAZ DE EXPEDIENTES Y GUARDADO SEGURO
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
@@ -147,6 +140,7 @@ def mostrar_modulo_expedientes(conn, df_base):
     supervisor_actual = st.session_state.get('usuario', 'Supervisor')
 
     st.title("📁 Gestión de Expedientes y Reportes")
+    st.info("💡 **Aviso:** Puedes registrar a Técnicos, Ayudantes, personal de SAC o Supervisores. Solo escríbelo en el recuadro correspondiente.")
     
     # --- REGISTRO ---
     with st.expander("➕ Registrar Nueva Incidencia / Falta", expanded=True):
@@ -154,25 +148,23 @@ def mostrar_modulo_expedientes(conn, df_base):
             c1, c2 = st.columns(2)
             with c1:
                 lista_tecs = sorted(df_base['TECNICO'].dropna().unique().tolist()) if ('TECNICO' in df_base.columns and not df_base.empty) else []
-                tecnico_sel = st.selectbox("👤 Seleccionar Técnico de la lista:", options=["---"] + lista_tecs)
-                nombre_manual = st.text_input("👷 O escribir nombre (AYUDANTE / OTRO):", placeholder="Si escribe aquí, se ignora la lista")
+                tecnico_sel = st.selectbox("👤 Seleccionar de la lista (Técnicos Base):", options=["---"] + lista_tecs)
+                nombre_manual = st.text_input("👷 O escribir nombre del colaborador (Ayudante / SAC / Otro):", placeholder="Ej. Juan Perez (SAC)")
                 
-                # Selector de Incidencia vs Falta
                 categoria_reg = st.radio("🏷️ Clasificación del Registro:", ["Falta Disciplinaria", "Incidencia Operativa"], horizontal=True)
                 
             with c2:
-                tipo_evento = st.selectbox("🚫 Motivo:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Falla de Protocolo", "Otro"])
+                tipo_evento = st.selectbox("🚫 Motivo:", ["Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", "Tiempos Muertos", "Mala Documentación", "Falla de Protocolo", "Incidente con Cliente", "Otro"])
                 fecha_inc = st.date_input("📅 Fecha del suceso:", value=get_honduras_time().date())
                 archivos = st.file_uploader("🖼️ Evidencias Visuales:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
             
             comentario = st.text_area("📝 Descripción detallada:")
             
-            if st.form_submit_button("💾 GUARDAR EN EXPEDIENTE"):
-                # UNIFICACIÓN DE NOMBRE Y PRIORIDAD
+            if st.form_submit_button("💾 GUARDAR EN BASE DE DATOS"):
                 nombre_final = nombre_manual.strip().upper() if nombre_manual.strip() != "" else (tecnico_sel.upper() if tecnico_sel != "---" else "")
                 
                 if not nombre_final:
-                    st.error("❌ ERROR: Debe indicar un nombre (seleccionando de la lista o escribiéndolo).")
+                    st.error("❌ ERROR: Debe indicar un nombre seleccionando de la lista o escribiéndolo.")
                 elif not comentario:
                     st.error("❌ ERROR: La descripción es obligatoria.")
                 else:
@@ -184,13 +176,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
                                     if res.status_code == 200: 
                                         urls.append(res.json()["image"]["url"])
-                                    else:
-                                        st.warning(f"⚠️ No se pudo subir una de las imágenes. Código de error: {res.status_code}")
                                     time.sleep(1)
 
+                        # Crear Dataframe del nuevo registro
                         nueva_fila = pd.DataFrame([{
                             "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                            "TECNICO": nombre_final,
+                            "TECNICO": nombre_final,  # La columna DB se llama TECNICO, pero guarda cualquier rol
                             "CATEGORIA": categoria_reg,
                             "TIPO_FALTA": tipo_evento,
                             "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
@@ -199,10 +190,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
-                        # Lectura forzada
+                        # Leer Base de Datos Actual
                         df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         
-                        # ASEGURAR COLUMNAS (Forma Segura para evitar romper DataFrames vacíos)
+                        # 1. ELIMINAR FILAS VACÍAS FANTASMAS (Evita que se guarde en la fila 1000 sin que lo veas)
+                        df_db = df_db.dropna(how='all')
+
                         cols_obligatorias = ["FECHA_REGISTRO", "TECNICO", "CATEGORIA", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
                         
                         if df_db.empty and len(df_db.columns) == 0:
@@ -211,39 +204,44 @@ def mostrar_modulo_expedientes(conn, df_base):
                             for col in cols_obligatorias:
                                 if col not in df_db.columns: df_db[col] = ""
                         
-                        # Evitar warning de concatenación asegurando que los dfs no estén completamente vacíos de mala manera
+                        # Unir datos
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                         df_final = df_final[cols_obligatorias]
                         
+                        # 2. SANITIZAR DATOS (Esto soluciona los fallos silenciosos de guardado de GSheets)
+                        df_final = df_final.fillna("")  # Quitar Nulos
+                        df_final = df_final.astype(str) # Forzar texto puro
+                        df_final = df_final.replace("nan", "") # Quitar texto basura
+
+                        # Actualizar en Sheets
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                         
                         st.cache_data.clear()
-                        st.success(f"✅ ¡Registro guardado para {nombre_final}!")
+                        st.success(f"✅ ¡Registro guardado exitosamente para {nombre_final} en la Base de Datos!")
                         time.sleep(1.5)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al guardar: {e}")
+                        st.error(f"❌ Error CRÍTICO al guardar en Google Sheets: {str(e)}")
+                        st.warning("Verifica que la pestaña 'Expedientes' exista en el archivo de Google Sheets y esté vinculada correctamente.")
 
     st.markdown("---")
     st.subheader("📜 Historial de Expedientes")
     
     try:
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        df_view = df_view.dropna(how='all') # Limpiar la vista también
         
         if not df_view.empty and 'TECNICO' in df_view.columns:
-            # UNIFICACIÓN DE NOMBRES PARA EL FILTRO
-            df_view = df_view.dropna(subset=['TECNICO'], how='all')
+            df_view = df_view.dropna(subset=['TECNICO'])
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             
             c_v, c_b = st.columns([3, 1])
             with c_b:
-                # Usamos dicts para la caché del PDF global
                 pdf_data_consolidado = generar_pdf_consolidado(df_view.to_dict(orient="records"))
                 st.download_button("📊 Reporte Gerencial", data=pdf_data_consolidado, file_name="Reporte_Gerencial.pdf", mime="application/pdf", use_container_width=True, type="primary")
 
-            # Filtro con nombres unificados en un solo bloque
             opciones = ["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist())
-            filtro = st.selectbox("🔍 Buscar por Nombre:", options=opciones)
+            filtro = st.selectbox("🔍 Buscar por Nombre del Colaborador:", options=opciones)
             
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
@@ -266,16 +264,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                     c_p, c_d = st.columns(2)
                     with c_p:
                         nombre_doc = "Memo" if row.get('CATEGORIA') == "Falta Disciplinaria" else "Incidencia"
-                        # Aquí pasamos un dict en lugar de un objeto Pandas Series para no romper el caché de Streamlit
                         pdf_individual_data = generar_pdf_memo(row.to_dict())
                         st.download_button(f"📄 Descargar {nombre_doc}", data=pdf_individual_data, file_name=f"Documento_{idx}.pdf", key=f"pdf_{idx}", use_container_width=True)
                     with c_d:
                         if es_admin and st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                             df_new = df_view.drop(idx)
+                            # Misma seguridad al eliminar para que no corrompa el Sheet
+                            df_new = df_new.fillna("").astype(str).replace("nan", "")
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_new)
                             st.cache_data.clear()
                             st.rerun()
         else:
             st.info("No hay registros disciplinarios o incidencias guardadas.")
     except Exception as e:
-        st.warning(f"⚠️ El historial está cargando o hubo un problema: {e}. Guarde un registro nuevo para inicializar la base de datos.")
+        st.warning(f"⚠️ El historial no se pudo cargar. Asegúrate de tener una pestaña llamada 'Expedientes'. Detalle técnico: {e}")
