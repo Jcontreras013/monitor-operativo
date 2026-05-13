@@ -17,22 +17,36 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
 
-@st.cache_data(show_spinner=False)
+# ⚠️ Le quitamos el @st.cache_data para que lea el archivo EN VIVO siempre
 def cargar_personal(filepath="personal_tecnico.txt"):
     try:
-        if not os.path.exists(filepath): return []
-        with open(filepath, 'r', encoding='utf-8') as f:
-            lineas = f.readlines()
+        if not os.path.exists(filepath): 
+            return []
+            
+        # Intentamos leer el archivo. Si tiene caracteres raros de Windows, usamos latin-1
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lineas = f.readlines()
+        except UnicodeDecodeError:
+            with open(filepath, 'r', encoding='latin-1') as f:
+                lineas = f.readlines()
+                
         nombres = []
         for linea in lineas:
             linea = linea.strip()
             if linea:
+                # Corta en la coma para ignorar el puesto
                 nombre_crudo = linea.split(',')[0]
+                # Limpia tabulaciones y espacios extra
                 nombre_limpio = " ".join(nombre_crudo.replace('\t', ' ').split()).upper()
-                if nombre_limpio: nombres.append(nombre_limpio)
+                if nombre_limpio: 
+                    nombres.append(nombre_limpio)
+                    
         return sorted(list(set(nombres)))
-    except: return []
-
+    except Exception as e:
+        print(f"Error al leer personal: {e}")
+        return []
+        
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
