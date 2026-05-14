@@ -58,13 +58,12 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF (TABLAS Y FECHA)
+# 2. GENERADORES DE DOCUMENTOS PDF (TABLA AJUSTADA)
 # ==============================================================================
 def generar_pdf_consolidado(df):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, "REPORTE CONSOLIDADO DE EXPEDIENTES", ln=True, align="C")
-    
     pdf.set_font("Helvetica", "", 10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
     pdf.ln(10)
@@ -73,7 +72,6 @@ def generar_pdf_consolidado(df):
         pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
-        
         pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
         pdf.cell(140, 8, " Motivo / Falta", border=1, fill=True)
         pdf.cell(50, 8, " Cantidad Total", border=1, ln=True, align="C", fill=True)
@@ -85,24 +83,27 @@ def generar_pdf_consolidado(df):
         pdf.ln(10)
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
         
-        pdf.set_font("Helvetica", "B", 9); pdf.set_fill_color(240, 240, 240)
-        pdf.cell(35, 8, " Registro (Hora)", border=1, fill=True, align="C")
-        pdf.cell(45, 8, " Colaborador", border=1, fill=True)
-        pdf.cell(45, 8, " Motivo", border=1, fill=True)
-        pdf.cell(65, 8, " Observacion Breve", border=1, ln=True, fill=True)
+        # --- TABLA OPTIMIZADA ---
+        # Anchos calculados: 30 + 50 + 35 + 75 = 190 mm (Ajuste perfecto a los márgenes)
+        pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240)
+        pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
+        pdf.cell(50, 8, " Colaborador", border=1, fill=True)
+        pdf.cell(35, 8, " Motivo", border=1, fill=True)
+        pdf.cell(75, 8, " Observacion Breve", border=1, ln=True, fill=True)
         
-        pdf.set_font("Helvetica", "", 8)
+        pdf.set_font("Helvetica", "", 7) # Letra más pequeña para que quepa todo perfecto
         for _, row in df.iterrows():
             f_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) 
-            tec = sanitizar(str(row.get('TECNICO',''))[:25])
-            mot = sanitizar(str(row.get('TIPO_FALTA',''))[:22])
+            tec = sanitizar(str(row.get('TECNICO',''))[:30])
+            mot = sanitizar(str(row.get('TIPO_FALTA',''))[:25])
             com = str(row.get('COMENTARIO',''))
-            det = sanitizar(com[:40] + "..." if len(com) > 40 else com)
+            # Ahora caben hasta ~65 caracteres en la columna de detalles
+            det = sanitizar(com[:65] + "..." if len(com) > 65 else com)
             
-            pdf.cell(35, 7, f" {f_reg}", border=1, align="C")
-            pdf.cell(45, 7, f" {tec}", border=1)
-            pdf.cell(45, 7, f" {mot}", border=1)
-            pdf.cell(65, 7, f" {det}", border=1, ln=True)
+            pdf.cell(30, 6, f" {f_reg}", border=1, align="C")
+            pdf.cell(50, 6, f" {tec}", border=1)
+            pdf.cell(35, 6, f" {mot}", border=1)
+            pdf.cell(75, 6, f" {det}", border=1, ln=True)
             
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
@@ -114,18 +115,16 @@ def generar_pdf_memo(row_dict):
     es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
     
     if es_medica:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204)
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204) # Azul
         titulo = "CONSTANCIA DE INCIDENCIA MEDICA"
     else:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0) # Rojo
         titulo = "MEMORANDUM: LLAMADO DE ATENCION"
         
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Fecha Suceso:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
     
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
@@ -161,9 +160,10 @@ def leer_expedientes(conn):
     return df
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES
+# 3. INTERFAZ DE EXPEDIENTES (LÓGICA INTACTA)
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
+    # Toma el nombre del usuario logueado
     supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', 'Supervisor'))
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
