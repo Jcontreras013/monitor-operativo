@@ -58,16 +58,15 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF (TABLAS Y FECHA SEGURAS)
+# 2. GENERADORES DE DOCUMENTOS PDF (CON TABLAS Y FECHAS)
 # ==============================================================================
 def generar_pdf_consolidado(df, titulo_reporte):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, sanitizar(titulo_reporte), ln=True, align="C")
     
-    # Hora de generación del reporte
     pdf.set_font("Helvetica", "I", 9); pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, f"Impreso el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
+    pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
     pdf.ln(5)
     
     if df.empty:
@@ -75,9 +74,8 @@ def generar_pdf_consolidado(df, titulo_reporte):
         pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
         pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen Estadístico:", ln=True)
         
-        # TABLA DE RESUMEN
         pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
         pdf.cell(140, 8, " Motivo / Falta", border=1, fill=True)
         pdf.cell(50, 8, " Cantidad Total", border=1, ln=True, align="C", fill=True)
@@ -89,7 +87,6 @@ def generar_pdf_consolidado(df, titulo_reporte):
         pdf.ln(10)
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
         
-        # TABLA HISTORIAL DETALLADO
         pdf.set_font("Helvetica", "B", 9); pdf.set_fill_color(240, 240, 240)
         pdf.cell(35, 8, " F. Registro (Hora)", border=1, fill=True, align="C")
         pdf.cell(55, 8, " Colaborador", border=1, fill=True)
@@ -98,7 +95,7 @@ def generar_pdf_consolidado(df, titulo_reporte):
         
         pdf.set_font("Helvetica", "", 8)
         for _, row in df.iterrows():
-            f_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) # Ej: 14/05/2026 10:04
+            f_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) 
             tec = sanitizar(str(row.get('TECNICO',''))[:25])
             mot = sanitizar(str(row.get('TIPO_FALTA',''))[:22])
             com = str(row.get('COMENTARIO',''))
@@ -127,7 +124,6 @@ def generar_pdf_memo(row_dict):
         
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     
-    # TABLA DEL MEMORANDUM CON FECHA Y HORA DE REGISTRO
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(45, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
@@ -153,10 +149,9 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES (LÓGICA ORIGINAL INTACTA)
+# 3. INTERFAZ DE EXPEDIENTES Y LÓGICA DE GUARDADO
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
-    # Toma el nombre del usuario logueado
     supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', 'Supervisor'))
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
@@ -196,7 +191,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
                                 if res.status_code == 200: urls.append(res.json()["image"]["url"])
                         
-                        # ESTRUCTURA EXACTA ORIGINAL DE 7 COLUMNAS
                         nueva_fila = pd.DataFrame([{
                             "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             "TECNICO": colaborador_sel,
@@ -207,13 +201,19 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
-                        st.cache_data.clear() # Limpia la caché antes de leer para tener los datos frescos
+                        st.cache_data.clear() 
                         df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         
-                        if not df_db.empty:
-                            # Ignoramos filas totalmente vacías
-                            df_db = df_db.dropna(subset=['TECNICO'], how='all')
-                        
+                        # --- SOLUCIÓN: BUSCADOR DE LA FILA VACÍA (EJ: A12) ---
+                        if not df_db.empty and 'TECNICO' in df_db.columns:
+                            # 1. Convierte a texto y borra espacios fantasmas (" ", "   ")
+                            df_db['TECNICO'] = df_db['TECNICO'].astype(str).str.strip()
+                            # 2. Descarta las filas que se quedaron sin nombre (las vacías de Google Sheets)
+                            df_db = df_db[df_db['TECNICO'] != ""]
+                            # 3. Descarta los nulos de pandas
+                            df_db = df_db[~df_db['TECNICO'].str.lower().isin(["nan", "none", "null"])]
+                        # -----------------------------------------------------
+
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                         df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
                         
@@ -231,19 +231,21 @@ def mostrar_modulo_expedientes(conn, df_base):
         st.cache_data.clear()
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
-        # Filtro de limpieza para visualizar
-        df_view = df_view[df_view['TECNICO'].notna()]
-        df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != ""]
+        # Filtro de limpieza para la pantalla
+        if not df_view.empty and 'TECNICO' in df_view.columns:
+            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.strip()
+            df_view = df_view[df_view['TECNICO'] != ""]
+            df_view = df_view[~df_view['TECNICO'].str.lower().isin(["nan", "none", "null"])]
         
         if not df_view.empty:
-            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
+            df_view['TECNICO'] = df_view['TECNICO'].str.upper()
             
-            # --- BUSCADOR Y BOTÓN REPORTE GERENCIAL EN UNA SOLA LÍNEA ---
+            # --- BOTONES Y BUSCADOR ---
             c_v, c_b = st.columns([2, 1])
             with c_v:
                 filtro = st.selectbox("🔍 Buscar Colaborador:", options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist()))
             with c_b:
-                st.write("") # Ajuste visual
+                st.write("") 
                 st.write("")
                 if filtro == "VER TODOS":
                     st.download_button("📊 Reporte Gerencial", data=generar_pdf_consolidado(df_view, "REPORTE GERENCIAL CONSOLIDADO"), file_name="Reporte_General.pdf", mime="application/pdf", use_container_width=True)
@@ -260,9 +262,9 @@ def mostrar_modulo_expedientes(conn, df_base):
                 with st.container():
                     st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
                         <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
-                        <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
-                        <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')} el {row.get('FECHA_REGISTRO', 'N/D')}</p>
-                        <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
+                        <p style="color:#94A3B8; margin-bottom: 2px;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha Suceso:</b> {row['FECHA_INCIDENCIA']}</p>
+                        <p style="font-size:12px; color:#64748B; margin-top: 0;">⏰ <b>Registrado el:</b> {row['FECHA_REGISTRO']} por {row.get('SUPERVISOR', 'N/D')}</p>
+                        <div style="background:#0F1115; padding:10px; border-radius:5px; color:white; margin-top: 10px;">{row['COMENTARIO']}</div>
                     </div>""", unsafe_allow_html=True)
                     
                     # --- BOTONES DE DESCARGA Y ELIMINAR ---
@@ -271,10 +273,9 @@ def mostrar_modulo_expedientes(conn, df_base):
                         st.download_button(f"📄 Descargar {'Constancia Medica' if es_m else 'Documento'}", data=generar_pdf_memo(row.to_dict()), file_name=f"Reporte_{idx}.pdf", key=f"p_{idx}", use_container_width=True)
                     with c_d:
                         if es_admin:
-                            if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
+                            if st.button("🗑️ Eliminar Registro", key=f"del_{idx}", use_container_width=True):
                                 df_new = df_view.drop(idx)
-                                df_new = df_new.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_new)
                                 st.cache_data.clear(); st.rerun()
         else: st.info("No hay registros aún.")
-    except: st.warning("⚠️ Cargando historial...")
+    except Exception as e: st.warning(f"⚠️ Cargando historial... ({e})")
