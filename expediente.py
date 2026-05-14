@@ -69,13 +69,16 @@ def generar_pdf_consolidado(df):
     if df.empty:
         pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
-        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen de Eventos Registrados:", ln=True)
-        pdf.ln(5)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Evento:", ln=True)
+        for cat, total in df['TIPO_FALTA'].value_counts().items():
+            pdf.set_font("Helvetica", "", 11); pdf.cell(0, 7, f"- {cat}: {total}", ln=True)
+        pdf.ln(10)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos:", ln=True)
         for _, row in df.iterrows():
             pdf.set_font("Helvetica", "B", 9)
             pdf.cell(0, 5, sanitizar(f"[{row.get('FECHA_REGISTRO','')}] - {row.get('TECNICO','')}"), ln=True)
             pdf.set_font("Helvetica", "I", 8)
-            pdf.cell(0, 4, f"   Motivo: {sanitizar(row.get('TIPO_FALTA',''))} | Suceso: {row.get('FECHA_INCIDENCIA','')}", ln=True)
+            pdf.cell(0, 4, f"   {sanitizar(row.get('TIPO_FALTA',''))}: {sanitizar(str(row.get('COMENTARIO',''))[:100])}...", ln=True)
             pdf.ln(2)
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
@@ -119,14 +122,14 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return data
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES
+# 3. INTERFAZ DE EXPEDIENTES (CONEXIÓN EXACTA ORIGINAL)
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', 'Supervisor'))
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
 
-    st.title("📁 Gestión de Expedientes Disciplinarios")
+    st.title("📁 Gestión de Expedientes y Reportes")
     
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
@@ -152,9 +155,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                     try:
                         urls = []
                         if archivos:
-                            for a in archivos:
-                                res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
-                                if res.status_code == 200: urls.append(res.json()["image"]["url"])
+                            with st.spinner("Subiendo evidencias..."):
+                                for a in archivos:
+                                    res = requests.post("https://freeimage.host/api/1/upload", data={"key": API_KEY_FREEIMAGE, "action": "upload", "source": base64.b64encode(a.getvalue()).decode('utf-8'), "format": "json"})
+                                    if res.status_code == 200: urls.append(res.json()["image"]["url"])
+                                    time.sleep(1)
                         
                         nueva_fila = pd.DataFrame([{
                             "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
@@ -166,13 +171,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
-                        st.cache_data.clear()
+                        # --- TU CÓDIGO BASE ORIGINAL EXACTO DE GUARDADO ---
                         df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                        if not df_db.empty:
-                            df_db = df_db.dropna(subset=['TECNICO'], how='all')
                         
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
-                        df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
+                        df_final = df_final.fillna("").astype(str)
                         
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
                         
@@ -185,10 +188,12 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     st.subheader("📜 Historial de Expedientes")
     try:
-        st.cache_data.clear()
         df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-        df_view = df_view[df_view['TECNICO'].notna()]
-        df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != ""]
+        df_view = df_view.fillna("").astype(str)
+        
+        # Filtramos para no mostrar filas vacías en la pantalla
+        df_view = df_view[df_view['TECNICO'].str.strip() != ""]
+        df_view = df_view[~df_view['TECNICO'].str.lower().isin(["nan", "none", "null"])]
         
         if not df_view.empty:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
@@ -212,7 +217,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         <div style="background:#0F1115; padding:10px; border-radius:5px; color:white; margin-top: 10px;">{row['COMENTARIO']}</div>
                     </div>""", unsafe_allow_html=True)
                     
-                    # --- AQUÍ ESTÁ EL VISOR DE IMÁGENES ---
                     urls_foto = str(row.get('URL_FOTO', '')).split(',')
                     urls_validas = [u.strip() for u in urls_foto if u.strip().startswith('http')]
                     
@@ -220,7 +224,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with st.expander("🖼️ Ver Evidencia Adjunta"):
                             for url in urls_validas:
                                 st.image(url, use_container_width=True)
-                    # --------------------------------------
                     
                     c_p, c_d = st.columns(2)
                     with c_p:
@@ -229,7 +232,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         if es_admin:
                             if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                                 df_new = df_view.drop(idx)
-                                df_new = df_new.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_new)
                                 st.cache_data.clear(); st.rerun()
         else: st.info("No hay registros aún.")
