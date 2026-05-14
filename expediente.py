@@ -58,60 +58,57 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF (AHORA CON TABLAS Y HORA)
+# 2. GENERADORES DE DOCUMENTOS PDF (TABLAS Y FECHA SEGURAS)
 # ==============================================================================
-def generar_pdf_consolidado(df, titulo_reporte="REPORTE CONSOLIDADO DE EXPEDIENTES"):
+def generar_pdf_consolidado(df, titulo_reporte):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, titulo_reporte.upper(), ln=True, align="C")
+    pdf.cell(0, 10, sanitizar(titulo_reporte), ln=True, align="C")
     
-    # Agregamos Fecha y Hora de Generación
-    pdf.set_font("Helvetica", "", 10); pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
+    # Hora de generación del reporte
+    pdf.set_font("Helvetica", "I", 9); pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, f"Impreso el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
     pdf.ln(5)
     
     if df.empty:
-        pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
+        pdf.set_font("Helvetica", "I", 12); pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
-        # TABLA 1: RESUMEN ESTADÍSTICO
-        pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, "Resumen Estadístico (Por Motivo):", ln=True)
-        pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
-        pdf.cell(140, 8, " Motivo de Incidencia / Falta", border=1, fill=True)
-        pdf.cell(50, 8, " Cantidad", border=1, ln=True, align="C", fill=True)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
         
+        # TABLA DE RESUMEN
+        pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
+        pdf.cell(140, 8, " Motivo / Falta", border=1, fill=True)
+        pdf.cell(50, 8, " Cantidad Total", border=1, ln=True, align="C", fill=True)
         pdf.set_font("Helvetica", "", 10)
         for cat, total in df['TIPO_FALTA'].value_counts().items():
-            pdf.cell(140, 7, f" {cat}", border=1)
+            pdf.cell(140, 7, f" {sanitizar(cat)}", border=1)
             pdf.cell(50, 7, str(total), border=1, ln=True, align="C")
             
         pdf.ln(10)
+        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
         
-        # TABLA 2: HISTORIAL DETALLADO
-        pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
+        # TABLA HISTORIAL DETALLADO
         pdf.set_font("Helvetica", "B", 9); pdf.set_fill_color(240, 240, 240)
-        
-        # Cabeceras de la tabla
-        pdf.cell(35, 8, " Fecha y Hora", border=1, fill=True, align="C")
+        pdf.cell(35, 8, " F. Registro (Hora)", border=1, fill=True, align="C")
         pdf.cell(55, 8, " Colaborador", border=1, fill=True)
         pdf.cell(45, 8, " Motivo", border=1, fill=True)
-        pdf.cell(55, 8, " Detalle Breve", border=1, ln=True, fill=True)
+        pdf.cell(55, 8, " Observacion Breve", border=1, ln=True, fill=True)
         
         pdf.set_font("Helvetica", "", 8)
         for _, row in df.iterrows():
-            # Extraemos Fecha y Hora exactas de registro
-            fecha_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) 
-            tecnico = sanitizar(str(row.get('TECNICO',''))[:25])
-            motivo = sanitizar(str(row.get('TIPO_FALTA',''))[:22])
+            f_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) # Ej: 14/05/2026 10:04
+            tec = sanitizar(str(row.get('TECNICO',''))[:25])
+            mot = sanitizar(str(row.get('TIPO_FALTA',''))[:22])
+            com = str(row.get('COMENTARIO',''))
+            det = sanitizar(com[:35] + "..." if len(com) > 35 else com)
             
-            # Recortamos el detalle para que quepa en la celda de la tabla
-            comentario_raw = str(row.get('COMENTARIO',''))
-            detalle = sanitizar(comentario_raw[:35] + "..." if len(comentario_raw) > 35 else comentario_raw)
+            pdf.cell(35, 7, f" {f_reg}", border=1, align="C")
+            pdf.cell(55, 7, f" {tec}", border=1)
+            pdf.cell(45, 7, f" {mot}", border=1)
+            pdf.cell(55, 7, f" {det}", border=1, ln=True)
             
-            pdf.cell(35, 7, f" {fecha_reg}", border=1, align="C")
-            pdf.cell(55, 7, f" {tecnico}", border=1)
-            pdf.cell(45, 7, f" {motivo}", border=1)
-            pdf.cell(55, 7, f" {detalle}", border=1, ln=True)
-
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
     os.remove(path); return data
@@ -130,10 +127,10 @@ def generar_pdf_memo(row_dict):
         
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     
-    # Tabla de datos del implicado (INCLUYENDO FECHA Y HORA)
+    # TABLA DEL MEMORANDUM CON FECHA Y HORA DE REGISTRO
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(45, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Motivo:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Fecha del Suceso:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Sistema (Fecha/Hora):", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(45, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(145, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
@@ -156,7 +153,7 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES (LÓGICA ORIGINAL DE GUARDADO INTACTA)
+# 3. INTERFAZ DE EXPEDIENTES (LÓGICA ORIGINAL INTACTA)
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     # Toma el nombre del usuario logueado
@@ -241,19 +238,19 @@ def mostrar_modulo_expedientes(conn, df_base):
         if not df_view.empty:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             
-            # --- BUSCADOR Y BOTÓN REPORTE GERENCIAL RESTAURADO ---
+            # --- BUSCADOR Y BOTÓN REPORTE GERENCIAL EN UNA SOLA LÍNEA ---
             c_v, c_b = st.columns([2, 1])
             with c_v:
                 filtro = st.selectbox("🔍 Buscar Colaborador:", options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist()))
             with c_b:
-                st.write("") # Espaciador para alinear el botón con el buscador
+                st.write("") # Ajuste visual
                 st.write("")
                 if filtro == "VER TODOS":
-                    st.download_button("📊 Descargar Reporte Gerencial", data=generar_pdf_consolidado(df_view, "Reporte Gerencial Consolidado"), file_name="Reporte_General.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("📊 Reporte Gerencial", data=generar_pdf_consolidado(df_view, "REPORTE GERENCIAL CONSOLIDADO"), file_name="Reporte_General.pdf", mime="application/pdf", use_container_width=True)
                 else:
                     df_tec = df_view[df_view['TECNICO'] == filtro]
-                    st.download_button(f"📊 Consolidado de {filtro}", data=generar_pdf_consolidado(df_tec, f"Historial Consolidado: {filtro}"), file_name=f"Consolidado_{filtro.replace(' ','_')}.pdf", mime="application/pdf", use_container_width=True)
-            
+                    st.download_button(f"📊 Consolidado de {filtro}", data=generar_pdf_consolidado(df_tec, f"REPORTE CONSOLIDADO: {filtro}"), file_name=f"Reporte_{filtro.replace(' ','_')}.pdf", mime="application/pdf", use_container_width=True)
+
             df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
             
             for idx, row in df_mostrar.iloc[::-1].iterrows():
@@ -263,19 +260,20 @@ def mostrar_modulo_expedientes(conn, df_base):
                 with st.container():
                     st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
                         <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
-                        <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha Suceso:</b> {row['FECHA_INCIDENCIA']}</p>
-                        <p style="font-size:12px; color:#64748B;">Registrado el {row['FECHA_REGISTRO']} por: {row.get('SUPERVISOR', 'N/D')}</p>
+                        <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
+                        <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')} el {row.get('FECHA_REGISTRO', 'N/D')}</p>
                         <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
                     </div>""", unsafe_allow_html=True)
                     
-                    # --- BOTONES DE DESCARGA Y ELIMINAR (SOLO PARA ADMIN) ---
+                    # --- BOTONES DE DESCARGA Y ELIMINAR ---
                     c_p, c_d = st.columns(2)
                     with c_p:
                         st.download_button(f"📄 Descargar {'Constancia Medica' if es_m else 'Documento'}", data=generar_pdf_memo(row.to_dict()), file_name=f"Reporte_{idx}.pdf", key=f"p_{idx}", use_container_width=True)
                     with c_d:
                         if es_admin:
-                            if st.button("🗑️ Eliminar Registro", key=f"del_{idx}", use_container_width=True):
+                            if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                                 df_new = df_view.drop(idx)
+                                df_new = df_new.fillna("").astype(str).replace(["nan", "NaN", "None", "null"], "")
                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_new)
                                 st.cache_data.clear(); st.rerun()
         else: st.info("No hay registros aún.")
