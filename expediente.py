@@ -90,7 +90,7 @@ def generar_pdf_consolidado(df):
         pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
         pdf.cell(50, 8, " Colaborador", border=1, fill=True)
         pdf.cell(35, 8, " Motivo", border=1, fill=True)
-        pdf.cell(75, 8, " Observacion Completa", border=1, ln=True, fill=True)
+        pdf.cell(75, 8, " Observaciones", border=1, ln=True, fill=True)
         
         pdf.set_font("Helvetica", "", 7)
         for _, row in df.iterrows():
