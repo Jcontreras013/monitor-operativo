@@ -12,7 +12,7 @@ def get_cookie_manager():
 cookie_manager = get_cookie_manager()
 
 def verificar_autenticacion():
-    """Verifica la sesión activa usando cookies y un temporizador de 5 minutos."""
+    """Verifica la sesión activa usando cookies y un temporizador de 30 minutos."""
     # Inicializar variables de sesión si no existen
     if 'autenticado' not in st.session_state:
         st.session_state['autenticado'] = False
@@ -33,8 +33,8 @@ def verificar_autenticacion():
             ultimo_acceso = datetime.fromisoformat(fecha_str)
             tiempo_inactivo = datetime.now() - ultimo_acceso
             
-            # 2. Verificamos el temporizador de 5 Minutos
-            if tiempo_inactivo < timedelta(minutes=5):
+            # 2. Verificamos el temporizador de 30 Minutos
+            if tiempo_inactivo < timedelta(minutes=30):
                 # ANTI-BUCLES: Solo renovamos la cookie si ha pasado más de 1 minuto
                 if tiempo_inactivo > timedelta(minutes=1):
                     nuevo_token = f"{datetime.now().isoformat()}|{user_guardado}|{rol_guardado}"
@@ -45,7 +45,7 @@ def verificar_autenticacion():
                 st.session_state['rol_actual'] = rol_guardado
                 return True
             else:
-                # 3. Si se pasó de los 5 minutos de inactividad, destruimos la sesión
+                # 3. Si se pasó de los 30 minutos de inactividad, destruimos la sesión
                 cookie_manager.delete("token_maxcom")
                 st.session_state['autenticado'] = False
                 return False
@@ -65,7 +65,8 @@ def mostrar_pantalla_login():
     with col_login:
         st.markdown("<h2 style='text-align: center;'>🔐 Acceso al Sistema</h2>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: gray;'>Monitor Operativo Maxcom PRO</p>", unsafe_allow_html=True)
-        st.info("⏳ Por seguridad, tu sesión se cerrará tras 5 minutos de inactividad.")
+        # Se actualizó el mensaje a 30 minutos
+        st.info("⏳ Por seguridad, tu sesión se cerrará tras 30 minutos de inactividad.")
         st.divider()
         
         with st.form("formulario_login"):
@@ -77,7 +78,6 @@ def mostrar_pantalla_login():
                 user_clean = usuario.strip().lower()
                 
                 # Vamos a la caja fuerte (secrets) a revisar si el usuario existe y si la clave coincide
-                # 🚨 SE MANTIENE EXACTAMENTE TU LÓGICA DE SECRETS 🚨
                 if "credenciales" in st.secrets and user_clean in st.secrets["credenciales"]:
                     if st.secrets["credenciales"][user_clean]["clave"] == clave:
                         rol = st.secrets["credenciales"][user_clean]["rol"]
