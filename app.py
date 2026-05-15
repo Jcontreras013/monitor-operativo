@@ -205,6 +205,17 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets.")
         conn = None
 
+    # ==============================================================================
+    # 🚀 ACCESO EXCLUSIVO PARA EL ROL "LLAMADOS"
+    # ==============================================================================
+    if str(rol_usuario).strip().lower() == 'llamados':
+        # Muestra directamente los expedientes usando una base vacía (no necesita cargar el Excel)
+        expediente.mostrar_modulo_expedientes(conn, pd.DataFrame())
+        mostrar_boton_logout() # Le mostramos el botón para que pueda cerrar sesión
+        st.stop() # 🛑 FRENAMOS EL CÓDIGO AQUÍ. Ignora todo lo que está abajo (botones, menús, monitor).
+    # ==============================================================================
+
+    # Si es Admin, Jefe o Monitoreo, el código sigue normalmente hacia abajo:
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
 
