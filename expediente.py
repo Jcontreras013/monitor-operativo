@@ -259,11 +259,10 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # HISTORIAL DE EXPEDIENTES
+    # HISTORIAL DE EXPEDIENTES Y FILTROS
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # FIX: Sin st.cache_data.clear() aquí. Solo leer con ttl corto.
         df_view = leer_expedientes(conn)
         
         df_view = df_view[df_view['TECNICO'].notna()]
@@ -272,70 +271,117 @@ def mostrar_modulo_expedientes(conn, df_base):
         if not df_view.empty:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             
-            # Buscador
-            filtro = st.selectbox(
-                "🔍 Buscar Colaborador:",
-                options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist())
-            )
-            df_mostrar = df_view if filtro == "VER TODOS" else df_view[df_view['TECNICO'] == filtro]
+            # --- NUEVOS FILTROS ---
+            with st.container():
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    filtro_nombre = st.selectbox(
+                        "🔍 Colaborador:",
+                        options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist())
+                    )
+                
+                with col2:
+                    # Rango de fechas por defecto: la última semana
+                    hoy = get_honduras_time().date()
+                    hace_una_semana = hoy - timedelta(days=7)
+                    rango_fechas = st.date_input(
+                        "📅 Rango de Fechas:",
+                        value=(hace_una_semana, hoy),
+                        max_value=hoy
+                    )
+                
+                with col3:
+                    filtro_tipo = st.selectbox(
+                        "📋 Tipo de Registro:",
+                        options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"]
+                    )
+
+            # --- APLICAR FILTROS AL DATAFRAME ---
+            df_mostrar = df_view.copy()
+            
+            # Filtro por Nombre
+            if filtro_nombre != "VER TODOS":
+                df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
+            
+            # Filtro por Rango de Fecha (Usando FECHA_INCIDENCIA)
+            if len(rango_fechas) == 2:
+                fecha_inicio, fecha_fin = rango_fechas
+                # Convertimos las fechas del dataframe a formato fecha para comparar
+                df_mostrar['FECHA_INCIDENCIA_DT'] = pd.to_datetime(df_mostrar['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce').dt.date
+                df_mostrar = df_mostrar[
+                    (df_mostrar['FECHA_INCIDENCIA_DT'] >= fecha_inicio) & 
+                    (df_mostrar['FECHA_INCIDENCIA_DT'] <= fecha_fin)
+                ]
+            
+            # Filtro por Tipo
+            if filtro_tipo == "Incidencia Médica":
+                df_mostrar = df_mostrar[df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
+            elif filtro_tipo == "Llamado de Atención":
+                df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
             
             # Botón de reporte gerencial
             c_v, c_b = st.columns([3, 1])
             with c_b:
-                if filtro == "VER TODOS":
+                if df_mostrar.empty:
+                    st.write("") # No mostrar botón si no hay resultados en el filtro
+                elif filtro_nombre == "VER TODOS":
                     st.download_button(
                         "📊 Reporte Gerencial",
-                        data=generar_pdf_consolidado(df_view),
+                        data=generar_pdf_consolidado(df_mostrar),
                         file_name="Reporte_General.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
                 else:
                     st.download_button(
-                        f"📊 Reporte de {filtro}",
+                        f"📊 Reporte de {filtro_nombre}",
                         data=generar_pdf_consolidado(df_mostrar),
-                        file_name=f"Reporte_{filtro.replace(' ', '_')}.pdf",
+                        file_name=f"Reporte_{filtro_nombre.replace(' ', '_')}.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
 
-            for idx, row in df_mostrar.iloc[::-1].iterrows():
-                es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
-                c_tag = "#3B82F6" if es_m else "#EF4444"
-                
-                with st.container():
-                    st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
-                        <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
-                        <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
-                        <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')}</p>
-                        <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
-                    </div>""", unsafe_allow_html=True)
+            if df_mostrar.empty:
+                st.info("No hay registros que coincidan con estos filtros.")
+            else:
+                for idx, row in df_mostrar.iloc[::-1].iterrows():
+                    es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
+                    c_tag = "#3B82F6" if es_m else "#EF4444"
                     
-                    # Botones de descarga y eliminar
-                    c_p, c_d = st.columns(2)
-                    with c_p:
-                        st.download_button(
-                            f"📄 Descargar {'Constancia Medica' if es_m else 'Documento'}",
-                            data=generar_pdf_memo(row.to_dict()),
-                            file_name=f"Reporte_{idx}.pdf",
-                            key=f"p_{idx}",
-                            use_container_width=True
-                        )
-                    with c_d:
-                        if es_admin:
-                            if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                df_new = df_view.drop(idx)
-                                df_new = df_new.fillna("").astype(str).replace(
-                                    ["nan", "NaN", "None", "null"], ""
-                                )
-                                conn.update(
-                                    spreadsheet=st.secrets["url_base_datos"],
-                                    worksheet="Expedientes",
-                                    data=df_new
-                                )
-                                # FIX: Solo limpiar caché después de una escritura real
-                                st.cache_data.clear()
-                                st.rerun()
+                    with st.container():
+                        st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
+                            <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
+                            <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
+                            <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')}</p>
+                            <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
+                        </div>""", unsafe_allow_html=True)
+                        
+                        # Botones de descarga y eliminar
+                        c_p, c_d = st.columns(2)
+                        with c_p:
+                            st.download_button(
+                                f"📄 Descargar {'Constancia Medica' if es_m else 'Documento'}",
+                                data=generar_pdf_memo(row.to_dict()),
+                                file_name=f"Reporte_{idx}.pdf",
+                                key=f"p_{idx}",
+                                use_container_width=True
+                            )
+                        with c_d:
+                            if es_admin:
+                                if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
+                                    df_new = df_view.drop(idx)
+                                    df_new = df_new.fillna("").astype(str).replace(
+                                        ["nan", "NaN", "None", "null"], ""
+                                    )
+                                    conn.update(
+                                        spreadsheet=st.secrets["url_base_datos"],
+                                        worksheet="Expedientes",
+                                        data=df_new
+                                    )
+                                    # FIX: Solo limpiar caché después de una escritura real
+                                    st.cache_data.clear()
+                                    st.rerun()
         else:
             st.info("No hay registros aún.")
 
