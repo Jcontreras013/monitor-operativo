@@ -58,12 +58,13 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF (TABLA AJUSTADA Y MULTILÍNEA)
+# 2. GENERADORES DE DOCUMENTOS PDF (TABLA AJUSTADA + ANEXOS)
 # ==============================================================================
 def generar_pdf_consolidado(df):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, "REPORTE CONSOLIDADO DE EXPEDIENTES", ln=True, align="C")
+    
     pdf.set_font("Helvetica", "", 10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
     pdf.ln(10)
@@ -72,6 +73,7 @@ def generar_pdf_consolidado(df):
         pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
+        
         pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
         pdf.cell(140, 8, " Motivo / Falta", border=1, fill=True)
         pdf.cell(50, 8, " Cantidad Total", border=1, ln=True, align="C", fill=True)
@@ -88,7 +90,7 @@ def generar_pdf_consolidado(df):
         pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
         pdf.cell(50, 8, " Colaborador", border=1, fill=True)
         pdf.cell(35, 8, " Motivo", border=1, fill=True)
-        pdf.cell(75, 8, " Observaciones", border=1, ln=True, fill=True)
+        pdf.cell(75, 8, " Observacion Completa", border=1, ln=True, fill=True)
         
         pdf.set_font("Helvetica", "", 7)
         for _, row in df.iterrows():
@@ -97,12 +99,10 @@ def generar_pdf_consolidado(df):
             mot = sanitizar(str(row.get('TIPO_FALTA',''))[:30])
             com = sanitizar(str(row.get('COMENTARIO','')))
             
-            # Divide el comentario en múltiples líneas para que quepa todo
             lineas_com = textwrap.wrap(com, width=55) 
             if not lineas_com: lineas_com = [""]
             
             for i, linea in enumerate(lineas_com):
-                # Pinta los bordes correctamente para que parezca una sola celda
                 b_top = 'T' if i == 0 else ''
                 b_bot = 'B' if i == len(lineas_com) - 1 else ''
                 b_style = 'LR' + b_top + b_bot
@@ -115,6 +115,54 @@ def generar_pdf_consolidado(df):
                 pdf.cell(50, 5, col2, border=b_style)
                 pdf.cell(35, 5, col3, border=b_style)
                 pdf.cell(75, 5, f" {linea}", border=b_style, ln=True)
+        
+        # ==============================================================================
+        # --- NUEVA SECCIÓN DE ANEXOS FOTOGRÁFICOS ---
+        # ==============================================================================
+        tiene_anexos = False
+        for _, row in df.iterrows():
+            urls = str(row.get('URL_FOTO', '')).split(',')
+            validas = [u.strip() for u in urls if u.strip().startswith('http')]
+            if validas:
+                tiene_anexos = True
+                break
+                
+        if tiene_anexos:
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(40, 50, 100)
+            pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
+            pdf.ln(5)
+            
+            for _, row in df.iterrows():
+                urls = str(row.get('URL_FOTO', '')).split(',')
+                validas = [u.strip() for u in urls if u.strip().startswith('http')]
+                
+                if validas:
+                    tec_name = sanitizar(str(row.get('TECNICO','')))
+                    f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA','')))
+                    motivo_falta = sanitizar(str(row.get('TIPO_FALTA','')))
+                    
+                    for url in validas:
+                        try:
+                            r = requests.get(url, timeout=10)
+                            if r.status_code == 200:
+                                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
+                                with open(tp, 'wb') as f: f.write(r.content)
+                                
+                                # Si estamos muy abajo en la hoja, saltamos a la siguiente para que no se corte
+                                if pdf.get_y() > 120: 
+                                    pdf.add_page()
+                                
+                                # Título de la imagen
+                                pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0)
+                                pdf.set_fill_color(240, 240, 240)
+                                pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
+                                pdf.ln(3)
+                                
+                                # Pegar la imagen
+                                pdf.image(tp, x=20, w=150) 
+                                pdf.ln(10); os.remove(tp)
+                        except: pass
             
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
@@ -126,10 +174,10 @@ def generar_pdf_memo(row_dict):
     es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
     
     if es_medica:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204) # Azul
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204)
         titulo = "CONSTANCIA DE INCIDENCIA MEDICA"
     else:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0) # Rojo
+        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
         titulo = "MEMORANDUM: LLAMADO DE ATENCION"
         
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
