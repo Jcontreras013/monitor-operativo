@@ -3,11 +3,14 @@ from datetime import datetime, timedelta
 import extra_streamlit_components as stx
 
 # ==============================================================================
-# INICIALIZAR EL ADMINISTRADOR DE COOKIES
+# INICIALIZAR EL ADMINISTRADOR DE COOKIES (AISLADO POR USUARIO)
 # ==============================================================================
-@st.cache_resource
+# 🚨 SE ELIMINÓ @st.cache_resource PARA EVITAR QUE SE CRUCEN LAS SESIONES 🚨
 def get_cookie_manager():
-    return stx.CookieManager()
+    if 'cookie_manager' not in st.session_state:
+        # Se guarda en el estado de sesión INDIVIDUAL de cada usuario
+        st.session_state['cookie_manager'] = stx.CookieManager(key="galletas_sesion")
+    return st.session_state['cookie_manager']
 
 cookie_manager = get_cookie_manager()
 
@@ -19,7 +22,7 @@ def verificar_autenticacion():
         st.session_state['rol_actual'] = None
         st.session_state['usuario_actual'] = None
 
-    # 1. Leemos la cookie del celular/PC con seguridad
+    # 1. Leemos la cookie del celular/PC de ESTE usuario en específico
     ultimo_acceso_str = cookie_manager.get(cookie="token_maxcom")
     
     if ultimo_acceso_str:
@@ -65,7 +68,6 @@ def mostrar_pantalla_login():
     with col_login:
         st.markdown("<h2 style='text-align: center;'>🔐 Acceso al Sistema</h2>", unsafe_allow_html=True)
         st.markdown("<p style='text-align: center; color: gray;'>Monitor Operativo Maxcom PRO</p>", unsafe_allow_html=True)
-        # Se actualizó el mensaje a 30 minutos
         st.info("⏳ Por seguridad, tu sesión se cerrará tras 30 minutos de inactividad.")
         st.divider()
         
@@ -79,7 +81,8 @@ def mostrar_pantalla_login():
                 
                 # Vamos a la caja fuerte (secrets) a revisar si el usuario existe y si la clave coincide
                 if "credenciales" in st.secrets and user_clean in st.secrets["credenciales"]:
-                    if st.secrets["credenciales"][user_clean]["clave"] == clave:
+                    # Se usa str() para evitar errores si la contraseña tiene números
+                    if str(st.secrets["credenciales"][user_clean]["clave"]) == str(clave):
                         rol = st.secrets["credenciales"][user_clean]["rol"]
                         
                         # Crear el token inicial con la hora, el usuario y el rol
