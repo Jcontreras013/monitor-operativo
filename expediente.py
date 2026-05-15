@@ -58,7 +58,7 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF (TABLA AJUSTADA)
+# 2. GENERADORES DE DOCUMENTOS PDF (TABLA AJUSTADA Y MULTILÍNEA)
 # ==============================================================================
 def generar_pdf_consolidado(df):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
@@ -83,27 +83,38 @@ def generar_pdf_consolidado(df):
         pdf.ln(10)
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
         
-        # --- TABLA OPTIMIZADA ---
-        # Anchos calculados: 30 + 50 + 35 + 75 = 190 mm (Ajuste perfecto a los márgenes)
+        # --- TABLA OPTIMIZADA MULTILÍNEA ---
         pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240)
         pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
         pdf.cell(50, 8, " Colaborador", border=1, fill=True)
         pdf.cell(35, 8, " Motivo", border=1, fill=True)
-        pdf.cell(75, 8, " Observacion Breve", border=1, ln=True, fill=True)
+        pdf.cell(75, 8, " Observaciones", border=1, ln=True, fill=True)
         
-        pdf.set_font("Helvetica", "", 7) # Letra más pequeña para que quepa todo perfecto
+        pdf.set_font("Helvetica", "", 7)
         for _, row in df.iterrows():
             f_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) 
-            tec = sanitizar(str(row.get('TECNICO',''))[:30])
-            mot = sanitizar(str(row.get('TIPO_FALTA',''))[:25])
-            com = str(row.get('COMENTARIO',''))
-            # Ahora caben hasta ~65 caracteres en la columna de detalles
-            det = sanitizar(com[:65] + "..." if len(com) > 65 else com)
+            tec = sanitizar(str(row.get('TECNICO',''))[:35])
+            mot = sanitizar(str(row.get('TIPO_FALTA',''))[:30])
+            com = sanitizar(str(row.get('COMENTARIO','')))
             
-            pdf.cell(30, 6, f" {f_reg}", border=1, align="C")
-            pdf.cell(50, 6, f" {tec}", border=1)
-            pdf.cell(35, 6, f" {mot}", border=1)
-            pdf.cell(75, 6, f" {det}", border=1, ln=True)
+            # Divide el comentario en múltiples líneas para que quepa todo
+            lineas_com = textwrap.wrap(com, width=55) 
+            if not lineas_com: lineas_com = [""]
+            
+            for i, linea in enumerate(lineas_com):
+                # Pinta los bordes correctamente para que parezca una sola celda
+                b_top = 'T' if i == 0 else ''
+                b_bot = 'B' if i == len(lineas_com) - 1 else ''
+                b_style = 'LR' + b_top + b_bot
+                
+                col1 = f" {f_reg}" if i == 0 else ""
+                col2 = f" {tec}" if i == 0 else ""
+                col3 = f" {mot}" if i == 0 else ""
+                
+                pdf.cell(30, 5, col1, border=b_style, align="C")
+                pdf.cell(50, 5, col2, border=b_style)
+                pdf.cell(35, 5, col3, border=b_style)
+                pdf.cell(75, 5, f" {linea}", border=b_style, ln=True)
             
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
@@ -125,6 +136,8 @@ def generar_pdf_memo(row_dict):
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Fecha Suceso:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
     
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
@@ -160,7 +173,7 @@ def leer_expedientes(conn):
     return df
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES (LÓGICA INTACTA)
+# 3. INTERFAZ DE EXPEDIENTES
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     # Toma el nombre del usuario logueado
@@ -307,7 +320,6 @@ def mostrar_modulo_expedientes(conn, df_base):
             # Filtro por Rango de Fecha (Usando FECHA_INCIDENCIA)
             if len(rango_fechas) == 2:
                 fecha_inicio, fecha_fin = rango_fechas
-                # Convertimos las fechas del dataframe a formato fecha para comparar
                 df_mostrar['FECHA_INCIDENCIA_DT'] = pd.to_datetime(df_mostrar['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce').dt.date
                 df_mostrar = df_mostrar[
                     (df_mostrar['FECHA_INCIDENCIA_DT'] >= fecha_inicio) & 
@@ -324,7 +336,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             c_v, c_b = st.columns([3, 1])
             with c_b:
                 if df_mostrar.empty:
-                    st.write("") # No mostrar botón si no hay resultados en el filtro
+                    st.write("") 
                 elif filtro_nombre == "VER TODOS":
                     st.download_button(
                         "📊 Reporte Gerencial",
@@ -379,7 +391,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                                         worksheet="Expedientes",
                                         data=df_new
                                     )
-                                    # FIX: Solo limpiar caché después de una escritura real
                                     st.cache_data.clear()
                                     st.rerun()
         else:
