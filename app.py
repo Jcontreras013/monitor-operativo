@@ -1580,46 +1580,8 @@ def main():
                         st.success("¡Excelente! No hay fallas Offline registradas en esta vista.")
 
 if __name__ == "__main__": 
-    # 1. El portero revisa si el usuario está logueado
     verificar_autenticacion()
-    
     if st.session_state.get('autenticado'):
-        # Aplicar estilos visuales base
-        aplicar_estilos_nativos()
-        
-        # 2. REDIRECCIÓN PARA EL ROL "LLAMADOS"
-        # Si el rol es 'llamados', entra directo a expedientes y se detiene ahí
-        if st.session_state.get('rol_actual') == 'llamados':
-            # Nota: Asegúrate que 'conn' y 'df_base' estén definidos arriba en tu app.py
-            expediente.mostrar_modulo_expedientes(conn, df_base)
-            mostrar_boton_logout()
-            st.stop() # Detiene la ejecución para que no cargue el resto de la app
-            
-        # 3. LÓGICA NORMAL PARA LOS DEMÁS ROLES (Admin, Monitoreo, etc.)
-        with st.sidebar:
-            st.image("logo.png", width=200) if os.path.exists("logo.png") else None
-            st.title("Navegación")
-            
-            # Tu menú actual de selección
-            menu = option_menu(
-                menu_title=None,
-                options=["Monitor Principal", "Expedientes", "Auditoría Vehicular"],
-                icons=["display", "folder", "car-front"],
-                menu_icon="cast",
-                default_index=0,
-            )
-            
-            mostrar_boton_logout()
-
-        # Renderizar la opción seleccionada del menú
-        if menu == "Monitor Principal":
-            # Aquí va tu función que muestra el dashboard principal
-            mostrar_pantalla_principal(df_v_tabla_monitor) 
-        elif menu == "Expedientes":
-            expediente.mostrar_modulo_expedientes(conn, df_base)
-        elif menu == "Auditoría Vehicular":
-            mostrar_auditoria(conn)
-
+        main()
     else:
-        # Si no hay sesión, muestra el candado
         mostrar_pantalla_login()
