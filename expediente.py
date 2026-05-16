@@ -60,7 +60,7 @@ def sanitizar(texto):
 # ==============================================================================
 # 2. GENERADORES DE DOCUMENTOS PDF (OPTIMIZADOS Y BLINDADOS)
 # ==============================================================================
-@st.cache_data(show_spinner=False, max_entries=50) # CORRECCIÓN 1: Caché de rendimiento
+@st.cache_data(show_spinner=False, max_entries=50) 
 def generar_pdf_consolidado(df):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
@@ -134,12 +134,9 @@ def generar_pdf_consolidado(df):
                             r = requests.get(url, timeout=10)
                             if r.status_code == 200:
                                 fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                                # CORRECCIÓN 2: try...finally para proteger el servidor
                                 try:
                                     with open(tp, 'wb') as f: f.write(r.content)
-                                    # CORRECCIÓN 3: Margen protegido (60) para no deformar el PDF
                                     if pdf.get_y() > 60: pdf.add_page() 
-                                    
                                     pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0)
                                     pdf.set_fill_color(240, 240, 240)
                                     pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
@@ -155,7 +152,7 @@ def generar_pdf_consolidado(df):
     with open(path, "rb") as f: data = f.read()
     os.remove(path); return data
 
-@st.cache_data(show_spinner=False, max_entries=50) # CORRECCIÓN 1: Caché de rendimiento
+@st.cache_data(show_spinner=False, max_entries=50) 
 def generar_pdf_memo(row_dict):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
     es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
@@ -180,10 +177,8 @@ def generar_pdf_memo(row_dict):
             r = requests.get(u, timeout=10)
             if r.status_code == 200:
                 fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                # CORRECCIÓN 2: try...finally de seguridad
                 try:
                     with open(tp, 'wb') as f: f.write(r.content)
-                    # CORRECCIÓN 3: Margen protegido
                     if pdf.get_y() > 60: pdf.add_page()
                     pdf.image(tp, x=15, w=170); pdf.ln(5)
                 finally:
@@ -197,7 +192,8 @@ def generar_pdf_memo(row_dict):
 # ==============================================================================
 # FUNCIÓN AUXILIAR: Leer expedientes desde Google Sheets
 # ==============================================================================
-def leer_expedientes(conn, ttl=5):
+def leer_expedientes(conn, ttl=0):
+    """Fuerza la lectura en tiempo real con ttl=0 en todo momento para evitar retrasos."""
     df = conn.read(
         spreadsheet=st.secrets["url_base_datos"],
         worksheet="Expedientes",
@@ -209,7 +205,6 @@ def leer_expedientes(conn, ttl=5):
 # FUNCIÓN AUXILIAR: Limpiar DataFrame antes de escribir
 # ==============================================================================
 def limpiar_df_para_escritura(df):
-    """Normaliza el DataFrame para evitar errores al escribir en Google Sheets."""
     return (
         df.fillna("")
           .astype(str)
@@ -220,15 +215,15 @@ def limpiar_df_para_escritura(df):
 # 3. INTERFAZ DE EXPEDIENTES
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
-    supervisor_actual = st.session_state.get('usuario', st.session_state.get('username', 'Supervisor'))
+    supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    # --------------------------------------------------------------------------
-    # FORMULARIO DE NUEVO REGISTRO
-    # --------------------------------------------------------------------------
+    # --- COLUMNAS OFICIALES OBLIGATORIAS ---
+    columnas_oficiales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
+
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         with st.form("form_incidencia_txt", clear_on_submit=True):
@@ -282,10 +277,17 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                         df_db = leer_expedientes(conn, ttl=0)
                         
-                        if not df_db.empty:
-                            df_db = df_db[df_db['TECNICO'].astype(str).str.strip() != ""]
+                        if df_db.empty:
+                            df_db = pd.DataFrame(columns=columnas_oficiales)
+                        else:
+                            if 'TECNICO' in df_db.columns:
+                                df_db = df_db[df_db['TECNICO'].astype(str).str.strip() != ""]
+                            for col in columnas_oficiales:
+                                if col not in df_db.columns:
+                                    df_db[col] = ""
                         
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
+                        df_final = df_final[columnas_oficiales] # Bloqueo estricto de columnas
                         df_final = limpiar_df_para_escritura(df_final)
                         
                         conn.update(
@@ -305,15 +307,14 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.markdown("---")
     
-    # --------------------------------------------------------------------------
-    # HISTORIAL DE EXPEDIENTES Y FILTROS
-    # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        df_view = leer_expedientes(conn, ttl=5)
+        # Se fuerza la lectura fresca para mostrar los datos de inmediato
+        df_view = leer_expedientes(conn, ttl=0)
         
-        df_view = df_view[df_view['TECNICO'].notna()]
-        df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != ""]
+        if 'TECNICO' in df_view.columns:
+            df_view = df_view[df_view['TECNICO'].notna()]
+            df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != ""]
         
         if not df_view.empty:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
@@ -332,8 +333,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     hace_una_semana = hoy - timedelta(days=7)
                     rango_fechas = st.date_input(
                         "📅 Rango de Fechas:",
-                        value=(hace_una_semana, hoy),
-                        max_value=hoy + timedelta(days=1)
+                        value=(hace_una_semana, hoy)
                     )
                 
                 with col3:
@@ -342,7 +342,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"]
                     )
 
-            # --- APLICAR FILTROS ---
             df_mostrar = df_view.copy()
             
             if filtro_nombre != "VER TODOS":
@@ -360,10 +359,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                     return None
 
                 df_mostrar['FECHA_INCIDENCIA_DT'] = df_mostrar['FECHA_INCIDENCIA'].apply(parsear_fecha)
-                
-                fechas_invalidas = df_mostrar['FECHA_INCIDENCIA_DT'].isna().sum()
-                if fechas_invalidas > 0:
-                    st.warning(f"⚠️ {fechas_invalidas} registro(s) tienen formato de fecha inválido y no aparecen en el filtro.")
                 
                 df_mostrar = df_mostrar[
                     df_mostrar['FECHA_INCIDENCIA_DT'].notna() &
@@ -396,7 +391,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     )
 
             if df_mostrar.empty:
-                st.info("No hay registros que coincidan con estos filtros.")
+                st.info("No hay registros en pantalla (verifica el rango de fechas para ver registros antiguos).")
             else:
                 for idx, row in df_mostrar.iloc[::-1].iterrows():
                     es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
@@ -429,11 +424,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                                         worksheet="Expedientes",
                                         data=df_new
                                     )
-                                    time.sleep(2)        # FIX: esperar propagación
+                                    time.sleep(2)
                                     st.cache_data.clear()
                                     st.rerun()
         else:
-            st.info("No hay registros aún.")
+            st.info("No hay registros en la base de datos.")
 
     except Exception as e:
         st.warning(f"⚠️ Error al cargar el historial: {e}")
