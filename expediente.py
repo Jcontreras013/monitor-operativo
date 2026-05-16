@@ -190,10 +190,9 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
-# FUNCIÓN AUXILIAR: Leer expedientes desde Google Sheets
+# FUNCIÓN AUXILIAR: Leer expedientes desde Google Sheets (TIEMPO REAL ESTRICTO)
 # ==============================================================================
 def leer_expedientes(conn, ttl=0):
-    """Fuerza la lectura en tiempo real con ttl=0 en todo momento para evitar retrasos."""
     df = conn.read(
         spreadsheet=st.secrets["url_base_datos"],
         worksheet="Expedientes",
@@ -275,19 +274,27 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
+                        # Descarga fresca en tiempo real
                         df_db = leer_expedientes(conn, ttl=0)
                         
-                        if df_db.empty:
-                            df_db = pd.DataFrame(columns=columnas_oficiales)
-                        else:
-                            if 'TECNICO' in df_db.columns:
-                                df_db = df_db[df_db['TECNICO'].astype(str).str.strip() != ""]
+                        # --- 🚨 FILTRADO INTEGRAL AGRESIVO ANTI-FILA-1000 🚨 ---
+                        # Forzamos la detección y eliminación absoluta de cualquier fila vacía o fantasma
+                        if not df_db.empty:
                             for col in columnas_oficiales:
-                                if col not in df_db.columns:
-                                    df_db[col] = ""
+                                if col not in df_db.columns: df_db[col] = ""
+                            
+                            # Filtramos nulos reales y de texto ('nan', 'none') para compactar la tabla al inicio
+                            df_db['TECNICO_TEST'] = df_db['TECNICO'].astype(str).str.strip().str.lower()
+                            df_db = df_db[~df_db['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'nat', 'undefined'])]
+                            df_db = df_db.drop(columns=['TECNICO_TEST'])
+                        else:
+                            df_db = pd.DataFrame(columns=columnas_oficiales)
                         
+                        df_db = df_db[columnas_oficiales]
+                        
+                        # El concat ahora se hace exactamente en el primer espacio vacío real
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
-                        df_final = df_final[columnas_oficiales] # Bloqueo estricto de columnas
+                        df_final = df_final[columnas_oficiales] 
                         df_final = limpiar_df_para_escritura(df_final)
                         
                         conn.update(
@@ -297,8 +304,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         )
                         
                         st.success(f"✅ ¡Guardado con éxito para {colaborador_sel}!")
-                        
-                        time.sleep(2)
+                        time.sleep(1.5)
                         st.cache_data.clear()
                         st.rerun()
 
@@ -307,14 +313,18 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.markdown("---")
     
+    # --------------------------------------------------------------------------
+    # HISTORIAL DE EXPEDIENTES Y FILTROS
+    # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # Se fuerza la lectura fresca para mostrar los datos de inmediato
+        # Se fuerza lectura fresca ttl=0 para asegurar la visualización inmediata
         df_view = leer_expedientes(conn, ttl=0)
         
-        if 'TECNICO' in df_view.columns:
-            df_view = df_view[df_view['TECNICO'].notna()]
-            df_view = df_view[df_view['TECNICO'].astype(str).str.strip() != ""]
+        if not df_view.empty and 'TECNICO' in df_view.columns:
+            df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
+            df_view = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat'])]
+            df_view = df_view.drop(columns=['TECNICO_TEST'])
         
         if not df_view.empty:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
@@ -330,7 +340,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
                 with col2:
                     hoy = get_honduras_time().date()
-                    hace_una_semana = hoy - timedelta(days=7)
+                    hace_una_semana = hoy - timedelta(days=30) 
                     rango_fechas = st.date_input(
                         "📅 Rango de Fechas:",
                         value=(hace_una_semana, hoy)
@@ -418,13 +428,13 @@ def mostrar_modulo_expedientes(conn, df_base):
                             if es_admin:
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                                     df_new = df_view.drop(idx)
-                                    df_new = limpiar_df_para_escritura(df_new)
+                                    df_new = df_new.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT"], "")
                                     conn.update(
                                         spreadsheet=st.secrets["url_base_datos"],
                                         worksheet="Expedientes",
                                         data=df_new
                                     )
-                                    time.sleep(2)
+                                    time.sleep(1.5)
                                     st.cache_data.clear()
                                     st.rerun()
         else:
