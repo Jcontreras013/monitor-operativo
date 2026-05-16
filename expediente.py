@@ -190,7 +190,7 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
-# FUNCIÓN AUXILIAR: Leer expedientes desde Google Sheets (TIEMPO REAL ESTRICTO)
+# FUNCIÓN AUXILIAR: Leer expedientes desde Google Sheets (TIEMPO REAL FORZADO)
 # ==============================================================================
 def leer_expedientes(conn, ttl=0):
     df = conn.read(
@@ -207,7 +207,7 @@ def limpiar_df_para_escritura(df):
     return (
         df.fillna("")
           .astype(str)
-          .replace(["nan", "NaN", "None", "null", "NaT"], "")
+          .replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
     )
 
 # ==============================================================================
@@ -220,7 +220,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    # --- COLUMNAS OFICIALES OBLIGATORIAS ---
     columnas_oficiales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
 
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
@@ -274,29 +273,31 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
-                        # Descarga fresca en tiempo real
+                        # 1. LEER EN TIEMPO REAL
                         df_db = leer_expedientes(conn, ttl=0)
                         
-                        # --- 🚨 FILTRADO INTEGRAL AGRESIVO ANTI-FILA-1000 🚨 ---
-                        # Forzamos la detección y eliminación absoluta de cualquier fila vacía o fantasma
-                        if not df_db.empty:
-                            for col in columnas_oficiales:
-                                if col not in df_db.columns: df_db[col] = ""
-                            
-                            # Filtramos nulos reales y de texto ('nan', 'none') para compactar la tabla al inicio
-                            df_db['TECNICO_TEST'] = df_db['TECNICO'].astype(str).str.strip().str.lower()
-                            df_db = df_db[~df_db['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'nat', 'undefined'])]
-                            df_db = df_db.drop(columns=['TECNICO_TEST'])
-                        else:
-                            df_db = pd.DataFrame(columns=columnas_oficiales)
+                        # 2. SANAR LAS COLUMNAS DE GOOGLE SHEETS (QUITAR ESPACIOS INVISIBLES)
+                        df_db.columns = df_db.columns.astype(str).str.strip().str.upper()
                         
+                        for col in columnas_oficiales:
+                            if col not in df_db.columns: 
+                                df_db[col] = ""
+                        
+                        # 3. FILTRADO AGRESIVO: Destruir todas las filas vacías para compactar arriba
+                        df_db['TECNICO_TEST'] = df_db['TECNICO'].astype(str).str.strip().str.lower()
+                        df_db = df_db[~df_db['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])]
+                        df_db = df_db.drop(columns=['TECNICO_TEST'])
+                        
+                        # 4. ACOMODAR COLUMNAS OFICIALES Y CONCATENAR
                         df_db = df_db[columnas_oficiales]
-                        
-                        # El concat ahora se hace exactamente en el primer espacio vacío real
                         df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
-                        df_final = df_final[columnas_oficiales] 
+                        
+                        # 5. ELIMINAR POSIBLES DUPLICADOS RESCATADOS DEL FONDO DEL EXCEL
+                        df_final = df_final.drop_duplicates(subset=['FECHA_REGISTRO', 'TECNICO'], keep='last')
+                        
                         df_final = limpiar_df_para_escritura(df_final)
                         
+                        # 6. REESCRIBIR LA BASE DE DATOS LIMPIA Y COMPACTA
                         conn.update(
                             spreadsheet=st.secrets["url_base_datos"],
                             worksheet="Expedientes",
@@ -304,7 +305,8 @@ def mostrar_modulo_expedientes(conn, df_base):
                         )
                         
                         st.success(f"✅ ¡Guardado con éxito para {colaborador_sel}!")
-                        time.sleep(1.5)
+                        
+                        time.sleep(2)
                         st.cache_data.clear()
                         st.rerun()
 
@@ -318,17 +320,19 @@ def mostrar_modulo_expedientes(conn, df_base):
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # Se fuerza lectura fresca ttl=0 para asegurar la visualización inmediata
+        # LECTURA FRESCA PARA MOSTRAR INMEDIATAMENTE
         df_view = leer_expedientes(conn, ttl=0)
         
-        if not df_view.empty and 'TECNICO' in df_view.columns:
+        # SANADO DE COLUMNAS AL LEER TAMBIÉN
+        df_view.columns = df_view.columns.astype(str).str.strip().str.upper()
+        
+        if 'TECNICO' in df_view.columns:
             df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
-            df_view = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat'])]
+            df_view = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])]
             df_view = df_view.drop(columns=['TECNICO_TEST'])
+            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
         
         if not df_view.empty:
-            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
-            
             with st.container():
                 col1, col2, col3 = st.columns(3)
                 
@@ -340,7 +344,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
                 with col2:
                     hoy = get_honduras_time().date()
-                    hace_una_semana = hoy - timedelta(days=30) 
+                    hace_una_semana = hoy - timedelta(days=60) # Filtro ampliado a 60 días para proteger la vista
                     rango_fechas = st.date_input(
                         "📅 Rango de Fechas:",
                         value=(hace_una_semana, hoy)
@@ -401,7 +405,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     )
 
             if df_mostrar.empty:
-                st.info("No hay registros en pantalla (verifica el rango de fechas para ver registros antiguos).")
+                st.info("💡 No se encuentran registros en este rango de fechas. Si acabas de guardar uno con fecha pasada, amplía el filtro.")
             else:
                 for idx, row in df_mostrar.iloc[::-1].iterrows():
                     es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
@@ -428,17 +432,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                             if es_admin:
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                                     df_new = df_view.drop(idx)
-                                    df_new = df_new.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT"], "")
+                                    df_new = limpiar_df_para_escritura(df_new)
                                     conn.update(
                                         spreadsheet=st.secrets["url_base_datos"],
                                         worksheet="Expedientes",
                                         data=df_new
                                     )
-                                    time.sleep(1.5)
+                                    time.sleep(2)
                                     st.cache_data.clear()
                                     st.rerun()
         else:
-            st.info("No hay registros en la base de datos.")
+            st.info("No hay registros válidos en la base de datos.")
 
     except Exception as e:
         st.warning(f"⚠️ Error al cargar el historial: {e}")
