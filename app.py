@@ -24,7 +24,8 @@ from ui_components import (
     aplicar_estilos_nativos, 
     mostrar_comentario_cierre, 
     mostrar_detalle_avance, 
-    aplicar_estilos_df
+    aplicar_estilos_df,
+    mostrar_seguimientos_tecnico
 )
 import settings # <--- IMPORTAMOS LA CONFIGURACIÓN AQUÍ
 
