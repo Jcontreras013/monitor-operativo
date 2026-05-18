@@ -2242,24 +2242,33 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     import re
     import pandas as pd
     
-    # 1. Obtener los números de orden asignados a este técnico
     df_limpio = df_base.copy()
-    df_limpio['TÉCNICO'] = df_limpio.get('TÉCNICO', df_limpio.get('TECNICO', pd.Series(dtype=str))).fillna('').astype(str).str.strip().str.upper()
-    ordenes_tecnico = set(df_limpio[df_limpio['TÉCNICO'] == str(tecnico_nombre).upper()]['NUM'].dropna().astype(str).unique())
+    
+    # 1. Unificar nombre de columna (previene errores si el Excel cambia TÉCNICO por TECNICO)
+    col_tec = 'TÉCNICO' if 'TÉCNICO' in df_limpio.columns else 'TECNICO'
+    if col_tec not in df_limpio.columns:
+        return pd.DataFrame()
+        
+    df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
+    tecnico_upper = str(tecnico_nombre).strip().upper()
+    
+    # 2. Identificar todas las órdenes que este técnico tiene asignadas
+    ordenes_tecnico = set(df_limpio[df_limpio[col_tec] == tecnico_upper]['NUM'].dropna().astype(str).unique())
     
     seguimientos = []
-    # Expresión regular quirúrgica para cazar el patrón con fecha y hora
+    # Expresión regular quirúrgica para cazar el patrón: * DD/MM/YYYY HH:MM:SS Nombre agrego el comentario:
     patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego el comentario:\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
     
     for _, row in df_base.iterrows():
         num_celda = str(row.get('NUM', '')).strip()
         comentario_celda = str(row.get('COMENTARIO', ''))
         contrato_celda = str(row.get('CONTRATO FÍSICO', row.get('CONTRATO_FISICO', '')))
+        tec_celda = str(row.get(col_tec, '')).strip().upper()
         
         # CASO A: Fila especial de seguimiento (Ej: NUM = "Seguimiento 93664177")
         if "SEGUIMIENTO" in num_celda.upper():
             id_orden = "".join(filter(str.isdigit, num_celda))
-            # Si este seguimiento pertenece a una orden del técnico, lo procesamos
+            # Procesamos solo si la orden es del técnico seleccionado
             if id_orden in ordenes_tecnico or not ordenes_tecnico:
                 texto_buscar = comentario_celda if "agrego el comentario" in comentario_celda else contrato_celda
                 matches = re.findall(patron, texto_buscar, re.IGNORECASE | re.DOTALL)
@@ -2272,8 +2281,8 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
                         'COMENTARIO': texto.strip()
                     })
         
-        # CASO B: Fila normal del técnico donde los comentarios están acumulados
-        elif str(row.get('TÉCNICO', row.get('TECNICO', ''))).strip().upper() == str(tecnico_nombre).upper():
+        # CASO B: Fila normal del técnico (los comentarios vienen acumulados en la misma fila)
+        elif tec_celda == tecnico_upper:
             if "agrego el comentario" in comentario_celda:
                 matches = re.findall(patron, comentario_celda, re.IGNORECASE | re.DOTALL)
                 for match in matches:
@@ -2285,7 +2294,7 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
                         'COMENTARIO': texto.strip()
                     })
 
-    # Convertir a DataFrame, limpiar y ordenar cronológicamente
+    # 3. Ensamblaje final, limpieza de duplicados y orden cronológico
     df_seg = pd.DataFrame(seguimientos)
     if not df_seg.empty:
         df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
