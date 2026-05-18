@@ -2232,3 +2232,64 @@ def generar_pdf_memorandum(row):
         pdf.cell(0, 5, "(No se adjunto evidencia grafica en este reporte).", ln=True)
         
     return finalizar_pdf(pdf)
+
+
+def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
+    """
+    Extrae el historial de seguimientos leyendo tanto las celdas normales 
+    como las filas especiales de 'Seguimiento' del reporte modificado.
+    """
+    import re
+    import pandas as pd
+    
+    # 1. Obtener los números de orden asignados a este técnico
+    df_limpio = df_base.copy()
+    df_limpio['TÉCNICO'] = df_limpio.get('TÉCNICO', df_limpio.get('TECNICO', pd.Series(dtype=str))).fillna('').astype(str).str.strip().str.upper()
+    ordenes_tecnico = set(df_limpio[df_limpio['TÉCNICO'] == str(tecnico_nombre).upper()]['NUM'].dropna().astype(str).unique())
+    
+    seguimientos = []
+    # Expresión regular quirúrgica para cazar el patrón con fecha y hora
+    patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego el comentario:\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
+    
+    for _, row in df_base.iterrows():
+        num_celda = str(row.get('NUM', '')).strip()
+        comentario_celda = str(row.get('COMENTARIO', ''))
+        contrato_celda = str(row.get('CONTRATO FÍSICO', row.get('CONTRATO_FISICO', '')))
+        
+        # CASO A: Fila especial de seguimiento (Ej: NUM = "Seguimiento 93664177")
+        if "SEGUIMIENTO" in num_celda.upper():
+            id_orden = "".join(filter(str.isdigit, num_celda))
+            # Si este seguimiento pertenece a una orden del técnico, lo procesamos
+            if id_orden in ordenes_tecnico or not ordenes_tecnico:
+                texto_buscar = comentario_celda if "agrego el comentario" in comentario_celda else contrato_celda
+                matches = re.findall(patron, texto_buscar, re.IGNORECASE | re.DOTALL)
+                for match in matches:
+                    fecha_hora, autor, texto = match
+                    seguimientos.append({
+                        'ORDEN': id_orden if id_orden else 'N/D',
+                        'FECHA_HORA': fecha_hora.strip(),
+                        'AUTOR': autor.strip(),
+                        'COMENTARIO': texto.strip()
+                    })
+        
+        # CASO B: Fila normal del técnico donde los comentarios están acumulados
+        elif str(row.get('TÉCNICO', row.get('TECNICO', ''))).strip().upper() == str(tecnico_nombre).upper():
+            if "agrego el comentario" in comentario_celda:
+                matches = re.findall(patron, comentario_celda, re.IGNORECASE | re.DOTALL)
+                for match in matches:
+                    fecha_hora, autor, texto = match
+                    seguimientos.append({
+                        'ORDEN': num_celda,
+                        'FECHA_HORA': fecha_hora.strip(),
+                        'AUTOR': autor.strip(),
+                        'COMENTARIO': texto.strip()
+                    })
+
+    # Convertir a DataFrame, limpiar y ordenar cronológicamente
+    df_seg = pd.DataFrame(seguimientos)
+    if not df_seg.empty:
+        df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
+        df_seg['FECHA_DT'] = pd.to_datetime(df_seg['FECHA_HORA'], format='mixed', dayfirst=True, errors='coerce')
+        df_seg = df_seg.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
+        
+    return df_seg
