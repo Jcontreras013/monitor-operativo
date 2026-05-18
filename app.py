@@ -1437,7 +1437,7 @@ def main():
                             )
                             
                             if opcion_tec != "[ Ocultar Historiales ]":
-                                df_seg = extraer_seguimientos_tecnico_unificado(df_monitor_filtrado, opcion_tec)
+                               df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
                                 mostrar_seguimientos_tecnico(opcion_tec, df_seg)
                             # =========================================================
                         else:
