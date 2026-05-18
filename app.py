@@ -1437,9 +1437,9 @@ def main():
                             )
                             
                             if opcion_tec != "[ Ocultar Historiales ]":
-                               df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
+                                df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
                                 mostrar_seguimientos_tecnico(opcion_tec, df_seg)
-                            # =========================================================
+                                    
                         else:
                             st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
