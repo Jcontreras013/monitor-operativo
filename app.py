@@ -67,7 +67,8 @@ try:
         generar_pdf_tiempos_muertos,
         generar_pdf_promedio_arranque,
         generar_tablas_gerenciales,
-        cargar_y_limpiar_crudos_diamante_monitor
+        cargar_y_limpiar_crudos_diamante_monitor,
+        extraer_seguimientos_tecnico_unificado
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
