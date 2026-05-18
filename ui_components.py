@@ -239,3 +239,32 @@ def aplicar_estilos_df(df_original_para_estilo):
     cols_a_mostrar = ['DIAS_RETRASO', 'NUM', 'HORA_INI','HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'TECNICO', 'ACTIVIDAD', 'MOTIVO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC']
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
+
+@st.dialog("Historial de Comentarios de Seguimiento", width="large")
+def mostrar_seguimientos_tecnico(tecnico, df_seguimientos):
+    st.markdown(f"### 💬 Seguimientos en Tiempo Real: **{tecnico}**")
+    
+    if df_seguimientos.empty:
+        st.info("No se encontraron registros de seguimientos estructurados para este técnico.")
+        if st.button("Cerrar", use_container_width=True): st.rerun()
+        return
+
+    for _, fila in df_seguimientos.iterrows():
+        st.markdown(f"""
+        <div style="background-color: #1A1D24; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #3B82F6;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="color: #60A5FA; font-weight: bold; font-size: 13px;">ORDEN N° {fila['ORDEN']}</span>
+                <span style="color: #94A3B8; font-size: 11px;">🕒 {fila['FECHA_HORA']}</span>
+            </div>
+            <div style="color: #E2E8F0; font-size: 11px; margin-bottom: 6px; font-style: italic;">
+                👤 Ingresado por: {fila['AUTOR']}
+            </div>
+            <div style="color: white; font-size: 13px; background: rgba(0,0,0,0.15); padding: 8px; border-radius: 4px;">
+                {fila['COMENTARIO']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    if st.button("Cerrar Panel", use_container_width=True): 
+        st.rerun()
+
