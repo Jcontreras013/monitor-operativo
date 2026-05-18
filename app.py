@@ -1424,6 +1424,22 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
+                            # =========================================================
+                            # INTERFAZ ULTRA-MINIMALISTA DE PESTAÑAS HORIZONTALES
+                            # =========================================================
+                            tecnicos_activos = sorted(df_para_gantt_final['TECNICO'].unique())
+                            
+                            opcion_tec = st.radio(
+                                "Selección de Historial:",
+                                options=["[ Ocultar Historiales ]"] + tecnicos_activos,
+                                horizontal=True,
+                                label_visibility="collapsed" 
+                            )
+                            
+                            if opcion_tec != "[ Ocultar Historiales ]":
+                                df_seg = extraer_seguimientos_tecnico_unificado(df_monitor_filtrado, opcion_tec)
+                                mostrar_seguimientos_tecnico(opcion_tec, df_seg)
+                            # =========================================================
                         else:
                             st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
