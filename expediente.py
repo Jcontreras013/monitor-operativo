@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import os
 import tempfile
 import textwrap
+import time
 from fpdf import FPDF
 
 # ==============================================================================
@@ -189,6 +190,38 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
+# 🚨 FUNCIÓN AUXILIAR: ESCUDO ANTI-LAG (LLAVES UNIFICADAS Y CORRECTAS) 🚨
+# ==============================================================================
+def obtener_df_seguro(conn):
+    st.cache_data.clear() # Destruye el caché falso de Streamlit
+    df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+    
+    if not df_nube.empty:
+        df_nube.columns = df_nube.columns.astype(str).str.strip().str.upper()
+        if 'TECNICO' in df_nube.columns:
+            df_nube['TECNICO_TEST'] = df_nube['TECNICO'].astype(str).str.strip().str.lower()
+            df_nube = df_nube[~df_nube['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])]
+            df_nube = df_nube.drop(columns=['TECNICO_TEST'])
+    else:
+        df_nube = pd.DataFrame()
+
+    # EL ESCUDO: Aquí estaba el error de nombre. Ahora coincide exactamente con la que guardamos.
+    if 'MEMORIA_EXPEDIENTES_ACTUAL' in st.session_state:
+        df_local = st.session_state['MEMORIA_EXPEDIENTES_ACTUAL']
+        # Si Google nos da MENOS registros de los que nosotros sabemos que guardamos, ignoramos a Google
+        if len(df_nube) < len(df_local):
+            return df_local.copy()
+            
+    return df_nube
+
+def limpiar_df_para_escritura(df):
+    return (
+        df.fillna("")
+          .astype(str)
+          .replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
+    )
+
+# ==============================================================================
 # 3. INTERFAZ DE EXPEDIENTES
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
@@ -200,9 +233,6 @@ def mostrar_modulo_expedientes(conn, df_base):
     
     columnas_oficiales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
 
-    # --------------------------------------------------------------------------
-    # GUARDADO SIN RERUN (Solución al Caché) Y BUSCADOR DE CASILLAS
-    # --------------------------------------------------------------------------
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         with st.form("form_incidencia_txt", clear_on_submit=True):
@@ -250,95 +280,93 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
-                        # Lectura en Tiempo Real (ttl=0 absoluto)
-                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                        # 1. LEER USANDO EL ESCUDO
+                        df_db = obtener_df_seguro(conn)
                         
-                        # Aseguramos que todas las columnas existan
+                        # 2. ASEGURAR COLUMNAS
                         for col in columnas_oficiales:
                             if col not in df_db.columns: 
                                 df_db[col] = ""
                         df_db = df_db[columnas_oficiales]
                         
-                        # EL BUSCADOR DE CASILLAS: Encontrar exactamente la primera fila vacía
-                        mascara_vacia = df_db['TECNICO'].isna() | \
-                                        (df_db['TECNICO'].astype(str).str.strip() == '') | \
-                                        df_db['TECNICO'].astype(str).str.lower().isin(['nan', 'none', 'null', 'nat', 'undefined'])
+                        # 3. PEGAR LA NUEVA FILA (SIN DESTRUIR LO ANTERIOR)
+                        df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
                         
-                        indices_vacios = df_db.index[mascara_vacia].tolist()
+                        # 4. LIMPIEZA FINAL
+                        df_final = df_final.drop_duplicates(subset=['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA'], keep='last')
+                        df_final = limpiar_df_para_escritura(df_final)
                         
-                        if indices_vacios:
-                            # Si hay huecos, metemos el dato en el primer hueco que encontremos
-                            primer_indice = indices_vacios[0]
-                            for col in columnas_oficiales:
-                                df_db.at[primer_indice, col] = nueva_fila.iloc[0][col]
-                            df_final = df_db
-                        else:
-                            # Si de verdad no hay huecos, agregamos al final
-                            df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
-                        
-                        # Limpiar cadenas de texto para Google Sheets
-                        df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
-                        
-                        # Subimos todo (manteniendo la misma cantidad de filas exactas de la hoja original)
+                        # 5. SUBIR A GOOGLE SHEETS
                         conn.update(
                             spreadsheet=st.secrets["url_base_datos"],
                             worksheet="Expedientes",
                             data=df_final
                         )
                         
-                        # GUARDAMOS EN MEMORIA PARA MOSTRAR ABAJO AL INSTANTE (SIN RERUN)
-                        st.session_state['df_expedientes_fresco'] = df_final
-                        st.success(f"✅ ¡Guardado exitosamente en el sistema!")
+                        # 6. ACTIVAR ESCUDO: GUARDAR LA MEMORIA LOCAL CON LA LLAVE EXACTA PARA EL PRÓXIMO GUARDADO
+                        st.session_state['MEMORIA_EXPEDIENTES_ACTUAL'] = df_final.copy()
+                        
+                        st.success(f"✅ ¡Guardado con éxito para {colaborador_sel}!")
+                        time.sleep(1.5)
+                        st.rerun()
 
                     except Exception as e:
-                        st.error(f"❌ Error crítico al guardar: {e}")
+                        st.error(f"❌ Error al guardar: {e}")
 
     st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # HISTORIAL Y TABLA
+    # HISTORIAL DE EXPEDIENTES Y FILTROS
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # Mostramos lo que acabamos de guardar, o leemos de nuevo
-        if 'df_expedientes_fresco' in st.session_state:
-            df_view = st.session_state['df_expedientes_fresco'].copy()
-        else:
-            df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        # Se lee con el escudo por si Google sigue retrasado al cargar la tabla
+        df_view = obtener_df_seguro(conn)
         
-        # Filtramos internamente solo para la VISTA en pantalla
-        if 'TECNICO' in df_view.columns:
-            df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
-            df_mostrar = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])].copy()
-            df_mostrar = df_mostrar.drop(columns=['TECNICO_TEST'])
-        else:
-            df_mostrar = pd.DataFrame()
-            
-        if not df_mostrar.empty:
-            df_mostrar['TECNICO'] = df_mostrar['TECNICO'].astype(str).str.upper().str.strip()
+        if not df_view.empty and 'TECNICO' in df_view.columns:
+            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             
             with st.container():
                 col1, col2, col3 = st.columns(3)
+                
                 with col1:
-                    filtro_nombre = st.selectbox("🔍 Colaborador:", options=["VER TODOS"] + sorted(df_mostrar['TECNICO'].unique().tolist()))
+                    filtro_nombre = st.selectbox(
+                        "🔍 Colaborador:",
+                        options=["VER TODOS"] + sorted(df_view['TECNICO'].unique().tolist())
+                    )
+                
                 with col2:
                     hoy = get_honduras_time().date()
-                    rango_fechas = st.date_input("📅 Rango de Fechas:", value=(hoy - timedelta(days=60), hoy))
+                    hace_una_semana = hoy - timedelta(days=60) 
+                    rango_fechas = st.date_input(
+                        "📅 Rango de Fechas:",
+                        value=(hace_una_semana, hoy)
+                    )
+                
                 with col3:
-                    filtro_tipo = st.selectbox("📋 Tipo de Registro:", options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"])
+                    filtro_tipo = st.selectbox(
+                        "📋 Tipo de Registro:",
+                        options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"]
+                    )
 
+            df_mostrar = df_view.copy()
+            
             if filtro_nombre != "VER TODOS":
                 df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
             
             if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
                 fecha_inicio, fecha_fin = rango_fechas
-                def parsear_fecha(f_str):
+
+                def parsear_fecha(fecha_str):
                     for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y'):
-                        try: return datetime.strptime(str(f_str).strip(), fmt).date()
-                        except: continue
+                        try:
+                            return datetime.strptime(str(fecha_str).strip(), fmt).date()
+                        except ValueError:
+                            continue
                     return None
 
                 df_mostrar['FECHA_INCIDENCIA_DT'] = df_mostrar['FECHA_INCIDENCIA'].apply(parsear_fecha)
+                
                 df_mostrar = df_mostrar[
                     df_mostrar['FECHA_INCIDENCIA_DT'].notna() &
                     (df_mostrar['FECHA_INCIDENCIA_DT'] >= fecha_inicio) & 
@@ -353,16 +381,24 @@ def mostrar_modulo_expedientes(conn, df_base):
             c_v, c_b = st.columns([3, 1])
             with c_b:
                 if not df_mostrar.empty:
+                    nombre_archivo = (
+                        "Reporte_General.pdf" if filtro_nombre == "VER TODOS"
+                        else f"Reporte_{filtro_nombre.replace(' ', '_')}.pdf"
+                    )
+                    etiqueta = (
+                        "📊 Reporte Gerencial" if filtro_nombre == "VER TODOS"
+                        else f"📊 Reporte de {filtro_nombre}"
+                    )
                     st.download_button(
-                        "📊 Reporte Gerencial",
+                        etiqueta,
                         data=generar_pdf_consolidado(df_mostrar),
-                        file_name="Reporte.pdf",
+                        file_name=nombre_archivo,
                         mime="application/pdf",
                         use_container_width=True
                     )
 
             if df_mostrar.empty:
-                st.info("💡 No hay registros. Verifica si el rango de fechas cubre tus incidentes guardados.")
+                st.info("💡 No hay registros. (Verifica si necesitas ampliar el rango de fechas)")
             else:
                 for idx, row in df_mostrar.iloc[::-1].iterrows():
                     es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
@@ -379,7 +415,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         c_p, c_d = st.columns(2)
                         with c_p:
                             st.download_button(
-                                f"📄 Descargar",
+                                f"📄 Descargar {'Constancia Medica' if es_m else 'Documento'}",
                                 data=generar_pdf_memo(row.to_dict()),
                                 file_name=f"Reporte_{idx}.pdf",
                                 key=f"p_{idx}",
@@ -388,20 +424,19 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with c_d:
                             if es_admin:
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    # Para eliminar, VACIAMOS la fila en lugar de destruirla para no desajustar el excel
-                                    df_completo = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                                    df_completo.loc[idx, columnas_oficiales] = ""
-                                    df_completo = df_completo.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
-                                    
+                                    df_new = df_view.drop(idx)
+                                    df_new = limpiar_df_para_escritura(df_new)
                                     conn.update(
                                         spreadsheet=st.secrets["url_base_datos"],
                                         worksheet="Expedientes",
-                                        data=df_completo
+                                        data=df_new
                                     )
-                                    st.session_state['df_expedientes_fresco'] = df_completo
-                                    st.rerun() # Aquí sí ocupamos rerun para que la tarjeta desaparezca visualmente al instante
+                                    # SE ACTUALIZA EL ESCUDO LOCAL AL ELIMINAR PARA NO RESUCITAR LA FILA BORRADA
+                                    st.session_state['MEMORIA_EXPEDIENTES_ACTUAL'] = df_new.copy()
+                                    time.sleep(1)
+                                    st.rerun()
         else:
-            st.info("No hay registros en la base de datos.")
+            st.info("No hay registros válidos en la base de datos.")
 
     except Exception as e:
         st.warning(f"⚠️ Error al cargar el historial: {e}")
