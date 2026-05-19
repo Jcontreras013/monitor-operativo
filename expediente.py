@@ -217,7 +217,7 @@ def leer_expedientes_sin_lag(conn):
         
     df_nube = df_nube[columnas_oficiales]
 
-    # --- AQUÍ OCURRE LA MAGIA ---
+    # --- AQUÍ OCURRE LA MAGIA PARA LA LECTURA VISUAL ---
     if 'cola_de_guardado' in st.session_state:
         registros_locales = st.session_state['cola_de_guardado']
         registros_faltantes = []
@@ -304,22 +304,33 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }
                         
-                        # 1. Metemos el dato en el "bolsillo" local
+                        # 1. Metemos el dato en el "bolsillo" local para que la tabla lo muestre de inmediato sin importar el lag de lectura
                         if 'cola_de_guardado' not in st.session_state:
                             st.session_state['cola_de_guardado'] = []
                         st.session_state['cola_de_guardado'].append(nuevo_diccionario)
 
-                        # 2. Leemos la hoja. Si Google nos manda la hoja vieja, nuestro Inyector
-                        # automáticamente le pegará el dato de nuestro "bolsillo" para que no se pierda.
-                        df_final = leer_expedientes_sin_lag(conn)
-                        df_final = limpiar_df_para_escritura(df_final)
+                        # --- NUEVA LÓGICA DE GUARDADO: INYECCIÓN DIRECTA MEDIANTE APPEND_ROW ---
                         
-                        # 3. Guardamos la hoja en Google (A prueba de balas)
-                        conn.update(
-                            spreadsheet=st.secrets["url_base_datos"],
-                            worksheet="Expedientes",
-                            data=df_final
-                        )
+                        # A. Convertimos el diccionario en una lista (en el orden exacto de tus columnas)
+                        nueva_fila = [
+                            nuevo_diccionario["FECHA_REGISTRO"],
+                            nuevo_diccionario["TECNICO"],
+                            nuevo_diccionario["TIPO_FALTA"],
+                            nuevo_diccionario["FECHA_INCIDENCIA"],
+                            nuevo_diccionario["COMENTARIO"],
+                            nuevo_diccionario["URL_FOTO"],
+                            nuevo_diccionario["SUPERVISOR"]
+                        ]
+                        
+                        # B. Accedemos al cliente nativo y a la hoja directamente
+                        documento = conn.client.open_by_url(st.secrets["url_base_datos"])
+                        hoja_expedientes = documento.worksheet("Expedientes")
+                        
+                        # C. Disparamos la fila directamente al final del documento en Google Sheets
+                        hoja_expedientes.append_row(nueva_fila)
+                        
+                        # D. Limpiamos caché para que la lectura recargue los datos
+                        st.cache_data.clear()
                         
                         st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado.")
                         time.sleep(1)
