@@ -2243,35 +2243,52 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     if col_tec not in df_limpio.columns:
         return pd.DataFrame()
         
-    df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
     tecnico_upper = str(tecnico_nombre).strip().upper()
-    ordenes_tecnico = set(df_limpio[df_limpio[col_tec] == tecnico_upper]['NUM'].dropna().astype(str).unique())
+    df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
     
+    # 1. Identificar SOLO las órdenes VIVAS (Activas/Asignadas) de este técnico
+    patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+    mask_tec = df_limpio[col_tec] == tecnico_upper
+    mask_vivas = df_limpio['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
+    
+    # Extraemos los números de orden (NUM) que el técnico tiene asignadas AHORA
+    ordenes_activas_tecnico = set(df_limpio[mask_tec & mask_vivas]['NUM'].dropna().astype(str).unique())
+    
+    # Si no tiene órdenes activas, no hay nada que mostrar
+    if not ordenes_activas_tecnico:
+        return pd.DataFrame()
+        
     seguimientos = []
+    # PATRÓN REGEX para extraer: Fecha/Hora, Usuario y Comentario
     patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego el comentario:\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
     
     for _, row in df_base.iterrows():
         num_celda = str(row.get('NUM', '')).strip()
         comentario_celda = str(row.get('COMENTARIO', ''))
         contrato_celda = str(row.get('CONTRATO FÍSICO', row.get('CONTRATO_FISICO', '')))
-        tec_celda = str(row.get(col_tec, '')).strip().upper()
         
+        # Limpiar el NUM por si viene en una fila de "SEGUIMIENTO"
         if "SEGUIMIENTO" in num_celda.upper():
             id_orden = "".join(filter(str.isdigit, num_celda))
-            if id_orden in ordenes_tecnico or not ordenes_tecnico:
-                texto_buscar = comentario_celda if "agrego el comentario" in comentario_celda else contrato_celda
-                matches = re.findall(patron, texto_buscar, re.IGNORECASE | re.DOTALL)
-                for match in matches:
-                    seguimientos.append({'ORDEN': id_orden if id_orden else 'N/D', 'FECHA_HORA': match[0].strip(), 'AUTOR': match[1].strip(), 'COMENTARIO': match[2].strip()})
-        
-        elif tec_celda == tecnico_upper:
-            if "agrego el comentario" in comentario_celda:
-                matches = re.findall(patron, comentario_celda, re.IGNORECASE | re.DOTALL)
-                for match in matches:
-                    seguimientos.append({'ORDEN': num_celda, 'FECHA_HORA': match[0].strip(), 'AUTOR': match[1].strip(), 'COMENTARIO': match[2].strip()})
+        else:
+            id_orden = num_celda
+            
+        # 2. SOLO filtramos seguimientos si la orden pertenece a las ACTIVAS del técnico
+        if id_orden in ordenes_activas_tecnico:
+            texto_buscar = comentario_celda if "agrego el comentario" in comentario_celda else contrato_celda
+            matches = re.findall(patron, texto_buscar, re.IGNORECASE | re.DOTALL)
+            for match in matches:
+                seguimientos.append({
+                    'ORDEN': id_orden, 
+                    'FECHA_HORA': match[0].strip(), 
+                    'AUTOR': match[1].strip(), 
+                    'COMENTARIO': match[2].strip()
+                })
 
     df_seg = pd.DataFrame(seguimientos)
+    
     if not df_seg.empty:
+        # Limpiamos duplicados y ordenamos de la más reciente a la más antigua
         df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
         df_seg['FECHA_DT'] = pd.to_datetime(df_seg['FECHA_HORA'], format='mixed', dayfirst=True, errors='coerce')
         df_seg = df_seg.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
