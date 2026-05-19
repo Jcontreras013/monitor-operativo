@@ -251,7 +251,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         }])
 
                         # Lectura en Tiempo Real (ttl=0 absoluto)
-                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=1.5)
                         
                         # Aseguramos que todas las columnas existan
                         for col in columnas_oficiales:
