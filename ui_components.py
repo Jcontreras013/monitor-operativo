@@ -240,29 +240,30 @@ def aplicar_estilos_df(df_original_para_estilo):
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
 
-@st.dialog("Avance en Tiempo Real (Órdenes Activas)", width="large")
+
+
+@st.dialog("Avance en Tiempo Real (Solo Técnico)", width="large")
 def mostrar_seguimientos_tecnico(tecnico, df_seguimientos):
-    st.markdown(f"### 📡 Monitoreo en Vivo: **{tecnico}**")
+    st.markdown(f"### 📡 Reportes de Avance: **{tecnico}**")
+    st.caption("ℹ️ *Mostrando exclusivamente los comentarios ingresados por el técnico en sus órdenes activas.*")
     
     if df_seguimientos.empty:
-        st.info("⚠️ El técnico no tiene órdenes asignadas/vivas en este momento, o las órdenes activas aún no tienen comentarios de avance registrados.")
+        st.info("⚠️ El técnico no tiene órdenes asignadas en este momento, o aún no ha ingresado ningún comentario de avance en ellas.")
         if st.button("Cerrar", use_container_width=True): st.rerun()
         return
 
-    # Agrupamos los seguimientos por cada Orden Viva
     ordenes_activas = df_seguimientos['ORDEN'].unique()
     
     for orden in ordenes_activas:
         st.markdown(f"<h5 style='color: #F59E0B; margin-top: 15px; border-bottom: 2px solid #2D2F39; padding-bottom: 5px;'>⏳ ORDEN EN CURSO N° {orden}</h5>", unsafe_allow_html=True)
         
-        # Filtrar los seguimientos solo de esta orden
         df_orden = df_seguimientos[df_seguimientos['ORDEN'] == orden]
         
         for _, fila in df_orden.iterrows():
             st.markdown(f"""
-            <div style="background-color: #1A1D24; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid #3B82F6;">
+            <div style="background-color: #1A1D24; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid #10B981;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                    <span style="color: #94A3B8; font-size: 11px;">Actualizado por: <b style='color: #E2E8F0;'>{fila['AUTOR']}</b></span>
+                    <span style="color: #94A3B8; font-size: 11px;">Registrado por: <b style='color: #10B981;'>{fila['AUTOR']} (Técnico)</b></span>
                     <span style="color: #3B82F6; font-size: 11px; font-weight: bold;">🕒 {fila['FECHA_HORA']}</span>
                 </div>
                 <div style="color: white; font-size: 14px; margin-top: 5px;">
