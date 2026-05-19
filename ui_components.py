@@ -240,31 +240,37 @@ def aplicar_estilos_df(df_original_para_estilo):
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
 
-@st.dialog("Historial de Comentarios de Seguimiento", width="large")
+@st.dialog("Avance en Tiempo Real (Órdenes Activas)", width="large")
 def mostrar_seguimientos_tecnico(tecnico, df_seguimientos):
-    st.markdown(f"### 💬 Seguimientos en Tiempo Real: **{tecnico}**")
+    st.markdown(f"### 📡 Monitoreo en Vivo: **{tecnico}**")
     
     if df_seguimientos.empty:
-        st.info("No se encontraron registros de seguimientos estructurados para este técnico.")
+        st.info("⚠️ El técnico no tiene órdenes asignadas/vivas en este momento, o las órdenes activas aún no tienen comentarios de avance registrados.")
         if st.button("Cerrar", use_container_width=True): st.rerun()
         return
 
-    for _, fila in df_seguimientos.iterrows():
-        st.markdown(f"""
-        <div style="background-color: #1A1D24; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #3B82F6;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                <span style="color: #60A5FA; font-weight: bold; font-size: 13px;">ORDEN N° {fila['ORDEN']}</span>
-                <span style="color: #94A3B8; font-size: 11px;">🕒 {fila['FECHA_HORA']}</span>
-            </div>
-            <div style="color: #E2E8F0; font-size: 11px; margin-bottom: 6px; font-style: italic;">
-                👤 Ingresado por: {fila['AUTOR']}
-            </div>
-            <div style="color: white; font-size: 13px; background: rgba(0,0,0,0.15); padding: 8px; border-radius: 4px;">
-                {fila['COMENTARIO']}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Agrupamos los seguimientos por cada Orden Viva
+    ordenes_activas = df_seguimientos['ORDEN'].unique()
+    
+    for orden in ordenes_activas:
+        st.markdown(f"<h5 style='color: #F59E0B; margin-top: 15px; border-bottom: 2px solid #2D2F39; padding-bottom: 5px;'>⏳ ORDEN EN CURSO N° {orden}</h5>", unsafe_allow_html=True)
         
+        # Filtrar los seguimientos solo de esta orden
+        df_orden = df_seguimientos[df_seguimientos['ORDEN'] == orden]
+        
+        for _, fila in df_orden.iterrows():
+            st.markdown(f"""
+            <div style="background-color: #1A1D24; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid #3B82F6;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <span style="color: #94A3B8; font-size: 11px;">Actualizado por: <b style='color: #E2E8F0;'>{fila['AUTOR']}</b></span>
+                    <span style="color: #3B82F6; font-size: 11px; font-weight: bold;">🕒 {fila['FECHA_HORA']}</span>
+                </div>
+                <div style="color: white; font-size: 14px; margin-top: 5px;">
+                    {fila['COMENTARIO']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Cerrar Panel", use_container_width=True): 
         st.rerun()
-
