@@ -2254,7 +2254,6 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
     mask_vivas = df_limpio['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
     
-    # Detección de las cerradas de hoy (usando FECHA LIQUIDADO)
     col_liq = 'HORA_LIQ' if 'HORA_LIQ' in df_limpio.columns else 'FECHA LIQUIDADO'
     if col_liq in df_limpio.columns:
         df_limpio['_TEMP_LIQ'] = pd.to_datetime(df_limpio[col_liq], format='mixed', dayfirst=True, errors='coerce').dt.date
@@ -2263,7 +2262,6 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
         
     mask_cerradas_hoy = (df_limpio['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_limpio['_TEMP_LIQ'] == hoy_date)
     
-    # El técnico debe ser el asignado a la orden
     mask_tec = df_limpio[col_tec] == tecnico_upper
     
     df_bandeja = df_limpio[mask_tec & (mask_vivas | mask_cerradas_hoy)]
@@ -2275,21 +2273,20 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
         return pd.DataFrame()
         
     seguimientos = []
-    # Patrón para cazar la hora exacta, el autor y el texto del comentario
-    patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego el comentario:\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
+    # --- 3. NUEVO PATRÓN MAGICO --- 
+    # Atrapa tanto "agrego el comentario:" como "agrego archivo:"
+    patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego (?:el comentario|archivo):\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
     
-    # --- 3. EXTRACCIÓN DE TEXTOS ---
     for _, row in df_base.iterrows():
         num_celda = str(row.get('NUM', '')).strip()
         texto_toda_la_fila = " ".join([str(val) for val in row.values if pd.notna(val)])
         
-        # Limpiar el número de orden por si dice "Seguimiento 936..."
         id_orden = "".join(filter(str.isdigit, num_celda)) if "SEGUIMIENTO" in num_celda.upper() else num_celda
         
-        # Procesar SOLO si la orden pertenece a la bandeja actual de este técnico
         if id_orden in ordenes_bandeja:
             matches = re.findall(patron, texto_toda_la_fila, re.IGNORECASE | re.DOTALL)
             for match in matches:
+                # Ya no validamos el nombre exacto. Si la orden es de su bandeja, es su evidencia.
                 seguimientos.append({
                     'ORDEN': id_orden, 
                     'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
@@ -2301,21 +2298,25 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     df_seg = pd.DataFrame(seguimientos)
     
     if not df_seg.empty:
-        df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
         df_seg['FECHA_DT'] = pd.to_datetime(df_seg['FECHA_HORA'], format='mixed', dayfirst=True, errors='coerce')
         
-        # --- 4. FILTRO DE FOTOGRAFÍAS/EVIDENCIAS ---
-        palabras_clave = 'foto|imagen|captura|adjunt|evidencia'
-        mask_fotos = df_seg['COMENTARIO'].astype(str).str.contains(palabras_clave, case=False, na=False)
-        df_seg = df_seg[mask_fotos]
+        # --- 4. FUSIÓN DE COMENTARIO + NOMBRE DE IMAGEN ---
+        # Si un comentario y un archivo .png se suben en el mismo segundo exacto, los une en una sola frase.
+        df_agrupado = df_seg.groupby(['ORDEN', 'ESTADO_ACTUAL', 'FECHA_HORA', 'AUTOR', 'FECHA_DT'])['COMENTARIO'].apply(lambda x: ' | 📸 Archivo adjunto: '.join(x)).reset_index()
         
-    if not df_seg.empty:
-        # --- 5. RESTRINGIR A LAS ÚLTIMAS 3 ÓRDENES ---
-        ordenes_recientes = df_seg.groupby('ORDEN')['FECHA_DT'].max().sort_values(ascending=False)
-        top_3_ordenes = ordenes_recientes.head(3).index.tolist()
-        df_seg = df_seg[df_seg['ORDEN'].isin(top_3_ordenes)]
+        # --- 5. FILTRO DE FOTOGRAFÍAS (Incluyendo .png y .jpg) ---
+        palabras_clave = r'foto|imagen|captura|adjunt|evidencia|\.png|\.jpg|\.jpeg'
+        mask_fotos = df_agrupado['COMENTARIO'].astype(str).str.contains(palabras_clave, case=False, na=False, regex=True)
+        df_agrupado = df_agrupado[mask_fotos]
         
-        # Ordenar desde el comentario más reciente al más antiguo
-        df_seg = df_seg.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
-        
-    return df_seg
+        if not df_agrupado.empty:
+            # --- 6. RESTRINGIR A LAS ÚLTIMAS 3 ÓRDENES ---
+            ordenes_recientes = df_agrupado.groupby('ORDEN')['FECHA_DT'].max().sort_values(ascending=False)
+            top_3_ordenes = ordenes_recientes.head(3).index.tolist()
+            df_agrupado = df_agrupado[df_agrupado['ORDEN'].isin(top_3_ordenes)]
+            
+            # Ordenar para que lo más reciente salga primero
+            df_final = df_agrupado.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
+            return df_final
+            
+    return pd.DataFrame()
