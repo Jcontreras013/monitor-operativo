@@ -2237,7 +2237,12 @@ def generar_pdf_memorandum(row):
 def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     import re
     import pandas as pd
+    from datetime import datetime, timedelta
     
+    # Función interna para obtener la fecha local correcta
+    def get_hn_time_local():
+        return datetime.utcnow() - timedelta(hours=6)
+        
     df_limpio = df_base.copy()
     col_tec = 'TÉCNICO' if 'TÉCNICO' in df_limpio.columns else 'TECNICO'
     if col_tec not in df_limpio.columns:
@@ -2246,20 +2251,29 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     tecnico_upper = str(tecnico_nombre).strip().upper()
     df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
     
-    # 1. Identificar SOLO las órdenes VIVAS del técnico
+    # 1. IDENTIFICAR LA BANDEJA DEL DÍA (Vivas actuales + Cerradas de HOY)
+    hoy_date = get_hn_time_local().date()
     patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+    
     mask_tec = df_limpio[col_tec] == tecnico_upper
     mask_vivas = df_limpio['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
     
-    ordenes_activas_tecnico = set(df_limpio[mask_tec & mask_vivas]['NUM'].dropna().astype(str).unique())
+    # Extraemos solo las que se liquidaron hoy
+    df_limpio['_TEMP_LIQ_DATE'] = pd.to_datetime(df_limpio['HORA_LIQ'], errors='coerce').dt.date
+    mask_cerradas_hoy = (df_limpio['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_limpio['_TEMP_LIQ_DATE'] == hoy_date)
     
-    if not ordenes_activas_tecnico:
+    # Filtramos la bandeja completa del técnico
+    df_bandeja = df_limpio[mask_tec & (mask_vivas | mask_cerradas_hoy)]
+    ordenes_bandeja = set(df_bandeja['NUM'].dropna().astype(str).unique())
+    
+    # Creamos un diccionario para saber si la orden está CERRADA o sigue VIVA en la interfaz
+    mapa_estados = dict(zip(df_bandeja['NUM'].astype(str), df_bandeja['ESTADO'].astype(str).str.upper()))
+    
+    if not ordenes_bandeja:
         return pd.DataFrame()
         
     seguimientos = []
     patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego el comentario:\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
-    
-    # Separar el nombre del técnico en palabras (Ej: ["JOSUE", "MIGUEL", "SAUCEDA"]) para compararlo
     tecnico_words = set(tecnico_upper.split())
     
     for _, row in df_base.iterrows():
@@ -2272,7 +2286,8 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
         else:
             id_orden = num_celda
             
-        if id_orden in ordenes_activas_tecnico:
+        # Solo buscamos en las órdenes que están en la BANDEJA DEL DÍA
+        if id_orden in ordenes_bandeja:
             texto_buscar = comentario_celda if "agrego el comentario" in comentario_celda else contrato_celda
             matches = re.findall(patron, texto_buscar, re.IGNORECASE | re.DOTALL)
             
@@ -2280,18 +2295,14 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
                 autor_match = match[1].strip().upper()
                 autor_words = set(autor_match.split())
                 
-                # VALIDACIÓN DE IDENTIDAD:
-                # Comparamos si el "Autor" del comentario es realmente el Técnico evaluado.
-                # Es válido si:
-                # 1. El nombre del autor está dentro del nombre del técnico (o viceversa)
-                # 2. O si comparten al menos 2 palabras (Ej: Tienen el mismo Primer Nombre y Primer Apellido)
+                # Validación para que SOLO salgan los comentarios de él
                 coincidencias_palabras = len(tecnico_words.intersection(autor_words))
                 es_el_tecnico = (autor_match in tecnico_upper) or (tecnico_upper in autor_match) or (coincidencias_palabras >= 2)
                 
-                # SOLO guardamos si se comprobó que el comentario fue hecho por el técnico
                 if es_el_tecnico:
                     seguimientos.append({
                         'ORDEN': id_orden, 
+                        'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
                         'FECHA_HORA': match[0].strip(), 
                         'AUTOR': match[1].strip(), 
                         'COMENTARIO': match[2].strip()
