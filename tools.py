@@ -2272,14 +2272,15 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
         return pd.DataFrame()
         
     seguimientos = []
-    # --- 3. EL NUEVO REGEX INTELIGENTE --- 
-    # Atrapa el tipo de acción: (agrego el comentario|agrego archivo)
     patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+(agrego el comentario|agrego archivo):\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
+    
+    # Pre-calculamos las palabras del nombre del técnico (Ignorando DE, LA)
+    tecnico_words = set(tecnico_upper.split())
+    tecnico_words = {w for w in tecnico_words if len(w) > 2} 
     
     for _, row in df_base.iterrows():
         num_celda = str(row.get('NUM', '')).strip()
         
-        # Fusión segura: Solo columnas donde Cepheus escupe texto y limpiamos saltos de línea
         texto_celda = str(row.get('COMENTARIO', '')) + " " + str(row.get('CONTRATO FÍSICO', row.get('CONTRATO_FISICO', '')))
         texto_celda = texto_celda.replace('\n', ' ').replace('\r', ' ')
         
@@ -2293,33 +2294,37 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
                 tipo_accion = match[2].strip().lower()
                 texto_crudo = match[3].strip()
                 
-                # Inyección visual si es un archivo
-                if "archivo" in tipo_accion:
-                    texto_final = f"📸 Archivo adjunto: {texto_crudo}"
-                else:
-                    texto_final = texto_crudo
+                # --- NUEVO FILTRO DE IDENTIDAD (Bloqueo a Dispatch) ---
+                autor_limpio = autor.upper().replace('.', ' ')
+                autor_words = set(autor_limpio.split())
+                autor_words = {w for w in autor_words if len(w) > 2}
+                
+                # Exigimos que al menos una palabra del usuario exista en el nombre oficial
+                if len(tecnico_words.intersection(autor_words)) >= 1:
+                    
+                    if "archivo" in tipo_accion:
+                        texto_final = f"📸 Archivo adjunto: {texto_crudo}"
+                    else:
+                        texto_final = texto_crudo
 
-                seguimientos.append({
-                    'ORDEN': id_orden, 
-                    'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
-                    'FECHA_HORA': fecha_hora, 
-                    'AUTOR': autor, 
-                    'COMENTARIO': texto_final
-                })
+                    seguimientos.append({
+                        'ORDEN': id_orden, 
+                        'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
+                        'FECHA_HORA': fecha_hora, 
+                        'AUTOR': autor, 
+                        'COMENTARIO': texto_final
+                    })
 
     df_seg = pd.DataFrame(seguimientos)
     
     if not df_seg.empty:
-        # Limpieza de duplicados exactos (por si Cepheus repite datos)
         df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
         df_seg['FECHA_DT'] = pd.to_datetime(df_seg['FECHA_HORA'], format='mixed', dayfirst=True, errors='coerce')
         
-        # --- 4. RESTRINGIR A LAS ÚLTIMAS 3 ÓRDENES (Cronología intacta) ---
         ordenes_recientes = df_seg.groupby('ORDEN')['FECHA_DT'].max().sort_values(ascending=False)
         top_3_ordenes = ordenes_recientes.head(3).index.tolist()
         df_seg = df_seg[df_seg['ORDEN'].isin(top_3_ordenes)]
         
-        # Ordenar desde lo más reciente a lo más viejo para la interfaz
         df_final = df_seg.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
         return df_final
             
