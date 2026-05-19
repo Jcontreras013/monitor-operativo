@@ -2239,10 +2239,9 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     import pandas as pd
     from datetime import datetime, timedelta
     
-    # Función interna para obtener la fecha local correcta
-    def get_hn_time_local():
-        return datetime.utcnow() - timedelta(hours=6)
-        
+    # 1. Obtener fecha actual en Honduras
+    hoy_date = (datetime.utcnow() - timedelta(hours=6)).date()
+    
     df_limpio = df_base.copy()
     col_tec = 'TÉCNICO' if 'TÉCNICO' in df_limpio.columns else 'TECNICO'
     if col_tec not in df_limpio.columns:
@@ -2251,20 +2250,21 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     tecnico_upper = str(tecnico_nombre).strip().upper()
     df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
     
-    # 1. IDENTIFICAR LA BANDEJA DEL DÍA (Vivas actuales + Cerradas de HOY)
-    hoy_date = get_hn_time_local().date()
+    # --- 2. FILTRAR LA BANDEJA DEL TÉCNICO (Abiertas + Cerradas Hoy) ---
     patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-    
-    mask_tec = df_limpio[col_tec] == tecnico_upper
     mask_vivas = df_limpio['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
     
+    # Detección de las cerradas de hoy (usando FECHA LIQUIDADO)
     col_liq = 'HORA_LIQ' if 'HORA_LIQ' in df_limpio.columns else 'FECHA LIQUIDADO'
     if col_liq in df_limpio.columns:
-        df_limpio['_TEMP_LIQ_DATE'] = pd.to_datetime(df_limpio[col_liq], dayfirst=True, errors='coerce').dt.date
+        df_limpio['_TEMP_LIQ'] = pd.to_datetime(df_limpio[col_liq], format='mixed', dayfirst=True, errors='coerce').dt.date
     else:
-        df_limpio['_TEMP_LIQ_DATE'] = pd.NaT
+        df_limpio['_TEMP_LIQ'] = pd.NaT
         
-    mask_cerradas_hoy = (df_limpio['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_limpio['_TEMP_LIQ_DATE'] == hoy_date)
+    mask_cerradas_hoy = (df_limpio['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_limpio['_TEMP_LIQ'] == hoy_date)
+    
+    # El técnico debe ser el asignado a la orden
+    mask_tec = df_limpio[col_tec] == tecnico_upper
     
     df_bandeja = df_limpio[mask_tec & (mask_vivas | mask_cerradas_hoy)]
     ordenes_bandeja = set(df_bandeja['NUM'].dropna().astype(str).unique())
@@ -2272,39 +2272,31 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     mapa_estados = dict(zip(df_bandeja['NUM'].astype(str), df_bandeja['ESTADO'].astype(str).str.upper()))
     
     if not ordenes_bandeja:
-        return pd.DataFrame() 
+        return pd.DataFrame()
         
     seguimientos = []
+    # Patrón para cazar la hora exacta, el autor y el texto del comentario
     patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+agrego el comentario:\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
-    tecnico_words = set(tecnico_upper.split())
     
+    # --- 3. EXTRACCIÓN DE TEXTOS ---
     for _, row in df_base.iterrows():
         num_celda = str(row.get('NUM', '')).strip()
         texto_toda_la_fila = " ".join([str(val) for val in row.values if pd.notna(val)])
         
-        if "SEGUIMIENTO" in num_celda.upper():
-            id_orden = "".join(filter(str.isdigit, num_celda))
-        else:
-            id_orden = num_celda
-            
+        # Limpiar el número de orden por si dice "Seguimiento 936..."
+        id_orden = "".join(filter(str.isdigit, num_celda)) if "SEGUIMIENTO" in num_celda.upper() else num_celda
+        
+        # Procesar SOLO si la orden pertenece a la bandeja actual de este técnico
         if id_orden in ordenes_bandeja:
             matches = re.findall(patron, texto_toda_la_fila, re.IGNORECASE | re.DOTALL)
-            
             for match in matches:
-                autor_match = match[1].strip().upper().replace('.', ' ')
-                autor_words = set(autor_match.split())
-                
-                coincidencias_palabras = len(tecnico_words.intersection(autor_words))
-                es_el_tecnico = (autor_match in tecnico_upper) or (tecnico_upper in autor_match) or (coincidencias_palabras >= 2)
-                
-                if es_el_tecnico:
-                    seguimientos.append({
-                        'ORDEN': id_orden, 
-                        'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
-                        'FECHA_HORA': match[0].strip(), 
-                        'AUTOR': match[1].strip(), 
-                        'COMENTARIO': match[2].strip()
-                    })
+                seguimientos.append({
+                    'ORDEN': id_orden, 
+                    'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
+                    'FECHA_HORA': match[0].strip(), 
+                    'AUTOR': match[1].strip(), 
+                    'COMENTARIO': match[2].strip()
+                })
 
     df_seg = pd.DataFrame(seguimientos)
     
@@ -2312,23 +2304,18 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
         df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
         df_seg['FECHA_DT'] = pd.to_datetime(df_seg['FECHA_HORA'], format='mixed', dayfirst=True, errors='coerce')
         
-        # --- NUEVO FILTRO 1: Solo retener comentarios que hablen de fotografías o evidencias ---
+        # --- 4. FILTRO DE FOTOGRAFÍAS/EVIDENCIAS ---
         palabras_clave = 'foto|imagen|captura|adjunt|evidencia'
         mask_fotos = df_seg['COMENTARIO'].astype(str).str.contains(palabras_clave, case=False, na=False)
         df_seg = df_seg[mask_fotos]
         
     if not df_seg.empty:
-        # --- NUEVO FILTRO 2: Límite rotativo de las últimas 3 órdenes ---
-        # 1. Busca la fecha más reciente agrupada por orden
+        # --- 5. RESTRINGIR A LAS ÚLTIMAS 3 ÓRDENES ---
         ordenes_recientes = df_seg.groupby('ORDEN')['FECHA_DT'].max().sort_values(ascending=False)
-        
-        # 2. Se queda únicamente con los IDs de las primeras 3
         top_3_ordenes = ordenes_recientes.head(3).index.tolist()
-        
-        # 3. Elimina del dataframe cualquier orden que no esté en ese Top 3
         df_seg = df_seg[df_seg['ORDEN'].isin(top_3_ordenes)]
         
-        # Ordenamos visualmente del más nuevo al más viejo
+        # Ordenar desde el comentario más reciente al más antiguo
         df_seg = df_seg.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
         
     return df_seg
