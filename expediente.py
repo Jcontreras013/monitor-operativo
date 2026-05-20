@@ -8,7 +8,7 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
-import gspread  # Conexión nativa directa para asegurar la escritura
+import gspread  # Conexión unificada absoluta para lectura y escritura
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
@@ -55,7 +55,7 @@ class MemoPDF(FPDF):
 
 def sanitizar(texto):
     import unicodedata
-    if pd.isna(texto) or texto is None: return "N/D"
+    if pd.isna(texto) or texto is None: return "N/D"  # 🛠️ CORREGIDO: Cambio de 'text' a 'texto'
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
@@ -215,9 +215,9 @@ def mostrar_modulo_expedientes(conn, df_base):
     supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
-
-    st.title("📁 Gestión de Expedientes y Reportes")
     
+    columnas_oficiales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
+
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         with st.form("form_incidencia_txt", clear_on_submit=True):
@@ -255,7 +255,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 if res.status_code == 200:
                                     urls.append(res.json()["image"]["url"])
                         
-                        # Fila ordenada alineada exactamente con tus columnas A, B, C, D, E, F, G
                         nueva_fila = [
                             get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             colaborador_sel,
@@ -266,18 +265,14 @@ def mostrar_modulo_expedientes(conn, df_base):
                             supervisor_actual
                         ]
 
-                        # --- CONEXIÓN DIRECTA VIA GSPREAD ANTI-FALLOS ---
                         gc = obtener_cliente_gspread_directo()
                         documento = gc.open_by_url(st.secrets["url_base_datos"])
                         hoja_expedientes = documento.worksheet("Expedientes")
                         
-                        # gspread busca la última fila con datos de forma segura y añade la nueva
                         hoja_expedientes.append_row(nueva_fila)
                         
-                        # Forzar la limpieza de caché de lectura para la visualización del historial
                         st.cache_data.clear()
-                        
-                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
+                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado.")
                         time.sleep(1)
                         st.rerun()
 
@@ -287,12 +282,22 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # HISTORIAL Y HISTÓRICO VISUAL
+    # HISTORIAL DE EXPEDIENTES (Lectura unificada en tiempo real con gspread)
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # Forzar lectura directa sin búferes antiguos corruptos
-        df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        # 🚀 CAMBIO CLAVE: Leemos directamente con gspread para romper el caché por completo
+        gc = obtener_cliente_gspread_directo()
+        documento = gc.open_by_url(st.secrets["url_base_datos"])
+        hoja_expedientes = documento.worksheet("Expedientes")
+        
+        lista_filas = hoja_expedientes.get_all_values()
+        if lista_filas:
+            cabeceras = [str(c).strip().upper() for c in lista_filas[0]]
+            filas_datos = lista_filas[1:]
+            df_view = pd.DataFrame(filas_datos, columns=cabeceras)
+        else:
+            df_view = pd.DataFrame(columns=columnas_oficiales)
         
         if 'TECNICO' in df_view.columns:
             df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
@@ -373,18 +378,24 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 use_container_width=True
                             )
                         with c_d:
+                            # 🔒 EL BOTÓN DE ELIMINAR QUEDA PROTEGIDO BAJO EL ROL ADMIN NUEVAMENTE
                             if es_admin:
-                                if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    gc = obtener_cliente_gspread_directo()
-                                    documento = gc.open_by_url(st.secrets["url_base_datos"])
-                                    hoja_expedientes = documento.worksheet("Expedientes")
-                                    
-                                    # El índice de gspread inicia en 1, agregamos 2 por cabecera de Pandas
-                                    fila_a_borrar = int(idx) + 2
-                                    hoja_expedientes.delete_rows(fila_a_borrar)
-                                    
-                                    st.cache_data.clear()
-                                    st.rerun()
+                                if st.button("🗑️ Eliminar Registro", key=f"del_{idx}", use_container_width=True):
+                                    try:
+                                        gc = obtener_cliente_gspread_directo()
+                                        documento = gc.open_by_url(st.secrets["url_base_datos"])
+                                        hoja_expedientes = documento.worksheet("Expedientes")
+                                        
+                                        # Índice gspread base 1 + encabezado = idx + 2
+                                        fila_a_borrar = int(idx) + 2
+                                        hoja_expedientes.delete_rows(fila_a_borrar)
+                                        
+                                        st.cache_data.clear()
+                                        st.success("Registro eliminado correctamente.")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error al eliminar: {e}")
         else:
             st.info("No hay registros en la base de datos.")
 
