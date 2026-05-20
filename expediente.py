@@ -6,7 +6,9 @@ from datetime import datetime, timedelta, timezone
 import os
 import tempfile
 import textwrap
+import time
 from fpdf import FPDF
+import gspread  # Conexión nativa directa para asegurar la escritura
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
@@ -189,6 +191,24 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
+# FUNCIÓN DE CONEXIÓN AUTENTICADA CON TU LLAVE COMPLETA
+# ==============================================================================
+def obtener_cliente_gspread_directo():
+    credenciales = {
+        "type": st.secrets["connections"]["gsheets"]["type"],
+        "project_id": st.secrets["connections"]["gsheets"]["project_id"],
+        "private_key_id": st.secrets["connections"]["gsheets"]["private_key_id"],
+        "private_key": st.secrets["connections"]["gsheets"]["private_key"],
+        "client_email": st.secrets["connections"]["gsheets"]["client_email"],
+        "client_id": st.secrets["connections"]["gsheets"]["client_id"],
+        "auth_uri": st.secrets["connections"]["gsheets"]["auth_uri"],
+        "token_uri": st.secrets["connections"]["gsheets"]["token_uri"],
+        "auth_provider_x509_cert_url": st.secrets["connections"]["gsheets"]["auth_provider_x509_cert_url"],
+        "client_x509_cert_url": st.secrets["connections"]["gsheets"]["client_x509_cert_url"]
+    }
+    return gspread.service_account_from_dict(credenciales)
+
+# ==============================================================================
 # 3. INTERFAZ DE EXPEDIENTES
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
@@ -198,11 +218,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    columnas_oficiales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
-
-    # --------------------------------------------------------------------------
-    # GUARDADO SIN RERUN (Solución al Caché) Y BUSCADOR DE CASILLAS
-    # --------------------------------------------------------------------------
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         with st.form("form_incidencia_txt", clear_on_submit=True):
@@ -222,7 +237,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             if st.form_submit_button("💾 GUARDAR EN EXPEDIENTE"):
                 if colaborador_sel == "---" or not comentario:
-                    st.error("⚠️ Complete el nombre y el comentario.")    
+                    st.error("⚠️ Complete el nombre y el comentario.")
                 else:
                     try:
                         urls = []
@@ -240,66 +255,45 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 if res.status_code == 200:
                                     urls.append(res.json()["image"]["url"])
                         
-                        # 1. Creamos el nuevo registro en formato DataFrame
-                        nuevo_registro = pd.DataFrame([{
-                            "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                            "TECNICO": colaborador_sel,
-                            "TIPO_FALTA": tipo_falta,
-                            "FECHA_INCIDENCIA": fecha_inc.strftime("%d/%m/%Y"),
-                            "COMENTARIO": comentario,
-                            "URL_FOTO": ", ".join(urls),
-                            "SUPERVISOR": supervisor_actual
-                        }])
+                        # Fila ordenada alineada exactamente con tus columnas A, B, C, D, E, F, G
+                        nueva_fila = [
+                            get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
+                            colaborador_sel,
+                            tipo_falta,
+                            fecha_inc.strftime("%d/%m/%Y"),
+                            comentario,
+                            ", ".join(urls),
+                            supervisor_actual
+                        ]
 
-                        # 2. Descargamos la base de datos actual y forzamos la actualización (sin caché)
+                        # --- CONEXIÓN DIRECTA VIA GSPREAD ANTI-FALLOS ---
+                        gc = obtener_cliente_gspread_directo()
+                        documento = gc.open_by_url(st.secrets["url_base_datos"])
+                        hoja_expedientes = documento.worksheet("Expedientes")
+                        
+                        # gspread busca la última fila con datos de forma segura y añade la nueva
+                        hoja_expedientes.append_row(nueva_fila)
+                        
+                        # Forzar la limpieza de caché de lectura para la visualización del historial
                         st.cache_data.clear()
-                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         
-                        # Aseguramos que tenga las columnas correctas
-                        for col in columnas_oficiales:
-                            if col not in df_db.columns: 
-                                df_db[col] = ""
-                        df_db = df_db[columnas_oficiales]
-
-                        # 3. ELIMINAMOS FILAS FANTASMAS: Borramos cualquier fila donde la columna TECNICO esté vacía
-                        df_db = df_db.dropna(subset=['TECNICO'])
-                        df_db = df_db[df_db['TECNICO'].astype(str).str.strip() != '']
-                        df_db = df_db[~df_db['TECNICO'].astype(str).str.lower().isin(['nan', 'none', 'null', 'nat', 'undefined'])]
-
-                        # 4. Unimos la tabla limpia con el nuevo registro al final
-                        df_final = pd.concat([df_db, nuevo_registro], ignore_index=True)
-                        
-                        # Limpiamos los textos nulos para que Google Sheets no arroje error
-                        df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
-                        
-                        # 5. Sobreescribimos la hoja con la tabla perfecta
-                        conn.update(
-                            spreadsheet=st.secrets["url_base_datos"],
-                            worksheet="Expedientes",
-                            data=df_final
-                        )
-                        
-                        st.success(f"✅ ¡Guardado exitosamente: {colaborador_sel}!")
+                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
                         time.sleep(1)
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"❌ Error crítico al guardar: {e}")
+                        st.error(f"❌ Error al intentar escribir en Google Sheets: {e}")
 
     st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # HISTORIAL Y TABLA
+    # HISTORIAL Y HISTÓRICO VISUAL
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # Mostramos lo que acabamos de guardar, o leemos de nuevo
-        if 'df_expedientes_fresco' in st.session_state:
-            df_view = st.session_state['df_expedientes_fresco'].copy()
-        else:
-            df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        # Forzar lectura directa sin búferes antiguos corruptos
+        df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
-        # Filtramos internamente solo para la VISTA en pantalla
         if 'TECNICO' in df_view.columns:
             df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
             df_mostrar = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])].copy()
@@ -355,7 +349,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     )
 
             if df_mostrar.empty:
-                st.info("💡 No hay registros. Verifica si el rango de fechas cubre tus incidentes guardados.")
+                st.info("💡 No hay registros para los filtros seleccionados.")
             else:
                 for idx, row in df_mostrar.iloc[::-1].iterrows():
                     es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
@@ -372,7 +366,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         c_p, c_d = st.columns(2)
                         with c_p:
                             st.download_button(
-                                f"📄 Descargar",
+                                f"📄 Descargar PDF",
                                 data=generar_pdf_memo(row.to_dict()),
                                 file_name=f"Reporte_{idx}.pdf",
                                 key=f"p_{idx}",
@@ -381,18 +375,16 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with c_d:
                             if es_admin:
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    # Para eliminar, VACIAMOS la fila en lugar de destruirla para no desajustar el excel
-                                    df_completo = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                                    df_completo.loc[idx, columnas_oficiales] = ""
-                                    df_completo = df_completo.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
+                                    gc = obtener_cliente_gspread_directo()
+                                    documento = gc.open_by_url(st.secrets["url_base_datos"])
+                                    hoja_expedientes = documento.worksheet("Expedientes")
                                     
-                                    conn.update(
-                                        spreadsheet=st.secrets["url_base_datos"],
-                                        worksheet="Expedientes",
-                                        data=df_completo
-                                    )
-                                    st.session_state['df_expedientes_fresco'] = df_completo
-                                    st.rerun() # Aquí sí ocupamos rerun para que la tarjeta desaparezca visualmente al instante
+                                    # El índice de gspread inicia en 1, agregamos 2 por cabecera de Pandas
+                                    fila_a_borrar = int(idx) + 2
+                                    hoja_expedientes.delete_rows(fila_a_borrar)
+                                    
+                                    st.cache_data.clear()
+                                    st.rerun()
         else:
             st.info("No hay registros en la base de datos.")
 
