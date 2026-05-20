@@ -222,7 +222,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             if st.form_submit_button("💾 GUARDAR EN EXPEDIENTE"):
                 if colaborador_sel == "---" or not comentario:
-                    st.error("⚠️ Complete el nombre y el comentario.")
+                    st.error("⚠️ Complete el nombre y el comentario.")    
                 else:
                     try:
                         urls = []
@@ -240,7 +240,8 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 if res.status_code == 200:
                                     urls.append(res.json()["image"]["url"])
                         
-                        nueva_fila = pd.DataFrame([{
+                        # 1. Creamos el nuevo registro en formato DataFrame
+                        nuevo_registro = pd.DataFrame([{
                             "FECHA_REGISTRO": get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             "TECNICO": colaborador_sel,
                             "TIPO_FALTA": tipo_falta,
@@ -250,45 +251,37 @@ def mostrar_modulo_expedientes(conn, df_base):
                             "SUPERVISOR": supervisor_actual
                         }])
 
-                        # Lectura en Tiempo Real (ttl=0 absoluto)
-                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=1.5)
+                        # 2. Descargamos la base de datos actual y forzamos la actualización (sin caché)
+                        st.cache_data.clear()
+                        df_db = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         
-                        # Aseguramos que todas las columnas existan
+                        # Aseguramos que tenga las columnas correctas
                         for col in columnas_oficiales:
                             if col not in df_db.columns: 
                                 df_db[col] = ""
                         df_db = df_db[columnas_oficiales]
+
+                        # 3. ELIMINAMOS FILAS FANTASMAS: Borramos cualquier fila donde la columna TECNICO esté vacía
+                        df_db = df_db.dropna(subset=['TECNICO'])
+                        df_db = df_db[df_db['TECNICO'].astype(str).str.strip() != '']
+                        df_db = df_db[~df_db['TECNICO'].astype(str).str.lower().isin(['nan', 'none', 'null', 'nat', 'undefined'])]
+
+                        # 4. Unimos la tabla limpia con el nuevo registro al final
+                        df_final = pd.concat([df_db, nuevo_registro], ignore_index=True)
                         
-                        # EL BUSCADOR DE CASILLAS: Encontrar exactamente la primera fila vacía
-                        mascara_vacia = df_db['TECNICO'].isna() | \
-                                        (df_db['TECNICO'].astype(str).str.strip() == '') | \
-                                        df_db['TECNICO'].astype(str).str.lower().isin(['nan', 'none', 'null', 'nat', 'undefined'])
-                        
-                        indices_vacios = df_db.index[mascara_vacia].tolist()
-                        
-                        if indices_vacios:
-                            # Si hay huecos, metemos el dato en el primer hueco que encontremos
-                            primer_indice = indices_vacios[0]
-                            for col in columnas_oficiales:
-                                df_db.at[primer_indice, col] = nueva_fila.iloc[0][col]
-                            df_final = df_db
-                        else:
-                            # Si de verdad no hay huecos, agregamos al final
-                            df_final = pd.concat([df_db, nueva_fila], ignore_index=True)
-                        
-                        # Limpiar cadenas de texto para Google Sheets
+                        # Limpiamos los textos nulos para que Google Sheets no arroje error
                         df_final = df_final.fillna("").astype(str).replace(["nan", "NaN", "None", "null", "NaT", "undefined"], "")
                         
-                        # Subimos todo (manteniendo la misma cantidad de filas exactas de la hoja original)
+                        # 5. Sobreescribimos la hoja con la tabla perfecta
                         conn.update(
                             spreadsheet=st.secrets["url_base_datos"],
                             worksheet="Expedientes",
                             data=df_final
                         )
                         
-                        # GUARDAMOS EN MEMORIA PARA MOSTRAR ABAJO AL INSTANTE (SIN RERUN)
-                        st.session_state['df_expedientes_fresco'] = df_final
-                        st.success(f"✅ ¡Guardado exitosamente en el sistema!")
+                        st.success(f"✅ ¡Guardado exitosamente: {colaborador_sel}!")
+                        time.sleep(1)
+                        st.rerun()
 
                     except Exception as e:
                         st.error(f"❌ Error crítico al guardar: {e}")
