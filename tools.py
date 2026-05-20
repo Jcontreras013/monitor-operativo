@@ -2329,3 +2329,62 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
         return df_final
             
     return pd.DataFrame()
+
+def verificar_y_alertar_vips(df_diario, lista_vips):
+    """Cruza la base operativa con la lista VIP y dispara alertas SOLO si es Crítica u Offline."""
+    if not lista_vips or df_diario.empty:
+        return False, 0
+        
+    # Aseguramos que la columna CLIENTE sea texto limpio para comparar
+    df_diario['CLIENTE_STR'] = df_diario['CLIENTE'].astype(str).str.strip()
+    
+    # 1. Filtrar primero los que pertenecen a la lista VIP
+    vips_afectados = df_diario[df_diario['CLIENTE_STR'].isin(lista_vips)].copy()
+    
+    if vips_afectados.empty:
+        return False, 0
+
+    # 2. NUEVO FILTRO: Dejamos SOLO los que son Offline o tienen Alerta de Tiempo (Críticos)
+    condicion_offline = vips_afectados.get('ES_OFFLINE', pd.Series([False]*len(vips_afectados))) == True
+    condicion_tiempo = vips_afectados.get('ALERTA_TIEMPO', pd.Series([False]*len(vips_afectados))) == True
+    
+    vips_criticos = vips_afectados[condicion_offline | condicion_tiempo]
+    
+    if not vips_criticos.empty:
+        if 'alertas_enviadas' not in st.session_state:
+            st.session_state['alertas_enviadas'] = set()
+            
+        nuevas_alertas = 0
+        for index, row in vips_criticos.iterrows():
+            id_cliente = row['CLIENTE_STR']
+            nombre = str(row.get('NOMBRE', 'VIP Desconocido'))
+            actividad = str(row.get('ACTIVIDAD', 'ACTIVIDAD DESCONOCIDA'))
+            ticket = str(row.get('NUM', 'Sin Ticket'))
+            estado = str(row.get('ESTADO', 'N/D'))
+            
+            # Identificamos visualmente por qué se disparó la alerta
+            tipo_alerta = "🔴 EQUIPO OFFLINE (CAÍDO)" if row.get('ES_OFFLINE') else "⚠️ ALERTA DE TIEMPO (>2 HORAS)"
+            
+            # Evitamos enviar alertas por órdenes que ya fueron cerradas o anuladas
+            if estado.upper() in ['CERRADA', 'ANULADA']:
+                continue
+            
+            # Llave única para no bombardear el WhatsApp si la página se recarga (incluye etiqueta de critico)
+            llave_alerta = f"{ticket}_{id_cliente}_{estado}_critico"
+            
+            if llave_alerta not in st.session_state['alertas_enviadas']:
+                mensaje = f"🚨 *EMERGENCIA VIP MAXCOM* 🚨\n\n"
+                mensaje += f"⚠️ *URGENCIA:* {tipo_alerta}\n"
+                mensaje += f"👤 *Cliente:* {nombre}\n"
+                mensaje += f"🆔 *ID:* {id_cliente}\n"
+                mensaje += f"🛠️ *Actividad:* {actividad}\n"
+                mensaje += f"🎫 *Ticket:* {ticket}\n"
+                mensaje += f"🚦 *Estado Actual:* {estado}\n\n"
+                mensaje += f"Prioridad Máxima. Favor escalar de inmediato."
+                
+                enviar_whatsapp(mensaje)
+                st.session_state['alertas_enviadas'].add(llave_alerta)
+                nuevas_alertas += 1
+                
+        return (nuevas_alertas > 0), nuevas_alertas
+    return False, 0
