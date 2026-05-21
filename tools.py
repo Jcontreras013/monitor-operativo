@@ -2445,7 +2445,7 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
         
-      def generar_pdf_ordenes_totales(df_base, fecha_corte):
+   def generar_pdf_ordenes_totales(df_base, fecha_corte):
     """Genera un PDF con el listado de todas las órdenes PENDIENTES, incluyendo columna de Días de Retraso."""
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
