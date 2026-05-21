@@ -2392,7 +2392,7 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
 
 
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
-    """Genera un PDF con el listado de todas las órdenes PENDIENTES (Asignadas + No Asignadas)."""
+    """Genera un PDF con el listado de todas las órdenes PENDIENTES, incluyendo columna de Días de Retraso."""
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -2406,25 +2406,29 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {fecha_corte.strftime('%d/%m/%Y')}"), ln=True, align="C")
     pdf.ln(5)
     
-    pdf.seccion_titulo(f"Listado Total ({len(df_base)} Órdenes Asignadas y No Asignadas)")
+    pdf.seccion_titulo(f"Listado Total ({len(df_base)} Órdenes en Ruta / Sin Asignar)")
     
     pdf.set_fill_color(240, 240, 240)
     pdf.set_text_color(50, 50, 50)
     pdf.set_font("Helvetica", "B", 7)
     
-    w = [20, 20, 50, 60, 40]
+    # Anchos ajustados para incluir la nueva columna de "Días"
+    # Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Dias(15) + Estado(40) = 190mm
+    w = [20, 20, 40, 55, 15, 40] 
+    
     pdf.cell(w[0], 6, "Orden", border=1, align="C", fill=True)
     pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
     pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
     pdf.cell(w[3], 6, "Actividad", border=1, align="C", fill=True)
-    pdf.cell(w[4], 6, "Estado", border=1, align="C", fill=True)
+    pdf.cell(w[4], 6, "Días", border=1, align="C", fill=True)
+    pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 6)
     pdf.set_text_color(0, 0, 0)
     
     for _, row in df_base.iterrows():
-        # Si la hoja se llena, salta a la siguiente y repite encabezados
+        # Saltar página si se acaba el espacio
         if pdf.get_y() > 270:
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 7)
@@ -2433,28 +2437,32 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
             pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
             pdf.cell(w[3], 6, "Actividad", border=1, align="C", fill=True)
-            pdf.cell(w[4], 6, "Estado", border=1, align="C", fill=True)
+            pdf.cell(w[4], 6, "Días", border=1, align="C", fill=True)
+            pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 6)
             
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
         
-        tec_original = str(row.get('TECNICO', ''))
-        # Si no tiene técnico, le ponemos un indicativo claro
-        if pd.isna(tec_original) or tec_original.strip() == '' or tec_original.upper() in ['NONE', 'NAN', 'N/D', 'NULL']:
+        # Lógica para mostrar "SIN ASIGNAR" si no hay técnico
+        tec_raw = str(row.get('TECNICO', ''))
+        if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', '']:
             tec = "SIN ASIGNAR"
         else:
-            tec = safestr(tec_original)[:30]
+            tec = safestr(tec_raw)[:25]
             
         act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
+        # Aquí traemos la columna de Días de Retraso
+        dias = safestr(str(row.get('DIAS_RETRASO', '0')))
         est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
         
         pdf.cell(w[0], 5, num, border=1, align="C")
         pdf.cell(w[1], 5, cliente, border=1, align="C")
         pdf.cell(w[2], 5, tec, border=1, align="L")
         pdf.cell(w[3], 5, act, border=1, align="L")
-        pdf.cell(w[4], 5, est, border=1, align="C")
+        pdf.cell(w[4], 5, dias, border=1, align="C")
+        pdf.cell(w[5], 5, est, border=1, align="C")
         pdf.ln()
         
     return finalizar_pdf(pdf)
