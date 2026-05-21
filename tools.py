@@ -2388,3 +2388,64 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
                 
         return (nuevas_alertas > 0), nuevas_alertas
     return False, 0
+
+def generar_pdf_ordenes_totales(df_base, fecha_corte):
+    """Genera un PDF con el listado absoluto de todas las órdenes en la base."""
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE COMPLETO DE ORDENES TOTALES"), border=0, ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {fecha_corte.strftime('%d/%m/%Y')}"), ln=True, align="C")
+    pdf.ln(5)
+    
+    pdf.seccion_titulo(f"Listado Total ({len(df_base)} Órdenes)")
+    
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_text_color(50, 50, 50)
+    pdf.set_font("Helvetica", "B", 7)
+    
+    w = [20, 20, 50, 60, 40]
+    pdf.cell(w[0], 6, "Orden", border=1, align="C", fill=True)
+    pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
+    pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
+    pdf.cell(w[3], 6, "Actividad", border=1, align="C", fill=True)
+    pdf.cell(w[4], 6, "Estado", border=1, align="C", fill=True)
+    pdf.ln()
+    
+    pdf.set_font("Helvetica", "", 6)
+    pdf.set_text_color(0, 0, 0)
+    
+    for _, row in df_base.iterrows():
+        # Si llegamos al final de la hoja, creamos una nueva y repetimos cabeceras
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_fill_color(240, 240, 240)
+            pdf.cell(w[0], 6, "Orden", border=1, align="C", fill=True)
+            pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
+            pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
+            pdf.cell(w[3], 6, "Actividad", border=1, align="C", fill=True)
+            pdf.cell(w[4], 6, "Estado", border=1, align="C", fill=True)
+            pdf.ln()
+            pdf.set_font("Helvetica", "", 6)
+            
+        num = safestr(str(row.get('NUM', 'N/D')))
+        cliente = safestr(str(row.get('CLIENTE', 'N/D')))
+        tec = safestr(str(row.get('TECNICO', 'N/D')))[:30]
+        act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
+        est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
+        
+        pdf.cell(w[0], 5, num, border=1, align="C")
+        pdf.cell(w[1], 5, cliente, border=1, align="C")
+        pdf.cell(w[2], 5, tec, border=1, align="L")
+        pdf.cell(w[3], 5, act, border=1, align="L")
+        pdf.cell(w[4], 5, est, border=1, align="C")
+        pdf.ln()
+        
+    return finalizar_pdf(pdf)
