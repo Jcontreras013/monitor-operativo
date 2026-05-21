@@ -591,18 +591,20 @@ def main():
             
             check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
             check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
-            # --- NUEVO BOTÓN: ÓRDENES TOTALES ---
-            
-            total_absoluto = len(df_base_activa)
-            check_ordenes_totales = st.toggle(f"📋 Órdenes Totales ({total_absoluto})")
+         
+            # --- NUEVO BOTÓN: ÓRDENES TOTALES PENDIENTES ---
+            total_vivas = int(m_viva_count.sum()) # Esta variable ya trae la suma total (Asig + No Asig)
+            check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})")
             
             if check_ordenes_totales:
                 if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True):
                     with st.spinner("Generando documento PDF..."):
-                        st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_base_activa, hoy_date_valor)
+                        # Mandamos exclusivamente las órdenes vivas/pendientes
+                        df_vivas_export = df_base_activa[m_viva_count].copy()
+                        st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_vivas_export, hoy_date_valor)
                 if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
-                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Totales_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-            # ------------------------------------
+                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            # ------------------------------------------------
             
             lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
@@ -1178,7 +1180,16 @@ def main():
                         elif v == "= 0 Dia": bg_color = '#388e3c'
                         return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                else:
+                    st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
+                    
+                    # --- BOTÓN DE DESCARGA PDF EN MÓVIL ---
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("📄 DESCARGAR PDF", use_container_width=True, key="btn_pdf_movil"):
+                        with st.spinner("Generando PDF..."):
+                            st.session_state['pdf_tablero'] = generar_pdf_ordenes_totales(df_todas_pendientes_monitor, hoy_date_valor)
+                    if 'pdf_tablero' in st.session_state and st.session_state['pdf_tablero']:
+                        st.download_button("📥 GUARDAR PDF", data=st.session_state['pdf_tablero'], file_name=f"Tablero_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="dl_pdf_movil")
+               else:
                     col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
                     with col_tab_1:
                         st.caption("📅 Resumen de Retraso")
@@ -1195,8 +1206,14 @@ def main():
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                         st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                        st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: black;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align: center; padding-top: 5px; padding-bottom: 15px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
 
+                        if st.button("📄 DESCARGAR PDF", use_container_width=True, key="btn_pdf_desk"):
+                            with st.spinner("Generando PDF..."):
+                                st.session_state['pdf_tablero_desk'] = generar_pdf_ordenes_totales(df_todas_pendientes_monitor, hoy_date_valor)
+                        if 'pdf_tablero_desk' in st.session_state and st.session_state['pdf_tablero_desk']:
+                            st.download_button("📥 GUARDAR PDF", data=st.session_state['pdf_tablero_desk'], file_name=f"Tablero_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="dl_pdf_desk")
+                            
                 g_tab_list = []
                 sub_tab_list = []
                 for idx, r in df_todas_pendientes_monitor.iterrows():
@@ -1482,9 +1499,9 @@ def main():
 
                 status_final_btn = st.session_state.st_btn_v_active
 
-                # --- NUEVA REGLA: SI ESTÁ ACTIVO ÓRDENES TOTALES, MUESTRA TODO EL UNIVERSO ---
+                # --- NUEVA REGLA: SI ESTÁ ACTIVO "ÓRDENES TOTALES", MUESTRA EL UNIVERSO PENDIENTE COMPLETO ---
                 if check_ordenes_totales:
-                    df_v_tabla_monitor = df_monitor_filtrado 
+                    df_v_tabla_monitor = df_todas_pendientes_monitor 
                 else:
                     if status_final_btn == "PENDIENTE": 
                         if check_criticos_diamante:
@@ -1495,6 +1512,7 @@ def main():
                         df_v_tabla_monitor = df_cerradas_hoy_monitor
                     else: 
                         df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                        
 
                 t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
                 
