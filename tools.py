@@ -2390,9 +2390,15 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
     return False, 0
 
 
-
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
-    """Genera un PDF con el listado de todas las órdenes PENDIENTES, incluyendo columna de Días de Retraso."""
+    """Genera un PDF con el listado de todas las órdenes PENDIENTES, ordenadas por Días de Retraso de mayor a menor."""
+    
+    # --- 1. ORDENAMIENTO ---
+    # Aseguramos que la columna sea numérica para que el orden sea correcto (10 > 2)
+    df_base['DIAS_RETRASO'] = pd.to_numeric(df_base['DIAS_RETRASO'], errors='coerce').fillna(0)
+    # Ordenar de mayor a menor
+    df_base = df_base.sort_values(by='DIAS_RETRASO', ascending=False)
+    
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -2412,15 +2418,16 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.set_text_color(50, 50, 50)
     pdf.set_font("Helvetica", "B", 7)
     
-    # Anchos ajustados para incluir la nueva columna de "Días"
-    # Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Dias(15) + Estado(40) = 190mm
-    w = [20, 20, 40, 55, 15, 40] 
+    # --- 2. AJUSTE DE ANCHOS Y ORDEN DE COLUMNAS ---
+    # Nuevo Orden: Días(15) + Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Estado(40) = 190mm
+    w = [15, 20, 20, 40, 55, 40] 
     
-    pdf.cell(w[0], 6, "Orden", border=1, align="C", fill=True)
-    pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
-    pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
-    pdf.cell(w[3], 6, "Actividad", border=1, align="C", fill=True)
-    pdf.cell(w[4], 6, "Días", border=1, align="C", fill=True)
+    # Encabezado
+    pdf.cell(w[0], 6, "Días", border=1, align="C", fill=True)
+    pdf.cell(w[1], 6, "Orden", border=1, align="C", fill=True)
+    pdf.cell(w[2], 6, "Cliente", border=1, align="C", fill=True)
+    pdf.cell(w[3], 6, "Tecnico", border=1, align="C", fill=True)
+    pdf.cell(w[4], 6, "Actividad", border=1, align="C", fill=True)
     pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
     pdf.ln()
     
@@ -2433,19 +2440,20 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 7)
             pdf.set_fill_color(240, 240, 240)
-            pdf.cell(w[0], 6, "Orden", border=1, align="C", fill=True)
-            pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
-            pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
-            pdf.cell(w[3], 6, "Actividad", border=1, align="C", fill=True)
-            pdf.cell(w[4], 6, "Días", border=1, align="C", fill=True)
+            pdf.cell(w[0], 6, "Días", border=1, align="C", fill=True)
+            pdf.cell(w[1], 6, "Orden", border=1, align="C", fill=True)
+            pdf.cell(w[2], 6, "Cliente", border=1, align="C", fill=True)
+            pdf.cell(w[3], 6, "Tecnico", border=1, align="C", fill=True)
+            pdf.cell(w[4], 6, "Actividad", border=1, align="C", fill=True)
             pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 6)
             
+        # Extraer datos
+        dias = safestr(str(int(row.get('DIAS_RETRASO', 0)))) # Convertimos a int para quitar el .0 si es float
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
         
-        # Lógica para mostrar "SIN ASIGNAR" si no hay técnico
         tec_raw = str(row.get('TECNICO', ''))
         if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', '']:
             tec = "SIN ASIGNAR"
@@ -2453,15 +2461,14 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             tec = safestr(tec_raw)[:25]
             
         act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
-        # Aquí traemos la columna de Días de Retraso
-        dias = safestr(str(row.get('DIAS_RETRASO', '0')))
         est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
         
-        pdf.cell(w[0], 5, num, border=1, align="C")
-        pdf.cell(w[1], 5, cliente, border=1, align="C")
-        pdf.cell(w[2], 5, tec, border=1, align="L")
-        pdf.cell(w[3], 5, act, border=1, align="L")
-        pdf.cell(w[4], 5, dias, border=1, align="C")
+        # --- 3. DIBUJAR CELDAS EN EL NUEVO ORDEN ---
+        pdf.cell(w[0], 5, dias, border=1, align="C")
+        pdf.cell(w[1], 5, num, border=1, align="C")
+        pdf.cell(w[2], 5, cliente, border=1, align="C")
+        pdf.cell(w[3], 5, tec, border=1, align="L")
+        pdf.cell(w[4], 5, act, border=1, align="L")
         pdf.cell(w[5], 5, est, border=1, align="C")
         pdf.ln()
         
