@@ -2391,7 +2391,7 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
 
 
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
-    """Genera un PDF con el listado de todas las órdenes PENDIENTES, con semáforo de colores en la columna Días."""
+    """Genera un PDF con el listado de todas las órdenes PENDIENTES, ordenadas por retraso y con columna Colonia."""
     
     # --- 1. ORDENAMIENTO ---
     df_base['DIAS_RETRASO'] = pd.to_numeric(df_base['DIAS_RETRASO'], errors='coerce').fillna(0)
@@ -2416,8 +2416,8 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.set_text_color(50, 50, 50)
     pdf.set_font("Helvetica", "B", 7)
     
-    # Anchos: Días(15) + Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Estado(40) = 190mm
-    w = [15, 20, 20, 40, 55, 40] 
+    # Anchos ajustados: Días(12), Orden(18), Cliente(20), Tecnico(40), Actividad(50), Colonia(50) = 190mm
+    w = [12, 18, 20, 40, 50, 50] 
     
     # Encabezado
     pdf.cell(w[0], 6, "Días", border=1, align="C", fill=True)
@@ -2425,7 +2425,7 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.cell(w[2], 6, "Cliente", border=1, align="C", fill=True)
     pdf.cell(w[3], 6, "Tecnico", border=1, align="C", fill=True)
     pdf.cell(w[4], 6, "Actividad", border=1, align="C", fill=True)
-    pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
+    pdf.cell(w[5], 6, "Colonia", border=1, align="C", fill=True)
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 6)
@@ -2441,48 +2441,47 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             pdf.cell(w[2], 6, "Cliente", border=1, align="C", fill=True)
             pdf.cell(w[3], 6, "Tecnico", border=1, align="C", fill=True)
             pdf.cell(w[4], 6, "Actividad", border=1, align="C", fill=True)
-            pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
+            pdf.cell(w[5], 6, "Colonia", border=1, align="C", fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 6)
 
-        # 1. Lógica de Color para la celda de Días
+        # 1. Semáforo de Días
         dias_val = int(row.get('DIAS_RETRASO', 0))
-        
         if dias_val >= 7:
             pdf.set_fill_color(211, 47, 47)   # Rojo
-            pdf.set_text_color(255, 255, 255) # Texto Blanco
+            pdf.set_text_color(255, 255, 255)
         elif 4 <= dias_val <= 6:
             pdf.set_fill_color(245, 124, 0)   # Naranja
-            pdf.set_text_color(255, 255, 255) # Texto Blanco
+            pdf.set_text_color(255, 255, 255)
         elif 1 <= dias_val <= 3:
             pdf.set_fill_color(251, 192, 45)  # Amarillo
-            pdf.set_text_color(0, 0, 0)       # Texto Negro
+            pdf.set_text_color(0, 0, 0)
         else:
             pdf.set_fill_color(56, 142, 60)   # Verde
-            pdf.set_text_color(255, 255, 255) # Texto Blanco
+            pdf.set_text_color(255, 255, 255)
 
-        # Dibujar celda de Días con color
         pdf.set_font("Helvetica", "B", 6)
         pdf.cell(w[0], 5, str(dias_val), border=1, align="C", fill=True)
 
-        # 2. Resetear colores para el resto de la fila
+        # 2. Reset para el resto de la fila
         pdf.set_text_color(0, 0, 0)
         pdf.set_font("Helvetica", "", 6)
         
-        # Extraer resto de datos
+        # Datos
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
+        
         tec_raw = str(row.get('TECNICO', ''))
         tec = "SIN ASIGNAR" if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:25]
-        act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
-        est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
         
-        # Dibujar resto de celdas (Normales)
+        act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:32]
+        colonia = safestr(str(row.get('COLONIA', 'N/D')))[:35] # Obtenemos Colonia
+        
         pdf.cell(w[1], 5, num, border=1, align="C")
         pdf.cell(w[2], 5, cliente, border=1, align="C")
         pdf.cell(w[3], 5, tec, border=1, align="L")
         pdf.cell(w[4], 5, act, border=1, align="L")
-        pdf.cell(w[5], 5, est, border=1, align="C")
+        pdf.cell(w[5], 5, colonia, border=1, align="L") # Imprimimos Colonia
         pdf.ln()
         
     return finalizar_pdf(pdf)
