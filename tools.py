@@ -2389,22 +2389,24 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
         return (nuevas_alertas > 0), nuevas_alertas
     return False, 0
 
+
+
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
-    """Genera un PDF con el listado absoluto de todas las órdenes en la base."""
+    """Genera un PDF con el listado de todas las órdenes PENDIENTES (Asignadas + No Asignadas)."""
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
     
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 10, safestr("REPORTE COMPLETO DE ORDENES TOTALES"), border=0, ln=True, align="C")
+    pdf.cell(0, 10, safestr("REPORTE DE ORDENES TOTALES PENDIENTES"), border=0, ln=True, align="C")
     
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {fecha_corte.strftime('%d/%m/%Y')}"), ln=True, align="C")
     pdf.ln(5)
     
-    pdf.seccion_titulo(f"Listado Total ({len(df_base)} Órdenes)")
+    pdf.seccion_titulo(f"Listado Total ({len(df_base)} Órdenes Asignadas y No Asignadas)")
     
     pdf.set_fill_color(240, 240, 240)
     pdf.set_text_color(50, 50, 50)
@@ -2422,7 +2424,7 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.set_text_color(0, 0, 0)
     
     for _, row in df_base.iterrows():
-        # Si llegamos al final de la hoja, creamos una nueva y repetimos cabeceras
+        # Si la hoja se llena, salta a la siguiente y repite encabezados
         if pdf.get_y() > 270:
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 7)
@@ -2437,7 +2439,14 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
-        tec = safestr(str(row.get('TECNICO', 'N/D')))[:30]
+        
+        tec_original = str(row.get('TECNICO', ''))
+        # Si no tiene técnico, le ponemos un indicativo claro
+        if pd.isna(tec_original) or tec_original.strip() == '' or tec_original.upper() in ['NONE', 'NAN', 'N/D', 'NULL']:
+            tec = "SIN ASIGNAR"
+        else:
+            tec = safestr(tec_original)[:30]
+            
         act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
         est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
         
