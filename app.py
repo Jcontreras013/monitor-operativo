@@ -591,6 +591,20 @@ def main():
             
             check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
             check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+         
+            # --- NUEVO BOTÓN: ÓRDENES TOTALES PENDIENTES ---
+            total_vivas = int(m_viva_count.sum()) # Esta variable ya trae la suma total (Asig + No Asig)
+            check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})")
+            
+            if check_ordenes_totales:
+                if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True):
+                    with st.spinner("Generando documento PDF..."):
+                        # Mandamos exclusivamente las órdenes vivas/pendientes
+                        df_vivas_export = df_base_activa[m_viva_count].copy()
+                        st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_vivas_export, hoy_date_valor)
+                if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
+                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            # ------------------------------------------------
             
             lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
