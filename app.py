@@ -1189,7 +1189,8 @@ def main():
                             st.session_state['pdf_tablero'] = generar_pdf_ordenes_totales(df_todas_pendientes_monitor, hoy_date_valor)
                     if 'pdf_tablero' in st.session_state and st.session_state['pdf_tablero']:
                         st.download_button("📥 GUARDAR PDF", data=st.session_state['pdf_tablero'], file_name=f"Tablero_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="dl_pdf_movil")
-               else:
+               
+                else:
                     col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
                     with col_tab_1:
                         st.caption("📅 Resumen de Retraso")
