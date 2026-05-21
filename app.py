@@ -68,7 +68,8 @@ try:
         generar_pdf_promedio_arranque,
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
-        extraer_seguimientos_tecnico_unificado
+        extraer_seguimientos_tecnico_unificado,
+        generar_pdf_ordenes_totales
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -590,6 +591,18 @@ def main():
             
             check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
             check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+            # --- NUEVO BOTÓN: ÓRDENES TOTALES ---
+            
+            total_absoluto = len(df_base_activa)
+            check_ordenes_totales = st.toggle(f"📋 Órdenes Totales ({total_absoluto})")
+            
+            if check_ordenes_totales:
+                if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True):
+                    with st.spinner("Generando documento PDF..."):
+                        st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_base_activa, hoy_date_valor)
+                if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
+                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Totales_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            # ------------------------------------
             
             lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
@@ -1469,15 +1482,19 @@ def main():
 
                 status_final_btn = st.session_state.st_btn_v_active
 
-                if status_final_btn == "PENDIENTE": 
-                    if check_criticos_diamante:
-                        df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
-                    else:
-                        df_v_tabla_monitor = df_solo_asignadas_monitor
-                elif status_final_btn == "C_HOY": 
-                    df_v_tabla_monitor = df_cerradas_hoy_monitor
-                else: 
-                    df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                # --- NUEVA REGLA: SI ESTÁ ACTIVO ÓRDENES TOTALES, MUESTRA TODO EL UNIVERSO ---
+                if check_ordenes_totales:
+                    df_v_tabla_monitor = df_monitor_filtrado 
+                else:
+                    if status_final_btn == "PENDIENTE": 
+                        if check_criticos_diamante:
+                            df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+                        else:
+                            df_v_tabla_monitor = df_solo_asignadas_monitor
+                    elif status_final_btn == "C_HOY": 
+                        df_v_tabla_monitor = df_cerradas_hoy_monitor
+                    else: 
+                        df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
 
                 t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
                 
