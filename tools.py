@@ -2392,7 +2392,12 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
 
 
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
-    """Genera un PDF con el listado de todas las órdenes PENDIENTES, incluyendo columna de Días de Retraso."""
+    """Genera un PDF ordenado de mayor a menor retraso con semaforización."""
+    # 1. ORDENAR DE MAYOR A MENOR DÍAS
+    df_sorted = df_base.copy()
+    df_sorted['DIAS_RETRASO'] = pd.to_numeric(df_sorted['DIAS_RETRASO'], errors='coerce').fillna(0)
+    df_sorted = df_sorted.sort_values(by='DIAS_RETRASO', ascending=False)
+
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -2406,16 +2411,13 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {fecha_corte.strftime('%d/%m/%Y')}"), ln=True, align="C")
     pdf.ln(5)
     
-    pdf.seccion_titulo(f"Listado Total ({len(df_base)} Órdenes en Ruta / Sin Asignar)")
+    pdf.seccion_titulo(f"Listado Total ({len(df_sorted)} Órdenes - Ordenadas por Prioridad)")
     
+    # Encabezados
     pdf.set_fill_color(240, 240, 240)
     pdf.set_text_color(50, 50, 50)
     pdf.set_font("Helvetica", "B", 7)
-    
-    # Anchos ajustados para incluir la nueva columna de "Días"
-    # Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Dias(15) + Estado(40) = 190mm
     w = [20, 20, 40, 55, 15, 40] 
-    
     pdf.cell(w[0], 6, "Orden", border=1, align="C", fill=True)
     pdf.cell(w[1], 6, "Cliente", border=1, align="C", fill=True)
     pdf.cell(w[2], 6, "Tecnico", border=1, align="C", fill=True)
@@ -2425,10 +2427,8 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 6)
-    pdf.set_text_color(0, 0, 0)
     
-    for _, row in df_base.iterrows():
-        # Saltar página si se acaba el espacio
+    for _, row in df_sorted.iterrows():
         if pdf.get_y() > 270:
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 7)
@@ -2444,25 +2444,35 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
-        
-        # Lógica para mostrar "SIN ASIGNAR" si no hay técnico
         tec_raw = str(row.get('TECNICO', ''))
-        if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', '']:
-            tec = "SIN ASIGNAR"
-        else:
-            tec = safestr(tec_raw)[:25]
-            
+        tec = "SIN ASIGNAR" if tec_raw.upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:25]
         act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
-        # Aquí traemos la columna de Días de Retraso
-        dias = safestr(str(row.get('DIAS_RETRASO', '0')))
         est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
         
-        pdf.cell(w[0], 5, num, border=1, align="C")
-        pdf.cell(w[1], 5, cliente, border=1, align="C")
-        pdf.cell(w[2], 5, tec, border=1, align="L")
-        pdf.cell(w[3], 5, act, border=1, align="L")
-        pdf.cell(w[4], 5, dias, border=1, align="C")
-        pdf.cell(w[5], 5, est, border=1, align="C")
+        # LÓGICA DE COLORES DE SEMÁFORO
+        dias_val = int(row.get('DIAS_RETRASO', 0))
+        
+        if dias_val >= 7:
+            pdf.set_fill_color(231, 76, 60) # Rojo intenso (Crítico)
+            pdf.set_text_color(255, 255, 255)
+        elif dias_val >= 3:
+            pdf.set_fill_color(241, 196, 15) # Amarillo/Naranja (Alerta)
+            pdf.set_text_color(0, 0, 0)
+        else:
+            pdf.set_fill_color(39, 174, 96) # Verde (Al día)
+            pdf.set_text_color(255, 255, 255)
+            
+        pdf.cell(w[0], 5, num, border=1, align="C", fill=False)
+        pdf.cell(w[1], 5, cliente, border=1, align="C", fill=False)
+        pdf.cell(w[2], 5, tec, border=1, align="L", fill=False)
+        pdf.cell(w[3], 5, act, border=1, align="L", fill=False)
+        
+        # Aplicamos color de fondo solo a la columna de Días
+        pdf.cell(w[4], 5, str(dias_val), border=1, align="C", fill=True)
+        
+        pdf.set_fill_color(255, 255, 255)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(w[5], 5, est, border=1, align="C", fill=False)
         pdf.ln()
         
     return finalizar_pdf(pdf)
