@@ -2391,12 +2391,10 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
 
 
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
-    """Genera un PDF con el listado de todas las órdenes PENDIENTES, ordenadas por Días de Retraso de mayor a menor."""
+    """Genera un PDF con el listado de todas las órdenes PENDIENTES, con semáforo de colores en la columna Días."""
     
     # --- 1. ORDENAMIENTO ---
-    # Aseguramos que la columna sea numérica para que el orden sea correcto (10 > 2)
     df_base['DIAS_RETRASO'] = pd.to_numeric(df_base['DIAS_RETRASO'], errors='coerce').fillna(0)
-    # Ordenar de mayor a menor
     df_base = df_base.sort_values(by='DIAS_RETRASO', ascending=False)
     
     pdf = ReporteGenerencialPDF()
@@ -2418,8 +2416,7 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.set_text_color(50, 50, 50)
     pdf.set_font("Helvetica", "B", 7)
     
-    # --- 2. AJUSTE DE ANCHOS Y ORDEN DE COLUMNAS ---
-    # Nuevo Orden: Días(15) + Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Estado(40) = 190mm
+    # Anchos: Días(15) + Orden(20) + Cliente(20) + Tecnico(40) + Actividad(55) + Estado(40) = 190mm
     w = [15, 20, 20, 40, 55, 40] 
     
     # Encabezado
@@ -2432,14 +2429,13 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 6)
-    pdf.set_text_color(0, 0, 0)
     
     for _, row in df_base.iterrows():
-        # Saltar página si se acaba el espacio
         if pdf.get_y() > 270:
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 7)
             pdf.set_fill_color(240, 240, 240)
+            pdf.set_text_color(50, 50, 50)
             pdf.cell(w[0], 6, "Días", border=1, align="C", fill=True)
             pdf.cell(w[1], 6, "Orden", border=1, align="C", fill=True)
             pdf.cell(w[2], 6, "Cliente", border=1, align="C", fill=True)
@@ -2448,23 +2444,40 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             pdf.cell(w[5], 6, "Estado", border=1, align="C", fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 6)
-            
-        # Extraer datos
-        dias = safestr(str(int(row.get('DIAS_RETRASO', 0)))) # Convertimos a int para quitar el .0 si es float
+
+        # 1. Lógica de Color para la celda de Días
+        dias_val = int(row.get('DIAS_RETRASO', 0))
+        
+        if dias_val >= 7:
+            pdf.set_fill_color(211, 47, 47)   # Rojo
+            pdf.set_text_color(255, 255, 255) # Texto Blanco
+        elif 4 <= dias_val <= 6:
+            pdf.set_fill_color(245, 124, 0)   # Naranja
+            pdf.set_text_color(255, 255, 255) # Texto Blanco
+        elif 1 <= dias_val <= 3:
+            pdf.set_fill_color(251, 192, 45)  # Amarillo
+            pdf.set_text_color(0, 0, 0)       # Texto Negro
+        else:
+            pdf.set_fill_color(56, 142, 60)   # Verde
+            pdf.set_text_color(255, 255, 255) # Texto Blanco
+
+        # Dibujar celda de Días con color
+        pdf.set_font("Helvetica", "B", 6)
+        pdf.cell(w[0], 5, str(dias_val), border=1, align="C", fill=True)
+
+        # 2. Resetear colores para el resto de la fila
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 6)
+        
+        # Extraer resto de datos
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
-        
         tec_raw = str(row.get('TECNICO', ''))
-        if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', '']:
-            tec = "SIN ASIGNAR"
-        else:
-            tec = safestr(tec_raw)[:25]
-            
+        tec = "SIN ASIGNAR" if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:25]
         act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:35]
         est = safestr(str(row.get('ESTADO', 'N/D')))[:20]
         
-        # --- 3. DIBUJAR CELDAS EN EL NUEVO ORDEN ---
-        pdf.cell(w[0], 5, dias, border=1, align="C")
+        # Dibujar resto de celdas (Normales)
         pdf.cell(w[1], 5, num, border=1, align="C")
         pdf.cell(w[2], 5, cliente, border=1, align="C")
         pdf.cell(w[3], 5, tec, border=1, align="L")
