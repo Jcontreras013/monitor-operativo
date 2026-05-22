@@ -830,7 +830,7 @@ def main():
                         "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
                         "Cierre=" + df_para_gantt_diario['Cierre'].astype(str) + "<br>" +
                         "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
-                    ) }
+                    ) 
 
                     # [El resto del código del gráfico de barras Gantt y su configuración se mantiene exactamente igual...]
 
