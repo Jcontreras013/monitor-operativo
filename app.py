@@ -5,7 +5,7 @@ import os
 import io
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta, time as dt_timest.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
@@ -1573,13 +1573,24 @@ def main():
 
                 with t_graphs_v:
                     st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
-                    df_productividad_v = df_base[df_base['HORA_LIQ'].dt.date == hoy_date_valor].copy()
+                    
+                    # 🛠️ CORRECCIÓN DE ZONA HORARIA: Restamos 6 horas (UTC a Honduras)
+                    df_graficas = df_base.copy()
+                    df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+                    
+                    # Filtramos usando la fecha ya corregida a hora local
+                    df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
+                    
                     if not df_productividad_v.empty:
-                        df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ'].dt.hour
+                        df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
                         conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
+                        
+                        # Damos un formato más limpio a la gráfica (Ej: "14:00")
+                        conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
+                        
                         fig_barras_v = px.bar(
-                            conteo_horario_v, x='Hr_C', y='Ord', 
-                            labels={'Hr_C':'Hora del Día','Ord':'Cant. Cerradas'}, 
+                            conteo_horario_v, x='Hora_Format', y='Ord', 
+                            labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
                             template="plotly_dark", height=300
                         )
                         st.plotly_chart(fig_barras_v, use_container_width=True)
