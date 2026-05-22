@@ -796,38 +796,43 @@ def main():
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
-                with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
-                    mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
-                    df_para_gantt_diario = df_base[mask_ini_dia].copy()
+            with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                # 🛠️ APLICAR VACUNA DE HORA LOCAL HONDURAS (UTC - 6)
+                df_gantt_diario_local = df_base.copy()
+                df_gantt_diario_local['HORA_INI_LOCAL'] = df_gantt_diario_local['HORA_INI'] - pd.Timedelta(hours=6)
+                df_gantt_diario_local['HORA_LIQ_LOCAL'] = df_gantt_diario_local['HORA_LIQ'] - pd.Timedelta(hours=6)
+                
+                mask_ini_dia = pd.to_datetime(df_gantt_diario_local['HORA_INI_LOCAL'], errors='coerce').dt.date == fecha_cal_sel
+                df_para_gantt_diario = df_gantt_diario_local[mask_ini_dia].copy()
+                
+                if not df_para_gantt_diario.empty:
+                    ahora_hx_d = get_honduras_time()
                     
-                    if not df_para_gantt_diario.empty:
-                        ahora_hx_d = get_honduras_time()
-                        
-                        df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
-                        hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
-                        
-                        df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
-                        
-                        mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
-                        df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
-                        
-                        df_para_gantt_diario['Inicio'] = df_para_gantt_diario['HORA_INI'].dt.strftime('%H:%M')
-                        df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
-                            lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
-                        )
-                        
-                        df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
-                        df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
-                        
-                        df_para_gantt_diario['INFO_HOVER'] = (
-                            "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
-                            "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
-                            "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
-                            "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
-                            "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
-                            "Cierre=" + df_para_gantt_diario['Cierre'].astype(str) + "<br>" +
-                            "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
-                        )
+                    df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI_LOCAL']
+                    df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ_LOCAL'].fillna(hora_cierre_proyectada)
+                    
+                    mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
+                    df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
+                    
+                    df_para_gantt_diario['Inicio'] = df_para_gantt_diario['HORA_INI_LOCAL'].dt.strftime('%H:%M')
+                    df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ_LOCAL'].apply(
+                        lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
+                    )
+                    
+                    df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
+                    df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
+                    
+                    df_para_gantt_diario['INFO_HOVER'] = (
+                        "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
+                        "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
+                        "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
+                        "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
+                        "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
+                        "Cierre=" + df_para_gantt_diario['Cierre'].astype(str) + "<br>" +
+                        "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
+                    )
+
+                    # [El resto del código del gráfico de barras Gantt y su configuración se mantiene exactamente igual...]
 
                         # 🎨 MAPA DE COLORES SÓLIDOS Y FUERTES
                         colores_solidos = {
@@ -1386,23 +1391,28 @@ def main():
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
-                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                        mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
+                        # 🛠️ APLICAR VACUNA DE HORA LOCAL HONDURAS (UTC - 6)
+                        df_gantt_final_local = df_monitor_filtrado.copy()
+                        df_gantt_final_local['HORA_INI_LOCAL'] = df_gantt_final_local['HORA_INI'] - pd.Timedelta(hours=6)
+                        df_gantt_final_local['HORA_LIQ_LOCAL'] = df_gantt_final_local['HORA_LIQ'] - pd.Timedelta(hours=6)
                         
-                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
-                        df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
+                        mask_cerradas_gantt = (df_gantt_final_local['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_gantt_final_local['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor)
+                        mask_abiertas_gantt = (df_gantt_final_local['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_gantt_final_local['HORA_INI_LOCAL'].dt.date == hoy_date_valor)
+                        
+                        df_para_gantt_final = df_gantt_final_local[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+                        df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI_LOCAL'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
                             
-                            df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
-                            df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
+                            df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI_LOCAL']
+                            df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ_LOCAL'].fillna(ahora_hx)
                             
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                             df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
                             
-                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
-                            df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
+                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI_LOCAL'].dt.strftime('%H:%M')
+                            df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ_LOCAL'].apply(
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
@@ -1418,6 +1428,8 @@ def main():
                                 "Cierre=" + df_para_gantt_final['Cierre'].astype(str) + "<br>" +
                                 "Tiempo Total=" + df_para_gantt_final['TIEMPO_REAL'].astype(str)
                             )
+                            
+                            # [El resto del código de renderizado Plotly y radio buttons se mantiene exactamente igual...]
 
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                             
