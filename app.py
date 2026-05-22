@@ -1571,15 +1571,15 @@ def main():
                     else:
                         st.warning("No hay registros disponibles para mostrar.")
 
-                with t_graphs_v:
-                    st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+                    with t_graphs_v:
+                        st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
                     
                     # 🛠️ CORRECCIÓN DE ZONA HORARIA: Restamos 6 horas (UTC a Honduras)
-                    df_graficas = df_base.copy()
-                    df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+                        df_graficas = df_base.copy()
+                        df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
                     
-                    # Filtramos usando la fecha ya corregida a hora local
-                    df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
+                        # Filtramos usando la fecha ya corregida a hora local
+                        df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
                     
                     if not df_productividad_v.empty:
                         df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
