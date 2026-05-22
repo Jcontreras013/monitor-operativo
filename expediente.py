@@ -8,17 +8,17 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
-import gspread  # Conexión nativa directa
-import unicodedata
+import gspread  # Conexión nativa directa para asegurar la escritura
 
 # ==============================================================================
-# CONFIGURACIÓN Y UTILERÍAS DE EXPEDIENTES
+# CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 
 def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
 
+@st.cache_data(show_spinner=False)
 def cargar_personal(filepath="personal_tecnico.txt"):
     try:
         if not os.path.exists(filepath): return []
@@ -34,27 +34,8 @@ def cargar_personal(filepath="personal_tecnico.txt"):
         return sorted(list(set(nombres)))
     except: return []
 
-def obtener_cliente_gspread_directo():
-    credenciales = {
-        "type": st.secrets["connections"]["gsheets"]["type"],
-        "project_id": st.secrets["connections"]["gsheets"]["project_id"],
-        "private_key_id": st.secrets["connections"]["gsheets"]["private_key_id"],
-        "private_key": st.secrets["connections"]["gsheets"]["private_key"],
-        "client_email": st.secrets["connections"]["gsheets"]["client_email"],
-        "client_id": st.secrets["connections"]["gsheets"]["client_id"],
-        "auth_uri": st.secrets["connections"]["gsheets"]["auth_uri"],
-        "token_uri": st.secrets["connections"]["gsheets"]["token_uri"],
-        "auth_provider_x509_cert_url": st.secrets["connections"]["gsheets"]["auth_provider_x509_cert_url"],
-        "client_x509_cert_url": st.secrets["connections"]["gsheets"]["client_x509_cert_url"]
-    }
-    return gspread.service_account_from_dict(credenciales)
-
-def sanitizar(texto):
-    if pd.isna(texto) or texto is None: return "N/D"
-    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
-
 # ==============================================================================
-# LÓGICA DE REPORTES PDF INTERNOS DE EXPEDIENTES
+# 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
@@ -72,11 +53,17 @@ class MemoPDF(FPDF):
         self.set_y(-15); self.set_text_color(150, 150, 150); self.set_font("Helvetica", "I", 8)
         self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
 
+def sanitizar(texto):
+    import unicodedata
+    if pd.isna(texto) or texto is None: return "N/D"
+    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+
+# ==============================================================================
+# 2. GENERADORES DE DOCUMENTOS PDF
+# ==============================================================================
 @st.cache_data(show_spinner=False, max_entries=50) 
 def generar_pdf_consolidado(df):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.set_draw_color(0, 0, 0)
-    
     pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, "REPORTE CONSOLIDADO DE EXPEDIENTES", ln=True, align="C")
     pdf.set_font("Helvetica", "", 10); pdf.set_text_color(0, 0, 0)
@@ -133,51 +120,30 @@ def generar_pdf_consolidado(df):
                 
         if tiene_anexos:
             pdf.add_page()
-            pdf.set_draw_color(0, 0, 0)
             pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(40, 50, 100)
             pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
             pdf.ln(5)
-            
-            # 🛠️ SISTEMA VERTICAL: 2 FOTOS POR PÁGINA UNA DEBAJO DE LA OTRA
-            y_pos = pdf.get_y()
-            img_w = 140 # Foto grande y centrada
-            x_pos = 35  # Centro de una página A4 para ancho 140
-            
             for _, row in df.iterrows():
                 urls = str(row.get('URL_FOTO', '')).split(',')
                 validas = [u.strip() for u in urls if u.strip().startswith('http')]
-                
                 if validas:
-                    tec_name = sanitizar(str(row.get('TECNICO',''))[:25])
+                    tec_name = sanitizar(str(row.get('TECNICO','')))
                     f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA','')))
-                    
-                    for u in validas:
+                    motivo_falta = sanitizar(str(row.get('TIPO_FALTA','')))
+                    for url in validas:
                         try:
-                            r = requests.get(u, timeout=10)
+                            r = requests.get(url, timeout=10)
                             if r.status_code == 200:
                                 fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
                                 try:
                                     with open(tp, 'wb') as f: f.write(r.content)
-                                    
-                                    # Si el eje Y pasa de 150, significa que la foto de abajo ya no cabe.
-                                    # Creamos hoja nueva y reiniciamos coordenadas.
-                                    if y_pos > 150:
-                                        pdf.add_page()
-                                        pdf.set_draw_color(0, 0, 0)
-                                        y_pos = 30
-                                        
-                                    pdf.set_xy(x_pos, y_pos)
+                                    if pdf.get_y() > 60: pdf.add_page() 
                                     pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0)
                                     pdf.set_fill_color(240, 240, 240)
-                                    
-                                    # Etiqueta de la foto
-                                    pdf.cell(img_w, 8, f" Evidencia: {tec_name} | {f_inc}", ln=2, align="C", fill=True, border=1)
-                                    
-                                    # Insertar foto justo debajo de la etiqueta
-                                    pdf.image(tp, x=x_pos, y=pdf.get_y() + 3, w=img_w)
-                                    
-                                    # Avanzamos hacia abajo el espacio de la foto para la siguiente
-                                    y_pos += 125 
+                                    pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
+                                    pdf.ln(3)
+                                    pdf.image(tp, x=20, w=150) 
+                                    pdf.ln(10)
                                 finally:
                                     if os.path.exists(tp):
                                         os.remove(tp)
@@ -190,8 +156,6 @@ def generar_pdf_consolidado(df):
 @st.cache_data(show_spinner=False, max_entries=50) 
 def generar_pdf_memo(row_dict):
     pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.set_draw_color(0, 0, 0)
-    
     es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
     if es_medica:
         pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204)
@@ -200,7 +164,6 @@ def generar_pdf_memo(row_dict):
         pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
         titulo = "MEMORANDUM: LLAMADO DE ATENCION"
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
-    
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
@@ -208,43 +171,21 @@ def generar_pdf_memo(row_dict):
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
     pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
-    
     for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
-    
     urls = str(row_dict.get('URL_FOTO', '')).split(',')
-    validas = [x.strip() for x in urls if x.strip().startswith('http')]
-    
-    if validas:
-        pdf.ln(10)
-        
-        # 🛠️ SISTEMA VERTICAL: FOTOS UNA DEBAJO DE LA OTRA EN EL MEMO INDIVIDUAL
-        y_pos = pdf.get_y()
-        img_w = 150 # Foto un poco más grande
-        x_pos = 30  # Centrado
-        
-        for i, u in enumerate(validas):
-            try:
-                r = requests.get(u, timeout=10)
-                if r.status_code == 200:
-                    fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                    try:
-                        with open(tp, 'wb') as f: f.write(r.content)
-                        
-                        # Si pasa del límite vertical, agregar página nueva
-                        if y_pos > 150:
-                            pdf.add_page()
-                            pdf.set_draw_color(0, 0, 0)
-                            y_pos = 30
-                            
-                        pdf.image(tp, x=x_pos, y=y_pos, w=img_w)
-                        
-                        # Avanzar eje Y para que la próxima foto quede abajo
-                        y_pos += 125 
-                    finally:
-                        if os.path.exists(tp):
-                            os.remove(tp)
-            except: pass
-            
+    for u in [x.strip() for x in urls if x.strip().startswith('http')]:
+        try:
+            r = requests.get(u, timeout=10)
+            if r.status_code == 200:
+                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
+                try:
+                    with open(tp, 'wb') as f: f.write(r.content)
+                    if pdf.get_y() > 60: pdf.add_page()
+                    pdf.image(tp, x=15, w=170); pdf.ln(5)
+                finally:
+                    if os.path.exists(tp):
+                        os.remove(tp)
+        except: pass
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: d = f.read()
     os.remove(path); return d
@@ -277,8 +218,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    columnas_oficiales = ["FECHA_REGISTRO", "TECNICO", "TIPO_FALTA", "FECHA_INCIDENCIA", "COMENTARIO", "URL_FOTO", "SUPERVISOR"]
-
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         with st.form("form_incidencia_txt", clear_on_submit=True):
@@ -316,6 +255,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 if res.status_code == 200:
                                     urls.append(res.json()["image"]["url"])
                         
+                        # Fila ordenada alineada exactamente con tus columnas A, B, C, D, E, F, G
                         nueva_fila = [
                             get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             colaborador_sel,
@@ -326,12 +266,15 @@ def mostrar_modulo_expedientes(conn, df_base):
                             supervisor_actual
                         ]
 
+                        # --- CONEXIÓN DIRECTA VIA GSPREAD ANTI-FALLOS ---
                         gc = obtener_cliente_gspread_directo()
                         documento = gc.open_by_url(st.secrets["url_base_datos"])
                         hoja_expedientes = documento.worksheet("Expedientes")
                         
+                        # gspread busca la última fila con datos de forma segura y añade la nueva
                         hoja_expedientes.append_row(nueva_fila)
                         
+                        # Forzar la limpieza de caché de lectura para la visualización del historial
                         st.cache_data.clear()
                         
                         st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
@@ -344,21 +287,12 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # LECTURA HISTÓRICA EN TIEMPO REAL CON GSPREAD
+    # HISTORIAL Y HISTÓRICO VISUAL
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        gc = obtener_cliente_gspread_directo()
-        documento = gc.open_by_url(st.secrets["url_base_datos"])
-        hoja_expedientes = documento.worksheet("Expedientes")
-        
-        lista_filas = hoja_expedientes.get_all_values()
-        if lista_filas:
-            cabeceras = [str(c).strip().upper() for c in lista_filas[0]]
-            filas_datos = lista_filas[1:]
-            df_view = pd.DataFrame(filas_datos, columns=cabeceras)
-        else:
-            df_view = pd.DataFrame(columns=columnas_oficiales)
+        # Forzar lectura directa sin búferes antiguos corruptos
+        df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if 'TECNICO' in df_view.columns:
             df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
@@ -440,21 +374,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                             )
                         with c_d:
                             if es_admin:
-                                if st.button("🗑️ Eliminar Registro", key=f"del_{idx}", use_container_width=True):
-                                    try:
-                                        gc = obtener_cliente_gspread_directo()
-                                        documento = gc.open_by_url(st.secrets["url_base_datos"])
-                                        hoja_expedientes = documento.worksheet("Expedientes")
-                                        
-                                        fila_a_borrar = int(idx) + 2
-                                        hoja_expedientes.delete_rows(fila_a_borrar)
-                                        
-                                        st.cache_data.clear()
-                                        st.success("Registro eliminado correctamente.")
-                                        time.sleep(1)
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error al eliminar: {e}")
+                                if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
+                                    gc = obtener_cliente_gspread_directo()
+                                    documento = gc.open_by_url(st.secrets["url_base_datos"])
+                                    hoja_expedientes = documento.worksheet("Expedientes")
+                                    
+                                    # El índice de gspread inicia en 1, agregamos 2 por cabecera de Pandas
+                                    fila_a_borrar = int(idx) + 2
+                                    hoja_expedientes.delete_rows(fila_a_borrar)
+                                    
+                                    st.cache_data.clear()
+                                    st.rerun()
         else:
             st.info("No hay registros en la base de datos.")
 
