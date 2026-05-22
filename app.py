@@ -832,8 +832,7 @@ def main():
                         "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
                     ) 
 
-                    # [El resto del código del gráfico de barras Gantt y su configuración se mantiene exactamente igual...]
-
+                       st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                         # 🎨 MAPA DE COLORES SÓLIDOS Y FUERTES
                         colores_solidos = {
                             "SOPFIBRA": "#d32f2f",          
