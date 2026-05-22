@@ -1461,10 +1461,29 @@ def procesar_dataframe_base(df):
                 mapeocolumnas[realname] = nombreinterno
                 break
     df = df.rename(columns=mapeocolumnas)
+    
     for colv in COLUMNAS_VITALES_SISTEMA:
         if colv not in df.columns: df[colv] = "N/D"
+        
     for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
         df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
+        
+    # =========================================================================
+    # 🧹 NUEVO: DEPURACIÓN RADICAL DESDE LA LECTURA DEL EXCEL
+    # Elimina ACTUALIZARDATOSTECNICOS y otras basuras antes de que toquen la nube
+    # =========================================================================
+    if 'ACTIVIDAD' in df.columns:
+        actividades_basura = [
+            'ACTUALIZARDATOSTECNICOS', 
+            'ACTUALIZACIONDATOS', 
+            'ACTUALIZACIOFW', 
+            'ACTUALIZAINFOTECNICA', 
+            'ACTUALIZARSENSOR'
+        ]
+        # Filtramos buscando coincidencias exactas o parciales para mayor seguridad
+        mask_basura = df['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_basura)
+        df = df[~mask_basura].copy()
+        
     return df
 
 def generar_tablas_gerenciales(df_crudo):
