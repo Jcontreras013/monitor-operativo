@@ -5,7 +5,7 @@ import os
 import io
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, time as dt_timest.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
