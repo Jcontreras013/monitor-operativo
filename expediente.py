@@ -59,7 +59,7 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF (SOLO ESTA PARTE FUE MODIFICADA)
+# 2. GENERADORES DE DOCUMENTOS PDF
 # ==============================================================================
 @st.cache_data(show_spinner=False, max_entries=50) 
 def generar_pdf_consolidado(df):
@@ -73,7 +73,6 @@ def generar_pdf_consolidado(df):
     if df.empty:
         pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
-        # --- TABLAS ---
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
         pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
         pdf.cell(140, 8, " Motivo / Falta", border=1, fill=True)
@@ -100,7 +99,6 @@ def generar_pdf_consolidado(df):
             lineas_com = textwrap.wrap(com, width=55) 
             if not lineas_com: lineas_com = [""]
             for i, linea in enumerate(lineas_com):
-                if pdf.get_y() > 275: pdf.add_page()
                 b_top = 'T' if i == 0 else ''
                 b_bot = 'B' if i == len(lineas_com) - 1 else ''
                 b_style = 'LR' + b_top + b_bot
@@ -112,11 +110,13 @@ def generar_pdf_consolidado(df):
                 pdf.cell(35, 5, col3, border=b_style)
                 pdf.cell(75, 5, f" {linea}", border=b_style, ln=True)
         
-        # --- IMÁGENES AGRUPADAS ---
         tiene_anexos = False
         for _, row in df.iterrows():
-            if [u for u in str(row.get('URL_FOTO', '')).split(',') if u.strip().startswith('http')]:
-                tiene_anexos = True; break
+            urls = str(row.get('URL_FOTO', '')).split(',')
+            validas = [u.strip() for u in urls if u.strip().startswith('http')]
+            if validas:
+                tiene_anexos = True
+                break
                 
         if tiene_anexos:
             pdf.add_page()
@@ -124,30 +124,30 @@ def generar_pdf_consolidado(df):
             pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
             pdf.ln(5)
             for _, row in df.iterrows():
-                urls = [u.strip() for u in str(row.get('URL_FOTO', '')).split(',') if u.strip().startswith('http')]
-                if urls:
+                urls = str(row.get('URL_FOTO', '')).split(',')
+                validas = [u.strip() for u in urls if u.strip().startswith('http')]
+                if validas:
                     tec_name = sanitizar(str(row.get('TECNICO','')))
                     f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA','')))
                     motivo_falta = sanitizar(str(row.get('TIPO_FALTA','')))
-                    
-                    pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
-                    pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
-                    pdf.ln(2)
-
-                    for url in urls:
-                        # Si la imagen no cabe (estimamos 80mm de alto), saltamos de página
-                        if (pdf.get_y() + 85) > 275: 
-                            pdf.add_page()
+                    for url in validas:
                         try:
                             r = requests.get(url, timeout=10)
                             if r.status_code == 200:
                                 fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                                with open(tp, 'wb') as f: f.write(r.content)
-                                pdf.image(tp, x=30, w=150) 
-                                pdf.ln(5)
-                                if os.path.exists(tp): os.remove(tp)
+                                try:
+                                    with open(tp, 'wb') as f: f.write(r.content)
+                                    if pdf.get_y() > 60: pdf.add_page() 
+                                    pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0)
+                                    pdf.set_fill_color(240, 240, 240)
+                                    pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
+                                    pdf.ln(3)
+                                    pdf.image(tp, x=20, w=150) 
+                                    pdf.ln(10)
+                                finally:
+                                    if os.path.exists(tp):
+                                        os.remove(tp)
                         except: pass
-                    pdf.ln(5)
             
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: data = f.read()
@@ -166,31 +166,30 @@ def generar_pdf_memo(row_dict):
     pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
     pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
-    pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
-    pdf.cell(40, 8, " Fecha Suceso:", border=1, fill=True); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
-    pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
-    pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Fecha Suceso:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
+    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
     pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
-    for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): 
-        if pdf.get_y() > 275: pdf.add_page()
-        pdf.cell(0, 6, sanitizar(l), ln=True)
-    pdf.ln(5)
-    urls = [x.strip() for x in str(row_dict.get('URL_FOTO', '')).split(',') if x.strip().startswith('http')]
-    for u in urls:
-        # Si la imagen no cabe (estimamos 90mm), saltamos de página
-        if (pdf.get_y() + 90) > 275: 
-            pdf.add_page()
+    for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
+    urls = str(row_dict.get('URL_FOTO', '')).split(',')
+    for u in [x.strip() for x in urls if x.strip().startswith('http')]:
         try:
             r = requests.get(u, timeout=10)
             if r.status_code == 200:
                 fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                with open(tp, 'wb') as f: f.write(r.content)
-                pdf.image(tp, x=15, w=170); pdf.ln(5)
-                if os.path.exists(tp): os.remove(tp)
+                try:
+                    with open(tp, 'wb') as f: f.write(r.content)
+                    if pdf.get_y() > 60: pdf.add_page()
+                    pdf.image(tp, x=15, w=170); pdf.ln(5)
+                finally:
+                    if os.path.exists(tp):
+                        os.remove(tp)
         except: pass
     fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
     with open(path, "rb") as f: d = f.read()
     os.remove(path); return d
+
 # ==============================================================================
 # FUNCIÓN DE CONEXIÓN AUTENTICADA CON TU LLAVE COMPLETA
 # ==============================================================================
