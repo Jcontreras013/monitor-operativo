@@ -1392,24 +1392,20 @@ def main():
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
-                    if not df_para_gantt_final.empty:
-  
-                        ahora_hx = pd.Timestamp(get_honduras_time()).tz_localize(None)
-    
-
-                        df_para_gantt_final['GANTT_START'] = pd.to_datetime(df_para_gantt_final['HORA_INI']).dt.tz_localize(None)
-                        df_para_gantt_final['GANTT_END'] = pd.to_datetime(df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)).dt.tz_localize(None)
-    
-                        duracion_minima = pd.Timedelta(minutes=20)
-                        duracion_actual = df_para_gantt_final['GANTT_END'] - df_para_gantt_final['GANTT_START']
-    
-                        mask_corta = (duracion_actual < duracion_minima) | (df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START'])
-                        df_para_gantt_final.loc[mask_corta, 'GANTT_END'] = df_para_gantt_final['GANTT_START'] + duracion_minima
-    
-                        df_para_gantt_final['Inicio'] = df_para_gantt_final['GANTT_START'].dt.strftime('%H:%M')
-                        df_para_gantt_final['Cierre'] = pd.to_datetime(df_para_gantt_final['HORA_LIQ']).dt.strftime('%H:%M').fillna("En curso (Abierta)")
-
-
+                        if not df_para_gantt_final.empty:
+                            ahora_hx = get_honduras_time()
+                            
+                            df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
+                            df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
+                            
+                            mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
+                            df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
+                            
+                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
+                            df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
+                                lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
+                            )
+                            
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             
