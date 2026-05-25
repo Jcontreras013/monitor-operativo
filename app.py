@@ -69,9 +69,7 @@ try:
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
         extraer_seguimientos_tecnico_unificado,
-        generar_pdf_ordenes_totales,
-        sobrescribir_archivo_gcs,
-        leer_espejo_gcs
+        generar_pdf_ordenes_totales
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -105,18 +103,9 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
-            
-            # --- NUEVA LÓGICA: INTENTAR LEER DE GCS PRIMERO ---
-            nombre_bucket_sistema = "jovial-trilogy-306216.appspot.com"
-            df_nube = leer_espejo_gcs(nombre_bucket_sistema, "historial_maestro.csv")
-            
-            # RESPALDO DE EMERGENCIA: Si GCS está vacío o falla, leemos de Google Sheets
-            if df_nube is None or df_nube.empty:
-                df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
-            # --------------------------------------------------
-
-            if df_nube is not None and not df_nube.empty:
+        with st.spinner("Descargando historial y limpiando duplicados..."):
+            df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
+            if not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
 
@@ -190,11 +179,11 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa. Datos históricos cargados desde GCS.")
+                st.success("✅ Sincronización Exitosa. Datos históricos cargados y limpios.")
                 st.rerun()
-            else: st.warning("La base de datos está vacía.")
+            else: st.warning("La base de datos en la nube está vacía.")
     except Exception as e: st.error(f"Error al conectar con la nube: {e}")
-        
+
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
@@ -298,18 +287,23 @@ def main():
                 nav_menu_diamante = "⚡ Monitor en Vivo"
 
         
-   with sidebar_bottom:
-            if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
-            st.divider()
-            st.markdown("### ☁️ Sincronización")
-            
-            # Botón público con el texto actualizado
-            if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Descargar última versión desde Google Cloud", use_container_width=True, key="btn_nube_sidebar"):
-                if conn is not None: sincronizar_datos_nube(conn)
-                else: st.error("La conexión a la nube no está disponible.")
-                
-            st.markdown("<br>", unsafe_allow_html=True)
-            mostrar_boton_logout()
+    with sidebar_bottom:
+        if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
+        st.divider()
+        st.markdown("### ☁️ Sincronización")
+        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
+            if conn is not None: sincronizar_datos_nube(conn)
+            else: st.error("La conexión a la nube no está disponible.")
+        st.markdown("<br>", unsafe_allow_html=True)
+        mostrar_boton_logout()
+
+        mostrar_cargador = False
+        if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
+            mostrar_cargador = True
+
+        file_act_ptr = None
+        file_disp_ptr = None
+        btn_reprocesar = False
         
         if mostrar_cargador:
             st.divider()
@@ -345,22 +339,14 @@ def main():
 
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
 
-  # ==============================================================================
+    # ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS
     # ==============================================================================
-    nombre_bucket_sistema = "jovial-trilogy-306216.appspot.com"
-
     if 'df_base' not in st.session_state or btn_reprocesar:
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
             with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
                 try:
-                    # --- LECTURA OPTIMIZADA DESDE GCS ---
-                    df_fttx_cloud = leer_espejo_gcs(nombre_bucket_sistema, "fttx_activo.csv")
-                    
-                    # Respaldo si GCS no responde o está vacío
-                    if df_fttx_cloud is None or df_fttx_cloud.empty:
-                        df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
-                    
+                    df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
                     if not df_fttx_cloud.empty:
                         b_io = io.BytesIO()
                         with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
@@ -395,14 +381,7 @@ def main():
                             if 'NUM' in df_new.columns:
                                 df_new['NUM'] = df_new['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_new.loc[df_new['NUM'] == 'nan', 'NUM'] = 'N/D'
-                            
-                            # --- LECTURA DEL HISTORIAL DESDE GCS ---
-                            df_cloud = leer_espejo_gcs(nombre_bucket_sistema, "historial_maestro.csv")
-                            
-                            # Respaldo si GCS está vacío
-                            if df_cloud is None or df_cloud.empty:
-                                df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                            
+                            df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                             if not df_cloud.empty:
                                 df_cloud.columns = df_cloud.columns.str.upper().str.strip()
                                 if 'NUM' in df_cloud.columns:
@@ -429,32 +408,16 @@ def main():
                                 if c_date in df_to_upload.columns:
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
-                            # --- NUEVA LÓGICA ADITIVA: GUARDADO EN GCS ---
-                            sobrescribir_archivo_gcs(df_to_upload, nombre_bucket_sistema, "historial_maestro.csv")
-                            # ---------------------------------------------
-                            
-                            # Actualización en Sheets (Se eliminó la copia duplicada)
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             st.session_state.df_base = df_combined
-                                    
+                            
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
-                                    if hasattr(file_disp_ptr, 'read'): 
-                                        file_disp_ptr.seek(0)
-                                        
-                                        # --- LÓGICA ADITIVA: RESPALDO FTTX EN GCS ---
-                                        bytes_fttx = file_disp_ptr.read()
-                                        sobrescribir_archivo_gcs(bytes_fttx, nombre_bucket_sistema, "fttx_activo.csv")
-                                        file_disp_ptr.seek(0)
-                                        # --------------------------------------------
-
-                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
-                                        df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
-                                    else: 
-                                        df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
+                                    if hasattr(file_disp_ptr, 'read'): file_disp_ptr.seek(0)
+                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
+                                    else: df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
                                 except Exception as e_fttx: pass
-
                             st.success("✅ Datos sincronizados en modo Espejo Inverso y unidos al historial correctamente.")
                             import time
                             time.sleep(1)
@@ -467,9 +430,6 @@ def main():
                     st.success("✅ Datos procesados localmente.")
             else: return
 
-    # ==============================================================================
-    # 3. FILTRADO Y TRATAMIENTO DE DATOS GLOBAL EN MEMORIA
-    # ==============================================================================
     df_base = st.session_state.df_base.copy()
     
     if 'ACTIVIDAD' in df_base.columns:
@@ -536,8 +496,9 @@ def main():
     ahora_local = get_honduras_time()
     hoy_date_valor = ahora_local.date()
     df_base_activa = df_base.copy()
+
     # ==============================================================================
-    # 2.5. RENDERIZADO DE PANTALLAS Y CONFIGURACIÓN
+    # 3. RENDERIZADO DE PANTALLAS Y CONFIGURACIÓN
     # ==============================================================================
     if nav_menu_diamante == "⚙️ Configuración":
         settings.mostrar_configuracion()
