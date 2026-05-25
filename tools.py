@@ -2546,6 +2546,25 @@ def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_de
     except Exception as e:
         print(f"Error de persistencia en GCS: {e}")
         return False
+        
 
-
+def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
+    """
+    Descarga el archivo desde GCS en memoria RAM y lo devuelve como un DataFrame de Pandas.
+    """
+    import io
+    try:
+        cliente = obtener_cliente_gcs_nativo()
+        bucket = cliente.bucket(nombre_bucket)
+        blob = bucket.blob(nombre_archivo_destino)
+        
+        if blob.exists():
+            contenido = blob.download_as_bytes()
+            return pd.read_csv(io.BytesIO(contenido))
+        else:
+            print(f"El archivo {nombre_archivo_destino} no existe en GCS.")
+            return None
+    except Exception as e:
+        print(f"Error al leer desde GCS: {e}")
+        return None
 
