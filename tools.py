@@ -2513,44 +2513,39 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
 # 7. MÓDULO DE PERSISTENCIA EN GOOGLE CLOUD STORAGE (NUEVO)
 # ==============================================================================
 
-def obtener_cliente_gcs():
-    """Conecta a GCS reciclando los secretos de Streamlit (sin archivos físicos)."""
+def obtener_cliente_gcs_nativo():
+    """Inicializa el cliente de GCS reciclando las credenciales de gsheets de Streamlit."""
     import streamlit as st
     creds_dict = st.secrets["connections"]["gsheets"]
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     return storage.Client(credentials=creds, project=creds.project_id)
 
-def guardar_espejo_gcs(df, nombre_bucket, nombre_archivo_destino):
+def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_destino):
     """
-    Convierte el DataFrame en CSV en memoria RAM y lo sube/sobrescribe en GCS.
+    Sube un DataFrame (como CSV) o un archivo binario directo a GCS.
+    Si el archivo ya existe, GCS lo borra/sobrescribe automáticamente en el acto.
     """
     try:
-        csv_en_memoria = df.to_csv(index=False)
-        cliente = obtener_cliente_gcs()
+        cliente = obtener_cliente_gcs_nativo()
         bucket = cliente.bucket(nombre_bucket)
         blob = bucket.blob(nombre_archivo_destino)
         
-        # Sobrescribe automáticamente, manteniendo el consumo de GB al mínimo
-        blob.upload_from_string(csv_en_memoria, content_type="text/csv")
+        # Detectar si es un DataFrame de Pandas (para el Historial Maestro)
+        if isinstance(dataframe_o_bytes, pd.DataFrame):
+            csv_en_ram = dataframe_o_bytes.to_csv(index=False)
+            blob.upload_from_string(csv_en_ram, content_type="text/csv")
+        # Detectar si son bytes puros (para guardar el archivo FTTX tal cual)
+        elif isinstance(dataframe_o_bytes, bytes):
+            blob.upload_from_string(dataframe_o_bytes, content_type="application/octet-stream")
+        else:
+            # Si es un objeto de archivo subido de Streamlit (UploadedFile)
+            dataframe_o_bytes.seek(0)
+            blob.upload_from_file(dataframe_o_bytes)
+            
         return True
     except Exception as e:
-        print(f"Error al guardar en GCS: {e}")
+        print(f"Error de persistencia en GCS: {e}")
         return False
-
-def leer_espejo_gcs(nombre_bucket, nombre_archivo):
-    """Lee directamente la base de datos desde el bucket de GCS."""
-    try:
-        cliente = obtener_cliente_gcs()
-        bucket = cliente.bucket(nombre_bucket)
-        blob = bucket.blob(nombre_archivo)
-        
-        if blob.exists():
-            contenido = blob.download_as_string()
-            return pd.read_csv(io.BytesIO(contenido))
-        return None
-    except Exception as e:
-        print(f"Error al leer desde GCS: {e}")
-        return None
 
 
 
