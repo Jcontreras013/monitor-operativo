@@ -18,6 +18,7 @@ openpyxl
 xlrd==2.0.1
 st-gsheets-connection
 gspread
+google-cloud-storage
 
 # --- Extracción Web y HTML ---
 beautifulsoup4
