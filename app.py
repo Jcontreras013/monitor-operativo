@@ -104,9 +104,18 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("Descargando historial y limpiando duplicados..."):
-            df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
-            if not df_nube.empty:
+        with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
+            
+            # --- NUEVA LÓGICA: INTENTAR LEER DE GCS PRIMERO ---
+            nombre_bucket_sistema = "jovial-trilogy-306216.appspot.com"
+            df_nube = leer_espejo_gcs(nombre_bucket_sistema, "historial_maestro.csv")
+            
+            # RESPALDO DE EMERGENCIA: Si GCS está vacío o falla, leemos de Google Sheets
+            if df_nube is None or df_nube.empty:
+                df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
+            # --------------------------------------------------
+
+            if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
 
@@ -180,11 +189,11 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa. Datos históricos cargados y limpios.")
+                st.success("✅ Sincronización Exitosa. Datos históricos cargados desde GCS.")
                 st.rerun()
-            else: st.warning("La base de datos en la nube está vacía.")
+            else: st.warning("La base de datos está vacía.")
     except Exception as e: st.error(f"Error al conectar con la nube: {e}")
-
+        
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
