@@ -9,6 +9,9 @@ import numpy as np
 import streamlit as st
 import io
 from typing import Any, List, Optional, Tuple, Union, Dict
+import io
+from google.cloud import storage
+from google.oauth2 import service_account
 
 # ==============================================================================
 # MOTOR SEGURO DE FECHAS, ZONA HORARIA Y UTILIDADES BASE
@@ -2504,3 +2507,50 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
         pdf.ln()
         
     return finalizar_pdf(pdf)
+
+
+# ==============================================================================
+# 7. MÓDULO DE PERSISTENCIA EN GOOGLE CLOUD STORAGE (NUEVO)
+# ==============================================================================
+
+def obtener_cliente_gcs():
+    """Conecta a GCS reciclando los secretos de Streamlit (sin archivos físicos)."""
+    import streamlit as st
+    creds_dict = st.secrets["connections"]["gsheets"]
+    creds = service_account.Credentials.from_service_account_info(creds_dict)
+    return storage.Client(credentials=creds, project=creds.project_id)
+
+def guardar_espejo_gcs(df, nombre_bucket, nombre_archivo_destino):
+    """
+    Convierte el DataFrame en CSV en memoria RAM y lo sube/sobrescribe en GCS.
+    """
+    try:
+        csv_en_memoria = df.to_csv(index=False)
+        cliente = obtener_cliente_gcs()
+        bucket = cliente.bucket(nombre_bucket)
+        blob = bucket.blob(nombre_archivo_destino)
+        
+        # Sobrescribe automáticamente, manteniendo el consumo de GB al mínimo
+        blob.upload_from_string(csv_en_memoria, content_type="text/csv")
+        return True
+    except Exception as e:
+        print(f"Error al guardar en GCS: {e}")
+        return False
+
+def leer_espejo_gcs(nombre_bucket, nombre_archivo):
+    """Lee directamente la base de datos desde el bucket de GCS."""
+    try:
+        cliente = obtener_cliente_gcs()
+        bucket = cliente.bucket(nombre_bucket)
+        blob = bucket.blob(nombre_archivo)
+        
+        if blob.exists():
+            contenido = blob.download_as_string()
+            return pd.read_csv(io.BytesIO(contenido))
+        return None
+    except Exception as e:
+        print(f"Error al leer desde GCS: {e}")
+        return None
+
+
+
