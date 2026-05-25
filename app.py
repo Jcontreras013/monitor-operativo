@@ -70,7 +70,8 @@ try:
         cargar_y_limpiar_crudos_diamante_monitor,
         extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
-        sobrescribir_archivo_gcs
+        sobrescribir_archivo_gcs,
+        leer_espejo_gcs
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
