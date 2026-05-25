@@ -422,15 +422,23 @@ def main():
                             
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
-                                    if hasattr(file_disp_ptr, 'read'): file_disp_ptr.seek(0)
+                                    if hasattr(file_disp_ptr, 'read'): 
+                                        file_disp_ptr.seek(0)
+                                        
+                                        # --- LÓGICA ADITIVA: RESPALDO FTTX EN GCS ---
                                         bytes_fttx = file_disp_ptr.read()
                                         sobrescribir_archivo_gcs(bytes_fttx, nombre_bucket_sistema, "fttx_activo.csv")
                                         file_disp_ptr.seek(0) # Reseteamos el puntero para Pandas
-                                    
-                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
-                                    else: df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
+                                        # --------------------------------------------
+
+                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
+                                        df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
+                                    else: 
+                                        df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
                                 except Exception as e_fttx: pass
+
+                            
                             st.success("✅ Datos sincronizados en modo Espejo Inverso y unidos al historial correctamente.")
                             import time
                             time.sleep(1)
