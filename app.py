@@ -69,7 +69,7 @@ try:
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
         extraer_seguimientos_tecnico_unificado,
-        generar_pdf_ordenes_totales
+        generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs
     )
 except ImportError as e:
