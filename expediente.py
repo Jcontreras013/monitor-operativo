@@ -8,7 +8,7 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
-import plotly.express as px
+import plotly.express as px  # <-- CORRECCIÓN: Importación de Plotly integrada
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -210,7 +210,6 @@ def mostrar_modulo_expedientes(conn, df_base):
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
         
-        # Eliminamos el st.form para evitar que se coma los errores y recargue la página en silencio
         c1, c2 = st.columns(2)
         with c1:
             lista_nombres = cargar_personal("personal_tecnico.txt")
@@ -247,15 +246,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     urls.append(res.json()["image"]["url"])
                     
                     with st.spinner("Guardando en la Nube y en Sheets..."):
-                        # 1. Leemos la base actual (GCS primero, Sheets como respaldo)
                         df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                         if df_actual is None or df_actual.empty:
                             df_actual = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                             
-                        # Columnas estándar de la hoja Expedientes
                         cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
                         
-                        # Preparamos la nueva fila
                         nueva_fila = [
                             get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             colaborador_sel,
@@ -267,51 +263,42 @@ def mostrar_modulo_expedientes(conn, df_base):
                         ]
                         nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
                         
-                        # Unimos el historial con el nuevo registro
                         if df_actual is not None and not df_actual.empty:
                             df_actual.columns = cols_exp
                             df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
                         else:
                             df_final = nuevo_df
                             
-                        # 2. Guardamos en AMBOS lados usando los mismos conectores de app.py
-# 2. Guardamos en AMBOS lados usando los mismos conectores de app.py
                         sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
 
                     st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
                     time.sleep(1.5)
                     
-                    # --- LÓGICA PARA LIMPIAR LOS CAMPOS ---
                     llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario"]
                     for llave in llaves_a_borrar:
                         if llave in st.session_state:
                             del st.session_state[llave]
-                    # ---------------------------------------
                     
                     st.rerun()
 
                 except Exception as e:
                     st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
-  st.markdown("---")
+    st.markdown("---")
     
     # ==========================================================================
     # 📊 DASHBOARD DE KPIs: RENDIMIENTO Y FALTAS
     # ==========================================================================
     with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
         try:
-            # Leemos la base de alta velocidad
             df_kpi = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
             if df_kpi is None or df_kpi.empty:
                 df_kpi = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
 
             if df_kpi is not None and not df_kpi.empty and 'TECNICO' in df_kpi.columns:
-                # Limpieza rápida para los cálculos
                 df_kpi['TECNICO'] = df_kpi['TECNICO'].astype(str).str.upper().str.strip()
                 df_kpi = df_kpi[~df_kpi['TECNICO'].isin(['NAN', 'NONE', 'N/D', ''])]
-                
-                # Convertimos las fechas para ordenar
                 df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
                 
                 col_k1, col_k2, col_k3 = st.columns(3)
@@ -321,7 +308,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                     df_top = df_kpi['TECNICO'].value_counts().reset_index()
                     df_top.columns = ['Colaborador (Técnico/Auxiliar)', 'Total Faltas']
                     
-                    # Estilo para resaltar al que tiene más faltas
                     def highlight_top(row):
                         return ['background-color: #3b070c; color: white' if row.name == 0 else '' for _ in row.index]
                         
@@ -347,18 +333,18 @@ def mostrar_modulo_expedientes(conn, df_base):
                     fig_line.update_layout(margin=dict(t=0, b=0, l=0, r=0), xaxis_title="", yaxis_title="Cant. de Registros")
                     fig_line.update_traces(line_color='#10B981', marker=dict(size=8, color='#3B82F6'))
                     st.plotly_chart(fig_line, use_container_width=True)
-
             else:
                 st.info("📊 Aún no hay suficientes registros en la base de datos para calcular KPIs.")
         except Exception as e:
             st.warning(f"Error al procesar gráficas: {e}")
+
+    st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # HISTORIAL Y HISTÓRICO VISUAL (MIGRADO A GCS)
+    # HISTORIAL Y HISTÓRICO VISUAL
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # LECTURA DE ALTA VELOCIDAD DESDE GCS
         df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
         
         if df_view is None or df_view.empty:
@@ -447,16 +433,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
                                     with st.spinner("Eliminando registro de la base de datos..."):
                                         try:
-                                            # Volvemos a leer la base completa para evitar desfasajes
                                             df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                                             if df_borrado is None or df_borrado.empty:
                                                 df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                                             
-                                            # Eliminamos el registro usando el índice de Pandas (idx)
                                             if idx in df_borrado.index:
                                                 df_borrado = df_borrado.drop(idx).reset_index(drop=True)
-                                                
-                                                # Guardamos el cambio en GCS y en Sheets
                                                 sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
                                                 
