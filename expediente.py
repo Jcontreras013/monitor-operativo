@@ -214,10 +214,20 @@ def mostrar_modulo_expedientes(conn, df_base):
         with c1:
             lista_nombres = cargar_personal("personal_tecnico.txt")
             colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres, key="sel_colab")
-            tipo_falta = st.selectbox("🚫 Motivo:", [
+            
+            # Selector de Motivo base
+            tipo_falta_base = st.selectbox("🚫 Motivo:", [
                 "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
                 "Mala Documentación", "Incidencia Médica", "Otro"
             ], key="sel_falta")
+            
+            # --- NUEVA LÓGICA: CAMPO DINÁMICO PARA ESPECIFICAR "OTRO" ---
+            tipo_falta = tipo_falta_base
+            if tipo_falta_base == "Otro":
+                motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
+                tipo_falta = motivo_especifico.strip().upper() # Guardamos en mayúsculas para consistencia
+            # -------------------------------------------------------------
+            
         with c2:
             fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
             archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
@@ -271,16 +281,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                             
                         sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-
+    
                     st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
-                    time.sleep(1.5)
+                    time.sleep(1.0)
                     
-                    llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario"]
+                    # --- ACTUALIZACIÓN DE LIMPIEZA DE CAMPOS ---
+                    llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
                     for llave in llaves_a_borrar:
                         if llave in st.session_state:
                             del st.session_state[llave]
                     
-                    st.rerun()
+                    st.rerun()    
 
                 except Exception as e:
                     st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
