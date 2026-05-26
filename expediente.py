@@ -8,12 +8,19 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
-import gspread  # Conexión nativa directa para asegurar la escritura
+import gspread  
+
+# --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
+try:
+    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs
+except ImportError:
+    pass
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
@@ -242,20 +249,21 @@ def mostrar_modulo_expedientes(conn, df_base):
                     try:
                         urls = []
                         if archivos:
-                            for a in archivos:
-                                res = requests.post(
-                                    "https://freeimage.host/api/1/upload",
-                                    data={
-                                        "key": API_KEY_FREEIMAGE,
-                                        "action": "upload",
-                                        "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                        "format": "json"
-                                    }
-                                )
-                                if res.status_code == 200:
-                                    urls.append(res.json()["image"]["url"])
+                            with st.spinner("Subiendo imágenes al servidor..."):
+                                for a in archivos:
+                                    res = requests.post(
+                                        "https://freeimage.host/api/1/upload",
+                                        data={
+                                            "key": API_KEY_FREEIMAGE,
+                                            "action": "upload",
+                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                            "format": "json"
+                                        }
+                                    )
+                                    if res.status_code == 200:
+                                        urls.append(res.json()["image"]["url"])
                         
-                        # Fila ordenada alineada exactamente con tus columnas A, B, C, D, E, F, G
+                        # Fila ordenada alineada exactamente con tus columnas
                         nueva_fila = [
                             get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             colaborador_sel,
@@ -266,33 +274,51 @@ def mostrar_modulo_expedientes(conn, df_base):
                             supervisor_actual
                         ]
 
-                        # --- CONEXIÓN DIRECTA VIA GSPREAD ANTI-FALLOS ---
-                        gc = obtener_cliente_gspread_directo()
-                        documento = gc.open_by_url(st.secrets["url_base_datos"])
-                        hoja_expedientes = documento.worksheet("Expedientes")
-                        
-                        # gspread busca la última fila con datos de forma segura y añade la nueva
-                        hoja_expedientes.append_row(nueva_fila)
-                        
-                        # Forzar la limpieza de caché de lectura para la visualización del historial
+                        with st.spinner("Guardando en la Nube..."):
+                            # 1. Guardar en Sheets (Conexión Directa Anti-Fallos)
+                            gc = obtener_cliente_gspread_directo()
+                            documento = gc.open_by_url(st.secrets["url_base_datos"])
+                            hoja_expedientes = documento.worksheet("Expedientes")
+                            hoja_expedientes.append_row(nueva_fila)
+                            
+                            # 2. Lógica Espejo: Actualizar y Sobrescribir en GCS
+                            try:
+                                df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
+                                nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                                
+                                if df_actual is not None and not df_actual.empty:
+                                    # Aseguramos que tengan las mismas columnas antes de unir
+                                    df_actual.columns = cols_exp
+                                    df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                                else:
+                                    df_final = nuevo_df
+                                    
+                                sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            except Exception as e_gcs:
+                                st.warning(f"⚠️ Guardado en Sheets exitoso, pero GCS requiere actualización manual: {e_gcs}")
+
                         st.cache_data.clear()
-                        
                         st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
                         time.sleep(1)
                         st.rerun()
 
                     except Exception as e:
-                        st.error(f"❌ Error al intentar escribir en Google Sheets: {e}")
+                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
     st.markdown("---")
     
     # --------------------------------------------------------------------------
-    # HISTORIAL Y HISTÓRICO VISUAL
+    # HISTORIAL Y HISTÓRICO VISUAL (MIGRADO A GCS)
     # --------------------------------------------------------------------------
     st.subheader("📜 Historial de Expedientes")
     try:
-        # Forzar lectura directa sin búferes antiguos corruptos
-        df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        # LECTURA DE ALTA VELOCIDAD DESDE GCS
+        df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+        
+        # Respaldo de Emergencia a Google Sheets si GCS falla o está vacío
+        if df_view is None or df_view.empty:
+            df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if 'TECNICO' in df_view.columns:
             df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
@@ -375,16 +401,24 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with c_d:
                             if es_admin:
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    gc = obtener_cliente_gspread_directo()
-                                    documento = gc.open_by_url(st.secrets["url_base_datos"])
-                                    hoja_expedientes = documento.worksheet("Expedientes")
-                                    
-                                    # El índice de gspread inicia en 1, agregamos 2 por cabecera de Pandas
-                                    fila_a_borrar = int(idx) + 2
-                                    hoja_expedientes.delete_rows(fila_a_borrar)
-                                    
-                                    st.cache_data.clear()
-                                    st.rerun()
+                                    with st.spinner("Eliminando registro..."):
+                                        # 1. Borrar de Google Sheets (El maestro principal)
+                                        gc = obtener_cliente_gspread_directo()
+                                        documento = gc.open_by_url(st.secrets["url_base_datos"])
+                                        hoja_expedientes = documento.worksheet("Expedientes")
+                                        
+                                        fila_a_borrar = int(idx) + 2
+                                        hoja_expedientes.delete_rows(fila_a_borrar)
+                                        
+                                        # 2. Refrescar el archivo de GCS leyendo la hoja limpia de Sheets
+                                        try:
+                                            df_update = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                                            sobrescribir_archivo_gcs(df_update, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                        except Exception as e:
+                                            pass # Si falla GCS, en el próximo reinicio se auto-arregla
+                                            
+                                        st.cache_data.clear()
+                                        st.rerun()
         else:
             st.info("No hay registros en la base de datos.")
 
