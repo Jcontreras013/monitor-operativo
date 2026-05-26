@@ -1478,21 +1478,21 @@ def main():
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
                             
-                            tecnicos_activos = sorted(df_para_gantt_final['TECNICO'].unique())
+                          #  tecnicos_activos = sorted(df_para_gantt_final['TECNICO'].unique())
                             
-                            opcion_tec = st.radio(
-                                "Selección de Historial:",
-                                options=["[ Ocultar Historiales ]"] + tecnicos_activos,
-                                horizontal=True,
-                                label_visibility="collapsed" 
-                            )
+                           # opcion_tec = st.radio(
+                               # "Selección de Historial:",
+                               # options=["[ Ocultar Historiales ]"] + tecnicos_activos,
+                              #  horizontal=True,
+                             #   label_visibility="collapsed" 
+                            #)
                             
-                            if opcion_tec != "[ Ocultar Historiales ]":
-                                df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
-                                mostrar_seguimientos_tecnico(opcion_tec, df_seg)
+                            #if opcion_tec != "[ Ocultar Historiales ]":
+                            #    df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
+                           #     mostrar_seguimientos_tecnico(opcion_tec, df_seg)
                                     
-                        else:
-                            st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
+                    #    else:
+                   #         st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
             st.markdown("---")
         if st.session_state.get('config_ver_panel', True):
