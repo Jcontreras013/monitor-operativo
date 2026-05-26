@@ -8,6 +8,7 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
+import plotly.express as px
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -293,7 +294,64 @@ def mostrar_modulo_expedientes(conn, df_base):
                 except Exception as e:
                     st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
-    st.markdown("---")
+  st.markdown("---")
+    
+    # ==========================================================================
+    # 📊 DASHBOARD DE KPIs: RENDIMIENTO Y FALTAS
+    # ==========================================================================
+    with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
+        try:
+            # Leemos la base de alta velocidad
+            df_kpi = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+            if df_kpi is None or df_kpi.empty:
+                df_kpi = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+
+            if df_kpi is not None and not df_kpi.empty and 'TECNICO' in df_kpi.columns:
+                # Limpieza rápida para los cálculos
+                df_kpi['TECNICO'] = df_kpi['TECNICO'].astype(str).str.upper().str.strip()
+                df_kpi = df_kpi[~df_kpi['TECNICO'].isin(['NAN', 'NONE', 'N/D', ''])]
+                
+                # Convertimos las fechas para ordenar
+                df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+                
+                col_k1, col_k2, col_k3 = st.columns(3)
+                
+                with col_k1:
+                    st.markdown("<h5 style='color:#3B82F6; font-size:14px;'>🏆 Top 5: Colaboradores con más registros</h5>", unsafe_allow_html=True)
+                    df_top = df_kpi['TECNICO'].value_counts().reset_index()
+                    df_top.columns = ['Colaborador (Técnico/Auxiliar)', 'Total Faltas']
+                    
+                    # Estilo para resaltar al que tiene más faltas
+                    def highlight_top(row):
+                        return ['background-color: #3b070c; color: white' if row.name == 0 else '' for _ in row.index]
+                        
+                    st.dataframe(df_top.head(5).style.apply(highlight_top, axis=1), hide_index=True, use_container_width=True)
+
+                with col_k2:
+                    st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>🚫 Distribución por Motivo</h5>", unsafe_allow_html=True)
+                    df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
+                    df_motivos.columns = ['Motivo', 'Cantidad']
+                    
+                    fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.5, template="plotly_dark", height=220)
+                    fig_pie.update_traces(textposition='inside', textinfo='percent+value')
+                    fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+                    st.plotly_chart(fig_pie, use_container_width=True)
+
+                with col_k3:
+                    st.markdown("<h5 style='color:#10B981; font-size:14px;'>📈 Tendencia de Incidencias</h5>", unsafe_allow_html=True)
+                    df_tendencia = df_kpi.dropna(subset=['FECHA_DT']).copy()
+                    tendencia = df_tendencia.groupby('FECHA_DT').size().reset_index(name='Casos')
+                    tendencia = tendencia.sort_values('FECHA_DT')
+                    
+                    fig_line = px.line(tendencia, x='FECHA_DT', y='Casos', markers=True, template="plotly_dark", height=220)
+                    fig_line.update_layout(margin=dict(t=0, b=0, l=0, r=0), xaxis_title="", yaxis_title="Cant. de Registros")
+                    fig_line.update_traces(line_color='#10B981', marker=dict(size=8, color='#3B82F6'))
+                    st.plotly_chart(fig_line, use_container_width=True)
+
+            else:
+                st.info("📊 Aún no hay suficientes registros en la base de datos para calcular KPIs.")
+        except Exception as e:
+            st.warning(f"Error al procesar gráficas: {e}")
     
     # --------------------------------------------------------------------------
     # HISTORIAL Y HISTÓRICO VISUAL (MIGRADO A GCS)
