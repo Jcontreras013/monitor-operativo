@@ -288,91 +288,10 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     
     # ==========================================================================
-    # 📊 DASHBOARD DE KPIs AVANZADO: RENDIMIENTO, REINCIDENCIA Y TIEMPOS
+    # LECTURA Y FILTRADO INTEGRADO (Para KPIs y Tabla Histórica)
     # ==========================================================================
-    with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
-        try:
-            df_kpi = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-            if df_kpi is None or df_kpi.empty:
-                df_kpi = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-
-            if df_kpi is not None and not df_kpi.empty and 'TECNICO' in df_kpi.columns:
-                df_kpi['TECNICO'] = df_kpi['TECNICO'].astype(str).str.upper().str.strip()
-                df_kpi = df_kpi[~df_kpi['TECNICO'].isin(['NAN', 'NONE', 'N/D', ''])]
-                
-                df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
-                df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
-                
-                dias_es = {
-                    'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
-                    'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
-                }
-                df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
-
-                tot_registros = len(df_kpi)
-                colab_unicos = df_kpi['TECNICO'].nunique()
-                motivo_comun = df_kpi['TIPO_FALTA'].value_counts().index[0] if not df_kpi['TIPO_FALTA'].empty else "N/D"
-                
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.metric("📦 Total Incidencias", f"{tot_registros} Casos")
-                with m2:
-                    st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas")
-                with m3:
-                    st.metric("🚨 Mayor Problema", str(motivo_comun).title())
-                
-                st.markdown("<hr style='margin: 10px 0; border-color: #2D2F39;'>", unsafe_allow_html=True)
-
-                col_k1, col_k2, col_k3 = st.columns(3)
-                
-                with col_k1:
-                    st.markdown("<h5 style='color:#EF4444; font-size:14px;'>🚨 Alerta: Reincidentes Críticos</h5>", unsafe_allow_html=True)
-                    df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces Repetido')
-                    df_reinc = df_reinc[df_reinc['Veces Repetido'] > 1].sort_values(by='Veces Repetido', ascending=False)
-                    df_reinc.columns = ['Colaborador', 'Falta Repetida', 'Cantidad']
-                    
-                    if not df_reinc.empty:
-                        st.dataframe(df_reinc.head(5), hide_index=True, use_container_width=True)
-                    else:
-                        st.success("✅ Excelente: No hay reincidentes.")
-
-                with col_k2:
-                    st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 ¿Qué días ocurren más faltas?</h5>", unsafe_allow_html=True)
-                    orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-                    df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
-                    df_dias.columns = ['Día', 'Cantidad']
-                    
-                    fig_barras_dias = px.bar(
-                        df_dias, x='Día', y='Cantidad',
-                        template="plotly_dark", height=200,
-                        color='Cantidad', color_continuous_scale='Reds'
-                    )
-                    fig_barras_dias.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
-                    st.plotly_chart(fig_barras_dias, use_container_width=True)
-
-                with col_k3:
-                    st.markdown("<h5 style='color:#10B981; font-size:14px;'>🚫 Distribución por Motivo</h5>", unsafe_allow_html=True)
-                    df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
-                    df_motivos.columns = ['Motivo', 'Cantidad']
-                    
-                    fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.5, template="plotly_dark", height=200)
-                    fig_pie.update_traces(textposition='inside', textinfo='percent+value')
-                    fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.info("📊 Aún no hay suficientes registros en la base de datos para calcular KPIs.")
-        except Exception as e:
-            st.warning(f"Error al procesar gráficas de KPIs: {e}")
-
-    st.markdown("---")
-    
-    # --------------------------------------------------------------------------
-    # HISTORIAL Y HISTÓRICO VISUAL
-    # --------------------------------------------------------------------------
-    st.subheader("📜 Historial de Expedientes")
     try:
         df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-        
         if df_view is None or df_view.empty:
             df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
@@ -386,6 +305,8 @@ def mostrar_modulo_expedientes(conn, df_base):
         if not df_mostrar.empty:
             df_mostrar['TECNICO'] = df_mostrar['TECNICO'].astype(str).str.upper().str.strip()
             
+            # --- RENDERIZACIÓN DE CONTROLES DE FILTRADO ---
+            st.subheader("📜 Historial de Expedientes")
             with st.container():
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -396,9 +317,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                 with col3:
                     filtro_tipo = st.selectbox("📋 Tipo de Registro:", options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"])
 
+            # Aplicar filtro de nombre
             if filtro_nombre != "VER TODOS":
                 df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
             
+            # Aplicar filtro dinámico de fechas
             if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
                 fecha_inicio, fecha_fin = rango_fechas
                 def parsear_fecha(f_str):
@@ -414,11 +337,84 @@ def mostrar_modulo_expedientes(conn, df_base):
                     (df_mostrar['FECHA_INCIDENCIA_DT'] <= fecha_fin)
                 ]
             
+            # Aplicar filtro de tipo de falta
             if filtro_tipo == "Incidencia Médica":
                 df_mostrar = df_mostrar[df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
             elif filtro_tipo == "Llamado de Atención":
                 df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
-            
+
+            # ==================================================================
+            # 📊 PANEL DE KPIs DINÁMICO (Se alimenta del DataFrame ya filtrado)
+            # ==================================================================
+            with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
+                if not df_mostrar.empty:
+                    df_kpi = df_mostrar.copy()
+                    
+                    df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+                    df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
+                    
+                    dias_es = {
+                        'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
+                        'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
+                    }
+                    df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
+
+                    tot_registros = len(df_kpi)
+                    colab_unicos = df_kpi['TECNICO'].nunique()
+                    motivo_comun = df_kpi['TIPO_FALTA'].value_counts().index[0] if not df_kpi['TIPO_FALTA'].empty else "N/D"
+                    
+                    m1, m2, m3 = st.columns(3)
+                    with m1:
+                        st.metric("📦 Total Incidencias", f"{tot_registros} Casos")
+                    with m2:
+                        st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas")
+                    with m3:
+                        st.metric("🚨 Mayor Problema", str(motivo_comun).title())
+                    
+                    st.markdown("<hr style='margin: 10px 0; border-color: #2D2F39;'>", unsafe_allow_html=True)
+
+                    col_k1, col_k2, col_k3 = st.columns(3)
+                    
+                    with col_k1:
+                        st.markdown("<h5 style='color:#EF4444; font-size:14px;'>🚨 Alerta: Reincidentes Críticos</h5>", unsafe_allow_html=True)
+                        df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces Repetido')
+                        df_reinc = df_reinc[df_reinc['Veces Repetido'] > 1].sort_values(by='Veces Repetido', ascending=False)
+                        df_reinc.columns = ['Colaborador', 'Falta Repetida', 'Cantidad']
+                        
+                        if not df_reinc.empty:
+                            st.dataframe(df_reinc.head(5), hide_index=True, use_container_width=True)
+                        else:
+                            st.success("✅ Sin reincidentes en este rango.")
+
+                    with col_k2:
+                        st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 ¿Qué días ocurren más faltas?</h5>", unsafe_allow_html=True)
+                        orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+                        df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
+                        df_dias.columns = ['Día', 'Cantidad']
+                        
+                        fig_barras_dias = px.bar(
+                            df_dias, x='Día', y='Cantidad',
+                            template="plotly_dark", height=200,
+                            color='Cantidad', color_continuous_scale='Reds'
+                        )
+                        fig_barras_dias.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
+                        st.plotly_chart(fig_barras_dias, use_container_width=True)
+
+                    with col_k3:
+                        st.markdown("<h5 style='color:#10B981; font-size:14px;'>🚫 Distribución por Motivo</h5>", unsafe_allow_html=True)
+                        df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
+                        df_motivos.columns = ['Motivo', 'Cantidad']
+                        
+                        fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.5, template="plotly_dark", height=200)
+                        fig_pie.update_traces(textposition='inside', textinfo='percent+value')
+                        fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.info("📊 No hay datos disponibles para los filtros seleccionados en este rango.")
+
+            st.markdown("---")
+
+            # --- RENDIMIENTO DE BOTÓN DE DESCARGA GLOBAL ---
             c_v, c_b = st.columns([3, 1])
             with c_b:
                 if not df_mostrar.empty:
