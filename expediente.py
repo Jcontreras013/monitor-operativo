@@ -439,46 +439,67 @@ def mostrar_modulo_expedientes(conn, df_base):
                         use_container_width=True
                     )
 
-            if df_mostrar.empty:
+if df_mostrar.empty:
                 st.info("💡 No hay registros para los filtros seleccionados.")
             else:
-                for idx, row in df_mostrar.iloc[::-1].iterrows():
-                    es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
-                    c_tag = "#3B82F6" if es_m else "#EF4444"
+                # 1. PREPARAMOS Y MOSTRAMOS LA TABLA LIMPIA
+                df_tabla = df_mostrar[['FECHA_INCIDENCIA', 'TECNICO', 'TIPO_FALTA', 'COMENTARIO', 'SUPERVISOR']].copy()
+                df_tabla.columns = ['Fecha', 'Colaborador', 'Motivo', 'Descripción', 'Registrado por']
+                
+                st.dataframe(
+                    df_tabla.iloc[::-1], # Invertimos para ver el más reciente primero
+                    hide_index=True, 
+                    use_container_width=True,
+                    height=250 # Altura fija para no ocupar toda la pantalla
+                )
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # 2. PANEL DE ACCIONES (OCULTO/COMPACTO)
+                with st.expander("🛠️ ACCIONES: Descargar PDF o Eliminar Registro", expanded=False):
+                    st.write("Seleccione un registro de la lista para gestionarlo:")
                     
-                    with st.container():
-                        st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
-                            <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
-                            <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
-                            <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')}</p>
-                            <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
-                        </div>""", unsafe_allow_html=True)
+                    # Crear diccionario de opciones usando el índice original
+                    dict_acciones = {}
+                    lista_opciones = ["--- Seleccione un registro ---"]
+                    
+                    for idx, row in df_mostrar.iloc[::-1].iterrows():
+                        label = f"{row['FECHA_INCIDENCIA']} | {row['TECNICO']} | {row['TIPO_FALTA']}"
+                        lista_opciones.append(label)
+                        dict_acciones[label] = (idx, row)
+                        
+                    registro_sel = st.selectbox("Registro a gestionar:", options=lista_opciones, label_visibility="collapsed")
+                    
+                    if registro_sel != "--- Seleccione un registro ---":
+                        idx_sel, row_sel = dict_acciones[registro_sel]
+                        
+                        st.info(f"**Detalle del reporte:** {row_sel['COMENTARIO']}")
                         
                         c_p, c_d = st.columns(2)
                         with c_p:
                             st.download_button(
-                                f"📄 Descargar PDF",
-                                data=generar_pdf_memo(row.to_dict()),
-                                file_name=f"Reporte_{idx}.pdf",
-                                key=f"p_{idx}",
+                                "📄 Descargar Memo (PDF)",
+                                data=generar_pdf_memo(row_sel.to_dict()),
+                                file_name=f"Memo_{row_sel['TECNICO'].replace(' ', '_')}.pdf",
+                                key=f"pdf_btn_{idx_sel}",
                                 use_container_width=True
                             )
                         with c_d:
-                            if es_admin:
-                                if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    with st.spinner("Eliminando registro de la base de datos..."):
+                            if es_admin: # Solo tú puedes borrar
+                                if st.button("🗑️ Eliminar Registro", key=f"del_btn_{idx_sel}", type="primary", use_container_width=True):
+                                    with st.spinner("Eliminando de GCS y Sheets..."):
                                         try:
                                             df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                                             if df_borrado is None or df_borrado.empty:
                                                 df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                                             
-                                            if idx in df_borrado.index:
-                                                df_borrado = df_borrado.drop(idx).reset_index(drop=True)
+                                            if idx_sel in df_borrado.index:
+                                                df_borrado = df_borrado.drop(idx_sel).reset_index(drop=True)
                                                 sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
                                                 
                                             st.success("✅ Registro eliminado correctamente.")
-                                            time.sleep(1)
+                                            time.sleep(1.5)
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Error al eliminar: {e}")
