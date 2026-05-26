@@ -325,7 +325,7 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     
     # ==========================================================================
-    # LECTURA Y FILTRADO INTEGRADO DINÁMICO
+    # LECTURA, SANEAMIENTO Y FILTRADO INTEGRADO DINÁMICO
     # ==========================================================================
     try:
         df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
@@ -333,10 +333,9 @@ def mostrar_modulo_expedientes(conn, df_base):
             df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if 'TECNICO' in df_view.columns:
-            # --- LIMPIEZA ANTI-DUPLICADOS INTEGRAL ---
-            # Pasamos todo a mayúsculas, quitamos acentos y limpiamos espacios triples/dobles fantasmas
+            # --- LIMPIEZA ANTI-DUPLICADOS INTEGRAL PARA EVITAR FALSOS POSITIVOS ---
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
-            df_view['TECNICO'] = df_view['TECNICO'].apply(lambda x: " ".join(x.split()))
+            df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True) # Elimina espacios dobles intermedios
             
             df_view['TECNICO_TEST'] = df_view['TECNICO'].str.lower()
             df_mostrar = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])].copy()
@@ -381,7 +380,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
 
             # ==================================================================
-            # 📊 PANEL DE KPIs COMPACTO (Diseño optimizado y Anti-Duplicados)
+            # 📊 PANEL DE KPIs COMPACTO (Anti-Duplicados y Dona por TIPO_FALTA)
             # ==================================================================
             with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
                 if not df_mostrar.empty:
@@ -389,35 +388,21 @@ def mostrar_modulo_expedientes(conn, df_base):
                     
                     df_kpi['RUBRO'] = df_kpi.apply(lambda r: asignar_rubro_automatico(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
                     
-                    df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
-                    df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
-                    
-                    dias_es = {
-                        'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
-                        'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
-                    }
-                    df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
-
                     tot_registros = len(df_kpi)
                     
-                    # --- CONTEO EXACTO REAL SANEADO ---
-                    # Al haber unificado la limpieza arriba, unique() no dará falsos duplicados
-                    colab_unicos = df_kpi['TECNICO'].nunique()
+                    # Conteo exacto: Gracias al saneamiento previo con regex, esto es 100% preciso
+                    colab_unicos = df_kpi['TECNICO'].nunique() 
                     
-                    # --- DISEÑO DE TARJETAS MÁS PEQUEÑO Y ESTILIZADO ---
+                    # Diseño de indicadores ultracompacto en HTML
                     st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; background-color: #1A1D24; padding: 10px 20px; border-radius: 8px; border: 1px solid #2D2F39; margin-bottom: 15px;">
-                        <div style="text-align: center; flex: 1;">
-                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">📦 Total Incidencias</span>
-                            <h3 style="margin: 5px 0 0 0; color: #FFF; font-size: 20px;">{tot_registros} Casos</h3>
+                    <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                        <div style="flex: 1; background-color: #1A1D24; padding: 12px; border-radius: 8px; border: 1px solid #2D2F39; text-align: center;">
+                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">📦 Casos Totales</span>
+                            <h3 style="margin: 5px 0 0 0; color: #FFF; font-size: 22px;">{tot_registros}</h3>
                         </div>
-                        <div style="text-align: center; flex: 1; border-left: 1px solid #2D2F39; border-right: 1px solid #2D2F39;">
-                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">👤 Personas con Incidencias</span>
-                            <h3 style="margin: 5px 0 0 0; color: #FFF; font-size: 20px;">{colab_unicos} Técnicos/Aux</h3>
-                        </div>
-                        <div style="text-align: center; flex: 1;">
-                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">🎯 Rubro Dominante</span>
-                            <h3 style="margin: 5px 0 0 0; color: #F59E0B; font-size: 20px;">{df_kpi['RUBRO'].value_counts().index[0] if not df_kpi['RUBRO'].empty else "N/D"}</h3>
+                        <div style="flex: 1; background-color: #1A1D24; padding: 12px; border-radius: 8px; border: 1px solid #2D2F39; text-align: center;">
+                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">👤 Personas Implicadas</span>
+                            <h3 style="margin: 5px 0 0 0; color: #10B981; font-size: 22px;">{colab_unicos}</h3>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -425,18 +410,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                     col_k1, col_k2, col_k3 = st.columns(3)
                     
                     with col_k1:
-                        st.markdown("<h5 style='color:#EF4444; font-size:13px; font-weight:bold;'>🚨 Reincidentes Críticos</h5>", unsafe_allow_html=True)
-                        df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces Repetido')
-                        df_reinc = df_reinc[df_reinc['Veces Repetido'] > 1].sort_values(by='Veces Repetido', ascending=False)
-                        df_reinc.columns = ['Colaborador', 'Falta Repetida', 'Cantidad']
+                        st.markdown("<h5 style='color:#EF4444; font-size:13px; font-weight:bold;'>🚨 Reincidentes por Falta</h5>", unsafe_allow_html=True)
+                        df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces')
+                        df_reinc = df_reinc[df_reinc['Veces'] > 1].sort_values(by='Veces', ascending=False)
                         
                         if not df_reinc.empty:
                             st.dataframe(df_reinc.head(4), hide_index=True, use_container_width=True, height=180)
                         else:
-                            st.success("✅ Sin reincidentes en este rango.")
+                            st.success("✅ Sin reincidentes.")
 
                     with col_k2:
-                        st.markdown("<h5 style='color:#3B82F6; font-size:13px; font-weight:bold;'>🎛️ Distribución por Rubros</h5>", unsafe_allow_html=True)
+                        st.markdown("<h5 style='color:#3B82F6; font-size:13px; font-weight:bold;'>🎛️ Origen por Rubros</h5>", unsafe_allow_html=True)
                         df_rubros_chart = df_kpi['RUBRO'].value_counts().reset_index()
                         df_rubros_chart.columns = ['Rubro', 'Cantidad']
                         
@@ -451,17 +435,17 @@ def mostrar_modulo_expedientes(conn, df_base):
                         st.plotly_chart(fig_rubros, use_container_width=True)
 
                     with col_k3:
-                        # --- RETORNO DEL GRÁFICO DE PASTEL POR TIPO DE FALTA ORIGINAL ---
-                        st.markdown("<h5 style='color:#10B981; font-size:13px; font-weight:bold;'>🚫 Tipos de Falta Detallados</h5>", unsafe_allow_html=True)
+                        st.markdown("<h5 style='color:#10B981; font-size:13px; font-weight:bold;'>🚫 Tipos de Falta Específica</h5>", unsafe_allow_html=True)
                         df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
                         df_motivos.columns = ['Motivo', 'Cantidad']
                         
+                        # Retorna la gráfica de dona con los TIPO_FALTA originales (No los rubros)
                         fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.4, template="plotly_dark", height=180)
-                        fig_pie.update_traces(textposition='inside', textinfo='percent+value', textfont_size=9)
+                        fig_pie.update_traces(textposition='inside', textinfo='percent+label', textfont_size=10)
                         fig_pie.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False)
                         st.plotly_chart(fig_pie, use_container_width=True)
                 else:
-                    st.info("📊 No hay datos disponibles para los filtros seleccionados en este rango.")
+                    st.info("📊 No hay datos disponibles para los filtros seleccionados.")
 
             st.markdown("---")
 
