@@ -14,8 +14,6 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente
 
-
-
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
@@ -69,7 +67,9 @@ try:
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
         extraer_seguimientos_tecnico_unificado,
-        generar_pdf_ordenes_totales
+        generar_pdf_ordenes_totales,
+        sobrescribir_archivo_gcs,
+        leer_espejo_gcs
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -97,15 +97,21 @@ st.markdown("""
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# 2. FUNCION DE SINCRONIZACIÓN
+# 2. FUNCION DE SINCRONIZACIÓN (MIGRADA A GCS)
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("Descargando historial y limpiando duplicados..."):
-            df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
-            if not df_nube.empty:
+        with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
+            df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+            
+            # Respaldo si GCS no responde o está vacío
+            if df_nube is None or df_nube.empty:
+                df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
+                
+            if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
 
@@ -179,7 +185,7 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa. Datos históricos cargados y limpios.")
+                st.success("✅ Sincronización Exitosa. Datos históricos cargados desde GCS.")
                 st.rerun()
             else: st.warning("La base de datos en la nube está vacía.")
     except Exception as e: st.error(f"Error al conectar con la nube: {e}")
@@ -188,7 +194,7 @@ def sincronizar_datos_nube(conn):
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
 def main():
-    settings.inicializar_configuracion() # <--- INICIALIZAMOS LA CONFIGURACIÓN
+    settings.inicializar_configuracion() 
 
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
@@ -212,20 +218,18 @@ def main():
     # 🚀 ACCESO EXCLUSIVO PARA EL ROL "LLAMADOS"
     # ==============================================================================
     if str(rol_usuario).strip().lower() == 'llamados':
-        # Muestra directamente los expedientes usando una base vacía (no necesita cargar el Excel)
         expediente.mostrar_modulo_expedientes(conn, pd.DataFrame())
-        mostrar_boton_logout() # Le mostramos el botón para que pueda cerrar sesión
-        st.stop() # 🛑 FRENAMOS EL CÓDIGO AQUÍ. Ignora todo lo que está abajo (botones, menús, monitor).
+        mostrar_boton_logout() 
+        st.stop() 
     # ==============================================================================
 
-    # Si es Admin, Jefe o Monitoreo, el código sigue normalmente hacia abajo:
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
 
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
         pass 
 
-    # === LÓGICA DE NAVEGACIÓN (BLOQUEO ROL MONITOREO) ===
+    # === LÓGICA DE NAVEGACIÓN ===
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
@@ -286,12 +290,11 @@ def main():
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
                 nav_menu_diamante = "⚡ Monitor en Vivo"
 
-        
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
         st.markdown("### ☁️ Sincronización")
-        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Sincronizar con Google Sheets", use_container_width=True, key="btn_nube_sidebar"):
+        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Descargar última versión desde Google Cloud", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None: sincronizar_datos_nube(conn)
             else: st.error("La conexión a la nube no está disponible.")
         st.markdown("<br>", unsafe_allow_html=True)
@@ -340,19 +343,22 @@ def main():
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
 
     # ==============================================================================
-    # 2. CARGA Y PROCESAMIENTO DE DATOS
+    # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS)
     # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
         if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
-            with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde la nube..."):
+            with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde GCS..."):
                 try:
-                    df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
-                    if not df_fttx_cloud.empty:
+                    df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                    if df_fttx_cloud is None or df_fttx_cloud.empty:
+                        df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
+                    
+                    if df_fttx_cloud is not None and not df_fttx_cloud.empty:
                         b_io = io.BytesIO()
                         with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
                             df_fttx_cloud.to_excel(writer, index=False)
                         file_disp_ptr = b_io.getvalue()
-                    else: raise ValueError("La pestaña está vacía.")
+                    else: raise ValueError("La pestaña FTTX está vacía.")
                 except Exception as e:
                     b_io = io.BytesIO()
                     with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
@@ -375,14 +381,18 @@ def main():
             if res_p_diamante is not None:
                 st.session_state.df_hist = res_h_diamante
                 if conn is not None:
-                    with st.spinner("☁️ Sincronizando y uniendo con histórico..."):
+                    with st.spinner("☁️ Sincronizando y uniendo con histórico en GCS..."):
                         try:
                             df_new = res_p_diamante.copy()
                             if 'NUM' in df_new.columns:
                                 df_new['NUM'] = df_new['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_new.loc[df_new['NUM'] == 'nan', 'NUM'] = 'N/D'
-                            df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                            if not df_cloud.empty:
+                                
+                            df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                            if df_cloud is None or df_cloud.empty:
+                                df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                                
+                            if df_cloud is not None and not df_cloud.empty:
                                 df_cloud.columns = df_cloud.columns.str.upper().str.strip()
                                 if 'NUM' in df_cloud.columns:
                                     df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -408,17 +418,26 @@ def main():
                                 if c_date in df_to_upload.columns:
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
+                            sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             st.session_state.df_base = df_combined
                             
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
-                                    if hasattr(file_disp_ptr, 'read'): file_disp_ptr.seek(0)
-                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
-                                    else: df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
+                                    if hasattr(file_disp_ptr, 'read'): 
+                                        file_disp_ptr.seek(0)
+                                        bytes_fttx = file_disp_ptr.read()
+                                        sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                                        file_disp_ptr.seek(0)
+
+                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
+                                        df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
+                                    else: 
+                                        df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
                                 except Exception as e_fttx: pass
-                            st.success("✅ Datos sincronizados en modo Espejo Inverso y unidos al historial correctamente.")
+                            
+                            st.success("✅ Datos sincronizados en GCS (Espejo Inverso) y unidos al historial correctamente.")
                             import time
                             time.sleep(1)
                             st.rerun()
@@ -829,7 +848,6 @@ def main():
                             "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
                         )
 
-                        # 🎨 MAPA DE COLORES SÓLIDOS Y FUERTES
                         colores_solidos = {
                             "SOPFIBRA": "#d32f2f",          
                             "SOP": "#d32f2f",               
@@ -1182,7 +1200,6 @@ def main():
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                     st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
                     
-                    # --- BOTÓN DE DESCARGA PDF EN MÓVIL ---
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.button("📄 DESCARGAR PDF", use_container_width=True, key="btn_pdf_movil"):
                         with st.spinner("Generando PDF..."):
@@ -1377,7 +1394,6 @@ def main():
                 st.markdown("---")
         
         if st.session_state.get('config_mostrar_panel', True):
-
             
             # ==============================================================================
             # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
@@ -1421,7 +1437,6 @@ def main():
 
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                             
-                            # 🎨 MAPA DE COLORES SÓLIDOS Y FUERTES
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",          
                                 "SOP": "#d32f2f",               
@@ -1455,9 +1470,7 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
-                            # =========================================================
-                            # INTERFAZ ULTRA-MINIMALISTA DE PESTAÑAS HORIZONTALES
-                            # =========================================================
+                            
                             tecnicos_activos = sorted(df_para_gantt_final['TECNICO'].unique())
                             
                             opcion_tec = st.radio(
@@ -1574,18 +1587,15 @@ def main():
                     with t_graphs_v:
                         st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
                     
-                    # 🛠️ CORRECCIÓN DE ZONA HORARIA: Restamos 6 horas (UTC a Honduras)
                         df_graficas = df_base.copy()
                         df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
                     
-                        # Filtramos usando la fecha ya corregida a hora local
                         df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
                     
                     if not df_productividad_v.empty:
                         df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
                         conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
                         
-                        # Damos un formato más limpio a la gráfica (Ej: "14:00")
                         conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
                         
                         fig_barras_v = px.bar(
