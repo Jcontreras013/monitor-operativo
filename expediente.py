@@ -8,7 +8,7 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
-import plotly.express as px  # <-- CORRECCIÓN: Importación de Plotly integrada
+import plotly.express as px
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -287,7 +287,7 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.markdown("---")
     
-# ==========================================================================
+    # ==========================================================================
     # 📊 DASHBOARD DE KPIs AVANZADO: RENDIMIENTO, REINCIDENCIA Y TIEMPOS
     # ==========================================================================
     with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
@@ -300,40 +300,33 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_kpi['TECNICO'] = df_kpi['TECNICO'].astype(str).str.upper().str.strip()
                 df_kpi = df_kpi[~df_kpi['TECNICO'].isin(['NAN', 'NONE', 'N/D', ''])]
                 
-                # Procesamiento de fechas y días de la semana
                 df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
                 df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
                 
-                # Traducir días de la semana a español para el gráfico
                 dias_es = {
                     'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
                     'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
                 }
                 df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
 
-                # --- FILA 1: MÉTRICAS GENERALES DE UN VISTAZO ---
                 tot_registros = len(df_kpi)
                 colab_unicos = df_kpi['TECNICO'].nunique()
                 motivo_comun = df_kpi['TIPO_FALTA'].value_counts().index[0] if not df_kpi['TIPO_FALTA'].empty else "N/D"
                 
                 m1, m2, m3 = st.columns(3)
                 with m1:
-                    st.metric("📦 Total Incidencias", f"{tot_registros} Casos", help="Total de reportes guardados en la base histórica")
+                    st.metric("📦 Total Incidencias", f"{tot_registros} Casos")
                 with m2:
-                    st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas", help="Cantidad de técnicos/auxiliares únicos con faltas")
+                    st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas")
                 with m3:
-                    st.metric("🚨 Mayor Problema", str(motivo_comun).title(), help="El motivo de falta que más se repite en la operación")
+                    st.metric("🚨 Mayor Problema", str(motivo_comun).title())
                 
                 st.markdown("<hr style='margin: 10px 0; border-color: #2D2F39;'>", unsafe_allow_html=True)
 
-                # --- FILA 2: GRÁFICOS Y TABLAS DETALLADAS ---
                 col_k1, col_k2, col_k3 = st.columns(3)
                 
                 with col_k1:
                     st.markdown("<h5 style='color:#EF4444; font-size:14px;'>🚨 Alerta: Reincidentes Críticos</h5>", unsafe_allow_html=True)
-                    st.caption("Colaboradores que acumulan la misma falta más de una vez.")
-                    
-                    # Agrupar por técnico y tipo de falta para hallar reincidencia
                     df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces Repetido')
                     df_reinc = df_reinc[df_reinc['Veces Repetido'] > 1].sort_values(by='Veces Repetido', ascending=False)
                     df_reinc.columns = ['Colaborador', 'Falta Repetida', 'Cantidad']
@@ -341,12 +334,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                     if not df_reinc.empty:
                         st.dataframe(df_reinc.head(5), hide_index=True, use_container_width=True)
                     else:
-                        st.success("✅ Excelente: No se detectan colaboradores reincidentes en este período.")
+                        st.success("✅ Excelente: No hay reincidentes.")
 
                 with col_k2:
                     st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 ¿Qué días ocurren más faltas?</h5>", unsafe_allow_html=True)
-                    
-                    # Conteo por día de la semana ordenado correctamente
                     orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
                     df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
                     df_dias.columns = ['Día', 'Cantidad']
@@ -442,43 +433,62 @@ def mostrar_modulo_expedientes(conn, df_base):
             if df_mostrar.empty:
                 st.info("💡 No hay registros para los filtros seleccionados.")
             else:
-                for idx, row in df_mostrar.iloc[::-1].iterrows():
-                    es_m = str(row.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
-                    c_tag = "#3B82F6" if es_m else "#EF4444"
+                # 1. PREPARAMOS Y MOSTRAMOS LA TABLA LIMPIA COMPACTA
+                df_tabla = df_mostrar[['FECHA_INCIDENCIA', 'TECNICO', 'TIPO_FALTA', 'COMENTARIO', 'SUPERVISOR']].copy()
+                df_tabla.columns = ['Fecha', 'Colaborador', 'Motivo', 'Descripción', 'Registrado por']
+                
+                st.dataframe(
+                    df_tabla.iloc[::-1],
+                    hide_index=True, 
+                    use_container_width=True,
+                    height=250
+                )
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # 2. PANEL DE ACCIONES COMPACTO
+                with st.expander("🛠️ ACCIONES: Descargar PDF o Eliminar Registro", expanded=False):
+                    st.write("Seleccione un registro de la lista para gestionarlo:")
                     
-                    with st.container():
-                        st.markdown(f"""<div style="background-color: #1A1D24; padding: 15px; border-radius: 10px; border-left: 5px solid {c_tag}; margin-bottom: 10px; border: 1px solid #2D2F39;">
-                            <h3 style="margin:0; color:white;">{row['TECNICO']}</h3>
-                            <p style="color:#94A3B8;"><b>Motivo:</b> {row['TIPO_FALTA']} | <b>Fecha:</b> {row['FECHA_INCIDENCIA']}</p>
-                            <p style="font-size:12px; color:#64748B;">Registrado por: {row.get('SUPERVISOR', 'N/D')}</p>
-                            <div style="background:#0F1115; padding:10px; border-radius:5px; color:white;">{row['COMENTARIO']}</div>
-                        </div>""", unsafe_allow_html=True)
+                    dict_acciones = {}
+                    lista_opciones = ["--- Seleccione un registro ---"]
+                    
+                    for idx, row in df_mostrar.iloc[::-1].iterrows():
+                        label = f"{row['FECHA_INCIDENCIA']} | {row['TECNICO']} | {row['TIPO_FALTA']}"
+                        lista_opciones.append(label)
+                        dict_acciones[label] = (idx, row)
+                        
+                    registro_sel = st.selectbox("Registro a gestionar:", options=lista_opciones, label_visibility="collapsed")
+                    
+                    if registro_sel != "--- Seleccione un registro ---":
+                        idx_sel, row_sel = dict_acciones[registro_sel]
+                        st.info(f"**Detalle del reporte:** {row_sel['COMENTARIO']}")
                         
                         c_p, c_d = st.columns(2)
                         with c_p:
                             st.download_button(
-                                f"📄 Descargar PDF",
-                                data=generar_pdf_memo(row.to_dict()),
-                                file_name=f"Reporte_{idx}.pdf",
-                                key=f"p_{idx}",
+                                "📄 Descargar Memo (PDF)",
+                                data=generar_pdf_memo(row_sel.to_dict()),
+                                file_name=f"Memo_{row_sel['TECNICO'].replace(' ', '_')}.pdf",
+                                key=f"pdf_btn_{idx_sel}",
                                 use_container_width=True
                             )
                         with c_d:
                             if es_admin:
-                                if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    with st.spinner("Eliminando registro de la base de datos..."):
+                                if st.button("🗑️ Eliminar Registro", key=f"del_btn_{idx_sel}", type="primary", use_container_width=True):
+                                    with st.spinner("Eliminando de GCS y Sheets..."):
                                         try:
                                             df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                                             if df_borrado is None or df_borrado.empty:
                                                 df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                                             
-                                            if idx in df_borrado.index:
-                                                df_borrado = df_borrado.drop(idx).reset_index(drop=True)
+                                            if idx_sel in df_borrado.index:
+                                                df_borrado = df_borrado.drop(idx_sel).reset_index(drop=True)
                                                 sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
                                                 
                                             st.success("✅ Registro eliminado correctamente.")
-                                            time.sleep(1)
+                                            time.sleep(1.5)
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Error al eliminar: {e}")
