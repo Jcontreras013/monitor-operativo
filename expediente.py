@@ -42,6 +42,41 @@ def cargar_personal(filepath="personal_tecnico.txt"):
     except: return []
 
 # ==============================================================================
+# LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS
+# ==============================================================================
+def asignar_rubro_automatico(motivo, comentario):
+    motivo_str = str(motivo).upper().strip()
+    comentario_str = str(comentario).upper().strip()
+    
+    # Palabras clave para detectar casos de Vehículos/GPS en textos libres de "Otro"
+    claves_gps = ['VEHICULO', 'CARRO', 'MOTO', 'CONDUCIR', 'LLANTA', 'COLISION', 'CHOQUE', 'VELOCIDAD', 'RUTA', 'GPS', 'GASOLINA', 'KILOMETRAJE']
+    # Palabras clave para Biométrico
+    claves_biometrico = ['TARDE', 'LLEGADA', 'TARDANZA', 'BIOMETRICO', 'MARCAJE', 'HORARIO', 'ASISTENCIA']
+    # Palabras clave para Cepheus
+    claves_cepheus = ['CEPHEUS', 'DOCUMENTA', 'CERRAR', 'ABRIR', 'ORDEN', 'RETRASO ORDEN', 'LIQUIDAC']
+    
+    # 1. Evaluar Rubro GPS
+    if "EXCESO DE VELOCIDAD" in motivo_str or "ABANDONO DE RUTA" in motivo_str:
+        return "GPS"
+    if any(clv in motivo_str or clv in comentario_str for clv in claves_gps):
+        return "GPS"
+        
+    # 2. Evaluar Rubro Biométrico
+    if "LLEGADA TARDE" in motivo_str:
+        return "BIOMÉTRICO"
+    if any(clv in motivo_str or clv in comentario_str for clv in claves_biometrico):
+        return "BIOMÉTRICO"
+        
+    # 3. Evaluar Rubro Cepheus
+    if "MALA DOCUMENTACIÓN" in motivo_str or "MALA DOCUMENTACION" in motivo_str:
+        return "CEPHEUS"
+    if any(clv in motivo_str or clv in comentario_str for clv in claves_cepheus):
+        return "CEPHEUS"
+        
+    # 4. Caída por defecto a OTROS (Incluye Incidencias Médicas)
+    return "OTROS"
+
+# ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
 class MemoPDF(FPDF):
@@ -215,18 +250,15 @@ def mostrar_modulo_expedientes(conn, df_base):
             lista_nombres = cargar_personal("personal_tecnico.txt")
             colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres, key="sel_colab")
             
-            # Selector de Motivo base
             tipo_falta_base = st.selectbox("🚫 Motivo:", [
                 "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
                 "Mala Documentación", "Incidencia Médica", "Otro"
             ], key="sel_falta")
             
-            # --- NUEVA LÓGICA: CAMPO DINÁMICO PARA ESPECIFICAR "OTRO" ---
             tipo_falta = tipo_falta_base
             if tipo_falta_base == "Otro":
                 motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
-                tipo_falta = motivo_especifico.strip().upper() # Guardamos en mayúsculas para consistencia
-            # -------------------------------------------------------------
+                tipo_falta = motivo_especifico.strip().upper()
             
         with c2:
             fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
@@ -237,6 +269,8 @@ def mostrar_modulo_expedientes(conn, df_base):
         if st.button("💾 GUARDAR EN EXPEDIENTE", type="primary", use_container_width=True):
             if colaborador_sel == "---" or not comentario:
                 st.error("⚠️ Complete el nombre y el comentario.")
+            elif tipo_falta_base == "Otro" and not tipo_falta:
+                st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
             else:
                 try:
                     urls = []
@@ -281,17 +315,16 @@ def mostrar_modulo_expedientes(conn, df_base):
                             
                         sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-    
+
                     st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
-                    time.sleep(1.0)
+                    time.sleep(1.5)
                     
-                    # --- ACTUALIZACIÓN DE LIMPIEZA DE CAMPOS ---
                     llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
                     for llave in llaves_a_borrar:
                         if llave in st.session_state:
                             del st.session_state[llave]
                     
-                    st.rerun()    
+                    st.rerun()
 
                 except Exception as e:
                     st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
@@ -299,7 +332,7 @@ def mostrar_modulo_expedientes(conn, df_base):
     st.markdown("---")
     
     # ==========================================================================
-    # LECTURA Y FILTRADO INTEGRADO (Para KPIs y Tabla Histórica)
+    # LECTURA Y FILTRADO INTEGRADO DINÁMICO
     # ==========================================================================
     try:
         df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
@@ -316,7 +349,6 @@ def mostrar_modulo_expedientes(conn, df_base):
         if not df_mostrar.empty:
             df_mostrar['TECNICO'] = df_mostrar['TECNICO'].astype(str).str.upper().str.strip()
             
-            # --- RENDERIZACIÓN DE CONTROLES DE FILTRADO ---
             st.subheader("📜 Historial de Expedientes")
             with st.container():
                 col1, col2, col3 = st.columns(3)
@@ -328,11 +360,9 @@ def mostrar_modulo_expedientes(conn, df_base):
                 with col3:
                     filtro_tipo = st.selectbox("📋 Tipo de Registro:", options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"])
 
-            # Aplicar filtro de nombre
             if filtro_nombre != "VER TODOS":
                 df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
             
-            # Aplicar filtro dinámico de fechas
             if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
                 fecha_inicio, fecha_fin = rango_fechas
                 def parsear_fecha(f_str):
@@ -348,18 +378,20 @@ def mostrar_modulo_expedientes(conn, df_base):
                     (df_mostrar['FECHA_INCIDENCIA_DT'] <= fecha_fin)
                 ]
             
-            # Aplicar filtro de tipo de falta
             if filtro_tipo == "Incidencia Médica":
                 df_mostrar = df_mostrar[df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
             elif filtro_tipo == "Llamado de Atención":
                 df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
 
             # ==================================================================
-            # 📊 PANEL DE KPIs DINÁMICO (Se alimenta del DataFrame ya filtrado)
+            # 📊 PANEL DE KPIs DINÁMICO POR RUBROS OPERATIVOS
             # ==================================================================
             with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
                 if not df_mostrar.empty:
                     df_kpi = df_mostrar.copy()
+                    
+                    # --- INYECCIÓN DEL MOTOR DE RUBROS AUTOMÁTICOS ---
+                    df_kpi['RUBRO'] = df_kpi.apply(lambda r: asignar_rubro_automatico(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
                     
                     df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
                     df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
@@ -372,7 +404,9 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                     tot_registros = len(df_kpi)
                     colab_unicos = df_kpi['TECNICO'].nunique()
-                    motivo_comun = df_kpi['TIPO_FALTA'].value_counts().index[0] if not df_kpi['TIPO_FALTA'].empty else "N/D"
+                    
+                    # Conteo dominante de Rubros
+                    rubro_comun = df_kpi['RUBRO'].value_counts().index[0] if not df_kpi['RUBRO'].empty else "N/D"
                     
                     m1, m2, m3 = st.columns(3)
                     with m1:
@@ -380,7 +414,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     with m2:
                         st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas")
                     with m3:
-                        st.metric("🚨 Mayor Problema", str(motivo_comun).title())
+                        st.metric("🎯 Rubro con Más Fallas", f"{rubro_comun}")
                     
                     st.markdown("<hr style='margin: 10px 0; border-color: #2D2F39;'>", unsafe_allow_html=True)
 
@@ -398,7 +432,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                             st.success("✅ Sin reincidentes en este rango.")
 
                     with col_k2:
-                        st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 ¿Qué días ocurren más faltas?</h5>", unsafe_allow_html=True)
+                        st.markdown("<h5 style='color:#3B82F6; font-size:14px;'>🎛️ Distribución por Rubros</h5>", unsafe_allow_html=True)
+                        df_rubros_chart = df_kpi['RUBRO'].value_counts().reset_index()
+                        df_rubros_chart.columns = ['Rubro', 'Cantidad']
+                        
+                        # Paleta de colores fija para consistencia visual
+                        colores_rubros = {'GPS': '#EF4444', 'BIOMÉTRICO': '#3B82F6', 'CEPHEUS': '#F59E0B', 'OTROS': '#64748B'}
+                        
+                        fig_rubros = px.bar(
+                            df_rubros_chart, x='Rubro', y='Cantidad',
+                            template="plotly_dark", height=200,
+                            color='Rubro', color_discrete_map=colores_rubros
+                        )
+                        fig_rubros.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, xaxis_title="", yaxis_title="")
+                        st.plotly_chart(fig_rubros, use_container_width=True)
+
+                    with col_k3:
+                        st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 Conteo por Día de la Semana</h5>", unsafe_allow_html=True)
                         orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
                         df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
                         df_dias.columns = ['Día', 'Cantidad']
@@ -410,16 +460,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         )
                         fig_barras_dias.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
                         st.plotly_chart(fig_barras_dias, use_container_width=True)
-
-                    with col_k3:
-                        st.markdown("<h5 style='color:#10B981; font-size:14px;'>🚫 Distribución por Motivo</h5>", unsafe_allow_html=True)
-                        df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
-                        df_motivos.columns = ['Motivo', 'Cantidad']
-                        
-                        fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.5, template="plotly_dark", height=200)
-                        fig_pie.update_traces(textposition='inside', textinfo='percent+value')
-                        fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
-                        st.plotly_chart(fig_pie, use_container_width=True)
                 else:
                     st.info("📊 No hay datos disponibles para los filtros seleccionados en este rango.")
 
