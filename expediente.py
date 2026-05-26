@@ -8,7 +8,6 @@ import tempfile
 import textwrap
 import time
 from fpdf import FPDF
-import gspread  
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -198,24 +197,6 @@ def generar_pdf_memo(row_dict):
     os.remove(path); return d
 
 # ==============================================================================
-# FUNCIÓN DE CONEXIÓN AUTENTICADA CON TU LLAVE COMPLETA
-# ==============================================================================
-def obtener_cliente_gspread_directo():
-    credenciales = {
-        "type": st.secrets["connections"]["gsheets"]["type"],
-        "project_id": st.secrets["connections"]["gsheets"]["project_id"],
-        "private_key_id": st.secrets["connections"]["gsheets"]["private_key_id"],
-        "private_key": st.secrets["connections"]["gsheets"]["private_key"],
-        "client_email": st.secrets["connections"]["gsheets"]["client_email"],
-        "client_id": st.secrets["connections"]["gsheets"]["client_id"],
-        "auth_uri": st.secrets["connections"]["gsheets"]["auth_uri"],
-        "token_uri": st.secrets["connections"]["gsheets"]["token_uri"],
-        "auth_provider_x509_cert_url": st.secrets["connections"]["gsheets"]["auth_provider_x509_cert_url"],
-        "client_x509_cert_url": st.secrets["connections"]["gsheets"]["client_x509_cert_url"]
-    }
-    return gspread.service_account_from_dict(credenciales)
-
-# ==============================================================================
 # 3. INTERFAZ DE EXPEDIENTES
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
@@ -227,43 +208,53 @@ def mostrar_modulo_expedientes(conn, df_base):
     
     with st.expander("➕ Crear Nuevo Registro", expanded=True):
         st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
-        with st.form("form_incidencia_txt", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                lista_nombres = cargar_personal("personal_tecnico.txt")
-                colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres)
-                tipo_falta = st.selectbox("🚫 Motivo:", [
-                    "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
-                    "Mala Documentación", "Incidencia Médica", "Otro"
-                ])
-            with c2:
-                fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date())
-                archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
-            
-            comentario = st.text_area("📝 Descripción de los hechos:")
-            
-            if st.form_submit_button("💾 GUARDAR EN EXPEDIENTE"):
-                if colaborador_sel == "---" or not comentario:
-                    st.error("⚠️ Complete el nombre y el comentario.")
-                else:
-                    try:
-                        urls = []
-                        if archivos:
-                            with st.spinner("Subiendo imágenes al servidor..."):
-                                for a in archivos:
-                                    res = requests.post(
-                                        "https://freeimage.host/api/1/upload",
-                                        data={
-                                            "key": API_KEY_FREEIMAGE,
-                                            "action": "upload",
-                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                            "format": "json"
-                                        }
-                                    )
-                                    if res.status_code == 200:
-                                        urls.append(res.json()["image"]["url"])
+        
+        # Eliminamos el st.form para evitar que se coma los errores y recargue la página en silencio
+        c1, c2 = st.columns(2)
+        with c1:
+            lista_nombres = cargar_personal("personal_tecnico.txt")
+            colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres, key="sel_colab")
+            tipo_falta = st.selectbox("🚫 Motivo:", [
+                "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
+                "Mala Documentación", "Incidencia Médica", "Otro"
+            ], key="sel_falta")
+        with c2:
+            fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
+            archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
+        
+        comentario = st.text_area("📝 Descripción de los hechos:", key="txt_comentario")
+        
+        if st.button("💾 GUARDAR EN EXPEDIENTE", type="primary", use_container_width=True):
+            if colaborador_sel == "---" or not comentario:
+                st.error("⚠️ Complete el nombre y el comentario.")
+            else:
+                try:
+                    urls = []
+                    if archivos:
+                        with st.spinner("Subiendo imágenes al servidor..."):
+                            for a in archivos:
+                                res = requests.post(
+                                    "https://freeimage.host/api/1/upload",
+                                    data={
+                                        "key": API_KEY_FREEIMAGE,
+                                        "action": "upload",
+                                        "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                        "format": "json"
+                                    }
+                                )
+                                if res.status_code == 200:
+                                    urls.append(res.json()["image"]["url"])
+                    
+                    with st.spinner("Guardando en la Nube y en Sheets..."):
+                        # 1. Leemos la base actual (GCS primero, Sheets como respaldo)
+                        df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                        if df_actual is None or df_actual.empty:
+                            df_actual = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                            
+                        # Columnas estándar de la hoja Expedientes
+                        cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
                         
-                        # Fila ordenada alineada exactamente con tus columnas
+                        # Preparamos la nueva fila
                         nueva_fila = [
                             get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                             colaborador_sel,
@@ -273,38 +264,25 @@ def mostrar_modulo_expedientes(conn, df_base):
                             ", ".join(urls),
                             supervisor_actual
                         ]
-
-                        with st.spinner("Guardando en la Nube..."):
-                            # 1. Guardar en Sheets (Conexión Directa Anti-Fallos)
-                            gc = obtener_cliente_gspread_directo()
-                            documento = gc.open_by_url(st.secrets["url_base_datos"])
-                            hoja_expedientes = documento.worksheet("Expedientes")
-                            hoja_expedientes.append_row(nueva_fila)
+                        nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                        
+                        # Unimos el historial con el nuevo registro
+                        if df_actual is not None and not df_actual.empty:
+                            df_actual.columns = cols_exp
+                            df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                        else:
+                            df_final = nuevo_df
                             
-                            # 2. Lógica Espejo: Actualizar y Sobrescribir en GCS
-                            try:
-                                df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
-                                nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
-                                
-                                if df_actual is not None and not df_actual.empty:
-                                    # Aseguramos que tengan las mismas columnas antes de unir
-                                    df_actual.columns = cols_exp
-                                    df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
-                                else:
-                                    df_final = nuevo_df
-                                    
-                                sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                            except Exception as e_gcs:
-                                st.warning(f"⚠️ Guardado en Sheets exitoso, pero GCS requiere actualización manual: {e_gcs}")
+                        # 2. Guardamos en AMBOS lados usando los mismos conectores de app.py
+                        sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
 
-                        st.cache_data.clear()
-                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
-                        time.sleep(1)
-                        st.rerun()
+                    st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
+                    time.sleep(1.5)
+                    st.rerun()
 
-                    except Exception as e:
-                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+                except Exception as e:
+                    st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
     st.markdown("---")
     
@@ -316,7 +294,6 @@ def mostrar_modulo_expedientes(conn, df_base):
         # LECTURA DE ALTA VELOCIDAD DESDE GCS
         df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
         
-        # Respaldo de Emergencia a Google Sheets si GCS falla o está vacío
         if df_view is None or df_view.empty:
             df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
@@ -401,24 +378,26 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with c_d:
                             if es_admin:
                                 if st.button("🗑️ Eliminar", key=f"del_{idx}", use_container_width=True):
-                                    with st.spinner("Eliminando registro..."):
-                                        # 1. Borrar de Google Sheets (El maestro principal)
-                                        gc = obtener_cliente_gspread_directo()
-                                        documento = gc.open_by_url(st.secrets["url_base_datos"])
-                                        hoja_expedientes = documento.worksheet("Expedientes")
-                                        
-                                        fila_a_borrar = int(idx) + 2
-                                        hoja_expedientes.delete_rows(fila_a_borrar)
-                                        
-                                        # 2. Refrescar el archivo de GCS leyendo la hoja limpia de Sheets
+                                    with st.spinner("Eliminando registro de la base de datos..."):
                                         try:
-                                            df_update = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                                            sobrescribir_archivo_gcs(df_update, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                        except Exception as e:
-                                            pass # Si falla GCS, en el próximo reinicio se auto-arregla
+                                            # Volvemos a leer la base completa para evitar desfasajes
+                                            df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                            if df_borrado is None or df_borrado.empty:
+                                                df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                                             
-                                        st.cache_data.clear()
-                                        st.rerun()
+                                            # Eliminamos el registro usando el índice de Pandas (idx)
+                                            if idx in df_borrado.index:
+                                                df_borrado = df_borrado.drop(idx).reset_index(drop=True)
+                                                
+                                                # Guardamos el cambio en GCS y en Sheets
+                                                sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
+                                                
+                                            st.success("✅ Registro eliminado correctamente.")
+                                            time.sleep(1)
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error al eliminar: {e}")
         else:
             st.info("No hay registros en la base de datos.")
 
