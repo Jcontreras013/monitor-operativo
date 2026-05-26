@@ -48,32 +48,25 @@ def asignar_rubro_automatico(motivo, comentario):
     motivo_str = str(motivo).upper().strip()
     comentario_str = str(comentario).upper().strip()
     
-    # Palabras clave para detectar casos de Vehículos/GPS en textos libres de "Otro"
     claves_gps = ['VEHICULO', 'CARRO', 'MOTO', 'CONDUCIR', 'LLANTA', 'COLISION', 'CHOQUE', 'VELOCIDAD', 'RUTA', 'GPS', 'GASOLINA', 'KILOMETRAJE']
-    # Palabras clave para Biométrico
     claves_biometrico = ['TARDE', 'LLEGADA', 'TARDANZA', 'BIOMETRICO', 'MARCAJE', 'HORARIO', 'ASISTENCIA']
-    # Palabras clave para Cepheus
     claves_cepheus = ['CEPHEUS', 'DOCUMENTA', 'CERRAR', 'ABRIR', 'ORDEN', 'RETRASO ORDEN', 'LIQUIDAC']
     
-    # 1. Evaluar Rubro GPS
     if "EXCESO DE VELOCIDAD" in motivo_str or "ABANDONO DE RUTA" in motivo_str:
         return "GPS"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_gps):
         return "GPS"
         
-    # 2. Evaluar Rubro Biométrico
     if "LLEGADA TARDE" in motivo_str:
         return "BIOMÉTRICO"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_biometrico):
         return "BIOMÉTRICO"
         
-    # 3. Evaluar Rubro Cepheus
     if "MALA DOCUMENTACIÓN" in motivo_str or "MALA DOCUMENTACION" in motivo_str:
         return "CEPHEUS"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_cepheus):
         return "CEPHEUS"
         
-    # 4. Caída por defecto a OTROS (Incluye Incidencias Médicas)
     return "OTROS"
 
 # ==============================================================================
@@ -340,14 +333,18 @@ def mostrar_modulo_expedientes(conn, df_base):
             df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if 'TECNICO' in df_view.columns:
-            df_view['TECNICO_TEST'] = df_view['TECNICO'].astype(str).str.strip().str.lower()
+            # --- LIMPIEZA ANTI-DUPLICADOS INTEGRAL ---
+            # Pasamos todo a mayúsculas, quitamos acentos y limpiamos espacios triples/dobles fantasmas
+            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
+            df_view['TECNICO'] = df_view['TECNICO'].apply(lambda x: " ".join(x.split()))
+            
+            df_view['TECNICO_TEST'] = df_view['TECNICO'].str.lower()
             df_mostrar = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])].copy()
             df_mostrar = df_mostrar.drop(columns=['TECNICO_TEST'])
         else:
             df_mostrar = pd.DataFrame()
             
         if not df_mostrar.empty:
-            df_mostrar['TECNICO'] = df_mostrar['TECNICO'].astype(str).str.upper().str.strip()
             
             st.subheader("📜 Historial de Expedientes")
             with st.container():
@@ -384,13 +381,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
 
             # ==================================================================
-            # 📊 PANEL DE KPIs DINÁMICO POR RUBROS OPERATIVOS
+            # 📊 PANEL DE KPIs COMPACTO (Diseño optimizado y Anti-Duplicados)
             # ==================================================================
             with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
                 if not df_mostrar.empty:
                     df_kpi = df_mostrar.copy()
                     
-                    # --- INYECCIÓN DEL MOTOR DE RUBROS AUTOMÁTICOS ---
                     df_kpi['RUBRO'] = df_kpi.apply(lambda r: asignar_rubro_automatico(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
                     
                     df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
@@ -403,63 +399,67 @@ def mostrar_modulo_expedientes(conn, df_base):
                     df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
 
                     tot_registros = len(df_kpi)
+                    
+                    # --- CONTEO EXACTO REAL SANEADO ---
+                    # Al haber unificado la limpieza arriba, unique() no dará falsos duplicados
                     colab_unicos = df_kpi['TECNICO'].nunique()
                     
-                    # Conteo dominante de Rubros
-                    rubro_comun = df_kpi['RUBRO'].value_counts().index[0] if not df_kpi['RUBRO'].empty else "N/D"
-                    
-                    m1, m2, m3 = st.columns(3)
-                    with m1:
-                        st.metric("📦 Total Incidencias", f"{tot_registros} Casos")
-                    with m2:
-                        st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas")
-                    with m3:
-                        st.metric("🎯 Rubro con Más Fallas", f"{rubro_comun}")
-                    
-                    st.markdown("<hr style='margin: 10px 0; border-color: #2D2F39;'>", unsafe_allow_html=True)
+                    # --- DISEÑO DE TARJETAS MÁS PEQUEÑO Y ESTILIZADO ---
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; background-color: #1A1D24; padding: 10px 20px; border-radius: 8px; border: 1px solid #2D2F39; margin-bottom: 15px;">
+                        <div style="text-align: center; flex: 1;">
+                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">📦 Total Incidencias</span>
+                            <h3 style="margin: 5px 0 0 0; color: #FFF; font-size: 20px;">{tot_registros} Casos</h3>
+                        </div>
+                        <div style="text-align: center; flex: 1; border-left: 1px solid #2D2F39; border-right: 1px solid #2D2F39;">
+                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">👤 Personas con Incidencias</span>
+                            <h3 style="margin: 5px 0 0 0; color: #FFF; font-size: 20px;">{colab_unicos} Técnicos/Aux</h3>
+                        </div>
+                        <div style="text-align: center; flex: 1;">
+                            <span style="font-size: 11px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">🎯 Rubro Dominante</span>
+                            <h3 style="margin: 5px 0 0 0; color: #F59E0B; font-size: 20px;">{df_kpi['RUBRO'].value_counts().index[0] if not df_kpi['RUBRO'].empty else "N/D"}</h3>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                     col_k1, col_k2, col_k3 = st.columns(3)
                     
                     with col_k1:
-                        st.markdown("<h5 style='color:#EF4444; font-size:14px;'>🚨 Alerta: Reincidentes Críticos</h5>", unsafe_allow_html=True)
+                        st.markdown("<h5 style='color:#EF4444; font-size:13px; font-weight:bold;'>🚨 Reincidentes Críticos</h5>", unsafe_allow_html=True)
                         df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces Repetido')
                         df_reinc = df_reinc[df_reinc['Veces Repetido'] > 1].sort_values(by='Veces Repetido', ascending=False)
                         df_reinc.columns = ['Colaborador', 'Falta Repetida', 'Cantidad']
                         
                         if not df_reinc.empty:
-                            st.dataframe(df_reinc.head(5), hide_index=True, use_container_width=True)
+                            st.dataframe(df_reinc.head(4), hide_index=True, use_container_width=True, height=180)
                         else:
                             st.success("✅ Sin reincidentes en este rango.")
 
                     with col_k2:
-                        st.markdown("<h5 style='color:#3B82F6; font-size:14px;'>🎛️ Distribución por Rubros</h5>", unsafe_allow_html=True)
+                        st.markdown("<h5 style='color:#3B82F6; font-size:13px; font-weight:bold;'>🎛️ Distribución por Rubros</h5>", unsafe_allow_html=True)
                         df_rubros_chart = df_kpi['RUBRO'].value_counts().reset_index()
                         df_rubros_chart.columns = ['Rubro', 'Cantidad']
                         
-                        # Paleta de colores fija para consistencia visual
                         colores_rubros = {'GPS': '#EF4444', 'BIOMÉTRICO': '#3B82F6', 'CEPHEUS': '#F59E0B', 'OTROS': '#64748B'}
                         
                         fig_rubros = px.bar(
                             df_rubros_chart, x='Rubro', y='Cantidad',
-                            template="plotly_dark", height=200,
+                            template="plotly_dark", height=180,
                             color='Rubro', color_discrete_map=colores_rubros
                         )
-                        fig_rubros.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, xaxis_title="", yaxis_title="")
+                        fig_rubros.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False, xaxis_title="", yaxis_title="")
                         st.plotly_chart(fig_rubros, use_container_width=True)
 
                     with col_k3:
-                        st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 Conteo por Día de la Semana</h5>", unsafe_allow_html=True)
-                        orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-                        df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
-                        df_dias.columns = ['Día', 'Cantidad']
+                        # --- RETORNO DEL GRÁFICO DE PASTEL POR TIPO DE FALTA ORIGINAL ---
+                        st.markdown("<h5 style='color:#10B981; font-size:13px; font-weight:bold;'>🚫 Tipos de Falta Detallados</h5>", unsafe_allow_html=True)
+                        df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
+                        df_motivos.columns = ['Motivo', 'Cantidad']
                         
-                        fig_barras_dias = px.bar(
-                            df_dias, x='Día', y='Cantidad',
-                            template="plotly_dark", height=200,
-                            color='Cantidad', color_continuous_scale='Reds'
-                        )
-                        fig_barras_dias.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
-                        st.plotly_chart(fig_barras_dias, use_container_width=True)
+                        fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.4, template="plotly_dark", height=180)
+                        fig_pie.update_traces(textposition='inside', textinfo='percent+value', textfont_size=9)
+                        fig_pie.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False)
+                        st.plotly_chart(fig_pie, use_container_width=True)
                 else:
                     st.info("📊 No hay datos disponibles para los filtros seleccionados en este rango.")
 
