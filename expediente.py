@@ -287,8 +287,8 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.markdown("---")
     
-    # ==========================================================================
-    # 📊 DASHBOARD DE KPIs: RENDIMIENTO Y FALTAS
+# ==========================================================================
+    # 📊 DASHBOARD DE KPIs AVANZADO: RENDIMIENTO, REINCIDENCIA Y TIEMPOS
     # ==========================================================================
     with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
         try:
@@ -299,44 +299,79 @@ def mostrar_modulo_expedientes(conn, df_base):
             if df_kpi is not None and not df_kpi.empty and 'TECNICO' in df_kpi.columns:
                 df_kpi['TECNICO'] = df_kpi['TECNICO'].astype(str).str.upper().str.strip()
                 df_kpi = df_kpi[~df_kpi['TECNICO'].isin(['NAN', 'NONE', 'N/D', ''])]
-                df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
                 
+                # Procesamiento de fechas y días de la semana
+                df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+                df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
+                
+                # Traducir días de la semana a español para el gráfico
+                dias_es = {
+                    'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
+                    'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
+                }
+                df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
+
+                # --- FILA 1: MÉTRICAS GENERALES DE UN VISTAZO ---
+                tot_registros = len(df_kpi)
+                colab_unicos = df_kpi['TECNICO'].nunique()
+                motivo_comun = df_kpi['TIPO_FALTA'].value_counts().index[0] if not df_kpi['TIPO_FALTA'].empty else "N/D"
+                
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("📦 Total Incidencias", f"{tot_registros} Casos", help="Total de reportes guardados en la base histórica")
+                with m2:
+                    st.metric("👤 Colaboradores Implicados", f"{colab_unicos} Personas", help="Cantidad de técnicos/auxiliares únicos con faltas")
+                with m3:
+                    st.metric("🚨 Mayor Problema", str(motivo_comun).title(), help="El motivo de falta que más se repite en la operación")
+                
+                st.markdown("<hr style='margin: 10px 0; border-color: #2D2F39;'>", unsafe_allow_html=True)
+
+                # --- FILA 2: GRÁFICOS Y TABLAS DETALLADAS ---
                 col_k1, col_k2, col_k3 = st.columns(3)
                 
                 with col_k1:
-                    st.markdown("<h5 style='color:#3B82F6; font-size:14px;'>🏆 Top 5: Colaboradores con más registros</h5>", unsafe_allow_html=True)
-                    df_top = df_kpi['TECNICO'].value_counts().reset_index()
-                    df_top.columns = ['Colaborador (Técnico/Auxiliar)', 'Total Faltas']
+                    st.markdown("<h5 style='color:#EF4444; font-size:14px;'>🚨 Alerta: Reincidentes Críticos</h5>", unsafe_allow_html=True)
+                    st.caption("Colaboradores que acumulan la misma falta más de una vez.")
                     
-                    def highlight_top(row):
-                        return ['background-color: #3b070c; color: white' if row.name == 0 else '' for _ in row.index]
-                        
-                    st.dataframe(df_top.head(5).style.apply(highlight_top, axis=1), hide_index=True, use_container_width=True)
+                    # Agrupar por técnico y tipo de falta para hallar reincidencia
+                    df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces Repetido')
+                    df_reinc = df_reinc[df_reinc['Veces Repetido'] > 1].sort_values(by='Veces Repetido', ascending=False)
+                    df_reinc.columns = ['Colaborador', 'Falta Repetida', 'Cantidad']
+                    
+                    if not df_reinc.empty:
+                        st.dataframe(df_reinc.head(5), hide_index=True, use_container_width=True)
+                    else:
+                        st.success("✅ Excelente: No se detectan colaboradores reincidentes en este período.")
 
                 with col_k2:
-                    st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>🚫 Distribución por Motivo</h5>", unsafe_allow_html=True)
+                    st.markdown("<h5 style='color:#F59E0B; font-size:14px;'>📅 ¿Qué días ocurren más faltas?</h5>", unsafe_allow_html=True)
+                    
+                    # Conteo por día de la semana ordenado correctamente
+                    orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+                    df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
+                    df_dias.columns = ['Día', 'Cantidad']
+                    
+                    fig_barras_dias = px.bar(
+                        df_dias, x='Día', y='Cantidad',
+                        template="plotly_dark", height=200,
+                        color='Cantidad', color_continuous_scale='Reds'
+                    )
+                    fig_barras_dias.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
+                    st.plotly_chart(fig_barras_dias, use_container_width=True)
+
+                with col_k3:
+                    st.markdown("<h5 style='color:#10B981; font-size:14px;'>🚫 Distribución por Motivo</h5>", unsafe_allow_html=True)
                     df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
                     df_motivos.columns = ['Motivo', 'Cantidad']
                     
-                    fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.5, template="plotly_dark", height=220)
+                    fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.5, template="plotly_dark", height=200)
                     fig_pie.update_traces(textposition='inside', textinfo='percent+value')
                     fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
-
-                with col_k3:
-                    st.markdown("<h5 style='color:#10B981; font-size:14px;'>📈 Tendencia de Incidencias</h5>", unsafe_allow_html=True)
-                    df_tendencia = df_kpi.dropna(subset=['FECHA_DT']).copy()
-                    tendencia = df_tendencia.groupby('FECHA_DT').size().reset_index(name='Casos')
-                    tendencia = tendencia.sort_values('FECHA_DT')
-                    
-                    fig_line = px.line(tendencia, x='FECHA_DT', y='Casos', markers=True, template="plotly_dark", height=220)
-                    fig_line.update_layout(margin=dict(t=0, b=0, l=0, r=0), xaxis_title="", yaxis_title="Cant. de Registros")
-                    fig_line.update_traces(line_color='#10B981', marker=dict(size=8, color='#3B82F6'))
-                    st.plotly_chart(fig_line, use_container_width=True)
             else:
                 st.info("📊 Aún no hay suficientes registros en la base de datos para calcular KPIs.")
         except Exception as e:
-            st.warning(f"Error al procesar gráficas: {e}")
+            st.warning(f"Error al procesar gráficas de KPIs: {e}")
 
     st.markdown("---")
     
