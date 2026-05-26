@@ -274,11 +274,20 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_final = nuevo_df
                             
                         # 2. Guardamos en AMBOS lados usando los mismos conectores de app.py
+# 2. Guardamos en AMBOS lados usando los mismos conectores de app.py
                         sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
 
                     st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
                     time.sleep(1.5)
+                    
+                    # --- LÓGICA PARA LIMPIAR LOS CAMPOS ---
+                    llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario"]
+                    for llave in llaves_a_borrar:
+                        if llave in st.session_state:
+                            del st.session_state[llave]
+                    # ---------------------------------------
+                    
                     st.rerun()
 
                 except Exception as e:
