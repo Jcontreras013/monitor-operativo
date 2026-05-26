@@ -99,17 +99,14 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# ==============================================================================
-# 2. FUNCION DE SINCRONIZACIÓN (MIGRADA A GCS)
-# ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
         with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
             df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
             
-            # Respaldo si GCS no responde o está vacío
+            # Respaldo si GCS no responde o está vacío (Usamos ttl=0 para forzar datos frescos)
             if df_nube is None or df_nube.empty:
-                df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=60)
+                df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                 
             if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
@@ -185,11 +182,21 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                st.success("✅ Sincronización Exitosa. Datos históricos cargados desde GCS.")
+                
+                # --- NUEVA LÓGICA DE AVISO ---
+                st.success(f"✅ Sincronización Exitosa. Se cargaron {len(df_nube)} órdenes de la nube.")
+                import time
+                time.sleep(1.5) # Pausa intencional para que puedas ver que sí lo hizo
                 st.rerun()
-            else: st.warning("La base de datos en la nube está vacía.")
-    except Exception as e: st.error(f"Error al conectar con la nube: {e}")
-
+                # -----------------------------
+            else: 
+                st.warning("⚠️ La base de datos en la nube está completamente vacía. Sube archivos como Admin primero.")
+                import time
+                time.sleep(3)
+    except Exception as e: 
+        st.error(f"❌ Error crítico al conectar con la nube: {e}")
+        import time
+        time.sleep(3)
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
