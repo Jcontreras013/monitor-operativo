@@ -67,7 +67,6 @@ class ManualEscolarPDF(FPDF):
             r_bd, g_bd, b_bd = 59, 130, 246
 
         ancho_cuadro = 190
-        # --- CORRECCIÓN DE LA VARIABLE: lineas_texto en lugar de un nombre inexistente ---
         alto_estimado = 8 + (len(lineas_texto) * 5)
         
         # Verificar si cabe en la página actual
@@ -78,11 +77,11 @@ class ManualEscolarPDF(FPDF):
         self.set_fill_color(r_bg, g_bg, b_bg)
         self.rect(10, y_inicial, ancho_cuadro, alto_estimado, style='F')
         
-        # Borde izquierdo grueso característico de los libros modernos
+        # Borde izquierdo grueso característico de los libros modernos (CORREGIDO A set_line_width)
         self.set_draw_color(r_bd, g_bd, b_bd)
-        self.set_linewidth(1.5)
+        self.set_line_width(1.5)
         self.line(10, y_inicial, 10, y_inicial + alto_estimado)
-        self.set_linewidth(0.2) # Restaurar línea normal
+        self.set_line_width(0.2) # Restaurar línea normal
 
         self.set_x(14)
         self.set_y(y_inicial + 2)
@@ -411,7 +410,7 @@ def generar_manual_pdf():
     pdf.ln(2)
 
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(190, 6, "6.2 Interpretacion de la Cuadrícula Analítica de KPIs (2x2)", ln=True)
+    pdf.cell(190, 6, "6.2 Interpretacion de la Cuadricula Analitica de KPIs (2x2)", ln=True)
     pdf.dibujar_figura_dashboard()
     
     pdf.set_font("Helvetica", "B", 10)
