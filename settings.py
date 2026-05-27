@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import unicodedata
+import pandas as pd  # <--- ¡ESTA ERA LA IMPORTACIÓN QUE HACÍA FALTA!
 
 # --- IMPORTACIÓN BLINDADA PARA FPDF2 ---
 try:
@@ -51,8 +52,6 @@ class ManualPDF(FPDF):
         self.set_font("Helvetica", "B", 13)
         self.set_text_color(0, 51, 102)
         self.cell(190, 8, titulo, ln=True)
-        self.set_draw_color(0, 51, 102)
-        self.line(self.get_x(), self.get_y(), self.get_x() + 40, self.get_y())
         self.ln(4)
         
         for sub_tit, lineas in subsecciones.items():
@@ -66,7 +65,6 @@ class ManualPDF(FPDF):
             self.set_text_color(40, 40, 40)
             for linea in lineas:
                 linea_limpia = str(linea).replace("* ", "- ").replace("\t", " ").strip()
-                # Fijamos ancho a 190 para evitar desbordamientos horizontales
                 self.multi_cell(190, 5.5, txt=linea_limpia)
             self.ln(3)
         self.ln(4)
@@ -212,7 +210,6 @@ def mostrar_configuracion():
         col_espacio, col_boton, col_espacio2 = st.columns([1, 2, 1])
         with col_boton:
             try:
-                import pandas as pd # Requerido para la validación interna del safestr
                 pdf_manual = generar_manual_pdf()
                 st.download_button(
                     label="📥 DESCARGAR MANUAL TECNICO DE USUARIO (PDF)",
