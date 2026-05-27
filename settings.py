@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import tempfile
+import unicodedata
 
 # --- IMPORTACIÓN BLINDADA PARA FPDF2 ---
 try:
@@ -8,8 +9,14 @@ try:
 except ImportError:
     st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
 
+def safestr(texto):
+    """Sanitiza el texto eliminando caracteres especiales que confunden a FPDF2."""
+    if pd.isna(texto) or texto is None: 
+        return ""
+    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+
 # ==============================================================================
-# LÓGICA DE PDF PARA EL MANUAL TÉCNICO
+# LÓGICA DE PDF PARA EL MANUAL TÉCNICO (BLINDADA CONTRA ERRORES DE ESPACIO)
 # ==============================================================================
 class ManualPDF(FPDF):
     def header(self):
@@ -22,10 +29,10 @@ class ManualPDF(FPDF):
         self.set_x(50)
         self.set_text_color(0, 51, 102) # Azul Corporativo
         self.set_font("Helvetica", "B", 12)
-        self.cell(0, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
+        self.cell(150, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
         self.set_font("Helvetica", "", 9)
         self.set_x(50)
-        self.cell(0, 5, "Manual Técnico de Usuario - Monitor Operativo PRO", ln=True, align="R")
+        self.cell(150, 5, "Manual Tecnico de Usuario - Monitor Operativo PRO", ln=True, align="R")
         self.set_draw_color(200, 200, 200)
         self.line(10, 25, 200, 25)
         self.ln(15)
@@ -34,19 +41,20 @@ class ManualPDF(FPDF):
         self.set_y(-15)
         self.set_text_color(150, 150, 150)
         self.set_font("Helvetica", "I", 8)
-        self.cell(0, 10, f"Página {self.page_no()}", align="C")
+        self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
 
     def capitulo(self, titulo, texto_lineas):
         self.set_font("Helvetica", "B", 12)
         self.set_text_color(40, 50, 100)
-        self.cell(0, 8, titulo, ln=True)
+        self.cell(190, 8, titulo, ln=True)
         self.ln(2)
         
         self.set_font("Helvetica", "", 10)
         self.set_text_color(40, 40, 40)
         for linea in texto_lineas:
-            linea = linea.replace("* ", "- ") 
-            self.multi_cell(0, 6, txt=linea)
+            linea_limpia = str(linea).replace("* ", "- ").replace("\t", " ").strip()
+            # Al usar un ancho fijo de 190 prevenimos el "Not enough horizontal space"
+            self.multi_cell(190, 6, txt=linea_limpia)
         self.ln(6)
 
 @st.cache_data(show_spinner=False)
@@ -58,69 +66,69 @@ def generar_manual_pdf():
     # Título Principal
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 10, "MANUAL DE USUARIO: MONITOR OPERATIVO", ln=True, align="C")
+    pdf.cell(190, 10, "MANUAL DE USUARIO: MONITOR OPERATIVO", ln=True, align="C")
     pdf.ln(5)
     
     pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(0, 6, "Este sistema ha sido diseñado para la supervisión en tiempo real de la operación técnica, la gestión de indicadores y la auditoría del personal de campo.")
+    pdf.multi_cell(190, 6, "Este sistema ha sido disenado para la supervision en tiempo real de la operacion tecnica, la gestion de indicadores y la auditoria del personal de campo.")
     pdf.ln(8)
     
     # Capítulo 1
     pdf.capitulo("1. Acceso y Seguridad", [
-        "Inicio de Sesión: Ingrese sus credenciales asignadas en la pantalla principal.",
-        "Temporizador: Por seguridad, la sesión caduca tras 5 minutos de inactividad.",
-        "Cierre de Sesión: Use el botón 'Cerrar Sesión' al final de la barra lateral para salir de forma segura y borrar sus cookies locales."
+        "Inicio de Sesion: Ingrese sus credenciales asignadas en la pantalla principal.",
+        "Temporizador: Por seguridad, la sesion caduca tras 5 minutos de inactividad.",
+        "Cierre de Sesion: Use el boton 'Cerrar Sesion' al final de la barra lateral para salir de forma segura y borrar sus cookies locales."
     ])
     
     # Capítulo 2
     pdf.capitulo("2. Monitor en Vivo", [
         "A. Indicadores (KPIs):",
-        "- Pendientes Asignadas: Órdenes activas con técnico en ruta o sitio.",
-        "- Cerradas Hoy: Total de liquidaciones exitosas del día.",
-        "- Caídas (Offline): Equipos detectados con pérdida de señal en la red.",
+        "- Pendientes Asignadas: Ordenes activas con tecnico en ruta o sitio.",
+        "- Cerradas Hoy: Total de liquidaciones exitosas del dia.",
+        "- Caidas (Offline): Equipos detectados con perdida de senal en la red.",
         "",
-        "B. Línea de Tiempo (Gantt):",
-        "Muestra la secuencia de trabajo por técnico. Al pasar el cursor verá:",
+        "B. Linea de Tiempo (Gantt):",
+        "Muestra la secuencia de trabajo por tecnico. Al pasar el cursor vera:",
         "- Actividad y Estado actual.",
         "- Horas exactas de inicio y cierre.",
-        "- Tiempo Total de duración exacta de la gestión.",
+        "- Tiempo Total de duracion exacta de la gestion.",
         "",
         "C. Panel de Control (Alertas Visuales):",
-        "- Fondo Rojo: Retrasos mayores o iguales a 7 días.",
-        "- Fondo Naranja: Retraso de 4 a 6 días.",
-        "- Icono de Alerta: Órdenes que exceden el tiempo estándar (ej. SOP > 2h)."
+        "- Fondo Rojo: Retrasos mayores o iguales a 7 dias.",
+        "- Fondo Naranja: Retraso de 4 a 6 dias.",
+        "- Icono de Alerta: Ordenes que exceden el tiempo estandar (ej. SOP > 2h)."
     ])
     
     # Capítulo 3
     pdf.capitulo("3. Centro de Reportes", [
         "Cierre Diario:",
-        "Seleccione una fecha para generar el PDF con métricas de efectividad de mora.",
+        "Seleccione una fecha para generar el PDF con metricas de efectividad de mora.",
         "",
         "Resumen de Operaciones (6 Columnas):",
-        "Este cuadro separa el avance real para un análisis profundo:",
-        "1. Mora inicial: Pendientes arrastradas de días anteriores.",
+        "Este cuadro separa el avance real para un analisis profundo:",
+        "1. Mora inicial: Pendientes arrastradas de dias anteriores.",
         "2. Cerradas (Mora): Avance logrado sobre el arrastre.",
-        "3. Total (Mora): Saldo pendiente antiguo que no se logró liquidar.",
-        "4. Asignadas hoy: Nuevas entradas inyectadas durante el día.",
-        "5. Cerradas hoy: Órdenes nuevas que fueron liquidadas el mismo día.",
-        "6. Total (Hoy): Saldo total consolidado para el día siguiente."
+        "3. Total (Mora): Saldo pendiente antiguo que no se logro liquidar.",
+        "4. Asignadas hoy: Nuevas entradas inyectadas durante el dia.",
+        "5. Cerradas hoy: Ordenes nuevas que fueron liquidadas el mismo dia.",
+        "6. Total (Hoy): Saldo total consolidado para el dia siguiente."
     ])
     
     pdf.add_page()
     
     # Capítulo 4
-    pdf.capitulo("4. Configuración y Conectividad", [
-        "- Preferencias: Use los interruptores en la pestaña de configuración para limpiar su pantalla y ocultar los módulos que no necesita ver constantemente.",
-        "- Sincronización: El botón 'Descargar Datos Ahora' asegura que está viendo la información más reciente desde la Nube (Google Cloud Storage).",
-        "- Oracle (Beta): Módulo de conexión directa a la base de datos central en desarrollo."
+    pdf.capitulo("4. Configuracion y Conectividad", [
+        "- Preferencias: Use los interruptores en la pestana de configuracion para limpiar su pantalla y ocultar los modulos que no necesita ver constantemente.",
+        "- Sincronizacion: El boton 'Descargar Datos Ahora' asegura que esta viendo la informacion mas reciente desde la Nube (Google Cloud Storage).",
+        "- Oracle (Beta): Modulo de conexion directa a la base de datos central en desarrollo."
     ])
     
     # Capítulo 5
-    pdf.capitulo("5. Módulos de Auditoría", [
-        "- Auditoría Vehicular: Compara la primera salida y la última llegada para calcular el tiempo real de los vehículos en la calle.",
-        "- Biométrico: Analiza el archivo CSV de transacciones de recursos humanos para detectar tardanzas o excesos en tiempos de comida.",
-        "- Tiempos Técnicos: Contrasta el tiempo pagado en calle vs el tiempo facturado en órdenes.",
-        "- Expedientes: Gestor en la nube para registrar llamados de atención, incidencias médicas y adjuntar evidencia fotográfica."
+    pdf.capitulo("5. Modulos de Auditoria", [
+        "- Auditoria Vehicular: Compara la primera salida y la ultima llegada para calcular el tiempo real de los vehiculos en la calle.",
+        "- Biometrico: Analiza el archivo CSV de transacciones de recursos humanos para detectar tardanzas o excesos en tiempos de comida.",
+        "- Tiempos Tecnicos: Contrasta el tiempo pagado en calle vs el tiempo facturado en ordenes.",
+        "- Expedientes: Gestor en la nube para registrar llamados de atención, incidencias medicas y adjuntar evidencia fotografica."
     ])
 
     fd, path = tempfile.mkstemp(suffix=".pdf")
@@ -171,6 +179,7 @@ def mostrar_configuracion():
         col_espacio, col_boton, col_espacio2 = st.columns([1, 2, 1])
         with col_boton:
             try:
+                import pandas as pd # Requerido para la validación interna del safestr
                 pdf_manual = generar_manual_pdf()
                 st.download_button(
                     label="📥 DESCARGAR MANUAL TÉCNICO DE USUARIO (PDF)",
