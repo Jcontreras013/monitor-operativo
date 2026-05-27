@@ -353,7 +353,7 @@ def main():
 
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
 
-    # ==============================================================================
+# ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS)
     # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar:
@@ -365,7 +365,7 @@ def main():
                         df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
                         if df_fttx_cloud is not None and not df_fttx_cloud.empty:
                             # Sincronizamos Sheets hacia GCS
-                            sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv", df_fttx_cloud)
+                            sobrescribir_archivo_gcs(df_fttx_cloud, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
                     
                     if df_fttx_cloud is not None and not df_fttx_cloud.empty:
                         b_io = io.BytesIO()
@@ -406,7 +406,7 @@ def main():
                             if df_cloud is None or df_cloud.empty:
                                 df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                                 if df_cloud is not None and not df_cloud.empty:
-                                    sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv", df_cloud)
+                                    sobrescribir_archivo_gcs(df_cloud, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
                                 
                             if df_cloud is not None and not df_cloud.empty:
                                 df_cloud.columns = df_cloud.columns.str.upper().str.strip()
@@ -433,19 +433,19 @@ def main():
                             for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                                 if c_date in df_to_upload.columns:
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
-                                    
+                                        
                             # === CORRECCIÓN ORDEN PARÁMETROS GCS ===
-                            sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv", df_to_upload)
+                            sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             st.session_state.df_base = df_combined
-                            
+                                
                             if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
                                 try:
                                     if hasattr(file_disp_ptr, 'read'): 
                                         file_disp_ptr.seek(0)
                                         bytes_fttx = file_disp_ptr.read()
                                         # === CORRECCIÓN ORDEN PARÁMETROS GCS ===
-                                        sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv", bytes_fttx)
+                                        sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
                                         file_disp_ptr.seek(0)
 
                                     if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
@@ -454,7 +454,7 @@ def main():
                                         df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
                                 except Exception as e_fttx: pass
-                            
+                                
                             st.success("✅ Datos sincronizados en GCS (Base Principal) y unidos al historial correctamente.")
                             import time
                             time.sleep(1)
