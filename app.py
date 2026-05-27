@@ -465,7 +465,7 @@ def main():
             else: 
                 st.session_state.df_base = res_p_diamante
                 st.success("✅ Datos procesados localmente.")
-        else: return
+                return
 
     df_base = st.session_state.df_base.copy()
     
