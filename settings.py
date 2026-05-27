@@ -16,7 +16,7 @@ def safestr(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# LÓGICA DE PDF PARA EL MANUAL TÉCNICO (BLINDADA CONTRA ERRORES DE ESPACIO)
+# LÓGICA DE PDF PARA EL MANUAL TÉCNICO ESTRUCTURADO
 # ==============================================================================
 class ManualPDF(FPDF):
     def header(self):
@@ -27,12 +27,12 @@ class ManualPDF(FPDF):
                 pass
         self.set_y(10)
         self.set_x(50)
-        self.set_text_color(0, 51, 102) # Azul Corporativo
+        self.set_text_color(0, 51, 102) # Azul Corporativo Maxcom
         self.set_font("Helvetica", "B", 12)
         self.cell(150, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
         self.set_font("Helvetica", "", 9)
         self.set_x(50)
-        self.cell(150, 5, "Manual Tecnico de Usuario - Monitor Operativo PRO", ln=True, align="R")
+        self.cell(150, 5, "Manual Tecnico Estructurado - Monitor Operativo PRO", ln=True, align="R")
         self.set_draw_color(200, 200, 200)
         self.line(10, 25, 200, 25)
         self.ln(15)
@@ -43,19 +43,33 @@ class ManualPDF(FPDF):
         self.set_font("Helvetica", "I", 8)
         self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
 
-    def capitulo(self, titulo, texto_lineas):
-        self.set_font("Helvetica", "B", 12)
-        self.set_text_color(40, 50, 100)
+    def capitulo(self, titulo, subsecciones):
+        """
+        Escribe un bloque capitular estructurado.
+        subsecciones: Diccionario de { Subtitulo: [Lineas de parrafo] }
+        """
+        self.set_font("Helvetica", "B", 13)
+        self.set_text_color(0, 51, 102)
         self.cell(190, 8, titulo, ln=True)
-        self.ln(2)
+        self.set_draw_color(0, 51, 102)
+        self.line(self.get_x(), self.get_y(), self.get_x() + 40, self.get_y())
+        self.ln(4)
         
-        self.set_font("Helvetica", "", 10)
-        self.set_text_color(40, 40, 40)
-        for linea in texto_lineas:
-            linea_limpia = str(linea).replace("* ", "- ").replace("\t", " ").strip()
-            # Al usar un ancho fijo de 190 prevenimos el "Not enough horizontal space"
-            self.multi_cell(190, 6, txt=linea_limpia)
-        self.ln(6)
+        for sub_tit, lineas in subsecciones.items():
+            if sub_tit:
+                self.set_font("Helvetica", "B", 10)
+                self.set_text_color(51, 65, 85)
+                self.cell(190, 6, sub_tit, ln=True)
+                self.ln(1)
+            
+            self.set_font("Helvetica", "", 9.5)
+            self.set_text_color(40, 40, 40)
+            for linea in lineas:
+                linea_limpia = str(linea).replace("* ", "- ").replace("\t", " ").strip()
+                # Fijamos ancho a 190 para evitar desbordamientos horizontales
+                self.multi_cell(190, 5.5, txt=linea_limpia)
+            self.ln(3)
+        self.ln(4)
 
 @st.cache_data(show_spinner=False)
 def generar_manual_pdf():
@@ -63,74 +77,93 @@ def generar_manual_pdf():
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Título Principal
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_text_color(0, 0, 0)
-    pdf.cell(190, 10, "MANUAL DE USUARIO: MONITOR OPERATIVO", ln=True, align="C")
-    pdf.ln(5)
+    # --- PORTADA / TITULO ---
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(190, 10, "MANUAL TECNICO DE OPERACION Y SISTEMAS", ln=True, align="C")
+    pdf.set_font("Helvetica", "I", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(190, 6, "Plataforma Centralizada Monitor Operativo Maxcom PRO", ln=True, align="C")
+    pdf.ln(10)
     
-    pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(190, 6, "Este sistema ha sido disenado para la supervision en tiempo real de la operacion tecnica, la gestion de indicadores y la auditoria del personal de campo.")
-    pdf.ln(8)
+    # --- CAPÍTULO 1 ---
+    pdf.capitulo("1. PROTOCOLO DE ACCESO, SEGURIDAD Y SESION", {
+        "A. Control de Autenticacion": [
+            "* Acceso Restringido: El ingreso al sistema exige credenciales unicas validadas contra la lista de usuarios autorizados.",
+            "* Roles de Usuario: Los perfiles se dividen en Administrador (Acceso total, edicion y eliminacion) y Monitoreo (Carga y visualizacion analitica)."
+        ],
+        "B. Politicas de Seguridad del Servidor": [
+            "* Temporizador Inactivo: Como contingencia ante descuidos en estaciones de trabajo, la sesion expira automaticamente tras 5 minutos de inactividad detectada.",
+            "* Cierre Seguro: El boton 'Cerrar Sesion' purga los tokens de seguridad y elimina las cookies activas en el navegador (token_maxcom) para evitar secuestros de sesion."
+        ]
+    })
     
-    # Capítulo 1
-    pdf.capitulo("1. Acceso y Seguridad", [
-        "Inicio de Sesion: Ingrese sus credenciales asignadas en la pantalla principal.",
-        "Temporizador: Por seguridad, la sesion caduca tras 5 minutos de inactividad.",
-        "Cierre de Sesion: Use el boton 'Cerrar Sesion' al final de la barra lateral para salir de forma segura y borrar sus cookies locales."
-    ])
-    
-    # Capítulo 2
-    pdf.capitulo("2. Monitor en Vivo", [
-        "A. Indicadores (KPIs):",
-        "- Pendientes Asignadas: Ordenes activas con tecnico en ruta o sitio.",
-        "- Cerradas Hoy: Total de liquidaciones exitosas del dia.",
-        "- Caidas (Offline): Equipos detectados con perdida de senal en la red.",
-        "",
-        "B. Linea de Tiempo (Gantt):",
-        "Muestra la secuencia de trabajo por tecnico. Al pasar el cursor vera:",
-        "- Actividad y Estado actual.",
-        "- Horas exactas de inicio y cierre.",
-        "- Tiempo Total de duracion exacta de la gestion.",
-        "",
-        "C. Panel de Control (Alertas Visuales):",
-        "- Fondo Rojo: Retrasos mayores o iguales a 7 dias.",
-        "- Fondo Naranja: Retraso de 4 a 6 dias.",
-        "- Icono de Alerta: Ordenes que exceden el tiempo estandar (ej. SOP > 2h)."
-    ])
-    
-    # Capítulo 3
-    pdf.capitulo("3. Centro de Reportes", [
-        "Cierre Diario:",
-        "Seleccione una fecha para generar el PDF con metricas de efectividad de mora.",
-        "",
-        "Resumen de Operaciones (6 Columnas):",
-        "Este cuadro separa el avance real para un analisis profundo:",
-        "1. Mora inicial: Pendientes arrastradas de dias anteriores.",
-        "2. Cerradas (Mora): Avance logrado sobre el arrastre.",
-        "3. Total (Mora): Saldo pendiente antiguo que no se logro liquidar.",
-        "4. Asignadas hoy: Nuevas entradas inyectadas durante el dia.",
-        "5. Cerradas hoy: Ordenes nuevas que fueron liquidadas el mismo dia.",
-        "6. Total (Hoy): Saldo total consolidado para el dia siguiente."
-    ])
+    # --- CAPÍTULO 2 ---
+    pdf.capitulo("2. ARQUITECTURA DEL MONITOR EN VIVO Y PANELES", {
+        "A. Indicadores Operativos Clave (KPIs)": [
+            "* Pendientes Asignadas: Cuantifica las ordenes en estado activo que ya cuentan con un tecnico asignado, en ruta o en sitio.",
+            "* Cerradas Hoy: Despliega el total de ordenes que han sido liquidadas exitosamente en el transcurso del dia actual.",
+            "* Caidas (Offline): Alertas criticas que muestran equipos con perdida total de potencia o enlace en la red."
+        ],
+        "B. Linea de Tiempo Dinamica (Gantt)": [
+            "* Mapeo de Flujo Técnico: Grafica de forma cronologica la secuencia de actividades ejecutadas por cada tecnico de campo.",
+            "* Interaccion Tooltip: Al pasar el cursor sobre los bloques de tiempo, el sistema extrae e imprime el estado de la orden, hora de apertura, hora de liquidacion y la duracion exacta calculada de la gestion."
+        ],
+        "C. Panel de Control y Semaforizacion de Alertas": [
+            "* Alerta Critica (Fondo Rojo): Identifica ordenes con retraso acumulado igual o superior a 7 dias en la malla operativa.",
+            "* Alerta Preventiva (Fondo Naranja): Destaca ordenes en el limbo con retrasos de 4 a 6 dias.",
+            "* Exceso de Tiempo Estandar (Icono Alerta): Se activa dinamicamente si una tarea excede el tiempo promedio establecido para su rubro (Ej: Soporte de fibra > 2 horas)."
+        ]
+    })
     
     pdf.add_page()
-    
-    # Capítulo 4
-    pdf.capitulo("4. Configuracion y Conectividad", [
-        "- Preferencias: Use los interruptores en la pestana de configuracion para limpiar su pantalla y ocultar los modulos que no necesita ver constantemente.",
-        "- Sincronizacion: El boton 'Descargar Datos Ahora' asegura que esta viendo la informacion mas reciente desde la Nube (Google Cloud Storage).",
-        "- Oracle (Beta): Modulo de conexion directa a la base de datos central en desarrollo."
-    ])
-    
-    # Capítulo 5
-    pdf.capitulo("5. Modulos de Auditoria", [
-        "- Auditoria Vehicular: Compara la primera salida y la ultima llegada para calcular el tiempo real de los vehiculos en la calle.",
-        "- Biometrico: Analiza el archivo CSV de transacciones de recursos humanos para detectar tardanzas o excesos en tiempos de comida.",
-        "- Tiempos Tecnicos: Contrasta el tiempo pagado en calle vs el tiempo facturado en ordenes.",
-        "- Expedientes: Gestor en la nube para registrar llamados de atención, incidencias medicas y adjuntar evidencia fotografica."
-    ])
 
+    # --- CAPÍTULO 3 ---
+    pdf.capitulo("3. ESTRUCTURA ANALITICA DEL CENTRO DE REPORTES", {
+        "A. Cierre Diario de Efectividad": [
+            "* Filtrado por Fecha: Permite seleccionar un dia especifico del calendario para empaquetar un archivo PDF exportable con las metricas completas de resolucion de mora."
+        ],
+        "B. Logica de la Matriz Operativa de 6 Columnas": [
+            "Este cuadro desglosa matematicamente el balance diario para evitar duplicaciones:",
+            "1. Mora Inicial: Saldo de ordenes pendientes que fueron arrastradas de dias anteriores.",
+            "2. Cerradas (Mora): Cantidad de ordenes antiguas logradas liquidar durante la jornada.",
+            "3. Total (Mora): Saldo real remanente de mora que pasara al siguiente dia.",
+            "4. Asignadas Hoy: Ordenes nuevas capturadas e inyectadas en las ultimas 24 horas.",
+            "5. Cerradas Hoy: Ordenes nuevas creadas hoy que se resolvieron el mismo dia.",
+            "6. Total (Hoy): Balance final de ordenes del dia que quedan pendientes para manana."
+        ]
+    })
+    
+    # --- CAPÍTULO 4 ---
+    pdf.capitulo("4. PREFERENCIAS, PERSISTENCIA Y ADAPTADORES DE BASE DE DATOS", {
+        "A. Filtros Rápidos de Interfaz": [
+            "* Control de Secciones: Permite al supervisor usar interruptores logicos para ocultar o mostrar bloques (Gantt, Graficas, Tablas) con el fin de optimizar el rendimiento en pantallas moviles."
+        ],
+        "B. Sincronizacion de Datos": [
+            "* Boton 'Descargar Datos Ahora': Fuerza un llamado de lectura directo a la persistencia en la nube (Google Cloud Storage) sincronizando las ultimas modificaciones brutas procesadas."
+        ],
+        "C. Capa de Datos (GCS Principal & Sheets Contingencia)": [
+            "* Persistencia Central (GCS): El motor lee y sobrescribe archivos compactados (.csv) en el Bucket del sistema para operaciones de alta velocidad.",
+            "* Contingencia (Google Sheets): Actua como un espejo visual y respaldo. Si la conexion principal falla, el sistema se acopla a Sheets de inmediato para no detener la supervision.",
+            "* Conector Oracle (Beta): Modulo de transicion directa para conectarse directamente al core de la base de datos central sin dependencias manuales."
+        ]
+    })
+
+    # --- CAPÍTULO 5 ---
+    pdf.capitulo("5. SINOPSIS DE MODULOS DE AUDITORIA", {
+        "A. Auditoria Vehicular y Tiempos en Calle": [
+            "* Cruza la primera lectura de salida GPS con la ultima entrada registrada del vehiculo para certificar el total de horas productivas en ruta."
+        ],
+        "B. Auditoria Biometrica (RRHH)": [
+            "* Procesa las tramas de marcajes de los archivos de asistencia para contrastarlos con el catalogo oficial, detectando llegadas tarde, ausencias y tiempos de comida excedidos."
+        ],
+        "C. Control de Expedientes e Incidencias": [
+            "* Modulo integrado para registrar llamados de atencion oficiales, faltas operativas e incidencias medicas de forma persistente en la nube, permitiendo adjuntar evidencias fotograficas y generar memorandums individuales en PDF.",
+            "* Rubro Automatico RECO: Detecta palabras clave relacionadas con postes en las notas e inyecta de forma automatica y bloqueada el personal 'RECO' para simplificar los reportes generales."
+        ]
+    })
+
+    # Guardar en memoria y retornar bytes
     fd, path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     pdf.output(path)
@@ -171,8 +204,8 @@ def mostrar_configuracion():
         st.session_state.config_ver_panel = st.toggle("🎛️ Mostrar: Panel de Control y Análisis Detallado", value=st.session_state.config_ver_panel)
 
     with tab_doc:
-        st.markdown("### 📖 Documentación Oficial del Sistema")
-        st.write("El manual técnico de usuario detalla el funcionamiento de todos los módulos del sistema Maxcom PRO, incluyendo la interpretación de KPIs, el centro de reportes y las herramientas de auditoría.")
+        st.markdown("### 📖 Documentación Estructurada del Sistema")
+        st.write("Presione el botón inferior para compilar y descargar el Manual Técnico Oficial. Este documento detalla todos los lineamientos operativos, la lógica del balance de 6 columnas de mora, la configuración de bases de datos y los módulos de auditoría integral.")
         
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -182,12 +215,12 @@ def mostrar_configuracion():
                 import pandas as pd # Requerido para la validación interna del safestr
                 pdf_manual = generar_manual_pdf()
                 st.download_button(
-                    label="📥 DESCARGAR MANUAL TÉCNICO DE USUARIO (PDF)",
+                    label="📥 DESCARGAR MANUAL TECNICO DE USUARIO (PDF)",
                     data=pdf_manual,
-                    file_name="Manual_Usuario_MaxcomPRO.pdf",
+                    file_name="Manual_Tecnico_MaxcomPRO.pdf",
                     mime="application/pdf",
                     type="primary",
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"Error al generar el manual: {e}")
+                st.error(f"Error al generar el manual estructurado: {e}")
