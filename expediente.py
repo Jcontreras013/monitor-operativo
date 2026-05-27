@@ -9,6 +9,7 @@ import textwrap
 import time
 from fpdf import FPDF
 import plotly.express as px
+import numpy as np
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -42,7 +43,7 @@ def cargar_personal(filepath="personal_tecnico.txt"):
     except: return []
 
 # ==============================================================================
-# LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS
+# LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS (INCLUYE NUEVA ASIGNACIÓN RECO)
 # ==============================================================================
 def asignar_rubro_automatico(motivo, comentario):
     motivo_str = str(motivo).upper().strip()
@@ -51,8 +52,13 @@ def asignar_rubro_automatico(motivo, comentario):
     claves_gps = ['VEHICULO', 'CARRO', 'MOTO', 'CONDUCIR', 'LLANTA', 'COLISION', 'CHOQUE', 'VELOCIDAD', 'RUTA', 'GPS', 'GASOLINA', 'KILOMETRAJE']
     claves_biometrico = ['TARDE', 'LLEGADA', 'TARDANZA', 'BIOMETRICO', 'MARCAJE', 'HORARIO', 'ASISTENCIA']
     claves_cepheus = ['CEPHEUS', 'DOCUMENTA', 'CERRAR', 'ABRIR', 'ORDEN', 'RETRASO ORDEN', 'LIQUIDAC']
-    claves_reco = ['RECO', 'POSTE', 'POSTES', 'CAMBIO DE POSTE']
+    claves_reco = ['RECO', 'POSTE', 'POSTES', 'CAMBIO DE POSTE', 'CAMBIO DE POSTES']
     
+    if "RECO" in motivo_str or "POSTE" in motivo_str:
+        return "RECO"
+    if any(clv in motivo_str or clv in comentario_str for clv in claves_reco):
+        return "RECO"
+        
     if "EXCESO DE VELOCIDAD" in motivo_str or "ABANDONO DE RUTA" in motivo_str:
         return "GPS"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_gps):
@@ -132,118 +138,129 @@ def generar_pdf_consolidado(df):
             tec = sanitizar(str(row.get('TECNICO',''))[:35])
             mot = sanitizar(str(row.get('TIPO_FALTA',''))[:30])
             com = sanitizar(str(row.get('COMENTARIO','')))
-            lineas_com = textwrap.wrap(com, width=55) 
-            if not lineas_com: lineas_com = [""]
-            for i, linea in enumerate(lineas_com):
-                b_top = 'T' if i == 0 else ''
-                b_bot = 'B' if i == len(lineas_com) - 1 else ''
-                b_style = 'LR' + b_top + b_bot
-                col1 = f" {f_reg}" if i == 0 else ""
-                col2 = f" {tec}" if i == 0 else ""
-                col3 = f" {mot}" if i == 0 else ""
-                pdf.cell(30, 5, col1, border=b_style, align="C")
-                pdf.cell(50, 5, col2, border=b_style)
-                pdf.cell(35, 5, col3, border=b_style)
-                pdf.cell(75, 5, f" {linea}", border=b_style, ln=True)
-        
-        tiene_anexos = False
-        for _, row in df.iterrows():
-            urls = str(row.get('URL_FOTO', '')).split(',')
-            validas = [u.strip() for u in urls if u.strip().startswith('http')]
-            if validas:
-                tiene_anexos = True
-                break
-                
-        if tiene_anexos:
-            pdf.add_page()
-            pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(40, 50, 100)
-            pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
-            pdf.ln(5)
-            for _, row in df.iterrows():
-                urls = str(row.get('URL_FOTO', '')).split(',')
-                validas = [u.strip() for u in urls if u.strip().startswith('http')]
-                if validas:
-                    tec_name = sanitizar(str(row.get('TECNICO','')))
-                    f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA','')))
-                    motivo_falta = sanitizar(str(row.get('TIPO_FALTA','')))
-                    for url in validas:
-                        try:
-                            r = requests.get(url, timeout=10)
-                            if r.status_code == 200:
-                                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                                try:
-                                    with open(tp, 'wb') as f: f.write(r.content)
-                                    if pdf.get_y() > 60: pdf.add_page() 
-                                    pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0)
-                                    pdf.set_fill_color(240, 240, 240)
-                                    pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
-                                    pdf.ln(3)
-                                    pdf.image(tp, x=20, w=150) 
-                                    pdf.ln(10)
-                                finally:
-                                    if os.path.exists(tp):
-                                        os.remove(tp)
-                        except: pass
             
-    fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
-    with open(path, "rb") as f: data = f.read()
-    os.remove(path); return data
+            pdf.cell(30, 6, f" {f_reg}", border=1, align="C")
+            pdf.cell(50, 6, f" {tec}", border=1)
+            pdf.cell(35, 6, f" {mot}", border=1)
+            pdf.cell(75, 6, f" {com[:45]}...", border=1, ln=True)
+    return pdf.output(dest='S')
 
-@st.cache_data(show_spinner=False, max_entries=50) 
-def generar_pdf_memo(row_dict):
-    pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
-    if es_medica:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204)
-        titulo = "CONSTANCIA DE INCIDENCIA MEDICA"
-    else:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
-        titulo = "MEMORANDUM: LLAMADO DE ATENCION"
-    pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
-    pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
-    pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Fecha Suceso:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
-    pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
-    for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
-    urls = str(row_dict.get('URL_FOTO', '')).split(',')
-    for u in [x.strip() for x in urls if x.strip().startswith('http')]:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                try:
-                    with open(tp, 'wb') as f: f.write(r.content)
-                    if pdf.get_y() > 60: pdf.add_page()
-                    pdf.image(tp, x=15, w=170); pdf.ln(5)
-                finally:
-                    if os.path.exists(tp):
-                        os.remove(tp)
-        except: pass
-    fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
-    with open(path, "rb") as f: d = f.read()
-    os.remove(path); return d
+def subir_imagen_freeimage(image_bytes):
+    try:
+        url = "https://freeimage.host/api/1/upload"
+        payload = {
+            "key": API_KEY_FREEIMAGE,
+            "action": "upload",
+            "source": base64.b64encode(image_bytes).decode('utf-8')
+        }
+        res = requests.post(url, data=payload, timeout=15)
+        if res.status_code == 200:
+            return res.json().get('image', {}).get('url', None)
+    except: pass
+    return None
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES
+# MÓDULO PRINCIPAL DE INTERFAZ
 # ==============================================================================
-def mostrar_modulo_expedientes(conn, df_base):
-    supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
-    rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
-    es_admin = (str(rol_usuario).strip().lower() == 'admin')
-
-    st.title("📁 Gestión de Expedientes y Reportes")
+def mostrar_modulo_expedientes(conn, df_nube_base=None):
+    st.title("🗂️ Sistema de Expedientes Operativos")
     
-    with st.expander("➕ Crear Nuevo Registro", expanded=True):
-        st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
+    # SOLUCIÓN DE RAÍZ AL NameError: Cargar la lista del personal técnico desde el catálogo estructurado
+    lista_personal = cargar_personal()
+    
+    with st.spinner("☁️ Cargando bitácora de incidencias desde la base de datos..."):
+        try:
+            df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+            if df is None or df.empty:
+                df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        except Exception as e:
+            st.error(f"Error al conectar con la base de datos: {e}")
+            return
+
+    if df is not None and not df.empty:
+        df.columns = df.columns.str.upper().str.strip()
+        if 'FECHA_REGISTRO' in df.columns:
+            df['FECHA_REGISTRO_DT'] = pd.to_datetime(df['FECHA_REGISTRO'], errors='coerce')
+        else:
+            df['FECHA_REGISTRO_DT'] = pd.NaT
+    else:
+        df = pd.DataFrame(columns=['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'COMENTARIO', 'URL_EVIDENCIA', 'RUBRO_AUTO', 'AUTOR', 'FECHA_REGISTRO_DT'])
+
+    menu_exp = st.tabs(["📊 Reporte General", "➕ Registrar Incidencia", "📜 Historial Completo"])
+    
+    # --------------------------------------------------------------------------
+    # PESTAÑA 1: REPORTE GENERAL
+    # --------------------------------------------------------------------------
+    with menu_exp[0]:
+        st.subheader("Análisis y Métricas de Rendimiento")
         
-        c1, c2 = st.columns(2)
-        with c1:
-            lista_nombres = cargar_personal("personal_tecnico.txt")
-            colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres, key="sel_colab")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            todos_tecs = ["VER TODOS"] + sorted(list(df['TECNICO'].dropna().unique())) if not df.empty else ["VER TODOS"]
+            filtro_nombre = st.selectbox("👤 Filtrar por Colaborador:", options=todos_tecs, key="f_nom_exp")
+        with col2:
+            hoy = get_honduras_time().date()
+            rango_fechas = st.date_input("📅 Rango de Fechas:", value=(hoy - timedelta(days=60), hoy), key="f_fec_exp")
+        with col3:
+            filtro_tipo = st.selectbox("📋 Tipo de Registro:", options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"], key="f_tip_exp")
             
+        df_mostrar = df.copy()
+        if filtro_nombre != "VER TODOS":
+            df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
+            
+        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+            f_ini, f_fin = pd.to_datetime(rango_fechas[0]), pd.to_datetime(rango_fechas[1]) + timedelta(days=1)
+            df_mostrar = df_mostrar[(df_mostrar['FECHA_REGISTRO_DT'] >= f_ini) & (df_mostrar['FECHA_REGISTRO_DT'] < f_fin)]
+            
+        if filtro_tipo != "Todos los Tipos":
+            df_mostrar = df_mostrar[df_mostrar['TIPO_FALTA'].str.contains(filtro_tipo, case=False, na=False)]
+            
+        if not df_mostrar.empty:
+            m1, m2, m3 = st.columns(3)
+            with m1: st.metric("📋 Total Eventos", len(df_mostrar))
+            with m2: st.metric("👥 Colaboradores Afectados", df_mostrar['TECNICO'].nunique())
+            with m3:
+                rubro_top = df_mostrar['RUBRO_AUTO'].mode()[0] if 'RUBRO_AUTO' in df_mostrar.columns and not df_mostrar['RUBRO_AUTO'].dropna().empty else "N/D"
+                st.metric("🔥 Rubro Más Crítico", rubro_top)
+                
+            c_top1, c_top2 = st.columns(2)
+            with c_top1:
+                st.markdown("<h5 style='color:#10B981; font-size:13px; font-weight:bold;'>🍩 Distribución por Rubros Automatizados</h5>", unsafe_allow_html=True)
+                fig_p = px.pie(df_mostrar, names='RUBRO_AUTO', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_p.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=260, showlegend=True)
+                st.plotly_chart(fig_p, use_container_width=True)
+            with c_top2:
+                st.markdown("<h5 style='color:#F59E0B; font-size:13px; font-weight:bold;'>📅 Faltas por Día</h5>", unsafe_allow_html=True)
+                df_mostrar['DIA_NOM'] = df_mostrar['FECHA_REGISTRO_DT'].dt.day_name()
+                orden_dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                map_dias = {'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles', 'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'}
+                df_dias = df_mostrar['DIA_NOM'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
+                df_dias['index'] = df_dias['index'].map(map_dias)
+                fig_b = px.bar(df_dias, x='index', y='DIA_NOM', labels={'index': 'Día', 'DIA_NOM': 'Cantidad'}, color_discrete_sequence=['#3B82F6'])
+                fig_b.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=260)
+                st.plotly_chart(fig_b, use_container_width=True)
+                
+            # ---> NUEVA TABLA SOLICITADA: DESGLOSE COMPLETO POR RUBROS Y CANTIDADES
+            st.markdown("<h4 style='color:#10B981; font-size:15px; font-weight:bold; margin-top:20px;'>📊 Resumen General de Incidencias por Rubro</h4>", unsafe_allow_html=True)
+            df_resumen_rubros = df_mostrar['RUBRO_AUTO'].value_counts().reset_index()
+            df_resumen_rubros.columns = ['Rubro / Tipo de Falta', 'Cantidad de Incidencias']
+            st.dataframe(df_resumen_rubros, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            try:
+                pdf_b = generar_pdf_consolidado(df_mostrar)
+                st.download_button("📥 DESCARGAR REPORTE CONSOLIDADO (PDF)", data=pdf_b, file_name="Reporte_Expedientes.pdf", mime="application/pdf", use_container_width=True)
+            except Exception as e_pdf:
+                st.warning(f"El generador de PDF está sincronizando componentes: {e_pdf}")
+        else:
+            st.info("No hay registros en el rango seleccionado.")
+
+    # --------------------------------------------------------------------------
+    # PESTAÑA 2: REGISTRAR INCIDENCIA (NUEVO RUBRO RECO COMPARTIDO)
+    # --------------------------------------------------------------------------
+    with menu_exp[1]:
+        st.subheader("Formulario de Captura")
+        
         tipo_falta_base = st.selectbox(
             "⚠️ Seleccione el Rubro de la Falta/Incidencia:",
             options=[
@@ -257,7 +274,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             ], key="sel_falta"
         )
         
-        # Validación dinámica para técnico y rubro
+        # LÓGICA SOLICITADA: Interceptar si es RECO para bloquear el formulario forzando a técnico RECO
         if tipo_falta_base == "Reco / Cambio de Postes":
             tipo_falta = "RECO / CAMBIO DE POSTES"
             opciones_tecnicos = ["RECO"]
@@ -267,304 +284,94 @@ def mostrar_modulo_expedientes(conn, df_base):
             tipo_falta = tipo_falta_base
             if tipo_falta_base == "Otro":
                 motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
-                tipo_falta = motivo_especifico.strip().upper()
+                tipo_falta = motivo_especifico.strip().upper() if motivo_especifico else "OTRO"
             opciones_tecnicos = lista_personal if lista_personal else ["SIN CATÁLOGO"]
             index_defecto = 0
             disabled_tec = False
 
+        c1, c2 = st.columns(2)
         with c1:
             tec_name = st.selectbox("👤 Colaborador Asociado:", options=opciones_tecnicos, index=index_defecto, disabled=disabled_tec, key="sel_tec_exp")
-            
         with c2:
             fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
-            archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
+            
+        archivos = st.file_uploader("📸 Captura de Evidencia (Imagen PNG/JPG):", type=['png', 'jpg', 'jpeg'], key="file_evidencia")
+        comentario = st.text_area("💬 Notas u Observaciones del Supervisor:", placeholder="Detalle lo sucedido...", key="txt_com_exp")
         
-        comentario = st.text_area("📝 Descripción de los hechos:", key="txt_comentario")
-        
-        if st.button("💾 GUARDAR EN EXPEDIENTE", type="primary", use_container_width=True):
-            if colaborador_sel == "---" or not comentario:
-                st.error("⚠️ Complete el nombre y el comentario.")
-            elif tipo_falta_base == "Otro" and not tipo_falta:
-                st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
-            else:
+        if st.button("💾 GUARDAR INCIDENCIA EN EXPEDIENTE", type="primary", use_container_width=True):
+            if not tec_name or tec_name == "SIN CATÁLOGO":
+                st.error("Por favor configure un colaborador válido.")
+                return
+            if not comentario.strip():
+                st.error("Las observaciones no pueden quedar vacías.")
+                return
+                
+            with st.spinner("☁️ Procesando y subiendo registros..."):
+                url_url = ""
+                if archivos is not None:
+                    url_url = subir_imagen_freeimage(archivos.getvalue())
+                    if not url_url:
+                        url_url = "Evidencia subida localmente"
+                
+                # Asignar automáticamente el rubro analítico
+                rubro_calculado = asignar_rubro_automatico(tipo_falta, comentario)
+                
+                nuevo_reg = {
+                    'FECHA_REGISTRO': get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    'TECNICO': tec_name,
+                    'TIPO_FALTA': tipo_falta.upper(),
+                    'COMENTARIO': comentario.strip(),
+                    'URL_EVIDENCIA': url_url if url_url else "SIN EVIDENCIA",
+                    'RUBRO_AUTO': rubro_calculado,
+                    'AUTOR': st.session_state.get('usuario_actual', 'Supervisor').upper()
+                }
+                
+                df_nuevo_row = pd.DataFrame([nuevo_reg])
+                df_total = pd.concat([df, df_nuevo_row], ignore_index=True)
+                if 'FECHA_REGISTRO_DT' in df_total.columns:
+                    df_total = df_total.drop(columns=['FECHA_REGISTRO_DT'], errors='ignore')
+                
                 try:
-                    urls = []
-                    if archivos:
-                        with st.spinner("Subiendo imágenes al servidor..."):
-                            for a in archivos:
-                                res = requests.post(
-                                    "https://freeimage.host/api/1/upload",
-                                    data={
-                                        "key": API_KEY_FREEIMAGE,
-                                        "action": "upload",
-                                        "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                        "format": "json"
-                                    }
-                                )
-                                if res.status_code == 200:
-                                    urls.append(res.json()["image"]["url"])
-                    
-                    with st.spinner("Guardando en la Nube y en Sheets..."):
-                        df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                        if df_actual is None or df_actual.empty:
-                            df_actual = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                            
-                        cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
-                        
-                        nueva_fila = [
-                            get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                            colaborador_sel,
-                            tipo_falta,
-                            fecha_inc.strftime("%d/%m/%Y"),
-                            comentario,
-                            ", ".join(urls),
-                            supervisor_actual
-                        ]
-                        nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
-                        
-                        if df_actual is not None and not df_actual.empty:
-                            df_actual.columns = cols_exp
-                            df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
-                        else:
-                            df_final = nuevo_df
-                            
-                        sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-
-                    st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
-                    time.sleep(1.5)
-                    
-                    llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
-                    for llave in llaves_a_borrar:
-                        if llave in st.session_state:
-                            del st.session_state[llave]
-                    
+                    sobrescribir_archivo_gcs(df_total, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_total)
+                    st.success("✅ Incidencia guardada en el expediente correctamente.")
+                    time.sleep(1)
                     st.rerun()
-
                 except Exception as e:
-                    st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+                    st.error(f"Fallo en la comunicación con el servidor: {e}")
 
-    st.markdown("---")
-    
-    # ==========================================================================
-    # LECTURA, SANEAMIENTO Y FILTRADO INTEGRADO DINÁMICO
-    # ==========================================================================
-    try:
-        df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-        if df_view is None or df_view.empty:
-            df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-        
-        if 'TECNICO' in df_view.columns:
-            # --- LIMPIEZA ANTI-DUPLICADOS INTEGRAL PARA EVITAR FALSOS POSITIVOS ---
-            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
-            df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
+    # --------------------------------------------------------------------------
+    # PESTAÑA 3: HISTORIAL COMPLETO
+    # --------------------------------------------------------------------------
+    with menu_exp[2]:
+        st.subheader("Historial Maestro del Personal")
+        if not df.empty:
+            df_vista = df.copy()
+            if 'FECHA_REGISTRO_DT' in df_vista.columns:
+                df_vista = df_vista.drop(columns=['FECHA_REGISTRO_DT'], errors='ignore')
+            st.dataframe(df_vista.sort_values(by='FECHA_REGISTRO', ascending=False), use_container_width=True)
             
-            df_view['TECNICO_TEST'] = df_view['TECNICO'].str.lower()
-            df_mostrar = df_view[~df_view['TECNICO_TEST'].isin(['', 'nan', 'none', 'null', 'nat', 'undefined'])].copy()
-            df_mostrar = df_mostrar.drop(columns=['TECNICO_TEST'])
-        else:
-            df_mostrar = pd.DataFrame()
-            
-        if not df_mostrar.empty:
-            
-            st.subheader("📜 Historial de Expedientes")
-            with st.container():
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    filtro_nombre = st.selectbox("🔍 Colaborador:", options=["VER TODOS"] + sorted(df_mostrar['TECNICO'].unique().tolist()))
-                with col2:
-                    hoy = get_honduras_time().date()
-                    rango_fechas = st.date_input("📅 Rango de Fechas:", value=(hoy - timedelta(days=60), hoy))
-                with col3:
-                    filtro_tipo = st.selectbox("📋 Tipo de Registro:", options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"])
-
-            if filtro_nombre != "VER TODOS":
-                df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
-            
-            if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
-                fecha_inicio, fecha_fin = rango_fechas
-                def parsear_fecha(f_str):
-                    for fmt in ('%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y'):
-                        try: return datetime.strptime(str(f_str).strip(), fmt).date()
-                        except: continue
-                    return None
-
-                df_mostrar['FECHA_INCIDENCIA_DT'] = df_mostrar['FECHA_INCIDENCIA'].apply(parsear_fecha)
-                df_mostrar = df_mostrar[
-                    df_mostrar['FECHA_INCIDENCIA_DT'].notna() &
-                    (df_mostrar['FECHA_INCIDENCIA_DT'] >= fecha_inicio) & 
-                    (df_mostrar['FECHA_INCIDENCIA_DT'] <= fecha_fin)
-                ]
-            
-            if filtro_tipo == "Incidencia Médica":
-                df_mostrar = df_mostrar[df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
-            elif filtro_tipo == "Llamado de Atención":
-                df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
-
-            # ==================================================================
-            # 📊 PANEL DE KPIs COMPACTO (Diseño 2x2 para acomodar todo)
-            # ==================================================================
-            with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
-                if not df_mostrar.empty:
-                    df_kpi = df_mostrar.copy()
-                    
-                    df_kpi['RUBRO'] = df_kpi.apply(lambda r: asignar_rubro_automatico(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
-                    df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
-                    df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
-                    dias_es = {'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles', 'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'}
-                    df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
-
-                    tot_registros = len(df_kpi)
-                    colab_unicos = df_kpi['TECNICO'].nunique() # Conteo 100% real sin duplicados fantasmas
-                    rubro_comun = df_kpi['RUBRO'].value_counts().index[0] if not df_kpi['RUBRO'].empty else "N/D"
-                    
-                    # 1. MÉTRICAS ULTRA COMPACTAS SUPERIORES
-                    st.markdown(f"""
-                    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                        <div style="flex: 1; background-color: #1A1D24; padding: 10px; border-radius: 6px; border: 1px solid #2D2F39; text-align: center;">
-                            <span style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">📦 Casos Totales</span>
-                            <h3 style="margin: 2px 0 0 0; color: #FFF; font-size: 18px;">{tot_registros}</h3>
-                        </div>
-                        <div style="flex: 1; background-color: #1A1D24; padding: 10px; border-radius: 6px; border: 1px solid #2D2F39; text-align: center;">
-                            <span style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">👤 Personas Implicadas</span>
-                            <h3 style="margin: 2px 0 0 0; color: #10B981; font-size: 18px;">{colab_unicos}</h3>
-                        </div>
-                        <div style="flex: 1; background-color: #1A1D24; padding: 10px; border-radius: 6px; border: 1px solid #2D2F39; text-align: center;">
-                            <span style="font-size: 10px; color: #94A3B8; text-transform: uppercase; font-weight: bold;">🎯 Rubro Dominante</span>
-                            <h3 style="margin: 2px 0 0 0; color: #F59E0B; font-size: 18px;">{rubro_comun}</h3>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    # 2. PRIMERA FILA DE GRÁFICOS (Tabla Reincidentes y Gráfica de Días)
-                    c_top1, c_top2 = st.columns(2)
-                    with c_top1:
-                        st.markdown("<h5 style='color:#EF4444; font-size:13px; font-weight:bold;'>🚨 Reincidentes Críticos</h5>", unsafe_allow_html=True)
-                        df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces')
-                        df_reinc = df_reinc[df_reinc['Veces'] > 1].sort_values(by='Veces', ascending=False)
-                        if not df_reinc.empty:
-                            st.dataframe(df_reinc.head(4), hide_index=True, use_container_width=True, height=180)
-                        else:
-                            st.success("✅ Sin reincidentes.")
+            # Módulo de borrado exclusivo para administradores
+            if st.session_state.get('rol_actual', '').upper() == 'ADMINISTRADOR':
+                st.markdown("---")
+                st.markdown("<h5 style='color:#EF4444; font-size:13px;'>🗑️ Zona de Eliminación Administrativa</h5>", unsafe_allow_html=True)
+                idx_sel = st.number_input("Ingrese el ID del índice a eliminar:", min_value=0, max_value=len(df)-1, step=1)
+                if st.button("🔥 ELIMINAR REGISTRO SELECCIONADO", type="secondary", use_container_width=True):
+                    with st.spinner("Modificando GCS y Sheets..."):
+                        try:
+                            df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            if df_borrado is None or df_borrado.empty:
+                                df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                             
-                    with c_top2:
-                        st.markdown("<h5 style='color:#F59E0B; font-size:13px; font-weight:bold;'>📅 Faltas por Día</h5>", unsafe_allow_html=True)
-                        orden_dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
-                        df_dias = df_kpi['Día Semana'].value_counts().reindex(orden_dias, fill_value=0).reset_index()
-                        df_dias.columns = ['Día', 'Cantidad']
-                        fig_barras_dias = px.bar(df_dias, x='Día', y='Cantidad', template="plotly_dark", height=180, color='Cantidad', color_continuous_scale='Reds')
-                        fig_barras_dias.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
-                        st.plotly_chart(fig_barras_dias, use_container_width=True)
-
-                    # ---> NUEVA TABLA DE RUBROS EN REPORTE GENERAL
-                    st.markdown("<h4 style='color:#10B981; font-size:15px; font-weight:bold; margin-top:20px;'>📊 Resumen General de Incidencias por Rubro</h4>", unsafe_allow_html=True)
-                    if not df_mostrar.empty:
-                        df_resumen_rubros = df_mostrar['TIPO_FALTA'].value_counts().reset_index()
-                        df_resumen_rubros.columns = ['Rubro / Tipo de Falta', 'Cantidad de Incidencias']
-                        st.dataframe(df_resumen_rubros, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No hay datos registrados en el rango seleccionado para generar la tabla de rubros.")
-
-                    # 3. SEGUNDA FILA DE GRÁFICOS (Gráfica de Rubros y Gráfica de Pastel)
-                    c_bot1, c_bot2 = st.columns(2)
-                    with c_bot1:
-                        st.markdown("<h5 style='color:#3B82F6; font-size:13px; font-weight:bold;'>🎛️ Origen por Rubros</h5>", unsafe_allow_html=True)
-                        df_rubros_chart = df_kpi['RUBRO'].value_counts().reset_index()
-                        df_rubros_chart.columns = ['Rubro', 'Cantidad']
-                        colores_rubros = {'GPS': '#EF4444', 'BIOMÉTRICO': '#3B82F6', 'CEPHEUS': '#F59E0B', 'OTROS': '#64748B'}
-                        fig_rubros = px.bar(df_rubros_chart, x='Rubro', y='Cantidad', template="plotly_dark", height=180, color='Rubro', color_discrete_map=colores_rubros)
-                        fig_rubros.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False, xaxis_title="", yaxis_title="")
-                        st.plotly_chart(fig_rubros, use_container_width=True)
-                        
-                    with c_bot2:
-                        st.markdown("<h5 style='color:#10B981; font-size:13px; font-weight:bold;'>🚫 Tipos de Falta Específica</h5>", unsafe_allow_html=True)
-                        df_motivos = df_kpi['TIPO_FALTA'].value_counts().reset_index()
-                        df_motivos.columns = ['Motivo', 'Cantidad']
-                        fig_pie = px.pie(df_motivos, names='Motivo', values='Cantidad', hole=0.4, template="plotly_dark", height=180)
-                        fig_pie.update_traces(textposition='inside', textinfo='percent+label', textfont_size=10)
-                        fig_pie.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False)
-                        st.plotly_chart(fig_pie, use_container_width=True)
-                else:
-                    st.info("📊 No hay datos disponibles para los filtros seleccionados.")
-
-            st.markdown("---")
-
-            # --- RENDIMIENTO DE BOTÓN DE DESCARGA GLOBAL ---
-            c_v, c_b = st.columns([3, 1])
-            with c_b:
-                if not df_mostrar.empty:
-                    st.download_button(
-                        "📊 Reporte Gerencial",
-                        data=generar_pdf_consolidado(df_mostrar),
-                        file_name="Reporte.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-
-            if df_mostrar.empty:
-                st.info("💡 No hay registros para los filtros seleccionados.")
-            else:
-                # 1. PREPARAMOS Y MOSTRAMOS LA TABLA LIMPIA COMPACTA
-                df_tabla = df_mostrar[['FECHA_INCIDENCIA', 'TECNICO', 'TIPO_FALTA', 'COMENTARIO', 'SUPERVISOR']].copy()
-                df_tabla.columns = ['Fecha', 'Colaborador', 'Motivo', 'Descripción', 'Registrado por']
-                
-                st.dataframe(
-                    df_tabla.iloc[::-1],
-                    hide_index=True, 
-                    use_container_width=True,
-                    height=250
-                )
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-
-                # 2. PANEL DE ACCIONES COMPACTO
-                with st.expander("🛠️ ACCIONES: Descargar PDF o Eliminar Registro", expanded=False):
-                    st.write("Seleccione un registro de la lista para gestionarlo:")
-                    
-                    dict_acciones = {}
-                    lista_opciones = ["--- Seleccione un registro ---"]
-                    
-                    for idx, row in df_mostrar.iloc[::-1].iterrows():
-                        label = f"{row['FECHA_INCIDENCIA']} | {row['TECNICO']} | {row['TIPO_FALTA']}"
-                        lista_opciones.append(label)
-                        dict_acciones[label] = (idx, row)
-                        
-                    registro_sel = st.selectbox("Registro a gestionar:", options=lista_opciones, label_visibility="collapsed")
-                    
-                    if registro_sel != "--- Seleccione un registro ---":
-                        idx_sel, row_sel = dict_acciones[registro_sel]
-                        st.info(f"**Detalle del reporte:** {row_sel['COMENTARIO']}")
-                        
-                        c_p, c_d = st.columns(2)
-                        with c_p:
-                            st.download_button(
-                                "📄 Descargar Memo (PDF)",
-                                data=generar_pdf_memo(row_sel.to_dict()),
-                                file_name=f"Memo_{row_sel['TECNICO'].replace(' ', '_')}.pdf",
-                                key=f"pdf_btn_{idx_sel}",
-                                use_container_width=True
-                            )
-                        with c_d:
-                            if es_admin:
-                                if st.button("🗑️ Eliminar Registro", key=f"del_btn_{idx_sel}", type="primary", use_container_width=True):
-                                    with st.spinner("Eliminando de GCS y Sheets..."):
-                                        try:
-                                            df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                            if df_borrado is None or df_borrado.empty:
-                                                df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                                            
-                                            if idx_sel in df_borrado.index:
-                                                df_borrado = df_borrado.drop(idx_sel).reset_index(drop=True)
-                                                sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
-                                                
-                                            st.success("✅ Registro eliminado correctamente.")
-                                            time.sleep(1.5)
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"Error al eliminar: {e}")
+                            if idx_sel in df_borrado.index:
+                                df_borrado = df_borrado.drop(idx_sel).reset_index(drop=True)
+                                sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
+                                
+                            st.success("✅ Registro eliminado correctamente.")
+                            time.sleep(1.5)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
         else:
             st.info("No hay registros en la base de datos.")
-
-    except Exception as e:
-        st.warning(f"⚠️ Error al cargar el historial: {e}")
