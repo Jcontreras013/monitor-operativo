@@ -1,7 +1,12 @@
 import streamlit as st
 import os
 import tempfile
-from fpdf import FPDF
+
+# --- IMPORTACIÓN BLINDADA PARA FPDF2 ---
+try:
+    from fpdf import FPDF
+except ImportError:
+    st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
 
 # ==============================================================================
 # LÓGICA DE PDF PARA EL MANUAL TÉCNICO
@@ -40,9 +45,7 @@ class ManualPDF(FPDF):
         self.set_font("Helvetica", "", 10)
         self.set_text_color(40, 40, 40)
         for linea in texto_lineas:
-            # Reemplazar viñetas de Markdown con guiones para el PDF
             linea = linea.replace("* ", "- ") 
-            # Imprimir línea con soporte multilinea
             self.multi_cell(0, 6, txt=linea)
         self.ln(6)
 
@@ -103,7 +106,6 @@ def generar_manual_pdf():
         "6. Total (Hoy): Saldo total consolidado para el día siguiente."
     ])
     
-    # Nueva página para no cortar módulos
     pdf.add_page()
     
     # Capítulo 4
@@ -121,7 +123,6 @@ def generar_manual_pdf():
         "- Expedientes: Gestor en la nube para registrar llamados de atención, incidencias médicas y adjuntar evidencia fotográfica."
     ])
 
-    # Guardar en memoria y retornar bytes
     fd, path = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     pdf.output(path)
