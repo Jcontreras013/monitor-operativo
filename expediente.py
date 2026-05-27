@@ -126,8 +126,10 @@ def generar_pdf_consolidado(df):
         pdf.ln(10)
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
         pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240)
-        pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
+        
+        # --- ORDEN CORREGIDO DE COLUMNAS (Colaborador, Fecha, Motivo, Observaciones) ---
         pdf.cell(50, 8, " Colaborador", border=1, fill=True)
+        pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
         pdf.cell(35, 8, " Motivo", border=1, fill=True)
         pdf.cell(75, 8, " Observaciones", border=1, ln=True, fill=True)
         
@@ -139,16 +141,21 @@ def generar_pdf_consolidado(df):
             com = sanitizar(str(row.get('COMENTARIO','')))
             lineas_com = textwrap.wrap(com, width=55) 
             if not lineas_com: lineas_com = [""]
+            
             for i, linea in enumerate(lineas_com):
                 b_top = 'T' if i == 0 else ''
                 b_bot = 'B' if i == len(lineas_com) - 1 else ''
                 b_style = 'LR' + b_top + b_bot
-                col1 = f" {f_reg}" if i == 0 else ""
-                col2 = f" {tec}" if i == 0 else ""
-                col3 = f" {mot}" if i == 0 else ""
-                pdf.cell(30, 5, col1, border=b_style, align="C")
-                pdf.cell(50, 5, col2, border=b_style)
-                pdf.cell(35, 5, col3, border=b_style)
+                
+                # --- ASIGNACIÓN DE TEXTO CON EL NUEVO ORDEN ---
+                col_colab = f" {tec}" if i == 0 else ""
+                col_fecha = f" {f_reg}" if i == 0 else ""
+                col_motivo = f" {mot}" if i == 0 else ""
+                
+                # --- DIBUJADO DE CELDAS EN EL NUEVO ORDEN ---
+                pdf.cell(50, 5, col_colab, border=b_style)
+                pdf.cell(30, 5, col_fecha, border=b_style, align="C")
+                pdf.cell(35, 5, col_motivo, border=b_style)
                 pdf.cell(75, 5, f" {linea}", border=b_style, ln=True)
         
         tiene_anexos = False
