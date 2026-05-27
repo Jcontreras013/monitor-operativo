@@ -51,6 +51,7 @@ def asignar_rubro_automatico(motivo, comentario):
     claves_gps = ['VEHICULO', 'CARRO', 'MOTO', 'CONDUCIR', 'LLANTA', 'COLISION', 'CHOQUE', 'VELOCIDAD', 'RUTA', 'GPS', 'GASOLINA', 'KILOMETRAJE']
     claves_biometrico = ['TARDE', 'LLEGADA', 'TARDANZA', 'BIOMETRICO', 'MARCAJE', 'HORARIO', 'ASISTENCIA']
     claves_cepheus = ['CEPHEUS', 'DOCUMENTA', 'CERRAR', 'ABRIR', 'ORDEN', 'RETRASO ORDEN', 'LIQUIDAC']
+    claves_reco = ['RECO', 'POSTE', 'POSTES', 'CAMBIO DE POSTE']
     
     if "EXCESO DE VELOCIDAD" in motivo_str or "ABANDONO DE RUTA" in motivo_str:
         return "GPS"
@@ -243,15 +244,36 @@ def mostrar_modulo_expedientes(conn, df_base):
             lista_nombres = cargar_personal("personal_tecnico.txt")
             colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres, key="sel_colab")
             
-            tipo_falta_base = st.selectbox("🚫 Motivo:", [
-                "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
-                "Mala Documentación", "Incidencia Médica", "Otro"
-            ], key="sel_falta")
-            
+        tipo_falta_base = st.selectbox(
+            "⚠️ Seleccione el Rubro de la Falta/Incidencia:",
+            options=[
+                "Exceso de Velocidad",
+                "Llegada Tarde",
+                "Abandono de Ruta",
+                "Mala Documentación",
+                "Incidencia Médica",
+                "Reco / Cambio de Postes",
+                "Otro"
+            ], key="sel_falta"
+        )
+        
+        # Validación dinámica para técnico y rubro
+        if tipo_falta_base == "Reco / Cambio de Postes":
+            tipo_falta = "RECO / CAMBIO DE POSTES"
+            opciones_tecnicos = ["RECO"]
+            index_defecto = 0
+            disabled_tec = True
+        else:
             tipo_falta = tipo_falta_base
             if tipo_falta_base == "Otro":
                 motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
                 tipo_falta = motivo_especifico.strip().upper()
+            opciones_tecnicos = lista_personal if lista_personal else ["SIN CATÁLOGO"]
+            index_defecto = 0
+            disabled_tec = False
+
+        with c1:
+            tec_name = st.selectbox("👤 Colaborador Asociado:", options=opciones_tecnicos, index=index_defecto, disabled=disabled_tec, key="sel_tec_exp")
             
         with c2:
             fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
@@ -433,6 +455,15 @@ def mostrar_modulo_expedientes(conn, df_base):
                         fig_barras_dias = px.bar(df_dias, x='Día', y='Cantidad', template="plotly_dark", height=180, color='Cantidad', color_continuous_scale='Reds')
                         fig_barras_dias.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
                         st.plotly_chart(fig_barras_dias, use_container_width=True)
+
+                    # ---> NUEVA TABLA DE RUBROS EN REPORTE GENERAL
+                    st.markdown("<h4 style='color:#10B981; font-size:15px; font-weight:bold; margin-top:20px;'>📊 Resumen General de Incidencias por Rubro</h4>", unsafe_allow_html=True)
+                    if not df_mostrar.empty:
+                        df_resumen_rubros = df_mostrar['TIPO_FALTA'].value_counts().reset_index()
+                        df_resumen_rubros.columns = ['Rubro / Tipo de Falta', 'Cantidad de Incidencias']
+                        st.dataframe(df_resumen_rubros, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No hay datos registrados en el rango seleccionado para generar la tabla de rubros.")
 
                     # 3. SEGUNDA FILA DE GRÁFICOS (Gráfica de Rubros y Gráfica de Pastel)
                     c_bot1, c_bot2 = st.columns(2)
