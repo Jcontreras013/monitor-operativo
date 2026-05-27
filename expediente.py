@@ -177,12 +177,22 @@ def mostrar_modulo_expedientes(conn, df_nube_base=None):
             st.error(f"Error al conectar con la base de datos: {e}")
             return
 
-    if df is not None and not df.empty:
+if df is not None and not df.empty:
         df.columns = df.columns.str.upper().str.strip()
         if 'FECHA_REGISTRO' in df.columns:
             df['FECHA_REGISTRO_DT'] = pd.to_datetime(df['FECHA_REGISTRO'], errors='coerce')
         else:
             df['FECHA_REGISTRO_DT'] = pd.NaT
+            
+        # ---> SOLUCIÓN AL ERROR: Calcular RUBRO_AUTO para el historial viejo si no existe
+        if 'RUBRO_AUTO' not in df.columns:
+            df['RUBRO_AUTO'] = df.apply(lambda row: asignar_rubro_automatico(row.get('TIPO_FALTA', ''), row.get('COMENTARIO', '')), axis=1)
+        else:
+            # Rellenar posibles vacíos en registros anteriores
+            mask_vacios = df['RUBRO_AUTO'].isna() | (df['RUBRO_AUTO'] == '')
+            if mask_vacios.any():
+                df.loc[mask_vacios, 'RUBRO_AUTO'] = df[mask_vacios].apply(lambda row: asignar_rubro_automatico(row.get('TIPO_FALTA', ''), row.get('COMENTARIO', '')), axis=1)
+
     else:
         df = pd.DataFrame(columns=['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'COMENTARIO', 'URL_EVIDENCIA', 'RUBRO_AUTO', 'AUTOR', 'FECHA_REGISTRO_DT'])
 
