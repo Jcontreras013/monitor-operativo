@@ -67,7 +67,8 @@ class ManualEscolarPDF(FPDF):
             r_bd, g_bd, b_bd = 59, 130, 246
 
         ancho_cuadro = 190
-        alto_estimado = 8 + (len(texto_lineas) * 5)
+        # --- CORRECCIÓN DE LA VARIABLE: lineas_texto en lugar de un nombre inexistente ---
+        alto_estimado = 8 + (len(lineas_texto) * 5)
         
         # Verificar si cabe en la página actual
         if self.get_y() + alto_estimado > 270:
@@ -245,7 +246,7 @@ def generar_manual_pdf():
     pdf.cell(190, 10, "MANUAL DE USUARIO INTEGRAL (MAXCOM PRO)", ln=True, align="C")
     pdf.set_font("Helvetica", "I", 10)
     pdf.set_text_color(100, 116, 139)
-    pdf.cell(190, 5, "Guia Visual de Operaciones, Módulos de Auditoria y Control Gerencial", ln=True, align="C")
+    pdf.cell(190, 5, "Guia Visual de Operaciones, Modulos de Auditoria y Control Gerencial", ln=True, align="C")
     pdf.ln(8)
     
     # ==========================================================================
