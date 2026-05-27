@@ -51,7 +51,13 @@ def asignar_rubro_automatico(motivo, comentario):
     claves_gps = ['VEHICULO', 'CARRO', 'MOTO', 'CONDUCIR', 'LLANTA', 'COLISION', 'CHOQUE', 'VELOCIDAD', 'RUTA', 'GPS', 'GASOLINA', 'KILOMETRAJE']
     claves_biometrico = ['TARDE', 'LLEGADA', 'TARDANZA', 'BIOMETRICO', 'MARCAJE', 'HORARIO', 'ASISTENCIA']
     claves_cepheus = ['CEPHEUS', 'DOCUMENTA', 'CERRAR', 'ABRIR', 'ORDEN', 'RETRASO ORDEN', 'LIQUIDAC']
+    claves_reco = ['RECO', 'POSTE', 'POSTES', 'CAMBIO DE POSTE', 'CAMBIO DE POSTES']
     
+    if "RECO" in motivo_str or "POSTE" in motivo_str:
+        return "RECO"
+    if any(clv in motivo_str or clv in comentario_str for clv in claves_reco):
+        return "RECO"
+        
     if "EXCESO DE VELOCIDAD" in motivo_str or "ABANDONO DE RUTA" in motivo_str:
         return "GPS"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_gps):
@@ -241,17 +247,28 @@ def mostrar_modulo_expedientes(conn, df_base):
         c1, c2 = st.columns(2)
         with c1:
             lista_nombres = cargar_personal("personal_tecnico.txt")
-            colaborador_sel = st.selectbox("👤 Colaborador:", options=["---"] + lista_nombres, key="sel_colab")
             
             tipo_falta_base = st.selectbox("🚫 Motivo:", [
                 "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
-                "Mala Documentación", "Incidencia Médica", "Otro"
+                "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"
             ], key="sel_falta")
             
-            tipo_falta = tipo_falta_base
-            if tipo_falta_base == "Otro":
-                motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
-                tipo_falta = motivo_especifico.strip().upper()
+            # Lógica dinámica para forzar y bloquear técnico en caso de ser RECO
+            if tipo_falta_base == "Reco / Cambio de Postes":
+                tipo_falta = "RECO / CAMBIO DE POSTES"
+                opciones_tecnicos = ["RECO"]
+                idx_defecto = 0
+                disabled_tec = True
+            else:
+                tipo_falta = tipo_falta_base
+                if tipo_falta_base == "Otro":
+                    motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
+                    tipo_falta = motivo_especifico.strip().upper()
+                opciones_tecnicos = ["---"] + lista_nombres
+                idx_defecto = 0
+                disabled_tec = False
+                
+            colaborador_sel = st.selectbox("👤 Colaborador:", options=opciones_tecnicos, index=idx_defecto, disabled=disabled_tec, key="sel_colab")
             
         with c2:
             fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
@@ -440,7 +457,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         st.markdown("<h5 style='color:#3B82F6; font-size:13px; font-weight:bold;'>🎛️ Origen por Rubros</h5>", unsafe_allow_html=True)
                         df_rubros_chart = df_kpi['RUBRO'].value_counts().reset_index()
                         df_rubros_chart.columns = ['Rubro', 'Cantidad']
-                        colores_rubros = {'GPS': '#EF4444', 'BIOMÉTRICO': '#3B82F6', 'CEPHEUS': '#F59E0B', 'OTROS': '#64748B'}
+                        colores_rubros = {'GPS': '#EF4444', 'BIOMÉTRICO': '#3B82F6', 'CEPHEUS': '#F59E0B', 'RECO': '#10B981', 'OTROS': '#64748B'}
                         fig_rubros = px.bar(df_rubros_chart, x='Rubro', y='Cantidad', template="plotly_dark", height=180, color='Rubro', color_discrete_map=colores_rubros)
                         fig_rubros.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False, xaxis_title="", yaxis_title="")
                         st.plotly_chart(fig_rubros, use_container_width=True)
@@ -453,6 +470,13 @@ def mostrar_modulo_expedientes(conn, df_base):
                         fig_pie.update_traces(textposition='inside', textinfo='percent+label', textfont_size=10)
                         fig_pie.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False)
                         st.plotly_chart(fig_pie, use_container_width=True)
+
+                    # ---> NUEVA TABLA DE RUBROS SOLICITADA
+                    st.markdown("<h4 style='color:#10B981; font-size:14px; font-weight:bold; margin-top:20px;'>📊 Resumen General de Incidencias por Rubro</h4>", unsafe_allow_html=True)
+                    df_resumen_rubros = df_kpi['RUBRO'].value_counts().reset_index()
+                    df_resumen_rubros.columns = ['Rubro / Tipo de Falta', 'Cantidad de Incidencias']
+                    st.dataframe(df_resumen_rubros, use_container_width=True, hide_index=True)
+
                 else:
                     st.info("📊 No hay datos disponibles para los filtros seleccionados.")
 
