@@ -102,11 +102,16 @@ NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 def sincronizar_datos_nube(conn):
     try:
         with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
+            # Lógica Híbrida: GCS Primero
             df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
             
-            # Respaldo si GCS no responde o está vacío (Usamos ttl=0 para forzar datos frescos)
+            # Respaldo si GCS no responde o está vacío
             if df_nube is None or df_nube.empty:
+                st.warning("⚠️ GCS vacío o sin respuesta. Leyendo respaldo desde Google Sheets...")
                 df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                # Clonar de Sheets a GCS para llenar el tanque
+                if df_nube is not None and not df_nube.empty:
+                    sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv", df_nube)
                 
             if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
@@ -183,12 +188,10 @@ def sincronizar_datos_nube(conn):
 
                 st.session_state.df_base = df_nube
                 
-                # --- NUEVA LÓGICA DE AVISO ---
                 st.success(f"✅ Sincronización Exitosa. Se cargaron {len(df_nube)} órdenes de la nube.")
                 import time
-                time.sleep(1.5) # Pausa intencional para que puedas ver que sí lo hizo
+                time.sleep(1.5)
                 st.rerun()
-                # -----------------------------
             else: 
                 st.warning("⚠️ La base de datos en la nube está completamente vacía. Sube archivos como Admin primero.")
                 import time
@@ -197,6 +200,7 @@ def sincronizar_datos_nube(conn):
         st.error(f"❌ Error crítico al conectar con la nube: {e}")
         import time
         time.sleep(3)
+
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
@@ -359,6 +363,9 @@ def main():
                     df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
                     if df_fttx_cloud is None or df_fttx_cloud.empty:
                         df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
+                        if df_fttx_cloud is not None and not df_fttx_cloud.empty:
+                            # Sincronizamos Sheets hacia GCS
+                            sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv", df_fttx_cloud)
                     
                     if df_fttx_cloud is not None and not df_fttx_cloud.empty:
                         b_io = io.BytesIO()
@@ -398,6 +405,8 @@ def main():
                             df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
                             if df_cloud is None or df_cloud.empty:
                                 df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                                if df_cloud is not None and not df_cloud.empty:
+                                    sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv", df_cloud)
                                 
                             if df_cloud is not None and not df_cloud.empty:
                                 df_cloud.columns = df_cloud.columns.str.upper().str.strip()
@@ -425,7 +434,8 @@ def main():
                                 if c_date in df_to_upload.columns:
                                     df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
                                     
-                            sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                            # === CORRECCIÓN ORDEN PARÁMETROS GCS ===
+                            sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv", df_to_upload)
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                             st.session_state.df_base = df_combined
                             
@@ -434,7 +444,8 @@ def main():
                                     if hasattr(file_disp_ptr, 'read'): 
                                         file_disp_ptr.seek(0)
                                         bytes_fttx = file_disp_ptr.read()
-                                        sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                                        # === CORRECCIÓN ORDEN PARÁMETROS GCS ===
+                                        sobrescribir_archivo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv", bytes_fttx)
                                         file_disp_ptr.seek(0)
 
                                     if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
@@ -444,17 +455,17 @@ def main():
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
                                 except Exception as e_fttx: pass
                             
-                            st.success("✅ Datos sincronizados en GCS (Espejo Inverso) y unidos al historial correctamente.")
+                            st.success("✅ Datos sincronizados en GCS (Base Principal) y unidos al historial correctamente.")
                             import time
                             time.sleep(1)
                             st.rerun()
                         except Exception as e: 
                             st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
                             st.session_state.df_base = res_p_diamante
-                else: 
-                    st.session_state.df_base = res_p_diamante
-                    st.success("✅ Datos procesados localmente.")
-            else: return
+            else: 
+                st.session_state.df_base = res_p_diamante
+                st.success("✅ Datos procesados localmente.")
+        else: return
 
     df_base = st.session_state.df_base.copy()
     
@@ -619,13 +630,12 @@ def main():
             check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
          
             # --- NUEVO BOTÓN: ÓRDENES TOTALES PENDIENTES ---
-            total_vivas = int(m_viva_count.sum()) # Esta variable ya trae la suma total (Asig + No Asig)
+            total_vivas = int(m_viva_count.sum())
             check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})")
             
             if check_ordenes_totales:
                 if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True):
                     with st.spinner("Generando documento PDF..."):
-                        # Mandamos exclusivamente las órdenes vivas/pendientes
                         df_vivas_export = df_base_activa[m_viva_count].copy()
                         st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_vivas_export, hoy_date_valor)
                 if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
@@ -857,7 +867,7 @@ def main():
 
                         colores_solidos = {
                             "SOPFIBRA": "#d32f2f",          
-                            "SOP": "#d32f2f",               
+                            "SOP": "#d32f2f",                
                             "INSFIBRA": "#1976d2",          
                             "INSFIBRACORP": "#0d47a1",      
                             "PEXTERNO": "#f57c00",          
@@ -1446,7 +1456,7 @@ def main():
                             
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",          
-                                "SOP": "#d32f2f",               
+                                "SOP": "#d32f2f",                
                                 "INSFIBRA": "#1976d2",          
                                 "INSFIBRACORP": "#0d47a1",      
                                 "PEXTERNO": "#f57c00",          
@@ -1477,22 +1487,6 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
-                            
-                          #  tecnicos_activos = sorted(df_para_gantt_final['TECNICO'].unique())
-                            
-                           # opcion_tec = st.radio(
-                               # "Selección de Historial:",
-                               # options=["[ Ocultar Historiales ]"] + tecnicos_activos,
-                              #  horizontal=True,
-                             #   label_visibility="collapsed" 
-                            #)
-                            
-                            #if opcion_tec != "[ Ocultar Historiales ]":
-                            #    df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
-                           #     mostrar_seguimientos_tecnico(opcion_tec, df_seg)
-                                    
-                    #    else:
-                   #         st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
             st.markdown("---")
         if st.session_state.get('config_ver_panel', True):
@@ -1591,14 +1585,14 @@ def main():
                     else:
                         st.warning("No hay registros disponibles para mostrar.")
 
-                    with t_graphs_v:
-                        st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
-                    
-                        df_graficas = df_base.copy()
-                        df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
-                    
-                        df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
-                    
+                with t_graphs_v:
+                    st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+                
+                    df_graficas = df_base.copy()
+                    df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+                
+                    df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
+                
                     if not df_productividad_v.empty:
                         df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
                         conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
