@@ -19,6 +19,9 @@ xlrd==2.0.1
 st-gsheets-connection
 gspread
 google-cloud-storage
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
 
 # --- Extracción Web y HTML ---
 beautifulsoup4
