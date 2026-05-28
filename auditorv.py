@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import re
+import requests
+import base64
+from datetime import datetime, timedelta, timezone
 
 from tools import (
     get_hn_time,
@@ -14,6 +17,15 @@ from tools import (
     generar_pdf_telemetria_matriz
 )
 
+# --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
+try:
+    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs
+except ImportError:
+    pass
+
+API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+
 # ==============================================================================
 # PANTALLA VISUAL PRINCIPAL
 # ==============================================================================
@@ -26,7 +38,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.caption("Control gerencial de Tiempos en Ruta y Análisis de Telemetría.")
     st.divider()
 
-    tab_tiempos, tab_velocidad, tab_eficiencia = st.tabs(["⏱️ Auditoría de Tiempos", "🚀 Telemetría", "⚖️ Eficiencia Total"])
+    tab_tiempos, tab_velocidad, tab_eficiencia, tab_checklist = st.tabs([
+        "⏱️ Auditoría de Tiempos", 
+        "🚀 Telemetría", 
+        "⚖️ Eficiencia Total",
+        "📝 Checklist Inspección" # NUEVA PESTAÑA AÑADIDA
+    ])
 
     # --- PESTAÑA 1: TIEMPOS ---
     with tab_tiempos:
@@ -322,3 +339,163 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         else:
                             st.error("❌ No se detectaron datos válidos en los archivos GPS subidos.")
                     except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
+
+    # ==========================================================================
+    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR ---
+    # ==========================================================================
+    with tab_checklist:
+        st.markdown("### 📋 Formulario de Inspección y Control de Flota")
+        st.caption("Complete la evaluación física del vehículo para mantener el historial preventivo actualizado.")
+        
+        # Opciones estándar de evaluación
+        opciones_eval = ["✅ Buen Estado", "⚠️ Requiere Atención", "❌ Dañado/Falta"]
+        
+        # Categorías estructuradas
+        categorias_checklist = {
+            "💧 1. Fluidos y Motor": [
+                "Nivel de aceite de motor", "Nivel de aceite de transmisión",
+                "Nivel de aceite diferencial", "Nivel de aceite hidráulico (Dirección)",
+                "Líquido de frenos", "Nivel de refrigerante / agua", "Fugas visibles en motor"
+            ],
+            "⚙️ 2. Suspensión y Mecánica": [
+                "Sistema de Dirección", "Suspensión general", "Bujes de tijera",
+                "Hojas de resorte", "Frenos delanteros (fricciones/pastillas)", "Frenos traseros (zapatas/tambor)"
+            ],
+            "🚗 3. Exteriores y Llantas": [
+                "Estado de llantas en uso (desgaste y presión)", "Llanta de repuesto",
+                "Luces (Faros delanteros, traseros y vías)", "Estado de carrocería y espejos"
+            ],
+            "🧰 4. Equipamiento de Seguridad": [
+                "Extintor de incendios", "Conos y mica/triángulo reflectivo", "Gata hidráulica y llave de rueda"
+            ]
+        }
+
+        with st.form("form_inspeccion_vehicular"):
+            col_info1, col_info2, col_info3 = st.columns(3)
+            with col_info1:
+                placa_vehiculo = st.text_input("🚗 Placa / Código del Vehículo:*", placeholder="Ej: HAA-1234")
+            with col_info2:
+                conductor = st.text_input("👤 Nombre del Conductor:*", placeholder="Nombre del técnico responsable")
+            with col_info3:
+                kilometraje = st.number_input("🛣️ Kilometraje Actual:", min_value=0, value=0, step=100)
+
+            st.divider()
+            
+            # Generación dinámica de la matriz de checklist
+            resultados_checklist = {}
+            for cat, items in categorias_checklist.items():
+                st.markdown(f"<h5 style='color:#1E3A8A;'>{cat}</h5>", unsafe_allow_html=True)
+                for item in items:
+                    resultados_checklist[item] = st.radio(f"**{item}**", opciones_eval, horizontal=True, key=f"chk_{item}")
+                st.write("") # Espaciador
+                
+            st.divider()
+            st.markdown("#### 📝 Observaciones y Evidencia")
+            observaciones = st.text_area("Detalle aquí si encontró daños, rayones o piezas faltantes:", placeholder="Ej: Fricciones delanteras desgastadas, solicitar cambio pronto.")
+            archivos_evidencia = st.file_uploader("📸 Subir Evidencia Fotográfica (Opcional):", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+            
+            supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
+            
+            submit_inspeccion = st.form_submit_button("💾 GUARDAR INSPECCIÓN EN LA NUBE", type="primary", use_container_width=True)
+
+            if submit_inspeccion:
+                if not placa_vehiculo.strip() or not conductor.strip():
+                    st.error("⚠️ Los campos de Placa y Conductor son obligatorios.")
+                else:
+                    try:
+                        urls_fotos = []
+                        if archivos_evidencia:
+                            with st.spinner("Subiendo evidencia fotográfica al servidor..."):
+                                for a in archivos_evidencia:
+                                    res = requests.post(
+                                        "https://freeimage.host/api/1/upload",
+                                        data={
+                                            "key": API_KEY_FREEIMAGE,
+                                            "action": "upload",
+                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                            "format": "json"
+                                        }
+                                    )
+                                    if res.status_code == 200:
+                                        urls_fotos.append(res.json()["image"]["url"])
+                        
+                        with st.spinner("Compilando reporte y guardando en la Nube..."):
+                            # Analizar resultados para generar un resumen rápido
+                            conteo_alertas = sum(1 for v in resultados_checklist.values() if "Requiere Atención" in v)
+                            conteo_danos = sum(1 for v in resultados_checklist.values() if "Dañado/Falta" in v)
+                            
+                            # Formatear el detalle completo como un JSON en string para no crear 20 columnas en el CSV
+                            detalle_completo = " | ".join([f"{k}: {v.split(' ')[1]}" for k, v in resultados_checklist.items() if "Buen Estado" not in v])
+                            if not detalle_completo: detalle_completo = "Todo en orden."
+
+                            estado_general = "✅ ÓPTIMO"
+                            if conteo_alertas > 0: estado_general = "⚠️ CON OBSERVACIONES"
+                            if conteo_danos > 0: estado_general = "❌ CRÍTICO"
+
+                            # Intentar leer historial existente
+                            df_historial = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "inspecciones_flota.csv")
+                            if df_historial is None or df_historial.empty:
+                                try:
+                                    df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Inspecciones_Flota", ttl=0)
+                                except:
+                                    df_historial = pd.DataFrame()
+                                    
+                            cols_inspeccion = ['FECHA_INSPECCION', 'PLACA', 'CONDUCTOR', 'KILOMETRAJE', 'ESTADO_GENERAL', 'ALERTAS', 'DANOS', 'DETALLES_FALLAS', 'OBSERVACIONES', 'URL_FOTOS', 'SUPERVISOR']
+                            
+                            nueva_fila = [
+                                get_hn_time().strftime("%d/%m/%Y %H:%M:%S"),
+                                placa_vehiculo.strip().upper(),
+                                conductor.strip().upper(),
+                                kilometraje,
+                                estado_general,
+                                conteo_alertas,
+                                conteo_danos,
+                                detalle_completo,
+                                observaciones,
+                                ", ".join(urls_fotos),
+                                supervisor_actual
+                            ]
+                            nuevo_df = pd.DataFrame([nueva_fila], columns=cols_inspeccion)
+                            
+                            if df_historial is not None and not df_historial.empty:
+                                if len(df_historial.columns) == len(cols_inspeccion):
+                                    df_historial.columns = cols_inspeccion
+                                else:
+                                    # Forzar alineación si las columnas no coinciden por versiones viejas
+                                    for c in cols_inspeccion:
+                                        if c not in df_historial.columns: df_historial[c] = ""
+                                    df_historial = df_historial[cols_inspeccion]
+                                df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
+                            else:
+                                df_final = nuevo_df
+                                
+                            # Sobrescribir en GCS
+                            sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "inspecciones_flota.csv")
+                            
+                            # Actualizar en Sheets si hay conexión
+                            if conn:
+                                try:
+                                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Inspecciones_Flota", data=df_final)
+                                except Exception as e:
+                                    st.warning(f"Guardado en GCS exitoso, pero falló el espejo en Sheets: {e}")
+
+                        st.success(f"✅ ¡Inspección de {placa_vehiculo.upper()} guardada correctamente!")
+                    except Exception as e:
+                        st.error(f"❌ Error al intentar guardar la inspección: {e}")
+
+        # --- TABLA DE HISTORIAL DE INSPECCIONES ---
+        st.markdown("---")
+        st.markdown("#### 📜 Historial Reciente de Flota")
+        try:
+            df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "inspecciones_flota.csv")
+            if df_view_insp is None or df_view_insp.empty:
+                if conn: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Inspecciones_Flota", ttl=0)
+            
+            if df_view_insp is not None and not df_view_insp.empty:
+                # Mostrar solo las columnas más relevantes para no saturar la vista
+                df_mostrar_insp = df_view_insp[['FECHA_INSPECCION', 'PLACA', 'CONDUCTOR', 'ESTADO_GENERAL', 'DETALLES_FALLAS', 'OBSERVACIONES']].copy()
+                st.dataframe(df_mostrar_insp.iloc[::-1], use_container_width=True, hide_index=True, height=250)
+            else:
+                st.info("Aún no hay inspecciones vehiculares registradas en la base de datos.")
+        except Exception as e:
+            st.warning("No se pudo cargar el historial de inspecciones en este momento.")
