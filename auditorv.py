@@ -5,6 +5,7 @@ import requests
 import base64
 import tempfile
 import os
+import io
 from datetime import datetime, timedelta, timezone
 
 from tools import (
@@ -30,9 +31,53 @@ try:
 except ImportError:
     st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
 
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    DRIVE_DISPONIBLE = True
+except ImportError:
+    DRIVE_DISPONIBLE = False
+    st.warning("⚠️ Faltan librerías de Google Drive. Ejecuta: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+
 # Configuración de Nube
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+
+# ==============================================================================
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE
+# ==============================================================================
+def subir_archivo_drive(file_buffer, file_name, mimetype):
+    """Sube un archivo directamente a Google Drive y retorna el enlace público."""
+    try:
+        if "gcp_service_account" not in st.secrets or "drive_folder_id" not in st.secrets:
+            return None
+
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        folder_id = st.secrets["drive_folder_id"]
+        
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
+        )
+        service = build('drive', 'v3', credentials=credentials)
+        
+        file_metadata = {
+            'name': file_name,
+            'parents': [folder_id]
+        }
+        
+        media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
+        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        
+        service.permissions().create(
+            fileId=file.get('id'),
+            body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+        
+        return file.get('webViewLink')
+    except Exception as e:
+        st.error(f"❌ Error interno de Google Drive API: {e}")
+        return None
 
 # ==============================================================================
 # GENERADOR DE FORMATO PDF FÍSICO (PLANTILLA EN BLANCO)
@@ -69,7 +114,6 @@ def generar_pdf_en_blanco():
     pdf = FormatoInspeccionPDF()
     pdf.add_page()
     
-    # Bloque de Información General
     pdf.set_fill_color(241, 245, 249)
     pdf.rect(10, pdf.get_y(), 190, 20, style='F')
     pdf.set_font("Helvetica", "B", 10)
@@ -102,16 +146,14 @@ def generar_pdf_en_blanco():
         ]
     }
 
-    # Leyenda
     pdf.set_font("Helvetica", "I", 9)
     pdf.cell(0, 8, "Marque con una 'X' segun corresponda:   [ B ] Buen Estado    [ A ] Requiere Atencion    [ D ] Danado o Falta", ln=True, align="C")
     pdf.ln(2)
 
-    # Dibujar Lista
     for cat, items in categorias_checklist.items():
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_fill_color(30, 58, 138) # Azul corporativo
+        pdf.set_fill_color(30, 58, 138)
         pdf.cell(190, 7, f"  {cat}", ln=True, fill=True)
         
         pdf.set_font("Helvetica", "", 10)
@@ -123,7 +165,6 @@ def generar_pdf_en_blanco():
             pdf.cell(20, 7, "[ D ]", border='B', align="C", ln=True)
         pdf.ln(3)
 
-    # Observaciones
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(0, 8, "Observaciones de la Inspeccion:", ln=True)
     pdf.set_draw_color(150, 150, 150)
@@ -154,7 +195,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         "⏱️ Auditoría de Tiempos", 
         "🚀 Telemetría", 
         "⚖️ Eficiencia Total",
-        "📝 Checklist Inspección" # PESTAÑA PARA EL ESCÁNER Y FORMATOS
+        "📋 Gestión Documental"
     ])
 
     # --- PESTAÑA 1: TIEMPOS ---
@@ -257,7 +298,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             if df_matriz is not None:
                                 dict_promedios = {}
                                 col_placa_matriz = df_matriz.columns[0]
-                                placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
+                                placas_validas = df_matriz[col_placa_matriz].astype(str).strsplit('-').str[0].str.strip().str.upper().unique()
                                 
                                 if archivos_detallados:
                                     for file_det in archivos_detallados:
@@ -453,18 +494,17 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
 
     # ==========================================================================
-    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR (NUEVO FLUJO FÍSICO) ---
+    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR CON GOOGLE DRIVE ---
     # ==========================================================================
     with tab_checklist:
-        st.markdown("### 📋 Gestión Documental de Flota")
-        st.caption("Descarga el formato físico, complétalo en campo y sube aquí el escáner firmado.")
+        st.markdown("### 📋 Gestión Documental de Flota (Google Drive)")
+        st.caption("Descarga el formato físico, complétalo en campo y sube aquí el escáner firmado en PDF o Imagen.")
         
         col_formato, col_upload = st.columns(2)
         
-        # 1. GENERACIÓN DEL FORMATO
         with col_formato:
             st.markdown("#### 1️⃣ Obtener Formato Físico")
-            st.info("Formato oficial de inspección vehicular con áreas de firma.")
+            st.info("Formato oficial de inspección vehicular con áreas de firma y lista de revisión corporativa.")
             try:
                 pdf_blanco = generar_pdf_en_blanco()
                 st.download_button(
@@ -477,7 +517,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
             except Exception as e:
                 st.error(f"Error generando plantilla: {e}")
 
-        # 2. SUBIDA DEL ESCÁNER Y REGISTRO EN LA NUBE
         with col_upload:
             st.markdown("#### 2️⃣ Subir Documento Escaneado")
             with st.form("form_subida_escaner"):
@@ -487,19 +526,26 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 observaciones = st.text_input("Notas / Hallazgos principales:", placeholder="Breve descripción del estado del vehículo...")
                 
                 supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
-                submit_escaner = st.form_submit_button("💾 REGISTRAR Y SUBIR A LA NUBE", type="primary", use_container_width=True)
+                submit_escaner = st.form_submit_button("💾 REGISTRAR Y ENVIAR A GOOGLE DRIVE", type="primary", use_container_width=True)
 
                 if submit_escaner:
                     if not placa_vehiculo.strip():
                         st.error("⚠️ La placa es obligatoria para el registro.")
                     elif not archivo_escaner:
-                        st.error("⚠️ Debes adjuntar el archivo escaneado.")
+                        st.error("⚠️ Debes adjuntar el archivo escaneado (PDF o Imagen).")
                     else:
-                        with st.spinner("Procesando y guardando en Google Cloud..."):
-                            url_almacenada = "Archivo Subido Directo a GCS / Drive"
+                        with st.spinner("Procesando documento..."):
+                            url_almacenada = None
+                            nombre_archivo_drive = f"{placa_vehiculo.strip().upper()}_{fecha_escaneo.strftime('%Y%m%d')}_{archivo_escaner.name}"
                             
-                            # Si es imagen, podemos usar el API de FreeImage actual
-                            if archivo_escaner.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            if DRIVE_DISPONIBLE and "gcp_service_account" in st.secrets and "drive_folder_id" in st.secrets:
+                                st.info("Conectando con Google Drive...")
+                                mimetype = "application/pdf" if archivo_escaner.name.lower().endswith('.pdf') else "image/jpeg"
+                                buffer_archivo = io.BytesIO(archivo_escaner.getvalue())
+                                url_almacenada = subir_archivo_drive(buffer_archivo, nombre_archivo_drive, mimetype)
+                            
+                            if not url_almacenada and archivo_escaner.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                                st.warning("Configuración de Drive ausente. Usando API pública temporal (solo imágenes)...")
                                 try:
                                     res = requests.post(
                                         "https://freeimage.host/api/1/upload",
@@ -510,23 +556,17 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             "format": "json"
                                         }
                                     )
-                                    if res.status_code == 200:
-                                        url_almacenada = res.json()["image"]["url"]
-                                except Exception as e:
-                                    pass
-                            
-                            # NOTA TÉCNICA: Al ser un PDF, si tienes configurado el cliente oficial 
-                            # de google-cloud-storage en el servidor, aquí iría la lógica para subir 
-                            # 'archivo_escaner.getvalue()' directamente al bucket de jovial-trilogy.
-                            # Por ahora, guardamos el registro del metadato en la matriz de control.
+                                    if res.status_code == 200: url_almacenada = res.json()["image"]["url"]
+                                except Exception: pass
+                                
+                            if not url_almacenada:
+                                url_almacenada = "Error: Configura 'drive_folder_id' en los secrets para procesar PDFs."
                             
                             try:
                                 df_historial = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
                                 if df_historial is None or df_historial.empty:
-                                    try:
-                                        df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
-                                    except:
-                                        df_historial = pd.DataFrame()
+                                    try: df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                                    except: df_historial = pd.DataFrame()
                                         
                                 cols_registro = ['FECHA', 'PLACA', 'SUPERVISOR', 'OBSERVACIONES', 'ENLACE_ARCHIVO']
                                 nueva_fila = [
@@ -552,20 +592,26 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
                                     except: pass
                                 
-                                st.success(f"✅ ¡Inspección de {placa_vehiculo.upper()} guardada en la base de datos!")
+                                st.success(f"✅ ¡Inspección de {placa_vehiculo.upper()} subida y enlazada correctamente!")
                             except Exception as e:
-                                st.error(f"❌ Error al intentar registrar: {e}")
+                                st.error(f"❌ Error al registrar en la matriz: {e}")
 
         st.markdown("---")
-        st.markdown("#### 📜 Registro de Inspecciones Físicas")
+        st.markdown("#### 📜 Registro Maestro de Inspecciones Físicas")
         try:
             df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
             if df_view_insp is None or df_view_insp.empty:
                 if conn: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
             
             if df_view_insp is not None and not df_view_insp.empty:
-                st.dataframe(df_view_insp.iloc[::-1], use_container_width=True, hide_index=True, height=250)
+                st.dataframe(
+                    df_view_insp.iloc[::-1], 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    height=250,
+                    column_config={"ENLACE_ARCHIVO": st.column_config.LinkColumn("Enlace al PDF")}
+                )
             else:
-                st.info("Aún no hay escáneres vehiculares registrados.")
+                st.info("Aún no hay escáneres vehiculares en la base de datos.")
         except Exception as e:
             st.warning("No se pudo cargar el registro en este momento.")
