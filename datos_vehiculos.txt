@@ -1,0 +1,28 @@
+Device Name,	Chasis,			Numero de placa, 	Descripcion de vehiculo 
+‌MX-1,	  	JAANKK66LJ7100184,	HDL9821,		Kia Camion grande cabina sensilla
+‌MX-2,	  	MHCPHR54CPJ437555,	HDP9223,	 	Kia Camion Cabina cabina sensilla 
+‌MX-3,	  	MM7UR4DB9JW702296,	HED3833,		Mazda BT-50 Doble
+‌MX-4,		  KNCSHY71CL7407414,	HAU8203,		Camionsito kia Doble cabina 
+‌MX-5,		  KNCSHX71CG7029637,	HED3834,		Kia K2700 cabina sensilla 
+‌MX-6,		  KNCSHY71CH7058714,	HED3832,		Camionsito kia Doble cabina 
+‌MX-7,		  MHYDN71V7GJ402992,	HED3852,		Suzuki APV panel busito 
+‌MX-8,		  MM7UR43B1HW636596,	HED3835,		Mazda BT 50  cabina sencilla 
+‌MX-9,		  MPATFR54JJT000516,	HAB9494,		Izusu cabina sencilla 
+MX-10,		MPATFR54JJT000575,	HAC9763,		Izusu cabina sencilla 
+‌MX-12,		KNAB2512BLT558318,	HAU6095,		Kia picanto 
+‌MX-13,		KNCSHX71AM7439874,	HBA2557,		Camioncito Kia cabina sencilla 
+‌MX-14,		MM7UR3SB0LW954342,	HBB8594,		Mazda BT 50  cabina sencilla 
+‌MX-15,		MHYDN71V7NJ400415,	HBJ1317,		Suzuki APV panel busito 
+‌MX-16,		MHYDN71V0NJ400403,	HBJ1307,		Suzuki APV panel busito 
+‌MX-17,		MPATFR87JNT000166,	HDA4311,		Izusu Pick Up cabina sencilla
+‌MX-18,		MHCPHR54CNJ430722,	HDZ2561,		Isuzu Cabina Sencilla
+‌MX-19,		MHYDN71V1NJ402211,	HED6941,		Suzuki APV panel busito 
+‌MX-20,		MHYDN71V2NJ402296,	HDA9649,		Suzuki APV panel busito 
+‌MX-21,		MHYDC61T1PJ211180,	HDV2994,		Suzuki  Carry camion cabina sencilla 
+‌MX-23,		MHYDN71V5NJ402230,	HDV2997,		Suzuki APV panel busito 
+‌MX-22,		KNCSHZ71AH7095746,	HDQ9370,		Kia Camion cabina sencilla 
+‌MX-24,		MHYDN71V9NJ402392,	HBZ0243,		Suzuki APV panel busito 
+‌MX-25,		MHYDN71V1NJ402323,	HBZ0246,		Suzuki APV panel busito 
+‌MX-26,		MP2TFS87JPT002292,	HDU5167,		Mazda BT-50 Doble Gris
+‌MX-28,		KNAB2512BRT148104,	JAC5756,		Kia picanto 
+‌MX-30,		MAD0T0887R0A75612,	JH12534,		Suzuki APV panel busito 
