@@ -45,17 +45,24 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE DRIVE
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (AHORA CON DIAGNÓSTICO ESTRICTO)
 # ==============================================================================
 def subir_archivo_drive(file_buffer, file_name, mimetype):
-    """Sube un archivo directamente a Google Drive y retorna el enlace público."""
+    """Sube un archivo a Google Drive y retorna (URL, None) si tiene éxito, o (None, Error) si falla."""
     try:
-        if "gcp_service_account" not in st.secrets or "drive_folder_id" not in st.secrets:
-            return None
+        if "gcp_service_account" not in st.secrets:
+            return None, "Falta la llave 'gcp_service_account' en los Secrets."
+        if "drive_folder_id" not in st.secrets:
+            return None, "Falta el 'drive_folder_id' en los Secrets."
 
+        # Extraer credenciales y reparar saltos de línea (Error muy común en Streamlit Cloud)
         creds_dict = dict(st.secrets["gcp_service_account"])
-        folder_id = st.secrets["drive_folder_id"]
+        if '\\n' in creds_dict.get('private_key', ''):
+            creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+
+        folder_id = st.secrets["drive_folder_id"].strip()
         
+        # Iniciar conexión
         credentials = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
         )
@@ -69,15 +76,15 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
         media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         
+        # Ajustar permisos a modo lectura pública
         service.permissions().create(
             fileId=file.get('id'),
             body={'type': 'anyone', 'role': 'reader'}
         ).execute()
         
-        return file.get('webViewLink')
+        return file.get('webViewLink'), None
     except Exception as e:
-        st.error(f"❌ Error interno de Google Drive API: {e}")
-        return None
+        return None, str(e)
 
 # ==============================================================================
 # GENERADOR DE FORMATO PDF FÍSICO (PLANTILLA EN BLANCO)
@@ -298,7 +305,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             if df_matriz is not None:
                                 dict_promedios = {}
                                 col_placa_matriz = df_matriz.columns[0]
-                                placas_validas = df_matriz[col_placa_matriz].astype(str).strsplit('-').str[0].str.strip().str.upper().unique()
+                                placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
                                 
                                 if archivos_detallados:
                                     for file_det in archivos_detallados:
@@ -494,12 +501,47 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
 
     # ==========================================================================
-    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR CON GOOGLE DRIVE ---
+    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR (AHORA CON DIAGNÓSTICO) ---
     # ==========================================================================
     with tab_checklist:
         st.markdown("### 📋 Gestión Documental de Flota (Google Drive)")
         st.caption("Descarga el formato físico, complétalo en campo y sube aquí el escáner firmado en PDF o Imagen.")
         
+        # --- NUEVO: CALENDARIO ANUAL DE INSPECCIONES ---
+        with st.expander("📅 Ver Calendario Anual de Inspecciones (2026-2027)", expanded=False):
+            st.info("💡 Programación establecida a un ritmo de 2 revisiones por mes para mantener la operatividad fluida y minimizar tiempos muertos.")
+            datos_calendario = [
+                {"Año": 2026, "Mes": "Junio", "Quincena": "1ra", "Unidad": "MX-5", "Placa": "HED3834", "Descripción": "Kia K2700 cabina sensilla"},
+                {"Año": 2026, "Mes": "Junio", "Quincena": "2da", "Unidad": "MX-14", "Placa": "HBB8594", "Descripción": "Mazda BT 50 cabina sencilla"},
+                {"Año": 2026, "Mes": "Julio", "Quincena": "1ra", "Unidad": "MX-22", "Placa": "HDQ9370", "Descripción": "Kia Camion cabina sencilla"},
+                {"Año": 2026, "Mes": "Julio", "Quincena": "2da", "Unidad": "MX-7", "Placa": "HED3852", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2026, "Mes": "Agosto", "Quincena": "1ra", "Unidad": "MX-1", "Placa": "HDL9821", "Descripción": "Kia Camion grande cabina sensilla"},
+                {"Año": 2026, "Mes": "Agosto", "Quincena": "2da", "Unidad": "MX-20", "Placa": "HDA9649", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2026, "Mes": "Septiembre", "Quincena": "1ra", "Unidad": "MX-12", "Placa": "HAU6095", "Descripción": "Kia picanto"},
+                {"Año": 2026, "Mes": "Septiembre", "Quincena": "2da", "Unidad": "MX-4", "Placa": "HAU8203", "Descripción": "Camionsito kia Doble cabina"},
+                {"Año": 2026, "Mes": "Octubre", "Quincena": "1ra", "Unidad": "MX-16", "Placa": "HBJ1307", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2026, "Mes": "Octubre", "Quincena": "2da", "Unidad": "MX-26", "Placa": "HDU5167", "Descripción": "Mazda BT-50 Doble Gris"},
+                {"Año": 2026, "Mes": "Noviembre", "Quincena": "1ra", "Unidad": "MX-9", "Placa": "HAB9494", "Descripción": "Izusu cabina sencilla"},
+                {"Año": 2026, "Mes": "Noviembre", "Quincena": "2da", "Unidad": "MX-15", "Placa": "HBJ1317", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2026, "Mes": "Diciembre", "Quincena": "1ra", "Unidad": "MX-25", "Placa": "HBZ0246", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2026, "Mes": "Diciembre", "Quincena": "2da", "Unidad": "MX-2", "Placa": "HDP9223", "Descripción": "Kia Camion Cabina cabina sensilla"},
+                {"Año": 2027, "Mes": "Enero", "Quincena": "1ra", "Unidad": "MX-18", "Placa": "HDZ2561", "Descripción": "Isuzu Cabina Sencilla"},
+                {"Año": 2027, "Mes": "Enero", "Quincena": "2da", "Unidad": "MX-23", "Placa": "HDV2997", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2027, "Mes": "Febrero", "Quincena": "1ra", "Unidad": "MX-10", "Placa": "HAC9763", "Descripción": "Izusu cabina sencilla"},
+                {"Año": 2027, "Mes": "Febrero", "Quincena": "2da", "Unidad": "MX-13", "Placa": "HBA2557", "Descripción": "Camioncito Kia cabina sencilla"},
+                {"Año": 2027, "Mes": "Marzo", "Quincena": "1ra", "Unidad": "MX-3", "Placa": "HED3833", "Descripción": "Mazda BT-50 Doble"},
+                {"Año": 2027, "Mes": "Marzo", "Quincena": "2da", "Unidad": "MX-30", "Placa": "JH12534", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2027, "Mes": "Abril", "Quincena": "1ra", "Unidad": "MX-19", "Placa": "HED6941", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2027, "Mes": "Abril", "Quincena": "2da", "Unidad": "MX-6", "Placa": "HED3832", "Descripción": "Camionsito kia Doble cabina"},
+                {"Año": 2027, "Mes": "Mayo", "Quincena": "1ra", "Unidad": "MX-24", "Placa": "HBZ0243", "Descripción": "Suzuki APV panel busito"},
+                {"Año": 2027, "Mes": "Mayo", "Quincena": "2da", "Unidad": "MX-28", "Placa": "JAC5756", "Descripción": "Kia picanto"},
+                {"Año": 2027, "Mes": "Junio", "Quincena": "1ra", "Unidad": "MX-17", "Placa": "HDA4311", "Descripción": "Izusu Pick Up cabina sencilla"},
+                {"Año": 2027, "Mes": "Junio", "Quincena": "2da", "Unidad": "MX-21", "Placa": "HDV2994", "Descripción": "Suzuki Carry camion cabina sencilla"}
+            ]
+            df_cal = pd.DataFrame(datos_calendario)
+            st.dataframe(df_cal, use_container_width=True, hide_index=True)
+        # --- FIN CALENDARIO ---
+
         col_formato, col_upload = st.columns(2)
         
         with col_formato:
@@ -534,67 +576,60 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     elif not archivo_escaner:
                         st.error("⚠️ Debes adjuntar el archivo escaneado (PDF o Imagen).")
                     else:
-                        with st.spinner("Procesando documento..."):
+                        with st.spinner("Conectando con Google Drive..."):
                             url_almacenada = None
+                            error_mensaje = None
                             nombre_archivo_drive = f"{placa_vehiculo.strip().upper()}_{fecha_escaneo.strftime('%Y%m%d')}_{archivo_escaner.name}"
+                            mimetype = "application/pdf" if archivo_escaner.name.lower().endswith('.pdf') else "image/jpeg"
                             
-                            if DRIVE_DISPONIBLE and "gcp_service_account" in st.secrets and "drive_folder_id" in st.secrets:
-                                st.info("Conectando con Google Drive...")
-                                mimetype = "application/pdf" if archivo_escaner.name.lower().endswith('.pdf') else "image/jpeg"
+                            # Intentar Subida
+                            if DRIVE_DISPONIBLE:
                                 buffer_archivo = io.BytesIO(archivo_escaner.getvalue())
-                                url_almacenada = subir_archivo_drive(buffer_archivo, nombre_archivo_drive, mimetype)
-                            
-                            if not url_almacenada and archivo_escaner.name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                                st.warning("Configuración de Drive ausente. Usando API pública temporal (solo imágenes)...")
+                                url_almacenada, error_mensaje = subir_archivo_drive(buffer_archivo, nombre_archivo_drive, mimetype)
+                            else:
+                                error_mensaje = "Las librerías de Google Drive no están instaladas (google-api-python-client)."
+
+                            # SI HAY ERROR DE DRIVE, DETENEMOS TODO Y LO MOSTRAMOS EN ROJO
+                            if error_mensaje:
+                                st.error(f"❌ FALLO DE CONEXIÓN CON DRIVE: {error_mensaje}")
+                                st.info("⚠️ La aplicación detuvo el guardado. Verifica que tu 'drive_folder_id' sea correcto en los Secrets y que hayas compartido la carpeta en Google Drive con el correo de servicio en rol Editor.")
+                                st.stop() # <- ESTO EVITA QUE GUARDE REGISTROS FALSOS EN LA BASE DE DATOS
+
+                            # SI PASÓ LA PRUEBA, PROCEDE A GUARDAR EN LA MATRIZ DE CONTROL (GCS Y SHEETS)
+                            if url_almacenada:
                                 try:
-                                    res = requests.post(
-                                        "https://freeimage.host/api/1/upload",
-                                        data={
-                                            "key": API_KEY_FREEIMAGE,
-                                            "action": "upload",
-                                            "source": base64.b64encode(archivo_escaner.getvalue()).decode('utf-8'),
-                                            "format": "json"
-                                        }
-                                    )
-                                    if res.status_code == 200: url_almacenada = res.json()["image"]["url"]
-                                except Exception: pass
-                                
-                            if not url_almacenada:
-                                url_almacenada = "Error: Configura 'drive_folder_id' en los secrets para procesar PDFs."
-                            
-                            try:
-                                df_historial = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                if df_historial is None or df_historial.empty:
-                                    try: df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
-                                    except: df_historial = pd.DataFrame()
-                                        
-                                cols_registro = ['FECHA', 'PLACA', 'SUPERVISOR', 'OBSERVACIONES', 'ENLACE_ARCHIVO']
-                                nueva_fila = [
-                                    fecha_escaneo.strftime("%d/%m/%Y"),
-                                    placa_vehiculo.strip().upper(),
-                                    supervisor_actual,
-                                    observaciones,
-                                    url_almacenada
-                                ]
-                                nuevo_df = pd.DataFrame([nueva_fila], columns=cols_registro)
-                                
-                                if df_historial is not None and not df_historial.empty:
-                                    for c in cols_registro:
-                                        if c not in df_historial.columns: df_historial[c] = ""
-                                    df_historial = df_historial[cols_registro]
-                                    df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
-                                else:
-                                    df_final = nuevo_df
+                                    df_historial = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    if df_historial is None or df_historial.empty:
+                                        try: df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                                        except: df_historial = pd.DataFrame()
+                                            
+                                    cols_registro = ['FECHA', 'PLACA', 'SUPERVISOR', 'OBSERVACIONES', 'ENLACE_ARCHIVO']
+                                    nueva_fila = [
+                                        fecha_escaneo.strftime("%d/%m/%Y"),
+                                        placa_vehiculo.strip().upper(),
+                                        supervisor_actual,
+                                        observaciones,
+                                        url_almacenada
+                                    ]
+                                    nuevo_df = pd.DataFrame([nueva_fila], columns=cols_registro)
                                     
-                                sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                
-                                if conn:
-                                    try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
-                                    except: pass
-                                
-                                st.success(f"✅ ¡Inspección de {placa_vehiculo.upper()} subida y enlazada correctamente!")
-                            except Exception as e:
-                                st.error(f"❌ Error al registrar en la matriz: {e}")
+                                    if df_historial is not None and not df_historial.empty:
+                                        for c in cols_registro:
+                                            if c not in df_historial.columns: df_historial[c] = ""
+                                        df_historial = df_historial[cols_registro]
+                                        df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
+                                    else:
+                                        df_final = nuevo_df
+                                        
+                                    sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    
+                                    if conn:
+                                        try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
+                                        except: pass
+                                    
+                                    st.success(f"✅ ¡Inspección de {placa_vehiculo.upper()} subida a Drive y enlazada correctamente!")
+                                except Exception as e:
+                                    st.error(f"❌ Error al registrar en la matriz: {e}")
 
         st.markdown("---")
         st.markdown("#### 📜 Registro Maestro de Inspecciones Físicas")
@@ -609,7 +644,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     use_container_width=True, 
                     hide_index=True, 
                     height=250,
-                    column_config={"ENLACE_ARCHIVO": st.column_config.LinkColumn("Enlace al PDF")}
+                    column_config={"ENLACE_ARCHIVO": st.column_config.LinkColumn("Enlace al Documento")}
                 )
             else:
                 st.info("Aún no hay escáneres vehiculares en la base de datos.")
