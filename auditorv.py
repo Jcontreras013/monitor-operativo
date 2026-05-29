@@ -630,3 +630,79 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 submit_escaner = st.form_submit_button("💾 REGISTRAR Y ENVIAR A GOOGLE DRIVE", type="primary", use_container_width=True)
 
                 if submit_escaner:
+                    if not placa_vehiculo.strip():
+                        st.error("⚠️ La placa es obligatoria para el registro.")
+                    elif not archivo_escaner:
+                        st.error("⚠️ Debes adjuntar el archivo escaneado (PDF o Imagen).")
+                    else:
+                        with st.spinner("Conectando con Google Drive..."):
+                            url_almacenada = None
+                            error_mensaje = None
+                            nombre_archivo_drive = f"{placa_vehiculo.strip().upper()}_{fecha_escaneo.strftime('%Y%m%d')}_{archivo_escaner.name}"
+                            mimetype = "application/pdf" if archivo_escaner.name.lower().endswith('.pdf') else "image/jpeg"
+                            
+                            if DRIVE_DISPONIBLE:
+                                buffer_archivo = io.BytesIO(archivo_escaner.getvalue())
+                                url_almacenada, error_mensaje = subir_archivo_drive(buffer_archivo, nombre_archivo_drive, mimetype)
+                            else:
+                                error_mensaje = "Las librerías de Google Drive no están instaladas (google-api-python-client)."
+
+                            if error_mensaje:
+                                st.error(f"❌ FALLO DE CONEXIÓN CON DRIVE: {error_mensaje}")
+                                st.info("⚠️ La aplicación detuvo el guardado. Verifica que tu 'drive_folder_id' sea correcto en los Secrets y que hayas compartido la carpeta en Google Drive con el correo de servicio en rol Editor.")
+                                st.stop()
+
+                            if url_almacenada:
+                                try:
+                                    df_historial = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    if df_historial is None or df_historial.empty:
+                                        try: df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                                        except: df_historial = pd.DataFrame()
+                                            
+                                    cols_registro = ['FECHA', 'PLACA', 'SUPERVISOR', 'OBSERVACIONES', 'ENLACE_ARCHIVO']
+                                    nueva_fila = [
+                                        fecha_escaneo.strftime("%d/%m/%Y"),
+                                        placa_vehiculo.strip().upper(),
+                                        supervisor_actual,
+                                        observaciones,
+                                        url_almacenada
+                                    ]
+                                    nuevo_df = pd.DataFrame([nueva_fila], columns=cols_registro)
+                                    
+                                    if df_historial is not None and not df_historial.empty:
+                                        for c in cols_registro:
+                                            if c not in df_historial.columns: df_historial[c] = ""
+                                        df_historial = df_historial[cols_registro]
+                                        df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
+                                    else:
+                                        df_final = nuevo_df
+                                        
+                                    sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    
+                                    if conn:
+                                        try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
+                                        except: pass
+                                    
+                                    st.success(f"✅ ¡Inspección de {placa_vehiculo.upper()} subida a Drive y enlazada correctamente!")
+                                except Exception as e:
+                                    st.error(f"❌ Error al registrar en la matriz: {e}")
+
+        st.markdown("---")
+        st.markdown("#### 📜 Registro Maestro de Inspecciones Físicas")
+        try:
+            df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+            if df_view_insp is None or df_view_insp.empty:
+                if conn: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+            
+            if df_view_insp is not None and not df_view_insp.empty:
+                st.dataframe(
+                    df_view_insp.iloc[::-1], 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    height=250,
+                    column_config={"ENLACE_ARCHIVO": st.column_config.LinkColumn("Enlace al Documento")}
+                )
+            else:
+                st.info("Aún no hay escáneres vehiculares en la base de datos.")
+        except Exception as e:
+            st.warning("No se pudo cargar el registro en este momento.")
