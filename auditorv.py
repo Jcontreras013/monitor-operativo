@@ -62,7 +62,7 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
         folder_id = st.secrets["drive_folder_id"].strip()
         
         credentials = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=['https://www.googleapis.com/auth/drive.file']
+            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
         )
         service = build('drive', 'v3', credentials=credentials)
         
