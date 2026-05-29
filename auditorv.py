@@ -45,22 +45,25 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE DRIVE
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (ADAPTADO A TUS SECRETS)
 # ==============================================================================
 def subir_archivo_drive(file_buffer, file_name, mimetype):
     """Sube un archivo a Google Drive y retorna (URL, None) si tiene éxito, o (None, Error) si falla."""
     try:
-        if "gcp_service_account" not in st.secrets:
-            return None, "Falta la llave 'gcp_service_account' en los Secrets."
+        # 1. Buscamos el bloque exacto que tienes en tu imagen: [connections.gsheets]
+        if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
+            return None, "Falta la configuración '[connections.gsheets]' en los Secrets."
         if "drive_folder_id" not in st.secrets:
             return None, "Falta el 'drive_folder_id' en los Secrets."
 
-        creds_dict = dict(st.secrets["gcp_service_account"])
+        # 2. Extraer credenciales y reparar saltos de línea
+        creds_dict = dict(st.secrets["connections"]["gsheets"])
         if '\\n' in creds_dict.get('private_key', ''):
             creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
 
         folder_id = st.secrets["drive_folder_id"].strip()
         
+        # 3. Iniciar conexión (Usamos auth/drive global para que vea carpetas compartidas)
         credentials = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=['https://www.googleapis.com/auth/drive']
         )
@@ -71,9 +74,11 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
             'parents': [folder_id]
         }
         
+        # 4. Ejecutar la subida
         media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         
+        # 5. Ajustar permisos a modo lectura pública
         service.permissions().create(
             fileId=file.get('id'),
             body={'type': 'anyone', 'role': 'reader'}
