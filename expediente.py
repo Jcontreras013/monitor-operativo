@@ -87,7 +87,7 @@ class MemoPDF(FPDF):
         self.set_font("Helvetica", "B", 10)
         self.cell(0, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
         self.set_font("Helvetica", "", 8); self.set_x(50)
-        self.cell(0, 5, "Reporte Oficial de Gestión de Personal", ln=True, align="R")
+        self.cell(0, 5, "Reporte Oficial de Gestion de Personal", ln=True, align="R")
         self.set_draw_color(200, 200, 200); self.line(10, 22, 200, 22); self.ln(10)
         
     def footer(self):
@@ -127,7 +127,6 @@ def generar_pdf_consolidado(df):
         pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
         pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240)
         
-        # --- ORDEN CORREGIDO DE COLUMNAS (Colaborador, Fecha, Motivo, Observaciones) ---
         pdf.cell(50, 8, " Colaborador", border=1, fill=True)
         pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
         pdf.cell(35, 8, " Motivo", border=1, fill=True)
@@ -147,12 +146,10 @@ def generar_pdf_consolidado(df):
                 b_bot = 'B' if i == len(lineas_com) - 1 else ''
                 b_style = 'LR' + b_top + b_bot
                 
-                # --- ASIGNACIÓN DE TEXTO CON EL NUEVO ORDEN ---
                 col_colab = f" {tec}" if i == 0 else ""
                 col_fecha = f" {f_reg}" if i == 0 else ""
                 col_motivo = f" {mot}" if i == 0 else ""
                 
-                # --- DIBUJADO DE CELDAS EN EL NUEVO ORDEN ---
                 pdf.cell(50, 5, col_colab, border=b_style)
                 pdf.cell(30, 5, col_fecha, border=b_style, align="C")
                 pdf.cell(35, 5, col_motivo, border=b_style)
@@ -201,43 +198,6 @@ def generar_pdf_consolidado(df):
     with open(path, "rb") as f: data = f.read()
     os.remove(path); return data
 
-@st.cache_data(show_spinner=False, max_entries=50) 
-def generar_pdf_memo(row_dict):
-    pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    es_medica = str(row_dict.get('TIPO_FALTA', '')).upper() in ["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"]
-    if es_medica:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(0, 102, 204)
-        titulo = "CONSTANCIA DE INCIDENCIA MEDICA"
-    else:
-        pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(180, 0, 0)
-        titulo = "MEMORANDUM: LLAMADO DE ATENCION"
-    pdf.cell(0, 10, titulo, ln=True, align="C"); pdf.ln(5)
-    pdf.set_font("Helvetica", "B", 10); pdf.set_text_color(0, 0, 0); pdf.set_fill_color(240, 240, 240)
-    pdf.cell(40, 8, " Colaborador:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TECNICO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Motivo/Falta:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('TIPO_FALTA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Fecha Suceso:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_INCIDENCIA'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registro:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('FECHA_REGISTRO'))}", border=1, ln=True)
-    pdf.set_font("Helvetica", "B", 10); pdf.cell(40, 8, " Registrado por:", border=1, fill=True); pdf.set_font("Helvetica", "", 10); pdf.cell(150, 8, f" {sanitizar(row_dict.get('SUPERVISOR'))}", border=1, ln=True)
-    pdf.ln(8); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(40, 50, 100); pdf.cell(0, 8, "Detalle de los Hechos:", ln=True); pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "", 10)
-    for l in textwrap.wrap(str(row_dict.get('COMENTARIO','')), width=95): pdf.cell(0, 6, sanitizar(l), ln=True)
-    urls = str(row_dict.get('URL_FOTO', '')).split(',')
-    for u in [x.strip() for x in urls if x.strip().startswith('http')]:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                try:
-                    with open(tp, 'wb') as f: f.write(r.content)
-                    if pdf.get_y() > 60: pdf.add_page()
-                    pdf.image(tp, x=15, w=170); pdf.ln(5)
-                finally:
-                    if os.path.exists(tp):
-                        os.remove(tp)
-        except: pass
-    fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
-    with open(path, "rb") as f: d = f.read()
-    os.remove(path); return d
-
 # ==============================================================================
 # 3. INTERFAZ DE EXPEDIENTES
 # ==============================================================================
@@ -260,7 +220,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                 "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"
             ], key="sel_falta")
             
-            # Lógica dinámica para forzar y bloquear técnico en caso de ser RECO
             if tipo_falta_base == "Reco / Cambio de Postes":
                 tipo_falta = "RECO / CAMBIO DE POSTES"
                 opciones_tecnicos = ["RECO"]
@@ -357,7 +316,6 @@ def mostrar_modulo_expedientes(conn, df_base):
             df_view = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
         
         if 'TECNICO' in df_view.columns:
-            # --- LIMPIEZA ANTI-DUPLICADOS INTEGRAL PARA EVITAR FALSOS POSITIVOS ---
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
             
@@ -417,10 +375,9 @@ def mostrar_modulo_expedientes(conn, df_base):
                     df_kpi['Día Semana'] = df_kpi['Día Semana'].map(dias_es)
 
                     tot_registros = len(df_kpi)
-                    colab_unicos = df_kpi['TECNICO'].nunique() # Conteo 100% real sin duplicados fantasmas
+                    colab_unicos = df_kpi['TECNICO'].nunique() 
                     rubro_comun = df_kpi['RUBRO'].value_counts().index[0] if not df_kpi['RUBRO'].empty else "N/D"
                     
-                    # 1. MÉTRICAS ULTRA COMPACTAS SUPERIORES
                     st.markdown(f"""
                     <div style="display: flex; gap: 10px; margin-bottom: 15px;">
                         <div style="flex: 1; background-color: #1A1D24; padding: 10px; border-radius: 6px; border: 1px solid #2D2F39; text-align: center;">
@@ -438,7 +395,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # 2. PRIMERA FILA DE GRÁFICOS (Tabla Reincidentes y Gráfica de Días)
                     c_top1, c_top2 = st.columns(2)
                     with c_top1:
                         st.markdown("<h5 style='color:#EF4444; font-size:13px; font-weight:bold;'>🚨 Reincidentes Críticos</h5>", unsafe_allow_html=True)
@@ -458,7 +414,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         fig_barras_dias.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False, coloraxis_showscale=False, xaxis_title="", yaxis_title="")
                         st.plotly_chart(fig_barras_dias, use_container_width=True)
 
-                    # 3. SEGUNDA FILA DE GRÁFICOS (Gráfica de Rubros y Gráfica de Pastel)
                     c_bot1, c_bot2 = st.columns(2)
                     with c_bot1:
                         st.markdown("<h5 style='color:#3B82F6; font-size:13px; font-weight:bold;'>🎛️ Origen por Rubros</h5>", unsafe_allow_html=True)
@@ -478,7 +433,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         fig_pie.update_layout(margin=dict(t=5, b=5, l=5, r=5), showlegend=False)
                         st.plotly_chart(fig_pie, use_container_width=True)
 
-                    # ---> NUEVA TABLA DE RUBROS SOLICITADA
                     st.markdown("<h4 style='color:#10B981; font-size:14px; font-weight:bold; margin-top:20px;'>📊 Resumen General de Incidencias por Rubro</h4>", unsafe_allow_html=True)
                     df_resumen_rubros = df_kpi['RUBRO'].value_counts().reset_index()
                     df_resumen_rubros.columns = ['Rubro / Tipo de Falta', 'Cantidad de Incidencias']
@@ -489,7 +443,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
             st.markdown("---")
 
-            # --- RENDIMIENTO DE BOTÓN DE DESCARGA GLOBAL ---
             c_v, c_b = st.columns([3, 1])
             with c_b:
                 if not df_mostrar.empty:
@@ -517,8 +470,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # 2. PANEL DE ACCIONES COMPACTO
-                with st.expander("🛠️ ACCIONES: Descargar PDF o Eliminar Registro", expanded=False):
+                # ==============================================================
+                # 2. PANEL DE ACCIONES COMPLETO (VER, ELIMINAR)
+                # ==============================================================
+                with st.expander("🛠️ ACCIONES: Ver o Eliminar Registro", expanded=False):
                     st.write("Seleccione un registro de la lista para gestionarlo:")
                     
                     dict_acciones = {}
@@ -533,20 +488,19 @@ def mostrar_modulo_expedientes(conn, df_base):
                     
                     if registro_sel != "--- Seleccione un registro ---":
                         idx_sel, row_sel = dict_acciones[registro_sel]
-                        st.info(f"**Detalle del reporte:** {row_sel['COMENTARIO']}")
                         
-                        c_p, c_d = st.columns(2)
-                        with c_p:
-                            st.download_button(
-                                "📄 Descargar Memo (PDF)",
-                                data=generar_pdf_memo(row_sel.to_dict()),
-                                file_name=f"Memo_{row_sel['TECNICO'].replace(' ', '_')}.pdf",
-                                key=f"pdf_btn_{idx_sel}",
-                                use_container_width=True
-                            )
-                        with c_d:
+                        st.markdown("---")
+                        col_ver, col_del = st.columns(2)
+                        
+                        # --- BOTÓN 1: VER DETALLES ---
+                        with col_ver:
+                            if st.button("👁️ Ver Detalles", key=f"view_btn_{idx_sel}", use_container_width=True):
+                                st.session_state['ver_registro'] = idx_sel
+                                
+                        # --- BOTÓN 2: ELIMINAR ---
+                        with col_del:
                             if es_admin:
-                                if st.button("🗑️ Eliminar Registro", key=f"del_btn_{idx_sel}", type="primary", use_container_width=True):
+                                if st.button("🗑️ Eliminar", key=f"del_btn_{idx_sel}", type="primary", use_container_width=True):
                                     with st.spinner("Eliminando de GCS y Sheets..."):
                                         try:
                                             df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
@@ -563,6 +517,26 @@ def mostrar_modulo_expedientes(conn, df_base):
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Error al eliminar: {e}")
+                            else:
+                                st.button("🚫 Eliminar (Solo Admin)", disabled=True, use_container_width=True)
+                                
+                        # --- PANEL DE VISTA DE DETALLES ---
+                        if st.session_state.get('ver_registro') == idx_sel:
+                            st.markdown("---")
+                            st.markdown(f"### 📋 Detalles del Expediente: {row_sel['TECNICO']}")
+                            st.info(f"**📝 Descripción de los hechos:**\n\n{row_sel['COMENTARIO']}")
+                            st.write(f"**👤 Registrado por:** {row_sel['SUPERVISOR']}  |  **🕒 Fecha de registro:** {row_sel['FECHA_REGISTRO']}")
+                            
+                            urls = str(row_sel.get('URL_FOTO', '')).split(',')
+                            validas = [u.strip() for u in urls if u.strip().startswith('http')]
+                            if validas:
+                                st.markdown("#### 🖼️ Evidencias Fotográficas Adjuntas:")
+                                cols_img = st.columns(len(validas))
+                                for i, u in enumerate(validas):
+                                    with cols_img[i]:
+                                        st.image(u, use_container_width=True)
+                            else:
+                                st.caption("🚫 No se adjuntaron evidencias fotográficas en este registro.")
         else:
             st.info("No hay registros en la base de datos.")
 
