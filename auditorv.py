@@ -45,7 +45,7 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE DRIVE (RUTA DIRECTA Y BLINDADA)
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (BLINDADO CON SUPPORTS ALL DRIVES)
 # ==============================================================================
 def subir_archivo_drive(file_buffer, file_name, mimetype):
     """Sube un archivo a Google Drive usando la ruta directa."""
@@ -59,14 +59,10 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
         if '\\n' in creds_dict.get('private_key', ''):
             creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
 
-        # 3. RUTA DIRECTA INYECTADA (Adiós problemas de Secrets)
+        # 3. RUTA DIRECTA INYECTADA
         folder_id = "1_HRdEQMRWrhSeasMwr5HAJlZBLDLL6yB"
         
-        # 4. Iniciar conexión (Usamos auth/drive global para que vea carpetas compartidas)
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseUpload
-        
+        # 4. Iniciar conexión
         credentials = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=['https://www.googleapis.com/auth/drive']
         )
@@ -77,14 +73,20 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
             'parents': [folder_id]
         }
         
-        # 5. Ejecutar la subida del PDF
+        # 5. Ejecutar la subida del PDF (Con soporte para unidades de empresa/compartidas)
         media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
-        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id, webViewLink',
+            supportsAllDrives=True
+        ).execute()
         
         # 6. Ajustar permisos a modo lectura pública para que tu equipo pueda abrir el link
         service.permissions().create(
             fileId=file.get('id'),
-            body={'type': 'anyone', 'role': 'reader'}
+            body={'type': 'anyone', 'role': 'reader'},
+            supportsAllDrives=True
         ).execute()
         
         return file.get('webViewLink'), None
@@ -236,7 +238,6 @@ def generar_pdf_calendario():
     pdf.cell(0, 5, "Programacion Operativa: 2 Revisiones Mensuales por Unidad", ln=True, align="C")
     pdf.ln(5)
 
-    # Cabecera de la tabla
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_fill_color(30, 58, 138)
     pdf.set_text_color(255, 255, 255)
@@ -246,7 +247,6 @@ def generar_pdf_calendario():
     pdf.cell(25, 8, "Placa", border=1, align="C", fill=True)
     pdf.cell(100, 8, "Descripcion del Vehiculo", border=1, align="C", ln=True, fill=True)
 
-    # Filas de datos
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(15, 23, 42)
     
@@ -256,7 +256,6 @@ def generar_pdf_calendario():
         pdf.cell(20, 7, row['Unidad'], border=1, align="C")
         pdf.cell(25, 7, row['Placa'], border=1, align="C")
         
-        # Limpiar descripción para evitar caracteres extraños en PDF
         desc_limpia = str(row['Descripción']).encode('latin-1', 'replace').decode('latin-1')
         pdf.cell(100, 7, desc_limpia, border=1, align="L", ln=True)
 
@@ -582,7 +581,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
 
     # ==========================================================================
-    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR (NUEVO CALENDARIO DESCARGABLE) ---
+    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR (AHORA CON DIAGNÓSTICO) ---
     # ==========================================================================
     with tab_checklist:
         st.markdown("### 📋 Gestión Documental de Flota (Google Drive)")
@@ -657,7 +656,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
                             if error_mensaje:
                                 st.error(f"❌ FALLO DE CONEXIÓN CON DRIVE: {error_mensaje}")
-                                st.info("⚠️ La aplicación detuvo el guardado. Verifica que tu 'drive_folder_id' sea correcto en los Secrets y que hayas compartido la carpeta en Google Drive con el correo de servicio en rol Editor.")
+                                st.info("⚠️ La aplicación detuvo el guardado. Revisa que el ID de la carpeta sea el correcto y que le hayas dado permiso de Editor al correo de tu cuenta de servicio en Google Drive.")
                                 st.stop()
 
                             if url_almacenada:
@@ -678,9 +677,13 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     nuevo_df = pd.DataFrame([nueva_fila], columns=cols_registro)
                                     
                                     if df_historial is not None and not df_historial.empty:
-                                        for c in cols_registro:
-                                            if c not in df_historial.columns: df_historial[c] = ""
-                                        df_historial = df_historial[cols_registro]
+                                        if len(df_historial.columns) > len(cols_registro):
+                                            df_historial = df_historial.iloc[:, :len(cols_registro)]
+                                        elif len(df_historial.columns) < len(cols_registro):
+                                            for i in range(len(cols_registro) - len(df_historial.columns)):
+                                                df_historial[f"Columna_Recuperada_{i}"] = ""
+                                                
+                                        df_historial.columns = cols_registro
                                         df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
                                     else:
                                         df_final = nuevo_df
