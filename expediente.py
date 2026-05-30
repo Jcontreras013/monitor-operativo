@@ -284,6 +284,15 @@ def mostrar_modulo_expedientes(conn, df_base):
                         nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
                         
                         if df_actual is not None and not df_actual.empty:
+                            # --- BLINDAJE CONTRA COLUMNAS EXTRA EN GOOGLE SHEETS ---
+                            if len(df_actual.columns) > len(cols_exp):
+                                # Si hay más de 7 columnas (ej. columnas vacías extra), cortamos las sobrantes
+                                df_actual = df_actual.iloc[:, :len(cols_exp)]
+                            elif len(df_actual.columns) < len(cols_exp):
+                                # Por si por error se borrara una columna en Sheets
+                                for i in range(len(cols_exp) - len(df_actual.columns)):
+                                    df_actual[f"Columna_Recuperada_{i}"] = ""
+                                    
                             df_actual.columns = cols_exp
                             df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
                         else:
