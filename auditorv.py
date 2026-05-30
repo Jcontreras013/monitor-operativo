@@ -45,12 +45,12 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE DRIVE (ADAPTADO A TUS SECRETS)
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (ADAPTADO A TUS SECRETS Y PERMISOS)
 # ==============================================================================
 def subir_archivo_drive(file_buffer, file_name, mimetype):
     """Sube un archivo a Google Drive y retorna (URL, None) si tiene éxito, o (None, Error) si falla."""
     try:
-        # 1. Buscamos el bloque exacto que tienes en tu imagen: [connections.gsheets]
+        # 1. Buscamos el bloque exacto [connections.gsheets] de tus Secrets
         if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
             return None, "Falta la configuración '[connections.gsheets]' en los Secrets."
         if "drive_folder_id" not in st.secrets:
@@ -74,11 +74,11 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
             'parents': [folder_id]
         }
         
-        # 4. Ejecutar la subida
+        # 4. Ejecutar la subida del PDF
         media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         
-        # 5. Ajustar permisos a modo lectura pública
+        # 5. Ajustar permisos a modo lectura pública para que puedas abrirlo desde la tabla
         service.permissions().create(
             fileId=file.get('id'),
             body={'type': 'anyone', 'role': 'reader'}
