@@ -45,25 +45,28 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE DRIVE (ADAPTADO A TUS SECRETS Y PERMISOS)
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (RUTA DIRECTA Y BLINDADA)
 # ==============================================================================
 def subir_archivo_drive(file_buffer, file_name, mimetype):
-    """Sube un archivo a Google Drive y retorna (URL, None) si tiene éxito, o (None, Error) si falla."""
+    """Sube un archivo a Google Drive usando la ruta directa."""
     try:
-        # 1. Buscamos el bloque exacto [connections.gsheets] de tus Secrets
+        # 1. Buscamos tus credenciales en el bloque [connections.gsheets]
         if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
             return None, "Falta la configuración '[connections.gsheets]' en los Secrets."
-        if "drive_folder_id" not in st.secrets:
-            return None, "Falta el 'drive_folder_id' en los Secrets."
 
         # 2. Extraer credenciales y reparar saltos de línea
         creds_dict = dict(st.secrets["connections"]["gsheets"])
         if '\\n' in creds_dict.get('private_key', ''):
             creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
 
-        folder_id = st.secrets["drive_folder_id"].strip()
+        # 3. RUTA DIRECTA INYECTADA (Adiós problemas de Secrets)
+        folder_id = "1_HRdEQMRWrhSeasMwr5HAJlZBLDLL6yB"
         
-        # 3. Iniciar conexión (Usamos auth/drive global para que vea carpetas compartidas)
+        # 4. Iniciar conexión (Usamos auth/drive global para que vea carpetas compartidas)
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+        
         credentials = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=['https://www.googleapis.com/auth/drive']
         )
@@ -74,11 +77,11 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
             'parents': [folder_id]
         }
         
-        # 4. Ejecutar la subida del PDF
+        # 5. Ejecutar la subida del PDF
         media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         
-        # 5. Ajustar permisos a modo lectura pública para que puedas abrirlo desde la tabla
+        # 6. Ajustar permisos a modo lectura pública para que tu equipo pueda abrir el link
         service.permissions().create(
             fileId=file.get('id'),
             body={'type': 'anyone', 'role': 'reader'}
