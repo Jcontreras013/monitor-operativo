@@ -33,7 +33,7 @@ except ImportError:
 
 # Configuración de Nube
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+NOMBRE_BUCKET_SISTEMA = "monitor_maxcom_bd"
 
 # ==============================================================================
 # MOTOR DE CONEXIÓN A GOOGLE CLOUD STORAGE (EL PLAN MAESTRO SIN ERRORES DE CUOTA)
