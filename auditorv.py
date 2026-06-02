@@ -31,7 +31,7 @@ try:
 except ImportError:
     st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
 
-# Configuración de Nube
+# Configuración de Nube (CON TU BUCKET REAL)
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 NOMBRE_BUCKET_SISTEMA = "monitor_maxcom_bd"
 
@@ -54,8 +54,8 @@ def subir_archivo_gcs_pdf(file_buffer, file_name, mimetype):
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
         client = storage.Client(credentials=credentials, project=creds_dict.get('project_id'))
         
-        # Subimos al bucket que ya tienes operativo
-        bucket = client.bucket("jovial-trilogy-306216.appspot.com")
+        # Inyectamos el nombre real de tu bucket de forma directa para evitar el error 404
+        bucket = client.bucket("monitor_maxcom_bd")
         blob = bucket.blob(f"Inspecciones_PDF/{file_name}")
         
         file_buffer.seek(0)
@@ -559,7 +559,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
 
     # ==========================================================================
-    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR (AHORA CON DIAGNÓSTICO) ---
+    # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR ---
     # ==========================================================================
     with tab_checklist:
         st.markdown("### 📋 Gestión Documental de Flota (Google Cloud Storage)")
