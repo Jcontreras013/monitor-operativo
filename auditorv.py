@@ -36,7 +36,7 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "monitor_maxcom_bd"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE CLOUD STORAGE (EL PLAN MAESTRO SIN ERRORES DE CUOTA)
+# MOTOR DE CONEXIÓN A GOOGLE CLOUD STORAGE
 # ==============================================================================
 def subir_archivo_gcs_pdf(file_buffer, file_name, mimetype):
     """Sube un archivo directamente a tu Bucket de GCS sin límites de cuota."""
@@ -54,14 +54,13 @@ def subir_archivo_gcs_pdf(file_buffer, file_name, mimetype):
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
         client = storage.Client(credentials=credentials, project=creds_dict.get('project_id'))
         
-        # Inyectamos el nombre real de tu bucket de forma directa para evitar el error 404
+        # Inyectamos el nombre real de tu bucket
         bucket = client.bucket("monitor_maxcom_bd")
         blob = bucket.blob(f"Inspecciones_PDF/{file_name}")
         
         file_buffer.seek(0)
         blob.upload_from_file(file_buffer, content_type=mimetype)
         
-        # Generamos una URL pública para poder ver el PDF en la tabla
         try:
             blob.make_public()
         except:
@@ -565,7 +564,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.markdown("### 📋 Gestión Documental de Flota (Google Cloud Storage)")
         st.caption("Descarga el formato físico, complétalo en campo y sube aquí el escáner firmado en PDF o Imagen.")
         
-        # --- CALENDARIO ANUAL CON BOTÓN PEQUEÑO ---
+        # --- CALENDARIO ANUAL ---
         with st.expander("📅 Ver Calendario Anual de Inspecciones (2026-2027)", expanded=False):
             col_info, col_btn = st.columns([5, 1])
             with col_info:
@@ -673,7 +672,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 except Exception as e:
                                     st.error(f"❌ Error al registrar en la matriz: {e}")
 
-     st.markdown("---")
+        st.markdown("---")
         st.markdown("#### 📜 Registro Maestro de Inspecciones Físicas")
         try:
             df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
@@ -693,7 +692,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 cols_head[6].markdown("**BORRAR**")
                 st.markdown("<hr style='margin: 0px; padding: 0px; margin-bottom: 10px;'>", unsafe_allow_html=True)
                 
-                # Invertimos para ver los más nuevos y limitamos a 50 para que la app no se vuelva lenta
+                # Invertimos para ver los más nuevos y limitamos a 50
                 df_mostrar = df_view_insp.iloc[::-1].head(50)
                 
                 # 2. CONSTRUIR CADA FILA CON SUS PROPIOS BOTONES
@@ -707,42 +706,32 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     
                     enlace_doc = str(row.get('ENLACE_ARCHIVO', ''))
                     
-                    # Botón Lupa (Abre el PDF en el navegador para verlo)
                     with cols[4]:
                         if enlace_doc.startswith("http"):
                             st.link_button("🔍", url=enlace_doc, use_container_width=True)
                             
-                    # Botón Flecha (Abre el mismo enlace para guardarlo)
                     with cols[5]:
                         if enlace_doc.startswith("http"):
                             st.link_button("⬇️", url=enlace_doc, use_container_width=True)
                             
-                    # Botón X (Elimina la fila directamente y recarga)
                     with cols[6]:
-                        if st.button("❌", key=f"del_{idx}", type="primary", use_container_width=True):
+                        if st.button("❌", key=f"del_insp_{idx}", type="primary", use_container_width=True):
                             with st.spinner("⏳"):
                                 try:
                                     df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
                                     if df_borrado is None or df_borrado.empty:
                                         df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
                                     
-                                    # Si el índice existe, lo eliminamos
                                     if idx in df_borrado.index:
                                         df_borrado = df_borrado.drop(idx).reset_index(drop=True)
-                                        
-                                        # Guardamos la nueva tabla en la Nube
                                         sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                        
-                                        # Guardamos el respaldo en Sheets
                                         if conn:
                                             try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
                                             except: pass
-                                            
-                                    st.rerun() # Refrescamos la pantalla para que desaparezca
+                                    st.rerun()
                                 except Exception as e:
                                     st.error(f"Error: {e}")
                     
-                    # Separador sutil entre filas
                     st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
                     
                 if len(df_view_insp) > 50:
