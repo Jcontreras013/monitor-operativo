@@ -673,7 +673,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 except Exception as e:
                                     st.error(f"❌ Error al registrar en la matriz: {e}")
 
-        st.markdown("---")
+     st.markdown("---")
         st.markdown("#### 📜 Registro Maestro de Inspecciones Físicas")
         try:
             df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
@@ -681,13 +681,73 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 if conn: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
             
             if df_view_insp is not None and not df_view_insp.empty:
-                st.dataframe(
-                    df_view_insp.iloc[::-1], 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    height=250,
-                    column_config={"ENLACE_ARCHIVO": st.column_config.LinkColumn("Enlace al Documento")}
-                )
+                
+                # 1. DIBUJAR LOS ENCABEZADOS DE LA TABLA MANUAL
+                cols_head = st.columns([1.5, 1.5, 1.5, 3, 0.7, 0.7, 0.7])
+                cols_head[0].markdown("**FECHA**")
+                cols_head[1].markdown("**PLACA**")
+                cols_head[2].markdown("**SUPERVISOR**")
+                cols_head[3].markdown("**OBSERVACIONES**")
+                cols_head[4].markdown("**VER**")
+                cols_head[5].markdown("**BAJAR**")
+                cols_head[6].markdown("**BORRAR**")
+                st.markdown("<hr style='margin: 0px; padding: 0px; margin-bottom: 10px;'>", unsafe_allow_html=True)
+                
+                # Invertimos para ver los más nuevos y limitamos a 50 para que la app no se vuelva lenta
+                df_mostrar = df_view_insp.iloc[::-1].head(50)
+                
+                # 2. CONSTRUIR CADA FILA CON SUS PROPIOS BOTONES
+                for idx, row in df_mostrar.iterrows():
+                    cols = st.columns([1.5, 1.5, 1.5, 3, 0.7, 0.7, 0.7])
+                    
+                    cols[0].write(row.get('FECHA', ''))
+                    cols[1].write(row.get('PLACA', ''))
+                    cols[2].write(row.get('SUPERVISOR', ''))
+                    cols[3].write(row.get('OBSERVACIONES', ''))
+                    
+                    enlace_doc = str(row.get('ENLACE_ARCHIVO', ''))
+                    
+                    # Botón Lupa (Abre el PDF en el navegador para verlo)
+                    with cols[4]:
+                        if enlace_doc.startswith("http"):
+                            st.link_button("🔍", url=enlace_doc, use_container_width=True)
+                            
+                    # Botón Flecha (Abre el mismo enlace para guardarlo)
+                    with cols[5]:
+                        if enlace_doc.startswith("http"):
+                            st.link_button("⬇️", url=enlace_doc, use_container_width=True)
+                            
+                    # Botón X (Elimina la fila directamente y recarga)
+                    with cols[6]:
+                        if st.button("❌", key=f"del_{idx}", type="primary", use_container_width=True):
+                            with st.spinner("⏳"):
+                                try:
+                                    df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    if df_borrado is None or df_borrado.empty:
+                                        df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                                    
+                                    # Si el índice existe, lo eliminamos
+                                    if idx in df_borrado.index:
+                                        df_borrado = df_borrado.drop(idx).reset_index(drop=True)
+                                        
+                                        # Guardamos la nueva tabla en la Nube
+                                        sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                        
+                                        # Guardamos el respaldo en Sheets
+                                        if conn:
+                                            try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
+                                            except: pass
+                                            
+                                    st.rerun() # Refrescamos la pantalla para que desaparezca
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
+                    
+                    # Separador sutil entre filas
+                    st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
+                    
+                if len(df_view_insp) > 50:
+                    st.caption("Mostrando los últimos 50 registros por motivos de rendimiento.")
+                    
             else:
                 st.info("Aún no hay escáneres vehiculares en la base de datos.")
         except Exception as e:
