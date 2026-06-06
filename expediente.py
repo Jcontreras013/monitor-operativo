@@ -9,6 +9,7 @@ import textwrap
 import time
 from fpdf import FPDF
 import plotly.express as px
+import re
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -40,6 +41,38 @@ def cargar_personal(filepath="personal_tecnico.txt"):
                 if nombre_limpio: nombres.append(nombre_limpio)
         return sorted(list(set(nombres)))
     except: return []
+
+@st.cache_data(show_spinner=False)
+def cargar_personal_admin(filepath="personal_sac.txt"):
+    """Lee y clasifica el personal administrativo por departamento desde el txt."""
+    personal = {}
+    dept_actual = "OTROS"
+    try:
+        if not os.path.exists(filepath): return personal
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for linea in f:
+                linea = linea.strip()
+                if not linea: continue
+                
+                # Limpiar marcas raras como 
+                linea = re.sub(r'\[.*?\]', '', linea).strip()
+                if not linea: continue
+                
+                # Si no empieza con un número, asumimos que es el nombre del departamento
+                if not re.match(r'^\d+\.', linea):
+                    dept_actual = linea.upper()
+                    if dept_actual not in personal:
+                        personal[dept_actual] = []
+                else:
+                    # Es un nombre, le quitamos el número inicial (ej. "1. ")
+                    nombre = re.sub(r'^\d+\.\s*', '', linea).strip().upper()
+                    if nombre:
+                        if dept_actual not in personal:
+                            personal[dept_actual] = []
+                        personal[dept_actual].append(nombre)
+        return personal
+    except:
+        return {}
 
 # ==============================================================================
 # LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS
@@ -208,116 +241,239 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    with st.expander("➕ Crear Nuevo Registro", expanded=True):
-        st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            lista_nombres = cargar_personal("personal_tecnico.txt")
+    # --- SEPARADOR DE ÁREAS (PESTAÑAS) ---
+    tab_tecnicos, tab_admin = st.tabs(["⚙️ Operaciones (Técnicos y Auxiliares)", "🏢 Administrativo (SAC, Ventas, etc.)"])
+    
+    # ==========================================================================
+    # PESTAÑA 1: OPERACIONES (TÉCNICOS) - CÓDIGO ORIGINAL INTACTO
+    # ==========================================================================
+    with tab_tecnicos:
+        with st.expander("➕ Crear Nuevo Registro - Operaciones", expanded=True):
+            st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
             
-            tipo_falta_base = st.selectbox("🚫 Motivo:", [
-                "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
-                "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"
-            ], key="sel_falta")
-            
-            if tipo_falta_base == "Reco / Cambio de Postes":
-                tipo_falta = "RECO / CAMBIO DE POSTES"
-                opciones_tecnicos = ["RECO"]
-                idx_defecto = 0
-                disabled_tec = True
-            else:
-                tipo_falta = tipo_falta_base
-                if tipo_falta_base == "Otro":
-                    motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
-                    tipo_falta = motivo_especifico.strip().upper()
-                opciones_tecnicos = ["---"] + lista_nombres
-                idx_defecto = 0
-                disabled_tec = False
+            c1, c2 = st.columns(2)
+            with c1:
+                lista_nombres = cargar_personal("personal_tecnico.txt")
                 
-            colaborador_sel = st.selectbox("👤 Colaborador:", options=opciones_tecnicos, index=idx_defecto, disabled=disabled_tec, key="sel_colab")
+                tipo_falta_base = st.selectbox("🚫 Motivo:", [
+                    "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
+                    "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"
+                ], key="sel_falta")
+                
+                if tipo_falta_base == "Reco / Cambio de Postes":
+                    tipo_falta = "RECO / CAMBIO DE POSTES"
+                    opciones_tecnicos = ["RECO"]
+                    idx_defecto = 0
+                    disabled_tec = True
+                else:
+                    tipo_falta = tipo_falta_base
+                    if tipo_falta_base == "Otro":
+                        motivo_especifico = st.text_input("📝 Especifique el motivo de la falta:", key="txt_motivo_otro")
+                        tipo_falta = motivo_especifico.strip().upper()
+                    opciones_tecnicos = ["---"] + lista_nombres
+                    idx_defecto = 0
+                    disabled_tec = False
+                    
+                colaborador_sel = st.selectbox("👤 Colaborador:", options=opciones_tecnicos, index=idx_defecto, disabled=disabled_tec, key="sel_colab")
+                
+            with c2:
+                fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
+                archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
             
-        with c2:
-            fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
-            archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
-        
-        comentario = st.text_area("📝 Descripción de los hechos:", key="txt_comentario")
-        
-        if st.button("💾 GUARDAR EN EXPEDIENTE", type="primary", use_container_width=True):
-            if colaborador_sel == "---" or not comentario:
-                st.error("⚠️ Complete el nombre y el comentario.")
-            elif tipo_falta_base == "Otro" and not tipo_falta:
-                st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
-            else:
-                try:
-                    urls = []
-                    if archivos:
-                        with st.spinner("Subiendo imágenes al servidor..."):
-                            for a in archivos:
-                                res = requests.post(
-                                    "https://freeimage.host/api/1/upload",
-                                    data={
-                                        "key": API_KEY_FREEIMAGE,
-                                        "action": "upload",
-                                        "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                        "format": "json"
-                                    }
-                                )
-                                if res.status_code == 200:
-                                    urls.append(res.json()["image"]["url"])
-                    
-                    with st.spinner("Guardando en la Nube y en Sheets..."):
-                        df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                        if df_actual is None or df_actual.empty:
-                            df_actual = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                            
-                        cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
+            comentario = st.text_area("📝 Descripción de los hechos:", key="txt_comentario")
+            
+            if st.button("💾 GUARDAR EN EXPEDIENTE OPERATIVO", type="primary", use_container_width=True):
+                if colaborador_sel == "---" or not comentario:
+                    st.error("⚠️ Complete el nombre y el comentario.")
+                elif tipo_falta_base == "Otro" and not tipo_falta:
+                    st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
+                else:
+                    try:
+                        urls = []
+                        if archivos:
+                            with st.spinner("Subiendo imágenes al servidor..."):
+                                for a in archivos:
+                                    res = requests.post(
+                                        "https://freeimage.host/api/1/upload",
+                                        data={
+                                            "key": API_KEY_FREEIMAGE,
+                                            "action": "upload",
+                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                            "format": "json"
+                                        }
+                                    )
+                                    if res.status_code == 200:
+                                        urls.append(res.json()["image"]["url"])
                         
-                        nueva_fila = [
-                            get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                            colaborador_sel,
-                            tipo_falta,
-                            fecha_inc.strftime("%d/%m/%Y"),
-                            comentario,
-                            ", ".join(urls),
-                            supervisor_actual
-                        ]
-                        nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
-                        
-                        if df_actual is not None and not df_actual.empty:
-                            # --- BLINDAJE CONTRA COLUMNAS EXTRA EN GOOGLE SHEETS ---
-                            if len(df_actual.columns) > len(cols_exp):
-                                # Si hay más de 7 columnas (ej. columnas vacías extra), cortamos las sobrantes
-                                df_actual = df_actual.iloc[:, :len(cols_exp)]
-                            elif len(df_actual.columns) < len(cols_exp):
-                                # Por si por error se borrara una columna en Sheets
-                                for i in range(len(cols_exp) - len(df_actual.columns)):
-                                    df_actual[f"Columna_Recuperada_{i}"] = ""
-                                    
-                            df_actual.columns = cols_exp
-                            df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
-                        else:
-                            df_final = nuevo_df
+                        with st.spinner("Guardando en la Nube y en Sheets..."):
+                            df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            if df_actual is None or df_actual.empty:
+                                df_actual = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                                
+                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
                             
-                        sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+                            nueva_fila = [
+                                get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
+                                colaborador_sel,
+                                tipo_falta,
+                                fecha_inc.strftime("%d/%m/%Y"),
+                                comentario,
+                                ", ".join(urls),
+                                supervisor_actual
+                            ]
+                            nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                            
+                            if df_actual is not None and not df_actual.empty:
+                                # --- BLINDAJE CONTRA COLUMNAS EXTRA EN GOOGLE SHEETS ---
+                                if len(df_actual.columns) > len(cols_exp):
+                                    df_actual = df_actual.iloc[:, :len(cols_exp)]
+                                elif len(df_actual.columns) < len(cols_exp):
+                                    for i in range(len(cols_exp) - len(df_actual.columns)):
+                                        df_actual[f"Columna_Recuperada_{i}"] = ""
+                                        
+                                df_actual.columns = cols_exp
+                                df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                            else:
+                                df_final = nuevo_df
+                                
+                            sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
 
-                    st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
-                    time.sleep(1.5)
-                    
-                    llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
-                    for llave in llaves_a_borrar:
-                        if llave in st.session_state:
-                            del st.session_state[llave]
-                    
-                    st.rerun()
+                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
+                        time.sleep(1.5)
+                        
+                        llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
+                        for llave in llaves_a_borrar:
+                            if llave in st.session_state:
+                                del st.session_state[llave]
+                        
+                        st.rerun()
 
-                except Exception as e:
-                    st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+                    except Exception as e:
+                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+
+    # ==========================================================================
+    # PESTAÑA 2: ADMINISTRATIVO (NUEVO MÓDULO)
+    # ==========================================================================
+    with tab_admin:
+        with st.expander("➕ Crear Nuevo Registro - Administrativo", expanded=True):
+            st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
+            
+            # Cargar dinámicamente el personal desde personal_sac.txt
+            dict_admin = cargar_personal_admin("personal_sac.txt")
+            opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---", "SAC", "VENTAS EN CAMPO", "TELEMERCADEO", "CONTABILIDAD", "BODEGA", "ADMINISTRACION"]
+            
+            c1_admin, c2_admin = st.columns(2)
+            with c1_admin:
+                dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
+                
+                # Filtrar nombres basados en el departamento seleccionado
+                opciones_nombres_admin = ["---"]
+                if dept_sel != "--- Seleccione ---":
+                    opciones_nombres_admin += dict_admin.get(dept_sel, [])
+                    
+                if len(opciones_nombres_admin) <= 1:
+                    nombre_admin = st.text_input("👤 Nombre Completo del Colaborador:*", key="txt_nombre_admin").upper()
+                else:
+                    nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
+                    
+                tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
+                    "Llamado de Atención Verbal", "Amonestación Escrita", 
+                    "Llegada Tardía / Ausencia", "Incidencia Médica", 
+                    "Felicitación / Mérito", "Curriculum / Contrato", "Otro"
+                ], key="sel_falta_admin")
+                
+                if tipo_falta_admin_base == "Otro":
+                    tipo_falta_admin = st.text_input("📝 Especifique la incidencia:", key="txt_otro_admin").upper()
+                else:
+                    tipo_falta_admin = tipo_falta_admin_base.upper()
+                    
+            with c2_admin:
+                fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
+                archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
+                
+            comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
+            
+            if st.button("💾 REGISTRAR INCIDENCIA ADMINISTRATIVA", type="primary", use_container_width=True):
+                if dept_sel == "--- Seleccione ---":
+                    st.error("⚠️ Debes seleccionar el departamento.")
+                elif not nombre_admin or nombre_admin == "---":
+                    st.error("⚠️ El nombre del empleado es obligatorio.")
+                elif not comentario_admin:
+                    st.error("⚠️ Ingresa una descripción de los hechos.")
+                elif tipo_falta_admin_base == "Otro" and not tipo_falta_admin:
+                    st.error("⚠️ Especifique el motivo en el campo 'Otro'.")
+                else:
+                    try:
+                        urls_admin = []
+                        if archivos_admin:
+                            with st.spinner("Subiendo imágenes al servidor..."):
+                                for a in archivos_admin:
+                                    res = requests.post(
+                                        "https://freeimage.host/api/1/upload",
+                                        data={
+                                            "key": API_KEY_FREEIMAGE,
+                                            "action": "upload",
+                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                            "format": "json"
+                                        }
+                                    )
+                                    if res.status_code == 200:
+                                        urls_admin.append(res.json()["image"]["url"])
+                        
+                        with st.spinner("Guardando en la base de datos principal..."):
+                            df_actual = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            if df_actual is None or df_actual.empty:
+                                df_actual = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                                
+                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
+                            
+                            # TRUCO MAESTRO: Guardamos el departamento junto al nombre para poder filtrarlo en la tabla general
+                            nombre_etiquetado = f"{nombre_admin} ({dept_sel})"
+                            
+                            nueva_fila = [
+                                get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
+                                nombre_etiquetado,
+                                tipo_falta_admin,
+                                fecha_inc_admin.strftime("%d/%m/%Y"),
+                                comentario_admin,
+                                ", ".join(urls_admin),
+                                supervisor_actual
+                            ]
+                            nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                            
+                            if df_actual is not None and not df_actual.empty:
+                                if len(df_actual.columns) > len(cols_exp):
+                                    df_actual = df_actual.iloc[:, :len(cols_exp)]
+                                elif len(df_actual.columns) < len(cols_exp):
+                                    for i in range(len(cols_exp) - len(df_actual.columns)):
+                                        df_actual[f"Columna_Recuperada_{i}"] = ""
+                                        
+                                df_actual.columns = cols_exp
+                                df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                            else:
+                                df_final = nuevo_df
+                                
+                            sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+
+                        st.success(f"✅ ¡Guardado exitosamente! {nombre_admin} registrado en la base de datos.")
+                        time.sleep(1.5)
+                        
+                        llaves_a_borrar = ["sel_dept_admin", "sel_nombre_admin", "txt_nombre_admin", "sel_falta_admin", "date_inc_admin", "up_archivos_admin", "txt_comentario_admin", "txt_otro_admin"]
+                        for llave in llaves_a_borrar:
+                            if llave in st.session_state:
+                                del st.session_state[llave]
+                        
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
     st.markdown("---")
     
     # ==========================================================================
-    # LECTURA, SANEAMIENTO Y FILTRADO INTEGRADO DINÁMICO
+    # LECTURA, SANEAMIENTO Y FILTRADO INTEGRADO DINÁMICO (COMPARTIDO)
     # ==========================================================================
     try:
         df_view = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
@@ -336,7 +492,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             
         if not df_mostrar.empty:
             
-            st.subheader("📜 Historial de Expedientes")
+            st.subheader("📜 Historial de Expedientes (General)")
             with st.container():
                 col1, col2, col3 = st.columns(3)
                 with col1:
