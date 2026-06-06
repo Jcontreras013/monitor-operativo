@@ -31,19 +31,25 @@ try:
 except ImportError:
     st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
 
-# Configuración de Nube (CON TU BUCKET REAL)
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    DRIVE_DISPONIBLE = True
+except ImportError:
+    DRIVE_DISPONIBLE = False
+    st.warning("⚠️ Faltan librerías de Google Drive. Ejecuta: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+
+# Configuración de Nube
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-NOMBRE_BUCKET_SISTEMA = "monitor_maxcom_bd"
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE CLOUD STORAGE
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (RESTAURADO)
 # ==============================================================================
-def subir_archivo_gcs_pdf(file_buffer, file_name, mimetype):
-    """Sube un archivo directamente a tu Bucket de GCS sin límites de cuota."""
+def subir_archivo_drive(file_buffer, file_name, mimetype):
+    """Sube un archivo a Google Drive usando la ruta directa."""
     try:
-        from google.oauth2 import service_account
-        from google.cloud import storage
-
         if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
             return None, "Falta la configuración '[connections.gsheets]' en los Secrets."
 
@@ -51,24 +57,36 @@ def subir_archivo_gcs_pdf(file_buffer, file_name, mimetype):
         if '\\n' in creds_dict.get('private_key', ''):
             creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
 
-        credentials = service_account.Credentials.from_service_account_info(creds_dict)
-        client = storage.Client(credentials=credentials, project=creds_dict.get('project_id'))
+        # TU CARPETA ORIGINAL DE DRIVE
+        folder_id = "1_HRdEQMRWrhSeasMwr5HAJlZBLDLL6yB"
         
-        # Inyectamos el nombre real de tu bucket
-        bucket = client.bucket("monitor_maxcom_bd")
-        blob = bucket.blob(f"Inspecciones_PDF/{file_name}")
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+        )
+        service = build('drive', 'v3', credentials=credentials)
         
-        file_buffer.seek(0)
-        blob.upload_from_file(file_buffer, content_type=mimetype)
+        file_metadata = {
+            'name': file_name,
+            'parents': [folder_id]
+        }
         
-        try:
-            blob.make_public()
-        except:
-            pass
-            
-        return blob.public_url, None
+        media = MediaIoBaseUpload(file_buffer, mimetype=mimetype, resumable=True)
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id, webViewLink',
+            supportsAllDrives=True
+        ).execute()
+        
+        service.permissions().create(
+            fileId=file.get('id'),
+            body={'type': 'anyone', 'role': 'reader'},
+            supportsAllDrives=True
+        ).execute()
+        
+        return file.get('webViewLink'), None
     except Exception as e:
-        return None, f"Error de GCS: {str(e)}"
+        return None, str(e)
 
 # ==============================================================================
 # DATOS DEL CALENDARIO DE INSPECCIONES
@@ -561,7 +579,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
     # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR ---
     # ==========================================================================
     with tab_checklist:
-        st.markdown("### 📋 Gestión Documental de Flota (Google Cloud Storage)")
+        st.markdown("### 📋 Gestión Documental de Flota (Google Drive)")
         st.caption("Descarga el formato físico, complétalo en campo y sube aquí el escáner firmado en PDF o Imagen.")
         
         # --- CALENDARIO ANUAL ---
@@ -611,7 +629,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 observaciones = st.text_input("Notas / Hallazgos principales:", placeholder="Breve descripción del estado del vehículo...")
                 
                 supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
-                submit_escaner = st.form_submit_button("💾 REGISTRAR Y ENVIAR AL BUCKET (GCS)", type="primary", use_container_width=True)
+                submit_escaner = st.form_submit_button("💾 REGISTRAR Y ENVIAR A GOOGLE DRIVE", type="primary", use_container_width=True)
 
                 if submit_escaner:
                     if not placa_vehiculo.strip():
@@ -619,15 +637,18 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     elif not archivo_escaner:
                         st.error("⚠️ Debes adjuntar el archivo escaneado (PDF o Imagen).")
                     else:
-                        with st.spinner("Subiendo al almacenamiento seguro en la Nube (GCS)..."):
+                        with st.spinner("Subiendo al almacenamiento seguro en la Nube (Google Drive)..."):
                             url_almacenada = None
                             error_mensaje = None
                             
                             buffer_archivo = io.BytesIO(archivo_escaner.getvalue())
-                            nombre_archivo_gcs = f"{placa_vehiculo.strip().upper()}_{fecha_escaneo.strftime('%Y%m%d')}_{archivo_escaner.name}"
+                            nombre_archivo_drive = f"{placa_vehiculo.strip().upper()}_{fecha_escaneo.strftime('%Y%m%d')}_{archivo_escaner.name}"
                             mimetype = "application/pdf" if archivo_escaner.name.lower().endswith('.pdf') else "image/jpeg"
                             
-                            url_almacenada, error_mensaje = subir_archivo_gcs_pdf(buffer_archivo, nombre_archivo_gcs, mimetype)
+                            if DRIVE_DISPONIBLE:
+                                url_almacenada, error_mensaje = subir_archivo_drive(buffer_archivo, nombre_archivo_drive, mimetype)
+                            else:
+                                error_mensaje = "Las librerías de Google Drive no están instaladas (google-api-python-client)."
 
                             if error_mensaje:
                                 st.error(f"❌ FALLO DE SUBIDA: {error_mensaje}")
