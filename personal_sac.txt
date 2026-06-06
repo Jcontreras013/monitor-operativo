@@ -1,40 +1,40 @@
-SAC
-1.	Alejandra Fuentes Alcántara
-2.	Amy Sabrina Jerezano Zepeda
-3.	Barika Lorena Cook Pagoada
-4.	Denzel Wade Bodden Cook
-5.	Genesis Jenaya Clarck Zuniga
-6.	Jair Abiel Aguilar Velásquez
-7.	Jennifer Tais Pacheco Ortiz
-8.	Josué Enrique Sorto Ferrera
-9.	Kenneth Jafhar González Funez
-10.	Keydie Joanna Salmerón Calero
-11.	Marisha Janeri Bodden Padilla
-12.	Rosa Nayeli Portillo Guerrero
-13.	Roxana Fabiola Vásquez Meza
-14.	Tania Mariely Lucas Pereira
-15.	Tiffany Jannell Bodden
-16.	Waleska Abigail Castellanos Herrera
+SAC ,                    
+Alejandra Fuentes Alcántara
+Amy Sabrina Jerezano Zepeda
+Barika Lorena Cook Pagoada
+Denzel Wade Bodden Cook
+Genesis Jenaya Clarck Zuniga
+Jair Abiel Aguilar Velásquez
+Jennifer Tais Pacheco Ortiz
+Josué Enrique Sorto Ferrera
+Kenneth Jafhar González Funez
+Keydie Joanna Salmerón Calero
+Marisha Janeri Bodden Padilla
+Rosa Nayeli Portillo Guerrero
+Roxana Fabiola Vásquez Meza
+Tania Mariely Lucas Pereira
+Tiffany Jannell Bodden
+Waleska Abigail Castellanos Herrera.
 
-Ventas En Campo
-1.	Cinthia Gricelda Gutiérrez Ávila
-2.	Yoali Nayeli Quiroz Alvarado
-3.	Alejandra Paola Montes Contreras
+Ventas En Campo,
+Cinthia Gricelda Gutiérrez Ávila
+Yoali Nayeli Quiroz Alvarado
+Alejandra Paola Montes Contreras.
 
-Telemercadeo
-1.	Eyner Alejandro Orellana Bonilla
-2.	Mónica Gisselle Meza Barahona
-3.	Robinson Elías Monnar Matute
+Telemercadeo,
+Eyner Alejandro Orellana Bonilla
+Mónica Gisselle Meza Barahona
+Robinson Elías Monnar Matute.
 
-Contabilidad
-1. Darlin Fabiola Moreno Zuniga 
-2. Litzi Jessibet Sierra Ruiz
+Contabilidad,
+Darlin Fabiola Moreno Zuniga 
+Litzi Jessibet Sierra Ruiz.
 
-Bodega 
-1. Kelvio Omar Castro Montoya 
-2. Carlos roberto Flores Herrera 
+Bodega,
+Kelvin Omar Castro Montoya 
+Carlos roberto Flores Herrera.
 
-Administracion
+Administracion,
 Oscar Nuñez Nuñez 
 Jaison Javier Contreras Zuniga
 Angie Mochelle Fajardo Gomez
