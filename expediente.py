@@ -44,7 +44,6 @@ def cargar_personal(filepath="personal_tecnico.txt"):
 
 @st.cache_data(show_spinner=False)
 def cargar_personal_admin(filepath="personal_sac.txt"):
-    # Se mantiene la función original por compatibilidad base
     personal = {}
     dept_actual = "OTROS"
     try:
@@ -370,23 +369,40 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                 st.markdown("---")
 
-                c_v, c_b = st.columns([3, 1])
+                # ==============================================================
+                # LÓGICA DE BOTÓN INTELIGENTE (REPORTE PDF DINÁMICO)
+                # ==============================================================
+                c_v, c_b = st.columns([2, 1])
                 with c_b:
                     if not df_mostrar.empty:
-                        if st.button("⚙️ Preparar Reporte PDF", key=f"btn_pdf_{tab_id}", use_container_width=True):
-                            with st.spinner("Construyendo PDF (Descargando fotos)..."):
-                                st.session_state[f'pdf_listo_{tab_id}'] = generar_pdf_consolidado(df_mostrar)
-                        
-                        if f'pdf_listo_{tab_id}' in st.session_state:
+                        # 1. Definir texto según la selección
+                        if filtro_nombre == "VER TODOS":
+                            texto_btn = "Reporte General"
+                            nombre_archivo = "Reporte_General.pdf"
+                        else:
+                            nombre_corto = " ".join(filtro_nombre.split()[:2]) 
+                            texto_btn = f"Reporte de {nombre_corto}"
+                            nombre_archivo = f"Reporte_{nombre_corto.replace(' ', '_')}.pdf"
+
+                        # 2. Crear un ID único para saber si cambiaron los filtros
+                        id_estado = f"pdf_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
+
+                        # 3. Mostrar botón de Descarga (Si ya está generado) o Preparar (Si es nuevo)
+                        if st.session_state.get('estado_pdf_actual') == id_estado:
                             st.download_button(
-                                "⬇️ Descargar Reporte Listo",
-                                data=st.session_state[f'pdf_listo_{tab_id}'],
-                                file_name=f"Reporte_{titulo_seccion}.pdf",
+                                label=f"⬇️ Descargar {texto_btn}",
+                                data=st.session_state['pdf_bytes_listo'],
+                                file_name=nombre_archivo,
                                 mime="application/pdf",
                                 use_container_width=True,
-                                type="primary",
-                                key=f"dl_pdf_{tab_id}"
+                                type="primary"
                             )
+                        else:
+                            if st.button(f"⚙️ Preparar {texto_btn}", key=f"btn_pdf_{tab_id}", use_container_width=True):
+                                with st.spinner("Procesando imágenes y generando documento..."):
+                                    st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar)
+                                    st.session_state['estado_pdf_actual'] = id_estado
+                                    st.rerun()
 
                 if df_mostrar.empty:
                     st.info("💡 No hay registros para los filtros seleccionados.")
@@ -593,31 +609,20 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             c1_admin, c2_admin = st.columns(2)
             with c1_admin:
-                # Búsqueda Inteligente (Dropdown en Cascada)
-                areas_validas = ["SAC", "Administracion", "Ventas de campo", "Telemercadeo", "Contabilidad", "Bodega"]
-                opciones_dept = ["--- Seleccione ---"] + areas_validas
+                # SE REVIERTE A LA FUNCIÓN ORIGINAL QUE SÍ FUNCIONABA
+                dict_admin = cargar_personal_admin("personal_sac.txt")
+                opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---", "SAC", "VENTAS EN CAMPO", "TELEMERCADEO", "CONTABILIDAD", "BODEGA", "ADMINISTRACION"]
+                
                 dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
                 
-                nombres_filtrados = ["---"]
+                opciones_nombres_admin = ["---"]
                 if dept_sel != "--- Seleccione ---":
-                    try:
-                        with open("personal_sac.txt", "r", encoding="utf-8") as file:
-                            for linea in file.readlines():
-                                linea_limpia = linea.strip()
-                                if linea_limpia:
-                                    partes = linea_limpia.split(",")
-                                    if len(partes) >= 2:
-                                        nombre_emp = partes[0].strip()
-                                        dept_emp = partes[1].strip()
-                                        if dept_emp.lower() == dept_sel.lower():
-                                            nombres_filtrados.append(nombre_emp)
-                    except Exception:
-                        pass # Fallback manejado por el if de abajo
-                        
-                if len(nombres_filtrados) <= 1:
+                    opciones_nombres_admin += dict_admin.get(dept_sel, [])
+                    
+                if len(opciones_nombres_admin) <= 1:
                     nombre_admin = st.text_input("👤 Nombre Completo del Colaborador:*", key="txt_nombre_admin").upper()
                 else:
-                    nombre_admin = st.selectbox("👤 Colaborador:", nombres_filtrados, key="sel_nombre_admin")
+                    nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
                     
                 tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
                     "Llamado de Atención Verbal", "Amonestación Escrita", 
