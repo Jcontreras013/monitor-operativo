@@ -42,31 +42,34 @@ def cargar_personal(filepath="personal_tecnico.txt"):
         return sorted(list(set(nombres)))
     except: return []
 
-# --- NUEVA LÓGICA DE LECTURA EXACTA POR COMAS Y PUNTOS ---
+# --- LÓGICA ACTUALIZADA: DEPARTAMENTO, NOMBRES CON ';' Y PUNTO FINAL ---
 @st.cache_data(show_spinner=False)
 def cargar_personal_admin(filepath="personal_sac.txt"):
     personal = {}
     try:
         if not os.path.exists(filepath): return personal
         with open(filepath, 'r', encoding='utf-8') as f:
-            # Leemos todo el documento y quitamos saltos de línea para leerlo como una cadena
+            # Quitamos los saltos de línea reales para procesar el ';' como Enter
             contenido = f.read().replace('\n', ' ')
         
-        # Dividimos el texto por puntos (cada punto es el fin de un departamento)
+        # 1. Separamos por departamentos usando el punto
         bloques_departamentos = contenido.split('.')
         
         for bloque in bloques_departamentos:
             bloque = bloque.strip()
             if not bloque: continue
             
-            # Dividimos por comas. 
-            # El primer elemento es el departamento, el resto son los colaboradores.
-            partes = [p.strip() for p in bloque.split(',') if p.strip()]
+            # 2. Separamos el nombre del departamento del resto usando la primera coma
+            partes = bloque.split(',', 1)
             
             if len(partes) > 0:
-                departamento = partes[0].upper()
-                # Tomamos todos los elementos después de la primera coma
-                empleados = [e.upper() for e in partes[1:]]
+                departamento = partes[0].strip().upper()
+                
+                # 3. Separamos los nombres en cascada usando el punto y coma (;)
+                if len(partes) > 1:
+                    empleados = [e.strip().upper() for e in partes[1].split(';') if e.strip()]
+                else:
+                    empleados = []
                 
                 if departamento not in personal:
                     personal[departamento] = []
