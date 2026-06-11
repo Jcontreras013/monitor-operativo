@@ -42,28 +42,36 @@ def cargar_personal(filepath="personal_tecnico.txt"):
         return sorted(list(set(nombres)))
     except: return []
 
+# --- NUEVA LÓGICA DE LECTURA EXACTA POR COMAS Y PUNTOS ---
 @st.cache_data(show_spinner=False)
 def cargar_personal_admin(filepath="personal_sac.txt"):
     personal = {}
-    dept_actual = "OTROS"
     try:
         if not os.path.exists(filepath): return personal
         with open(filepath, 'r', encoding='utf-8') as f:
-            for linea in f:
-                linea = linea.strip()
-                if not linea: continue
-                linea = re.sub(r'\[.*?\]', '', linea).strip()
-                if not linea: continue
-                if not re.match(r'^\d+\.', linea):
-                    dept_actual = linea.upper()
-                    if dept_actual not in personal:
-                        personal[dept_actual] = []
-                else:
-                    nombre = re.sub(r'^\d+\.\s*', '', linea).strip().upper()
-                    if nombre:
-                        if dept_actual not in personal:
-                            personal[dept_actual] = []
-                        personal[dept_actual].append(nombre)
+            # Leemos todo el documento y quitamos saltos de línea para leerlo como una cadena
+            contenido = f.read().replace('\n', ' ')
+        
+        # Dividimos el texto por puntos (cada punto es el fin de un departamento)
+        bloques_departamentos = contenido.split('.')
+        
+        for bloque in bloques_departamentos:
+            bloque = bloque.strip()
+            if not bloque: continue
+            
+            # Dividimos por comas. 
+            # El primer elemento es el departamento, el resto son los colaboradores.
+            partes = [p.strip() for p in bloque.split(',') if p.strip()]
+            
+            if len(partes) > 0:
+                departamento = partes[0].upper()
+                # Tomamos todos los elementos después de la primera coma
+                empleados = [e.upper() for e in partes[1:]]
+                
+                if departamento not in personal:
+                    personal[departamento] = []
+                personal[departamento].extend(empleados)
+                
         return personal
     except:
         return {}
@@ -234,7 +242,6 @@ def obtener_datos_memoria(conn):
         forzar_actualizacion_memoria(conn)
     return st.session_state['df_exp_memoria']
 
-
 # ==============================================================================
 # 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS
 # ==============================================================================
@@ -375,7 +382,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                 c_v, c_b = st.columns([2, 1])
                 with c_b:
                     if not df_mostrar.empty:
-                        # 1. Definir texto según la selección
                         if filtro_nombre == "VER TODOS":
                             texto_btn = "Reporte General"
                             nombre_archivo = "Reporte_General.pdf"
@@ -384,10 +390,8 @@ def mostrar_modulo_expedientes(conn, df_base):
                             texto_btn = f"Reporte de {nombre_corto}"
                             nombre_archivo = f"Reporte_{nombre_corto.replace(' ', '_')}.pdf"
 
-                        # 2. Crear un ID único para saber si cambiaron los filtros
                         id_estado = f"pdf_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
 
-                        # 3. Mostrar botón de Descarga (Si ya está generado) o Preparar (Si es nuevo)
                         if st.session_state.get('estado_pdf_actual') == id_estado:
                             st.download_button(
                                 label=f"⬇️ Descargar {texto_btn}",
@@ -430,7 +434,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                             lista_opciones.append(label)
                             dict_acciones[label] = (idx, row)
                             
-                        # El selectbox directamente carga la vista (Cero retrocesos)
                         registro_sel = st.selectbox("Registro a gestionar:", options=lista_opciones, label_visibility="collapsed", key=f"sel_gestion_{tab_id}")
                         
                         if registro_sel != "--- Seleccione un registro ---":
@@ -453,7 +456,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 st.caption("🚫 No se adjuntaron evidencias.")
                                 
                             st.markdown("<br>", unsafe_allow_html=True)
-                            # Botón de eliminar directo debajo de la vista
                             if es_admin:
                                 if st.button("🗑️ Eliminar Registro de Base de Datos", key=f"del_btn_{idx_sel}_{tab_id}", type="primary", use_container_width=True):
                                     with st.spinner("Eliminando..."):
@@ -609,9 +611,8 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             c1_admin, c2_admin = st.columns(2)
             with c1_admin:
-                # SE REVIERTE A LA FUNCIÓN ORIGINAL QUE SÍ FUNCIONABA
                 dict_admin = cargar_personal_admin("personal_sac.txt")
-                opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---", "SAC", "VENTAS EN CAMPO", "TELEMERCADEO", "CONTABILIDAD", "BODEGA", "ADMINISTRACION"]
+                opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
                 
                 dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
                 
