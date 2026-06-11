@@ -374,6 +374,9 @@ def main():
 
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
+            if os.path.exists("Logotipo monitor.png"):
+                st.image("Logotipo monitor.png", width=400)
+            else:
                 st.title("⚡ Monitor Operativo Maxcom PRO")
                 st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
                 st.markdown("<br><br>", unsafe_allow_html=True)
@@ -1130,7 +1133,10 @@ def main():
             lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
         )
 
-        st.title("⚡ Monitor Operativo Maxcom")
+        if os.path.exists("Logotipo monitor.png"):
+            st.image("Logotipo monitor.png", width=400) # Puedes cambiar el número 400 para hacer el logo más grande o pequeño
+        else:
+            st.title("⚡ Monitor Operativo Maxcom")
 
         mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
         
