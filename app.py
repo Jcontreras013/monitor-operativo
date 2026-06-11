@@ -1205,8 +1205,8 @@ def main():
                         elif v == "= 0 Dia": bg_color = '#388e3c'
                         return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                    st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
-                    # Los botones de PDF fueron eliminados de aquí
+                    # Sumatoria homologada para móvil
+                    st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
                     col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
@@ -1225,8 +1225,8 @@ def main():
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                         st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                        st.markdown(f"<div style='text-align: center; padding-top: 5px; padding-bottom: 15px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
-                        # Los botones de PDF fueron eliminados de aquí
+                        # 🔥 Sumatoria idéntica a las de al lado (alineada a la izquierda y en negrita)
+                        st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
 
                 g_tab_list = []
                 sub_tab_list = []
