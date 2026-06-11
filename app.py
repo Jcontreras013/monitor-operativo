@@ -374,7 +374,7 @@ def main():
 
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
-                st.title("⚡ Monitor Operativo Maxcom PRO")
+                st.image("Logotipo monitor.png" , width=180)
                 st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
