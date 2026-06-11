@@ -374,9 +374,9 @@ def main():
 
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
-            if os.path.exists("Logotipo monitor.png"):
+        if os.path.exists("Logotipo monitor.png"):
                 st.image("Logotipo monitor.png", width=400)
-            else:
+        else:
                 st.title("⚡ Monitor Operativo Maxcom PRO")
                 st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
                 st.markdown("<br><br>", unsafe_allow_html=True)
