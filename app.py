@@ -374,17 +374,26 @@ def main():
 
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
-            if os.path.exists("Logotipo monitor.png"):
-                st.image("Logotipo monitor.png", width=400)
-            else:
-                st.title("⚡ Monitor Operativo Maxcom PRO")
+                
+                # 1. Mostrar el Logo centrado (o el título si no lo encuentra)
+                if os.path.exists("Logotipo monitor.png"):
+                    col1_img, col2_img, col3_img = st.columns([1, 2, 1])
+                    with col2_img:
+                        st.image("Logotipo monitor.png", use_container_width=True)
+                else:
+                    st.title("⚡ Monitor Operativo Maxcom PRO")
+                
+                # 2. El mensaje y el botón SIEMPRE deben aparecer (alineados con el if de arriba)
                 st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
                 st.markdown("<br><br>", unsafe_allow_html=True)
+                
                 col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
                 with col_c2:
                     if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_central"):
-                        if conn is not None: sincronizar_datos_nube(conn)
-                        else: st.error("Conexión no disponible.")
+                        if conn is not None: 
+                            sincronizar_datos_nube(conn)
+                        else: 
+                            st.error("Conexión no disponible.")
                 return
         else:
             res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
