@@ -1206,13 +1206,7 @@ def main():
                         return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                     st.markdown(f"<div style='text-align: center; padding-top: 5px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("📄 DESCARGAR PDF", use_container_width=True, key="btn_pdf_movil"):
-                        with st.spinner("Generando PDF..."):
-                            st.session_state['pdf_tablero'] = generar_pdf_ordenes_totales(df_todas_pendientes_monitor, hoy_date_valor)
-                    if 'pdf_tablero' in st.session_state and st.session_state['pdf_tablero']:
-                        st.download_button("📥 GUARDAR PDF", data=st.session_state['pdf_tablero'], file_name=f"Tablero_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="dl_pdf_movil")
+                    # Los botones de PDF fueron eliminados de aquí
                
                 else:
                     col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
@@ -1232,13 +1226,8 @@ def main():
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                         st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                         st.markdown(f"<div style='text-align: center; padding-top: 5px; padding-bottom: 15px; font-weight: bold; font-size: 16px; color: white;'>Total Órdenes: {len(df_todas_pendientes_monitor)}</div>", unsafe_allow_html=True)
+                        # Los botones de PDF fueron eliminados de aquí
 
-                        if st.button("📄 DESCARGAR PDF", use_container_width=True, key="btn_pdf_desk"):
-                            with st.spinner("Generando PDF..."):
-                                st.session_state['pdf_tablero_desk'] = generar_pdf_ordenes_totales(df_todas_pendientes_monitor, hoy_date_valor)
-                        if 'pdf_tablero_desk' in st.session_state and st.session_state['pdf_tablero_desk']:
-                            st.download_button("📥 GUARDAR PDF", data=st.session_state['pdf_tablero_desk'], file_name=f"Tablero_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="dl_pdf_desk")
-                            
                 g_tab_list = []
                 sub_tab_list = []
                 for idx, r in df_todas_pendientes_monitor.iterrows():
