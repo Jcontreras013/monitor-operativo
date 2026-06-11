@@ -1529,28 +1529,56 @@ def main():
                 with t_panel_v:
                     if not df_v_tabla_monitor.empty:
                         if es_movil:
-                            st.markdown("<h5 style='color:#3B82F6;'>Resumen de Retraso</h5>", unsafe_allow_html=True)
-                        if not df_v_tabla_monitor.empty:
-                            # 1. Calculamos la tabla
-                            df_retraso = df_v_tabla_monitor.groupby('RETRASO').size().reset_index(name='Cantidad')
-                            df_retraso = df_retraso.sort_values('Cantidad', ascending=False)
-                            
-                            # 2. Dividimos la pantalla: Tabla a la izquierda (2), Total a la derecha (1)
-                            col_ret_1, col_ret_2 = st.columns([2, 1])
-                            
-                            with col_ret_1:
-                                st.dataframe(df_retraso, use_container_width=True, hide_index=True)
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            for idx, row in df_v_tabla_monitor.iterrows():
+                                color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
+                                estado_txt = str(row.get('ESTADO', 'N/D')).upper()
+                                bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                                 
-                            with col_ret_2:
-                                total_retraso = df_retraso['Cantidad'].sum()
                                 st.markdown(f"""
-                                <div style="background-color: #1E293B; padding: 15px; border-radius: 8px; text-align: center; height: 100%; display: flex; flex-direction: column; justify-content: center;">
-                                    <p style="color: #94A3B8; margin-bottom: 5px; font-size: 14px;">Total Retraso</p>
-                                    <h2 style="color: #38BDF8; margin: 0; font-size: 32px;">{total_retraso}</h2>
+                                <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span style="color: white; font-weight: bold; font-size: 16px;">ORD-{row.get('NUM', 'N/D')}</span>
+                                        <span style="background: {bg_estado}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">{estado_txt}</span>
+                                    </div>
+                                    <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
+                                        👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
+                                        📍 {str(row.get('COLONIA', 'N/D'))[:30]}
+                                    </div>
+                                    <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
+                                        🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
+                                        👨‍🔧 {str(row.get('TECNICO', ''))[:20]}
+                                    </div>
                                 </div>
                                 """, unsafe_allow_html=True)
+                                
+                                if st.button(f"👁️ Ver Detalle de Orden {row.get('NUM')}", key=f"btn_mobile_{row.get('NUM')}_{idx}", use_container_width=True):
+                                    mostrar_comentario_cierre(row)
+                                st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
                         else:
-                            st.info("No hay datos de retraso para mostrar en el resumen.")
+                            df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
+                            
+                            evento_monitor_diam = st.dataframe(
+                                df_estilo_v.style.apply(row_styler, axis=1),
+                                column_config={
+                                    "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
+                                    "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
+                                    "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
+                                    "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
+                                    "ES_OFFLINE": None,
+                                    "MINUTOS_CALC": None
+                                }, 
+                                use_container_width=True, 
+                                height=600, 
+                                hide_index=True, 
+                                on_select="rerun", 
+                                selection_mode="single-row"
+                            )
+                            
+                            if evento_monitor_diam.selection.rows:
+                                mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
+                    else:
+                        st.warning("No hay registros disponibles para mostrar.")
 
                     with t_graphs_v:
                         st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
