@@ -148,7 +148,7 @@ def procesar_imagenes_lote(archivos):
 # ==============================================================================
 # MÓDULO PRINCIPAL: AUDITORÍA DE VEHÍCULOS
 # ==============================================================================
-def mostrar_auditoria(conn):
+def mostrar_auditoria(conn, df_base=None, *args):
     st.markdown("<h2 style='text-align: center; color: #38BDF8;'>🚐 Auditoría y Gestión de Flota Vehicular</h2>", unsafe_allow_html=True)
     
     supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
