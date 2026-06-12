@@ -2804,114 +2804,101 @@ def procesar_cruce_operativo_mensual(df_gps_resumen, df_act):
 # ==============================================================================
 
 def procesar_mensual_zonas_con_nube(df_gps_zonas, df_nube_sheet1):
-    """Cruza InformeZonasRutas con Sheet1 de la Nube para reporte Gerencial."""
     try:
-        # 1. Limpiar GPS (InformeZonasRutas)
+        # 1. Procesar GPS (Zonas y Rutas)
         df_gps = df_gps_zonas.copy()
-        # Extraer MX del Alias: "HAB9494 - [MX-09 ...]" -> "MX-09"
-        def extraer_mx_gps(texto):
-            match = re.search(r'MX-\d+', str(texto).upper())
-            return match.group(0) if match else None
-
-        df_gps['MX_KEY'] = df_gps['Placa-Alias'].apply(extraer_mx_gps)
+        def extraer_mx(t):
+            m = re.search(r'MX-\d+', str(t).upper())
+            return m.group(0) if m else None
+        
+        df_gps['MX_KEY'] = df_gps['Placa-Alias'].apply(extraer_mx)
         df_gps['I_DT'] = pd.to_datetime(df_gps['Hora Ingreso'], errors='coerce')
         df_gps['S_DT'] = pd.to_datetime(df_gps['Hora Salida'], errors='coerce')
         df_gps = df_gps.dropna(subset=['I_DT', 'S_DT', 'MX_KEY'])
         
-        # Calcular Segundos en Calle (Salida - Ingreso)
+        # Calcular duración por fila y asignar semana
         df_gps['Segs'] = (df_gps['S_DT'] - df_gps['I_DT']).dt.total_seconds().clip(lower=0)
         df_gps['Semana'] = df_gps['I_DT'].dt.isocalendar().week
         
-        # Mapeo de semanas del mes
-        semanas = sorted(df_gps['Semana'].unique())
-        mapa_semanas = {s: f"Sem 1" if i==0 else f"Sem {i+1}" for i, s in enumerate(semanas)}
-        df_gps['Semana_Label'] = df_gps['Semana'].map(mapa_semanas)
+        semanas_u = sorted(df_gps['Semana'].unique())
+        mapa_sems = {s: f"Sem {i+1} (Hrs)" for i, s in enumerate(semanas_u)}
+        df_gps['Semana_Label'] = df_gps['Semana'].map(mapa_sems)
 
-        # Consolidar GPS Semanal por MX
-        gps_pivot = df_gps.pivot_table(
-            index='MX_KEY', columns='Semana_Label', values='Segs', aggfunc='sum'
-        ).fillna(0)
+        # Pivot de horas semanales
+        gps_semanal = df_gps.pivot_table(index='MX_KEY', columns='Semana_Label', values='Segs', aggfunc='sum').fillna(0)
+        gps_semanal = (gps_semanal / 3600).round(1) # Convertir a horas
+        gps_semanal['Total Hrs Calle'] = gps_semanal.sum(axis=1).round(1)
 
-        # 2. Limpiar Nube (Sheet1)
-        df_nube = procesar_dataframe_base(df_nube_sheet1)
-        df_nube['%_PUNTOS'] = df_nube.apply(calcular_aporte_meta, axis=1)
+        # 2. Procesar Nube (Sheet1)
+        df_n = procesar_dataframe_base(df_nube_sheet1)
+        df_n['%_PUNTOS'] = df_n.apply(calcular_aporte_meta, axis=1)
         
-        # Identificar Segmento
-        act_up = df_nube['ACTIVIDAD'].astype(str).str.upper()
-        df_nube['SEGMENTO_PRO'] = np.where(act_up.str.contains('PLEX|PEXTERNO|SPLITTEROPT'), 'PLEX', 'RESIDENCIAL')
+        # Clasificar actividades para el desglose
+        def cat_act(a):
+            a = str(a).upper()
+            if any(x in a for x in ['INS', 'NUEVA', 'PLEX']): return 'INS'
+            if any(x in a for x in ['SOP', 'FALLA', 'MANT']): return 'SOP'
+            return 'OTR'
         
-        # Extraer MX de la Nube (columna MX)
-        df_nube['MX_KEY'] = df_nube['MX'].astype(str).str.strip().str.upper()
-        
-        resumen_nube = df_nube.groupby(['TECNICO', 'MX_KEY', 'SEGMENTO_PRO']).agg(
-            Ordenes=('NUM', 'count'),
-            Puntos=('%_PUNTOS', 'sum')
+        df_n['TIPO_G'] = df_n['ACTIVIDAD'].apply(cat_act)
+        df_n['SEG_G'] = np.where(df_n['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEX|PEXTERNO|SPLITTEROPT'), 'PLEX', 'RESIDENCIAL')
+        df_n['MX_KEY'] = df_n['MX'].astype(str).str.strip().str.upper()
+
+        resumen_nube = df_n.groupby(['TECNICO', 'MX_KEY', 'SEG_G']).agg(
+            Instalaciones=('TIPO_G', lambda x: (x == 'INS').sum()),
+            Mantenimientos=('TIPO_G', lambda x: (x == 'SOP').sum()),
+            Puntos_Total=('%_PUNTOS', 'sum')
         ).reset_index()
 
-        # 3. CRUCE FINAL
-        df_cruce = pd.merge(resumen_nube, gps_pivot.reset_index(), on='MX_KEY', how='inner')
+        # 3. Cruce
+        df_final = pd.merge(resumen_nube, gps_semanal.reset_index(), on='MX_KEY', how='inner')
+        df_final['KPI Eficiencia (Pts/Hr)'] = (df_final['Puntos_Total'] / df_final['Total Hrs Calle'].replace(0,1)).round(1)
         
-        # Formatear horas
-        cols_semanas = [c for c in df_cruce.columns if 'Sem' in c]
-        df_cruce['Total_Segs'] = df_cruce[cols_semanas].sum(axis=1)
-        
-        def to_hrs(s): return round(s/3600, 1)
-        for c in cols_semanas: df_cruce[c] = df_cruce[c].apply(to_hrs)
-        df_cruce['Total_Hrs_Calle'] = df_cruce['Total_Segs'].apply(to_hrs)
-        
-        # KPI Eficiencia: Puntos por hora en calle
-        df_cruce['KPI_Eficiencia'] = (df_cruce['Puntos'] / df_cruce['Total_Hrs_Calle'].replace(0,1)).round(1)
-        
-        return df_cruce.sort_values(by='KPI_Eficiencia', ascending=False), "OK"
-    except Exception as e:
-        return None, str(e)
+        # Ordenar columnas para el jefe
+        cols_sem = [c for c in df_final.columns if 'Sem' in c]
+        cols_final = ['TECNICO', 'MX_KEY', 'SEG_G', 'Instalaciones', 'Mantenimientos', 'Puntos_Total', 'KPI Eficiencia (Pts/Hr)', 'Total Hrs Calle'] + cols_sem
+        df_final = df_final[cols_final].rename(columns={'MX_KEY': 'UNIDAD', 'SEG_G': 'SEGMENTO_PRO'})
 
-def generar_pdf_gerencial_mensual_premium(df, mes_nombre):
-    """PDF ultra claro diseñado para la gerencia."""
+        # KPIs Globales para los st.metric
+        kpis = {
+            'ef_res': round(df_final[df_final['SEGMENTO_PRO'] == 'RESIDENCIAL']['KPI Eficiencia (Pts/Hr)'].mean(), 1),
+            'ef_plex': round(df_final[df_final['SEGMENTO_PRO'] == 'PLEX']['KPI Eficiencia (Pts/Hr)'].mean(), 1),
+            'total_ord': int(df_final['Instalaciones'].sum() + df_final['Mantenimientos'].sum()),
+            'total_hrs': round(df_final['Total Hrs Calle'].sum(), 1)
+        }
+
+        return df_final.sort_values(by='KPI Eficiencia (Pts/Hr)', ascending=False), kpis, "OK"
+    except Exception as e: return None, None, str(e)
+
+def generar_pdf_gerencial_mensual_premium(df, kpis, titulo_periodo):
     pdf = ReporteGenerencialPDF(orientation='L')
-    pdf.alias_nb_pages()
-    pdf.add_page()
+    pdf.alias_nb_pages(); pdf.add_page()
     
-    # Encabezado
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(22, 73, 110)
-    pdf.cell(0, 12, safestr(f"CONSOLIDADO GERENCIAL: PRODUCTIVIDAD MENSUAL"), ln=True, align="C")
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, safestr(f"Periodo: {mes_nombre.upper()}"), ln=True, align="C")
+    # Titulo Principal
+    pdf.set_font("Helvetica", "B", 18); pdf.set_text_color(30, 58, 138)
+    pdf.cell(0, 12, safestr(titulo_periodo.upper()), ln=True, align="C")
+    pdf.ln(5)
+
+    # Tabla de KPIs Globales
+    pdf.set_fill_color(240, 240, 240); pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(65, 10, safestr(f"Promedio Eficiencia RES: {kpis['ef_res']} pts/hr"), border=1, align="C", fill=True)
+    pdf.cell(65, 10, safestr(f"Promedio Eficiencia PLEX: {kpis['ef_plex']} pts/hr"), border=1, align="C", fill=True)
+    pdf.cell(70, 10, safestr(f"Total Ordenes: {kpis['total_ord']}"), border=1, align="C", fill=True)
+    pdf.cell(75, 10, safestr(f"Total Horas Calle: {kpis['total_hrs']}h"), border=1, ln=True, align="C", fill=True)
     pdf.ln(10)
 
-    # Función para dibujar tablas por segmento
-    def tabla_segmento(segmento, color_r, color_g, color_b):
-        pdf.set_fill_color(color_r, color_g, color_b)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 8, safestr(f"  TECNICOS {segmento}"), ln=True, fill=True)
+    # Detalle por Segmento
+    for seg in ['RESIDENCIAL', 'PLEX']:
+        pdf.set_font("Helvetica", "B", 12); pdf.set_text_color(200, 0, 0) if seg == 'RESIDENCIAL' else pdf.set_text_color(0, 0, 200)
+        pdf.cell(0, 8, safestr(f"ANALISIS DE DESEMPEÑO: TÉCNICOS {seg}"), ln=True)
         pdf.ln(2)
         
-        df_sub = df[df['SEGMENTO_PRO'] == segmento].copy()
+        df_sub = df[df['SEGMENTO_PRO'] == seg].drop(columns=['SEGMENTO_PRO']).copy()
         if not df_sub.empty:
-            cols_sem = [c for c in df_sub.columns if 'Sem' in c]
-            # Columnas clave para el jefe
-            cols_final = ['TECNICO', 'MX_KEY', 'Ordenes', 'Puntos', 'KPI_Eficiencia', 'Total_Hrs_Calle'] + cols_sem
-            
-            # Ajuste de nombres para el PDF
-            df_sub = df_sub[cols_final].rename(columns={
-                'MX_KEY': 'UNIDAD', 'KPI_Eficiencia': 'KPI (Pts/Hr)', 'Total_Hrs_Calle': 'HRS CALLE'
-            })
-            
-            pdf.dibujar_tabla_rendimiento(df_sub, anchos=[55, 18, 18, 18, 25, 25] + [22]*len(cols_sem))
+            # Reordenar para que las semanas queden al final
+            pdf.dibujar_tabla_rendimiento(df_sub, anchos=[50, 18, 15, 15, 20, 28, 25, 22, 22, 22, 22, 22])
         else:
-            pdf.set_text_color(0,0,0); pdf.set_font("Helvetica", "I", 9)
-            pdf.cell(0, 8, "No se detectaron datos para este segmento.", ln=True)
-        pdf.ln(10)
-
-    # Dibujar Residencial (Verde) y PLEX (Azul)
-    tabla_segmento('RESIDENCIAL', 46, 125, 50)
-    pdf.add_page()
-    tabla_segmento('PLEX', 30, 58, 138)
-
-    # Glosario
-    pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(100, 100, 100)
-    pdf.multi_cell(0, 5, safestr("EXPLICACIÓN DE KPIs:\n- KPI (Pts/Hr): Productividad real. Puntos ganados por cada hora que el GPS marcó en la calle.\n- PUNTOS: Valor de tareas (Instalaciones=25 pts, SOP/Otros=12.5 pts).\n- SEM 1-4: Horas totales semanales detectadas por el Informe de Zonas y Rutas."))
+            pdf.set_font("Helvetica", "I", 10); pdf.cell(0, 8, "No hay datos para este segmento.", ln=True)
+        pdf.add_page()
 
     return finalizar_pdf(pdf)
