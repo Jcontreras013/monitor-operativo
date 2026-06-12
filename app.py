@@ -25,6 +25,8 @@ from ui_components import (
     aplicar_estilos_df,
     mostrar_seguimientos_tecnico
 )
+from auditorv import mostrar_auditoria
+
 import settings # <--- IMPORTAMOS LA CONFIGURACIÓN AQUÍ
 
 try:
