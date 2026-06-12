@@ -1850,6 +1850,66 @@ def procesar_auditoria_semanal(df_input):
         return forzar_columnas_unicas(final_diario), forzar_columnas_unicas(final_semanal), "OK", f_inicio, f_fin
     except Exception as e: return None, None, str(e), None, None
 
+def procesar_auditoria_mensual(df_input):
+    """
+    Reutiliza el motor de 'procesar_auditoria_semanal' para obtener el desglose
+    diario por vehículo, y luego consolida los resultados por MES (Año-Mes)
+    en lugar de por semana. Devuelve:
+      - final_diario: desglose diario por vehículo (con columna 'Mes')
+      - final_mensual: consolidado por Mes y Vehículo (Días Trabajados, Tiempo Total, Promedio Diario)
+      - msg, f_inicio, f_fin
+    """
+    try:
+        final_diario, _final_semanal, msg, f_inicio, f_fin = procesar_auditoria_semanal(df_input)
+        if final_diario is None:
+            return None, None, msg, None, None
+
+        diario = final_diario.copy()
+        diario['Fecha'] = pd.to_datetime(diario['Fecha'], errors='coerce')
+        diario = diario.dropna(subset=['Fecha'])
+        if diario.empty:
+            return None, None, "No hay fechas válidas para consolidar el mes.", None, None
+
+        diario['Mes_Periodo'] = diario['Fecha'].dt.to_period('M')
+        diario['Mes'] = diario['Fecha'].dt.strftime('%B %Y')
+
+        diario['segundos'] = diario['Tiempo Diario'].apply(time_to_sec_robust)
+
+        mensual = diario.groupby(['Vehículo / Placa', 'Mes_Periodo', 'Mes']).agg(
+            Dias_Laborados=('Fecha', 'nunique'),
+            Total_Segundos=('segundos', 'sum')
+        ).reset_index()
+
+        dias_reales = diario[diario['segundos'] > 0].groupby(['Vehículo / Placa', 'Mes_Periodo']).size().reset_index(name='Dias_Efectivos')
+        mensual = pd.merge(mensual, dias_reales, on=['Vehículo / Placa', 'Mes_Periodo'], how='left')
+        mensual['Dias_Efectivos'] = mensual['Dias_Efectivos'].fillna(mensual['Dias_Laborados'])
+
+        mensual['Prom_Segundos'] = 0
+        mask_efectivos = mensual['Dias_Efectivos'] > 0
+        mensual.loc[mask_efectivos, 'Prom_Segundos'] = (
+            mensual.loc[mask_efectivos, 'Total_Segundos'] / mensual.loc[mask_efectivos, 'Dias_Efectivos']
+        ).astype(int)
+        mensual['Prom_Segundos'] = mensual['Prom_Segundos'].fillna(0).astype(int)
+
+        def format_segs(secs):
+            if pd.isnull(secs) or secs <= 0: return "00:00:00"
+            h, r = divmod(int(secs), 3600); m, s = divmod(r, 60)
+            return f"{h:02d}:{m:02d}:{s:02d}"
+
+        mensual['Tiempo Total Mes'] = mensual['Total_Segundos'].apply(format_segs)
+        mensual['Promedio Diario'] = mensual['Prom_Segundos'].apply(format_segs)
+        mensual = mensual.rename(columns={'Dias_Laborados': 'Días Trabajados'})
+        mensual = mensual.sort_values(['Mes_Periodo', 'Vehículo / Placa'])
+
+        final_mensual = mensual[['Mes', 'Vehículo / Placa', 'Días Trabajados', 'Tiempo Total Mes', 'Promedio Diario']].copy()
+        final_diario_out = diario.sort_values(['Mes_Periodo', 'Vehículo / Placa', 'Fecha'])[
+            ['Vehículo / Placa', 'Fecha', 'Primera Salida', 'Última Entrada', 'Tiempo Diario', 'Mes']
+        ].copy()
+
+        return forzar_columnas_unicas(final_diario_out), forzar_columnas_unicas(final_mensual), "OK", f_inicio, f_fin
+    except Exception as e:
+        return None, None, str(e), None, None
+
 def procesar_matriz_telemetria(df_raw):
     try:
         header_idx = None
@@ -2016,6 +2076,106 @@ def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
         pdf.set_font("Helvetica", "", 10)
         pdf.cell(0, 10, "Sin datos disponibles.", border=0, ln=True)
         
+    return finalizar_pdf(pdf)
+
+def generar_pdf_mensual_tiempos(df_diario, df_mensual, f_inicio, f_fin):
+    pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(84, 98, 143)
+
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+
+    titulo = f" Auditoria Mensual Consolidada ({inicio_str} al {fin_str})"
+    pdf.cell(0, 10, safestr(titulo), border=1, ln=True, fill=True, align="C")
+    pdf.ln(5)
+
+    if df_mensual is not None and not df_mensual.empty:
+        # --- TABLA 1: RESUMEN CONSOLIDADO POR MES Y VEHICULO ---
+        pdf.seccion_titulo("Resumen Consolidado por Mes y Vehiculo")
+
+        w_res = [40, 95, 30, 45, 45]
+        pdf.set_fill_color(210, 210, 215)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 8)
+
+        headers_res = ['MES', 'VEHICULO / PLACA', 'DIAS TRAB.', 'TIEMPO TOTAL MES', 'PROMEDIO DIARIO']
+        for i, h in enumerate(headers_res):
+            pdf.cell(w_res[i], 8, safestr(h), border=1, align="C", fill=True)
+        pdf.ln()
+
+        pdf.set_font("Helvetica", "", 8)
+        last_mes = None
+        for _, row in df_mensual.iterrows():
+            mes_actual = row['Mes']
+            mes_display = safestr(mes_actual) if mes_actual != last_mes else ""
+            if mes_display: last_mes = mes_actual
+
+            fill = mes_display != ""
+            pdf.set_fill_color(240, 248, 255) if fill else pdf.set_fill_color(255, 255, 255)
+            pdf.set_text_color(0, 0, 0)
+
+            if mes_display: pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(w_res[0], 6, mes_display.upper(), border=1, align="L", fill=fill)
+            pdf.set_font("Helvetica", "", 8)
+
+            pdf.cell(w_res[1], 6, safestr(row['Vehículo / Placa'])[:55], border=1, align="L", fill=fill)
+            pdf.cell(w_res[2], 6, str(row['Días Trabajados']), border=1, align="C", fill=fill)
+            pdf.cell(w_res[3], 6, safestr(row['Tiempo Total Mes']), border=1, align="C", fill=fill)
+
+            pdf.set_text_color(0, 100, 0)
+            pdf.cell(w_res[4], 6, safestr(row['Promedio Diario']), border=1, align="C", fill=fill)
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln()
+
+        # --- TABLA 2: DESGLOSE DIARIO COMPLETO ---
+        if df_diario is not None and not df_diario.empty:
+            pdf.add_page()
+            pdf.seccion_titulo("Desglose Diario Detallado del Periodo")
+
+            w_dia = [40, 70, 30, 28, 28, 30]
+            pdf.set_fill_color(210, 210, 215)
+            pdf.set_text_color(50, 50, 50)
+            pdf.set_font("Helvetica", "B", 8)
+
+            headers_dia = ['MES', 'VEHICULO / PLACA', 'FECHA', '1RA SALIDA', 'ULT ENTRADA', 'TIEMPO DIARIO']
+            for i, h in enumerate(headers_dia):
+                pdf.cell(w_dia[i], 8, safestr(h), border=1, align="C", fill=True)
+            pdf.ln()
+
+            pdf.set_font("Helvetica", "", 8)
+            last_mes_d = None
+            for _, row in df_diario.iterrows():
+                mes_actual = row.get('Mes', '')
+                mes_display = safestr(mes_actual) if mes_actual != last_mes_d else ""
+                if mes_display: last_mes_d = mes_actual
+
+                fecha_str = row['Fecha'].strftime('%d/%m/%Y') if hasattr(row['Fecha'], 'strftime') else str(row['Fecha'])
+
+                fill = mes_display != ""
+                pdf.set_fill_color(240, 248, 255) if fill else pdf.set_fill_color(255, 255, 255)
+                pdf.set_text_color(0, 0, 0)
+
+                if mes_display: pdf.set_font("Helvetica", "B", 8)
+                pdf.cell(w_dia[0], 6, mes_display.upper(), border=1, align="L", fill=fill)
+                pdf.set_font("Helvetica", "", 8)
+
+                pdf.cell(w_dia[1], 6, safestr(row['Vehículo / Placa'])[:40], border=1, align="L", fill=fill)
+                pdf.cell(w_dia[2], 6, fecha_str, border=1, align="C", fill=fill)
+                pdf.cell(w_dia[3], 6, safestr(row['Primera Salida']), border=1, align="C", fill=fill)
+                pdf.cell(w_dia[4], 6, safestr(row['Última Entrada']), border=1, align="C", fill=fill)
+
+                if row['Tiempo Diario'] == "00:00:00": pdf.set_text_color(180, 180, 180)
+                pdf.cell(w_dia[5], 6, safestr(row['Tiempo Diario']), border=1, align="C", fill=fill)
+                pdf.set_text_color(0, 0, 0)
+                pdf.ln()
+    else:
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 10, "Sin datos disponibles.", border=0, ln=True)
+
     return finalizar_pdf(pdf)
 
 def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
@@ -2567,74 +2727,3 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
     except Exception as e:
         print(f"Error al leer desde GCS: {e}")
         return None
-
-
-
-
-# ==============================================================================
-# REPORTE EJECUTIVO MENSUAL - AUDITORÍA DE FLOTA
-# ==============================================================================
-def generar_pdf_mensual_tiempos(df_resumen, f_in, f_out):
-    try:
-        from fpdf import FPDF
-    except ImportError:
-        return b""
-        
-    class PDF(FPDF):
-        def header(self):
-            if os.path.exists('logo.png'):
-                try: self.image('logo.png', 10, 6, 35)
-                except: pass
-            self.set_x(50)
-            self.set_font("Helvetica", "B", 14)
-            self.cell(0, 10, "REPORTE EJECUTIVO MENSUAL - AUDITORIA VEHICULAR", ln=True, align="C")
-            self.set_font("Helvetica", "", 10)
-            fecha_str = f"Periodo Analizado: {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}"
-            self.set_x(50)
-            self.cell(0, 6, fecha_str, ln=True, align="C")
-            self.ln(10)
-
-        def footer(self):
-            self.set_y(-15)
-            self.set_text_color(150, 150, 150)
-            self.set_font("Helvetica", "I", 8)
-            self.cell(0, 10, f"Página {self.page_no()}", align="C")
-
-    pdf = PDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    
-    if df_resumen is None or df_resumen.empty:
-        pdf.cell(0, 10, "No hay datos para este mes.", ln=True)
-    else:
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(225, 225, 225)
-        
-        cols = ['TECNICOS', 'Motor Encendido', 'En movimiento', 'Ralenti', 'Distancia(km)']
-        valid_cols = [c for c in cols if c in df_resumen.columns]
-        
-        if not valid_cols:
-            valid_cols = df_resumen.columns[:5].tolist()
-            
-        col_width = 190 / len(valid_cols)
-        
-        for c in valid_cols:
-            titulo = safestr(str(c)).replace("Encendido", "Enc.").replace("movimiento", "Mov.")
-            pdf.cell(col_width, 8, titulo[:20], border=1, fill=True, align="C")
-        pdf.ln()
-        
-        pdf.set_font("Helvetica", "", 8)
-        for _, row in df_resumen.iterrows():
-            for c in valid_cols:
-                val = safestr(str(row.get(c, '')))
-                pdf.cell(col_width, 7, val[:25], border=1, align="C")
-            pdf.ln()
-
-    fd, path = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    pdf.output(path)
-    with open(path, "rb") as f:
-        data = f.read()
-    os.remove(path)
-    return data
-
