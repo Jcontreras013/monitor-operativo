@@ -260,54 +260,68 @@ def mostrar_auditoria(es_movil=False, conn=None):
             # ==============================================================================
             # CRUCE MENSUAL GERENCIAL (PEDIDO POR EL USUARIO)
             # ==============================================================================
-            elif tipo_reporte == "🗓️ Reporte Mensual Consolidado":
-                st.markdown("### 📊 Cruce Mensual: GPS vs Nube (Sheet1)")
-                st.info("Este reporte cruza el historial de Zonas/Rutas del GPS con la producción de la **Sheet1** en la nube.")
+elif tipo_reporte == "🗓️ Reporte Mensual Consolidado":
+                st.markdown("### 📊 DASHBOARD GERENCIAL: CRUCE OPERATIVO MENSUAL")
+                st.info("Este módulo cruza el **Informe de Zonas y Rutas** con la **Producción en la Nube (Sheet1)**.")
                 
-                # Paso 1: Sincronizar Sheet1
-                if st.button("🔍 1. Sincronizar Producción de la Nube (Sheet1)", use_container_width=True):
-                    with st.spinner("Conectando con Google Drive..."):
+                # --- PASO 1: SINCRONIZACIÓN ---
+                if st.button("🔄 1. Sincronizar Producción de la Nube (Sheet1)", use_container_width=True, type="primary"):
+                    with st.spinner("Leyendo base de datos en la nube..."):
                         try:
                             df_nube_val = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                             if not df_nube_val.empty:
                                 st.session_state['df_nube_sheet1'] = df_nube_val
-                                st.success("✅ Datos de Sheet1 cargados correctamente.")
+                                st.success("✅ ¡Datos de producción sincronizados!")
+                                time.sleep(1)
                                 st.rerun()
                         except Exception as e: st.error(f"Error nube: {e}")
                 
-                # Paso 2: Subir archivo GPS y cruzar
+                # --- PASO 2: CARGA Y CRUCE ---
                 if 'df_nube_sheet1' in st.session_state:
-                    st.success("✔ Base de datos en la nube (Actividades) lista.")
-                    archivo_zonas = st.file_uploader("📥 2. Sube el archivo 'InformeZonasRutas' (Excel/CSV)", type=['csv', 'xlsx'], key="zonas_mensual")
+                    archivo_zonas = st.file_uploader("📥 2. Sube el archivo 'InformeZonasRutas'", type=['csv', 'xlsx'], key="zonas_mensual")
                     
                     if archivo_zonas:
-                        with st.spinner("🧠 Calculando Eficiencia y Horas Semanales..."):
+                        with st.spinner("🧠 Generando Inteligencia de Negocios..."):
                             df_zonas_raw = read_file_robust(archivo_zonas)
-                            # Llamada a la función en tools.py
-                            df_cruce_res, msg_c = procesar_mensual_zonas_con_nube(df_zonas_raw, st.session_state['df_nube_sheet1'])
+                            # LLAMADA AL MOTOR DE HERRAMIENTAS
+                            df_final, kpis, msg = procesar_mensual_zonas_con_nube(df_zonas_raw, st.session_state['df_nube_sheet1'])
                             
-                            if df_cruce_res is not None:
-                                c1, c2 = st.columns(2)
-                                with c1:
-                                    st.markdown("#### 🏠 Rendimiento Residencial")
-                                    st.dataframe(df_cruce_res[df_cruce_res['SEGMENTO_PRO'] == 'RESIDENCIAL'].drop(columns=['SEGMENTO_PRO']), hide_index=True)
-                                with c2:
-                                    st.markdown("#### 🏢 Rendimiento PLEX")
-                                    st.dataframe(df_cruce_res[df_cruce_res['SEGMENTO_PRO'] == 'PLEX'].drop(columns=['SEGMENTO_PRO']), hide_index=True)
+                            if df_final is not None:
+                                # --- VISTA DE KPIs PARA EL JEFE ---
+                                st.markdown("#### 📈 Indicadores Clave de Desempeño (Promedios)")
+                                c1, c2, c3, c4 = st.columns(4)
+                                with c1: st.metric("Eficiencia Residencial", f"{kpis['ef_res']} pts/hr")
+                                with c2: st.metric("Eficiencia PLEX", f"{kpis['ef_plex']} pts/hr")
+                                with c3: st.metric("Órdenes Totales", kpis['total_ord'])
+                                with c4: st.metric("Horas Calle Totales", f"{kpis['total_hrs']}h")
+
+                                # --- DESGLOSE POR SEGMENTO ---
+                                tab_res, tab_plex = st.tabs(["🏠 TÉCNICOS RESIDENCIAL", "🏢 TÉCNICOS PLEX"])
                                 
+                                with tab_res:
+                                    st.markdown("##### Detalle de Producción y Horas Semanales")
+                                    df_res_view = df_final[df_final['SEGMENTO_PRO'] == 'RESIDENCIAL'].drop(columns=['SEGMENTO_PRO'])
+                                    st.dataframe(df_res_view, use_container_width=True, hide_index=True)
+                                
+                                with tab_plex:
+                                    st.markdown("##### Detalle de Producción y Horas Semanales")
+                                    df_plex_view = df_final[df_final['SEGMENTO_PRO'] == 'PLEX'].drop(columns=['SEGMENTO_PRO'])
+                                    st.dataframe(df_plex_view, use_container_width=True, hide_index=True)
+
+                                # --- BOTÓN DE DESCARGA GERENCIAL ---
                                 st.divider()
-                                pdf_final = generar_pdf_gerencial_mensual_premium(df_cruce_res, "Resumen Mensual Gerencial")
+                                pdf_data = generar_pdf_gerencial_mensual_premium(df_final, kpis, "Análisis de Productividad Mensual")
                                 st.download_button(
-                                    label="📥 DESCARGAR REPORTE GERENCIAL PREMIUM (PDF)",
-                                    data=pdf_final,
-                                    file_name=f"Reporte_Mensual_Operativo.pdf",
+                                    label="📥 DESCARGAR REPORTE PARA GERENCIA (PDF)",
+                                    data=pdf_data,
+                                    file_name=f"Reporte_Gerencial_{get_hn_time().strftime('%B_%Y')}.pdf",
                                     mime="application/pdf",
                                     use_container_width=True,
                                     type="primary"
                                 )
-                            else: st.error(f"❌ Error en el cruce: {msg_c}")
+                            else: st.error(f"❌ Error: {msg}")
                 else:
-                    st.warning("Primero debes sincronizar los datos de la nube en el botón de arriba.")
+                    st.warning("Paso 1 requerido: Sincroniza la información de la nube antes de subir el archivo.")
 
     # --- PESTAÑA 2: TELEMETRÍA (SIN CAMBIOS) ---
     with tab_velocidad:
