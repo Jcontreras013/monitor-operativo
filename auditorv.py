@@ -17,7 +17,8 @@ from tools import (
     procesar_matriz_telemetria,
     generar_pdf_auditoria_tiempos,
     generar_pdf_semanal_tiempos,
-    generar_pdf_telemetria_matriz
+    generar_pdf_telemetria_matriz,
+    generar_pdf_mensual_tiempos
 )
 
 # --- IMPORTACIONES BLINDADAS ---
@@ -289,9 +290,12 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     del st.session_state['df_gps_memoria']
                 st.rerun()
                 
-        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático"], horizontal=True)
+        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático", "🗓️ Reporte Mensual"], horizontal=True)
         if tipo_reporte == "📅 Reporte Semanal Automático":
             st.info("💡 El sistema detectará automáticamente los días en el archivo o historial de la Nube para generar el resumen de la semana.")
+        elif tipo_reporte == "🗓️ Reporte Mensual":
+            st.info("💡 El reporte mensual consolidará toda la data del mes para un informe ejecutivo, conciso y directo a los totales de flota.")
+            
 
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
@@ -351,6 +355,68 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     with col_s1:
                         st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
                 else: st.warning(f"⚠️ {msg_sem}")
+
+    elif tipo_reporte == "🗓️ Reporte Mensual":
+                with st.spinner("⚙️ Escaneando fechas y consolidando totales mensuales..."):
+                    # Utilizamos la función robusta que suma y agrupa toda la data del mes
+                    res_diario, res_men, msg_men, f_in, f_out = procesar_auditoria_semanal(df_gps_crudo)
+                    
+                    if res_men is not None:
+                        st.success(f"✅ Análisis Mensual completado (Del {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}).")
+                        
+                        st.markdown("#### 📊 Consolidado Ejecutivo Mensual por Técnico")
+                        
+                        # Cajas de KPI
+                        col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+                        with col_kpi1:
+                            st.metric("👥 Técnicos Auditados", len(res_men))
+                        with col_kpi2:
+                            total_secs = 0
+                            if 'Motor Encendido' in res_men.columns:
+                                for val in res_men['Motor Encendido']:
+                                    try: total_secs += time_to_sec_robust(val)
+                                    except: pass
+                            st.metric("⏱️ Total Horas Motor", f"{total_secs // 3600} hrs")
+                        with col_kpi3:
+                            total_sec_ral = 0
+                            if 'Ralenti' in res_men.columns:
+                                for val in res_men['Ralenti']:
+                                    try: total_sec_ral += time_to_sec_robust(val)
+                                    except: pass
+                            st.metric("⛽ Total Horas Ralentí", f"{total_sec_ral // 3600} hrs")
+                            
+                        st.dataframe(res_men, use_container_width=True, hide_index=True)
+                        
+                        try:
+                            import plotly.express as px
+                            if 'Distancia(km)' in res_men.columns:
+                                fig_men = px.bar(
+                                    res_men.sort_values('Distancia(km)', ascending=False).head(15), 
+                                    x='TECNICOS', 
+                                    y='Distancia(km)', 
+                                    title="Top 15 Técnicos con Mayor Distancia Recorrida en el Mes (km)", 
+                                    template="plotly_dark", 
+                                    color='Distancia(km)', 
+                                    color_continuous_scale="Blues"
+                                )
+                                st.plotly_chart(fig_men, use_container_width=True)
+                        except:
+                            pass
+                        
+                        col_m1, col_m2 = st.columns(2)
+                        with col_m1:
+                            st.download_button(
+                                label="🚀 Descargar Reporte Ejecutivo Mensual (PDF)", 
+                                data=generar_pdf_mensual_tiempos(res_men, f_in, f_out), 
+                                file_name=f"Auditoria_Mensual_{f_in.strftime('%Y%m')}.pdf", 
+                                mime="application/pdf", 
+                                use_container_width=True, 
+                                type="primary"
+                            )
+                    else: 
+                        st.warning(f"⚠️ {msg_men}")
+
+    
 
     # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
