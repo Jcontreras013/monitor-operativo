@@ -290,7 +290,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     del st.session_state['df_gps_memoria']
                 st.rerun()
                 
-        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático", "🗓️ Reporte Mensual"], horizontal=True)
+      tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático", "🗓️ Reporte Mensual"], horizontal=True)
         if tipo_reporte == "📅 Reporte Semanal Automático":
             st.info("💡 El sistema detectará automáticamente los días en el archivo o historial de la Nube para generar el resumen de la semana.")
         elif tipo_reporte == "🗓️ Reporte Mensual":
