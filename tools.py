@@ -2727,42 +2727,73 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
     except Exception as e:
         print(f"Error al leer desde GCS: {e}")
         return None
-
-def procesar_cruce_operativo_mensual(df_gps, df_actividades):
-    """
-    Cruza el consolidado GPS con el reporte de actividades para sacar eficiencia.
-    Se asume que df_actividades tiene: 'TECNICO', 'FECHA', 'TIPO_ORDEN', 'TIEMPO_MINUTOS', 'COMENTARIO_ATRASO'
-    """
+        
+# ==============================================================================
+# CRUCE INTELIGENTE: GPS MENSUAL VS REPORTE DE ACTIVIDADES
+# ==============================================================================
+def procesar_cruce_operativo_mensual(df_gps_resumen, df_act):
+    import pandas as pd
     try:
-        # 1. Limpiar y unificar nombres y fechas para que el cruce no falle
-        df_actividades['TECNICO'] = df_actividades['TECNICO'].astype(str).str.upper().str.strip()
-        df_actividades['FECHA'] = pd.to_datetime(df_actividades['FECHA']).dt.date
-        df_gps['FECHA'] = pd.to_datetime(df_gps['FECHA']).dt.date
+        # 1. Detectar columnas dinámicamente sin importar cómo se llamen exactamente
+        col_tec = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'NOMBRE' in str(c).upper()), None)
+        col_tipo = next((c for c in df_act.columns if 'TIPO' in str(c).upper() or 'ORDEN' in str(c).upper() or 'TAREA' in str(c).upper()), None)
+        col_comentario = next((c for c in df_act.columns if 'COMENTARIO' in str(c).upper() or 'ATRASO' in str(c).upper() or 'OBSERVACION' in str(c).upper()), None)
+        col_tiempo = next((c for c in df_act.columns if 'TIEMPO' in str(c).upper() or 'MINUTOS' in str(c).upper() or 'DURACION' in str(c).upper()), None)
         
-        # 2. Agrupar Actividades por Técnico y Fecha
-        # Sumamos el tiempo invertido y contamos las órdenes por tipo
-        resumen_act = df_actividades.groupby(['TECNICO', 'FECHA']).agg(
-            Total_Ordenes=('TIPO_ORDEN', 'count'),
-            Minutos_Trabajados=('TIEMPO_MINUTOS', 'sum'),
-            Ordenes_Residencial=('TIPO_ORDEN', lambda x: (x == 'RESIDENCIAL').sum()),
-            Ordenes_Plex=('TIPO_ORDEN', lambda x: (x == 'PLEX').sum())
-        ).reset_index()
+        if not col_tec: 
+            return None, None, "El archivo 'rep_actividades' no tiene una columna reconocible de TECNICO."
 
-        # 3. Cruzar con el GPS
-        # Hacemos un LEFT JOIN: A cada registro del GPS le pegamos lo que hizo en actividades
-        df_cruce = pd.merge(df_gps, resumen_act, on=['TECNICO', 'FECHA'], how='left')
+        # 2. Estandarizar nombres para que el cruce sea exacto
+        df_act['TEC_KEY'] = df_act[col_tec].astype(str).str.upper().str.strip()
+        df_gps_resumen['TEC_KEY'] = df_gps_resumen['TECNICOS'].astype(str).str.upper().str.strip()
+
+        # 3. Agrupar la productividad total
+        agrupado = df_act.groupby('TEC_KEY').agg(Total_Ordenes=(col_tec, 'count')).reset_index()
+
+        # Separar PLEX y Residencial
+        if col_tipo:
+            res_counts = df_act[df_act[col_tipo].astype(str).str.upper().str.contains('RESIDENCIAL', na=False)].groupby('TEC_KEY').size().reset_index(name='Residenciales')
+            plex_counts = df_act[df_act[col_tipo].astype(str).str.upper().str.contains('PLEX', na=False)].groupby('TEC_KEY').size().reset_index(name='Plex')
+            agrupado = pd.merge(agrupado, res_counts, on='TEC_KEY', how='left')
+            agrupado = pd.merge(agrupado, plex_counts, on='TEC_KEY', how='left')
+            agrupado.fillna(0, inplace=True)
+
+        # Sumar Tiempos Reales de Trabajo
+        if col_tiempo:
+            df_act[col_tiempo] = pd.to_numeric(df_act[col_tiempo], errors='coerce').fillna(0)
+            tiempo_sum = df_act.groupby('TEC_KEY')[col_tiempo].sum().reset_index(name='Minutos_Actividad')
+            agrupado = pd.merge(agrupado, tiempo_sum, on='TEC_KEY', how='left')
+
+        # 4. Cruzar Ambos Mundos (GPS + Actividades)
+        df_final = pd.merge(df_gps_resumen, agrupado, on='TEC_KEY', how='left')
+        df_final.fillna({'Total_Ordenes': 0, 'Residenciales': 0, 'Plex': 0, 'Minutos_Actividad': 0}, inplace=True)
+
+        # 5. Calcular Eficiencia (% de Motor convertido en Trabajo)
+        if col_tiempo and 'Motor Encendido' in df_final.columns:
+            def get_hrs(val):
+                try: 
+                    from tools import time_to_sec_robust
+                    return time_to_sec_robust(val) / 3600
+                except: return 0
+            
+            df_final['Horas_Motor'] = df_final['Motor Encendido'].apply(get_hrs)
+            df_final['Horas_Trabajo'] = df_final['Minutos_Actividad'] / 60
+            
+            df_final['% Productividad'] = (df_final['Horas_Trabajo'] / df_final['Horas_Motor'].replace(0, 0.001)) * 100
+            df_final['% Productividad'] = df_final['% Productividad'].apply(lambda x: min(round(x, 1), 100))
+            
+            df_final['% Productividad'] = df_final['% Productividad'].astype(str) + '%'
+            df_final.drop(columns=['Horas_Motor', 'Horas_Trabajo'], inplace=True)
+
+        df_final.drop(columns=['TEC_KEY'], inplace=True)
+
+        # 6. Extraer Tabla Exclusiva de Atrasos para Auditoría
+        df_atrasos = pd.DataFrame()
+        if col_comentario:
+            mask = df_act[col_comentario].notna() & (df_act[col_comentario].astype(str).str.strip() != '') & (~df_act[col_comentario].astype(str).str.upper().isin(['NAN', 'N/A', 'NONE']))
+            df_atrasos = df_act[mask].copy()
+
+        return df_final, df_atrasos, "Cruce exitoso"
         
-        # Llenar vacíos con ceros (días que anduvo en la calle pero no hizo órdenes)
-        df_cruce.fillna({'Total_Ordenes': 0, 'Minutos_Trabajados': 0, 'Ordenes_Residencial': 0, 'Ordenes_Plex': 0}, inplace=True)
-        
-        # 4. Calcular el Porcentaje de Efectividad
-        # Asumiendo que df_gps tiene una columna 'Minutos_Motor'
-        df_cruce['%_Efectividad'] = (df_cruce['Minutos_Trabajados'] / df_cruce['Minutos_Motor']) * 100
-        df_cruce['%_Efectividad'] = df_cruce['%_Efectividad'].apply(lambda x: min(x, 100)) # Topar al 100%
-        
-        # 5. Filtrar la tabla de justificaciones (Atípicos)
-        df_atrasos = df_actividades[df_actividades['COMENTARIO_ATRASO'].notna() & (df_actividades['COMENTARIO_ATRASO'] != '')]
-        
-        return df_cruce, df_atrasos, "Cruce exitoso"
     except Exception as e:
-        return None, None, f"Error en el cruce de datos: {e}"
+        return None, None, f"Error al procesar el cruce: {e}"
