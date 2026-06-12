@@ -297,68 +297,52 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 
         tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático", "🗓️ Reporte Mensual Consolidado"], horizontal=True)
 
-        if tipo_reporte == "🗓️ Reporte Mensual Consolidado":
-            st.markdown("### 📊 DASHBOARD GERENCIAL: CRUCE OPERATIVO MENSUAL")
-            st.info("Este módulo cruza el **Informe de Zonas y Rutas** con la **Producción en la Nube (Sheet1)**.")
-            
-            # --- PASO 1: SINCRONIZACIÓN ---
-            if st.button("🔄 1. Sincronizar Producción de la Nube (Sheet1)", use_container_width=True, type="primary"):
-                with st.spinner("Leyendo base de datos en la nube..."):
-                    try:
-                        df_nube_val = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                        if not df_nube_val.empty:
-                            st.session_state['df_nube_sheet1'] = df_nube_val
-                            st.success("✅ ¡Datos de producción sincronizados!")
-                            time.sleep(1)
-                            st.rerun()
-                    except Exception as e: st.error(f"Error nube: {e}")
-            
-            # --- PASO 2: CARGA Y CRUCE ---
-            if 'df_nube_sheet1' in st.session_state:
-                archivo_zonas = st.file_uploader("📥 2. Sube el archivo 'InformeZonasRutas'", type=['csv', 'xlsx'], key="zonas_mensual")
+elif tipo_reporte == "🗓️ Reporte Mensual Consolidado":
+                st.markdown("### 📊 DASHBOARD GERENCIAL: CRUCE DE ARCHIVOS")
+                st.warning("Este proceso ignora la nube y usa archivos cargados directamente para mayor precisión.")
                 
-                if archivo_zonas:
-                    with st.spinner("🧠 Generando Inteligencia de Negocios..."):
-                        df_zonas_raw = read_file_robust(archivo_zonas)
-                        # LLAMADA AL MOTOR DE HERRAMIENTAS (Debes tener esto en tools.py)
-                        df_final, kpis, msg = procesar_mensual_zonas_con_nube(df_zonas_raw, st.session_state['df_nube_sheet1'])
-                        
-                        if df_final is not None:
-                            # --- VISTA DE KPIs PARA EL JEFE ---
-                            st.markdown("#### 📈 Indicadores Clave de Desempeño (Promedios)")
-                            c1, c2, c3, c4 = st.columns(4)
-                            with c1: st.metric("Eficiencia Residencial", f"{kpis['ef_res']} pts/hr")
-                            with c2: st.metric("Eficiencia PLEX", f"{kpis['ef_plex']} pts/hr")
-                            with c3: st.metric("Órdenes Totales", kpis['total_ord'])
-                            with c4: st.metric("Horas Calle Totales", f"{kpis['total_hrs']}h")
-
-                            # --- DESGLOSE POR SEGMENTO ---
-                            tab_res, tab_plex = st.tabs(["🏠 TÉCNICOS RESIDENCIAL", "🏢 TÉCNICOS PLEX"])
+                c_up1, c_up2 = st.columns(2)
+                with c_up1:
+                    archivo_zonas = st.file_uploader("1️⃣ Sube 'InformeZonasRutas' (GPS)", type=['csv', 'xlsx'], key="u_z")
+                with c_up2:
+                    archivo_act = st.file_uploader("2️⃣ Sube 'rep_actividades' (Excel)", type=['xlsx'], key="u_a")
+                
+                if archivo_zonas and archivo_act:
+                    if st.button("🚀 GENERAR CRUCE DE RENDIMIENTO MENSUAL", use_container_width=True, type="primary"):
+                        with st.spinner("🧠 Analizando miles de registros..."):
+                            df_z_raw = read_file_robust(archivo_zonas)
+                            df_a_raw = read_file_robust(archivo_act)
                             
-                            with tab_res:
-                                st.markdown("##### Detalle de Producción y Horas Semanales")
-                                df_res_view = df_final[df_final['SEGMENTO_PRO'] == 'RESIDENCIAL'].drop(columns=['SEGMENTO_PRO'])
-                                st.dataframe(df_res_view, use_container_width=True, hide_index=True)
+                            # LLAMADA AL NUEVO MOTOR DE CRUCE DIRECTO
+                            df_res, kpis, msg = procesar_mensual_cruce_directo(df_z_raw, df_a_raw)
                             
-                            with tab_plex:
-                                st.markdown("##### Detalle de Producción y Horas Semanales")
-                                df_plex_view = df_final[df_final['SEGMENTO_PRO'] == 'PLEX'].drop(columns=['SEGMENTO_PRO'])
-                                st.dataframe(df_plex_view, use_container_width=True, hide_index=True)
+                            if df_res is not None and not df_res.empty:
+                                # --- VISTA DE KPIs ---
+                                st.markdown("#### 📈 Indicadores Clave de Desempeño")
+                                m1, m2, m3, m4 = st.columns(4)
+                                m1.metric("Eficiencia RES", f"{kpis['ef_res']} pts/hr")
+                                m2.metric("Eficiencia PLEX", f"{kpis['ef_plex']} pts/hr")
+                                m3.metric("Órdenes Totales", kpis['total_ord'])
+                                m4.metric("Horas Calle", f"{kpis['total_hrs']}h")
 
-                            # --- BOTÓN DE DESCARGA GERENCIAL ---
-                            st.divider()
-                            pdf_data = generar_pdf_gerencial_mensual_premium(df_final, kpis, f"Análisis de Productividad - {get_hn_time().strftime('%B %Y')}")
-                            st.download_button(
-                                label="📥 DESCARGAR REPORTE PARA GERENCIA (PDF)",
-                                data=pdf_data,
-                                file_name=f"Reporte_Gerencial_{get_hn_time().strftime('%B_%Y')}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                                type="primary"
-                            )
-                        else: st.error(f"❌ Error: {msg}")
-            else:
-                st.warning("Paso 1 requerido: Sincroniza la información de la nube antes de subir el archivo.")
+                                # --- TABLAS ---
+                                t_res, t_plex = st.tabs(["🏠 TÉCNICOS RESIDENCIAL", "🏢 TÉCNICOS PLEX"])
+                                with t_res:
+                                    st.dataframe(df_res[df_res['SEGMENTO_PRO'] == 'RESIDENCIAL'].drop(columns=['SEGMENTO_PRO']), use_container_width=True, hide_index=True)
+                                with t_plex:
+                                    st.dataframe(df_res[df_res['SEGMENTO_PRO'] == 'PLEX'].drop(columns=['SEGMENTO_PRO']), use_container_width=True, hide_index=True)
+
+                                # --- PDF ---
+                                st.divider()
+                                pdf_data = generar_pdf_gerencial_mensual_premium(df_res, kpis, "Resumen Operativo Mensual")
+                                st.download_button("📥 DESCARGAR INFORME GERENCIAL (PDF)", data=pdf_data, file_name="Reporte_Gerencial.pdf", mime="application/pdf", use_container_width=True)
+                            
+                            elif df_res is not None and df_res.empty:
+                                st.error("❌ Los archivos cargaron bien, pero no se encontró ningún código 'MX' en común para cruzarlos. Revisa que la columna MX o los nombres tengan el formato MX-00.")
+                            else:
+                                st.error(f"❌ Error en el proceso: {msg}")
+                else:
+                    st.info("Por favor sube ambos archivos para habilitar el botón de procesamiento.")
         
         else:
             # Lógica para Diario y Semanal Automático
