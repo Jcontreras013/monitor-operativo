@@ -2568,3 +2568,73 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
         print(f"Error al leer desde GCS: {e}")
         return None
 
+
+
+
+# ==============================================================================
+# REPORTE EJECUTIVO MENSUAL - AUDITORÍA DE FLOTA
+# ==============================================================================
+def generar_pdf_mensual_tiempos(df_resumen, f_in, f_out):
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        return b""
+        
+    class PDF(FPDF):
+        def header(self):
+            if os.path.exists('logo.png'):
+                try: self.image('logo.png', 10, 6, 35)
+                except: pass
+            self.set_x(50)
+            self.set_font("Helvetica", "B", 14)
+            self.cell(0, 10, "REPORTE EJECUTIVO MENSUAL - AUDITORIA VEHICULAR", ln=True, align="C")
+            self.set_font("Helvetica", "", 10)
+            fecha_str = f"Periodo Analizado: {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}"
+            self.set_x(50)
+            self.cell(0, 6, fecha_str, ln=True, align="C")
+            self.ln(10)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_text_color(150, 150, 150)
+            self.set_font("Helvetica", "I", 8)
+            self.cell(0, 10, f"Página {self.page_no()}", align="C")
+
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    if df_resumen is None or df_resumen.empty:
+        pdf.cell(0, 10, "No hay datos para este mes.", ln=True)
+    else:
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(225, 225, 225)
+        
+        cols = ['TECNICOS', 'Motor Encendido', 'En movimiento', 'Ralenti', 'Distancia(km)']
+        valid_cols = [c for c in cols if c in df_resumen.columns]
+        
+        if not valid_cols:
+            valid_cols = df_resumen.columns[:5].tolist()
+            
+        col_width = 190 / len(valid_cols)
+        
+        for c in valid_cols:
+            titulo = safestr(str(c)).replace("Encendido", "Enc.").replace("movimiento", "Mov.")
+            pdf.cell(col_width, 8, titulo[:20], border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in df_resumen.iterrows():
+            for c in valid_cols:
+                val = safestr(str(row.get(c, '')))
+                pdf.cell(col_width, 7, val[:25], border=1, align="C")
+            pdf.ln()
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+    with open(path, "rb") as f:
+        data = f.read()
+    os.remove(path)
+    return data
+
