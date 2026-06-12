@@ -2727,3 +2727,42 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
     except Exception as e:
         print(f"Error al leer desde GCS: {e}")
         return None
+
+def procesar_cruce_operativo_mensual(df_gps, df_actividades):
+    """
+    Cruza el consolidado GPS con el reporte de actividades para sacar eficiencia.
+    Se asume que df_actividades tiene: 'TECNICO', 'FECHA', 'TIPO_ORDEN', 'TIEMPO_MINUTOS', 'COMENTARIO_ATRASO'
+    """
+    try:
+        # 1. Limpiar y unificar nombres y fechas para que el cruce no falle
+        df_actividades['TECNICO'] = df_actividades['TECNICO'].astype(str).str.upper().str.strip()
+        df_actividades['FECHA'] = pd.to_datetime(df_actividades['FECHA']).dt.date
+        df_gps['FECHA'] = pd.to_datetime(df_gps['FECHA']).dt.date
+        
+        # 2. Agrupar Actividades por Técnico y Fecha
+        # Sumamos el tiempo invertido y contamos las órdenes por tipo
+        resumen_act = df_actividades.groupby(['TECNICO', 'FECHA']).agg(
+            Total_Ordenes=('TIPO_ORDEN', 'count'),
+            Minutos_Trabajados=('TIEMPO_MINUTOS', 'sum'),
+            Ordenes_Residencial=('TIPO_ORDEN', lambda x: (x == 'RESIDENCIAL').sum()),
+            Ordenes_Plex=('TIPO_ORDEN', lambda x: (x == 'PLEX').sum())
+        ).reset_index()
+
+        # 3. Cruzar con el GPS
+        # Hacemos un LEFT JOIN: A cada registro del GPS le pegamos lo que hizo en actividades
+        df_cruce = pd.merge(df_gps, resumen_act, on=['TECNICO', 'FECHA'], how='left')
+        
+        # Llenar vacíos con ceros (días que anduvo en la calle pero no hizo órdenes)
+        df_cruce.fillna({'Total_Ordenes': 0, 'Minutos_Trabajados': 0, 'Ordenes_Residencial': 0, 'Ordenes_Plex': 0}, inplace=True)
+        
+        # 4. Calcular el Porcentaje de Efectividad
+        # Asumiendo que df_gps tiene una columna 'Minutos_Motor'
+        df_cruce['%_Efectividad'] = (df_cruce['Minutos_Trabajados'] / df_cruce['Minutos_Motor']) * 100
+        df_cruce['%_Efectividad'] = df_cruce['%_Efectividad'].apply(lambda x: min(x, 100)) # Topar al 100%
+        
+        # 5. Filtrar la tabla de justificaciones (Atípicos)
+        df_atrasos = df_actividades[df_actividades['COMENTARIO_ATRASO'].notna() & (df_actividades['COMENTARIO_ATRASO'] != '')]
+        
+        return df_cruce, df_atrasos, "Cruce exitoso"
+    except Exception as e:
+        return None, None, f"Error en el cruce de datos: {e}"
