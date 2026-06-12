@@ -14,12 +14,12 @@ from tools import (
     time_to_sec_robust,
     procesar_auditoria_vehiculos,
     procesar_auditoria_semanal,
+    procesar_auditoria_mensual,
     procesar_matriz_telemetria,
     generar_pdf_auditoria_tiempos,
     generar_pdf_semanal_tiempos,
-    generar_pdf_telemetria_matriz,
     generar_pdf_mensual_tiempos,
-    procesar_cruce_operativo_mensual
+    generar_pdf_telemetria_matriz
 )
 
 # --- IMPORTACIONES BLINDADAS ---
@@ -36,7 +36,7 @@ except ImportError:
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+    from googleapiclient.http import MediaIoBaseUpload
     DRIVE_DISPONIBLE = True
 except ImportError:
     DRIVE_DISPONIBLE = False
@@ -47,7 +47,7 @@ API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE CONEXIÓN A GOOGLE DRIVE (RESTAURADO Y MEJORADO)
+# MOTOR DE CONEXIÓN A GOOGLE DRIVE (RESTAURADO)
 # ==============================================================================
 def subir_archivo_drive(file_buffer, file_name, mimetype):
     """Sube un archivo a Google Drive usando la ruta directa."""
@@ -89,46 +89,6 @@ def subir_archivo_drive(file_buffer, file_name, mimetype):
         return file.get('webViewLink'), None
     except Exception as e:
         return None, str(e)
-
-def descargar_excel_drive_por_nombre(nombre_archivo="rep_actividades"):
-    """Busca y descarga el archivo rep_actividades automáticamente desde Drive."""
-    try:
-        if "connections" not in st.secrets or "gsheets" not in st.secrets["connections"]:
-            return None
-
-        creds_dict = dict(st.secrets["connections"]["gsheets"])
-        if '\\n' in creds_dict.get('private_key', ''):
-            creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
-
-        credentials = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=['https://www.googleapis.com/auth/drive.readonly']
-        )
-        service = build('drive', 'v3', credentials=credentials)
-        
-        query = f"name contains '{nombre_archivo}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
-        resultados = service.files().list(q=query, spaces='drive', fields='files(id, name)', orderBy='modifiedTime desc').execute()
-        archivos = resultados.get('files', [])
-        
-        if not archivos: return None
-        
-        file_id = archivos[0]['id']
-        file_name = archivos[0]['name']
-        
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while done is False:
-            status, done = downloader.next_chunk()
-        fh.seek(0)
-        
-        if file_name.endswith('.csv'):
-            return pd.read_csv(fh)
-        else:
-            return pd.read_excel(fh)
-    except Exception as e:
-        st.error(f"Error accediendo a Drive para descarga: {e}")
-        return None
 
 # ==============================================================================
 # DATOS DEL CALENDARIO DE INSPECCIONES
@@ -306,7 +266,7 @@ def generar_pdf_calendario():
 # ==============================================================================
 # PANTALLA VISUAL PRINCIPAL
 # ==============================================================================
-def mostrar_auditoria(es_movil=False, conn=None, df_base=None, *args):
+def mostrar_auditoria(es_movil=False, conn=None):
     col1, col2 = st.columns([1, 4])
     with col1:
         st.write(""); st.markdown("<h1 style='text-align: center;'>🚙</h1>", unsafe_allow_html=True)
@@ -331,11 +291,11 @@ def mostrar_auditoria(es_movil=False, conn=None, df_base=None, *args):
                     del st.session_state['df_gps_memoria']
                 st.rerun()
                 
-        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático", "🗓️ Reporte Mensual"], horizontal=True)
+        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático", "🗓️ Reporte Mensual Consolidado"], horizontal=True)
         if tipo_reporte == "📅 Reporte Semanal Automático":
             st.info("💡 El sistema detectará automáticamente los días en el archivo o historial de la Nube para generar el resumen de la semana.")
-        elif tipo_reporte == "🗓️ Reporte Mensual":
-            st.info("💡 Consolidará la data del mes y cruzará la telemetría automáticamente con el reporte de actividades de Drive.")
+        elif tipo_reporte == "🗓️ Reporte Mensual Consolidado":
+            st.info("💡 El sistema agrupará automáticamente todos los días detectados por mes para generar un consolidado mensual por vehículo.")
 
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
@@ -396,63 +356,22 @@ def mostrar_auditoria(es_movil=False, conn=None, df_base=None, *args):
                         st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), f"Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
                 else: st.warning(f"⚠️ {msg_sem}")
 
-            elif tipo_reporte == "🗓️ Reporte Mensual":
-                with st.spinner("⚙️ Consolidando totales mensuales..."):
-                    res_diario, res_men, msg_men, f_in, f_out = procesar_auditoria_semanal(df_gps_crudo)
-                    
-                    if res_men is not None:
-                        st.success(f"✅ Consolidado de Vehículos Listo (Del {f_in.strftime('%d/%m/%Y')} al {f_out.strftime('%d/%m/%Y')}).")
-                        
-                        # --- INICIO DEL CRUCE AUTOMÁTICO CON DRIVE ---
-                        st.markdown("---")
-                        st.markdown("<h3 style='color: #10B981;'>🔗 Inteligencia Operativa: GPS vs Efectividad de Órdenes</h3>", unsafe_allow_html=True)
-                        
-                        df_actividades = None
-                        if DRIVE_DISPONIBLE:
-                            with st.spinner("Buscando y descargando automáticamente 'rep_actividades' desde Google Drive..."):
-                                df_actividades = descargar_excel_drive_por_nombre("rep_actividades")
-                                
-                        if df_actividades is None or df_actividades.empty:
-                            st.warning("⚠️ No se encontró el archivo 'rep_actividades' en Drive. Súbelo manualmente para auditar la efectividad.")
-                            file_act = st.file_uploader("📂 Subir rep_actividades manual", type=["xlsx", "csv"], key="up_act_manual_mensual")
-                            if file_act: 
-                                df_actividades = pd.read_excel(file_act) if file_act.name.endswith('.xlsx') else pd.read_csv(file_act)
+            elif tipo_reporte == "🗓️ Reporte Mensual Consolidado":
+                with st.spinner("⚙️ Agrupando por mes y procesando consolidado mensual..."):
+                    res_diario_m, res_mes, msg_mes, f_in_m, f_out_m = procesar_auditoria_mensual(df_gps_crudo)
+                if res_mes is not None:
+                    st.success(f"✅ Análisis Mensual completado (Del {f_in_m.strftime('%d/%m/%Y')} al {f_out_m.strftime('%d/%m/%Y')}).")
 
-                        if df_actividades is not None and not df_actividades.empty:
-                            df_cruce, df_atrasos, msg_cruce = procesar_cruce_operativo_mensual(res_men, df_actividades)
-                            
-                            if df_cruce is not None:
-                                st.success("🎯 Cruce Operativo exitoso. Visualizando Productividad:")
-                                if '% Productividad' in df_cruce.columns:
-                                    prom_efectividad = df_cruce['% Productividad'].str.replace('%', '').astype(float).mean()
-                                    st.metric("🏆 Promedio de Flota (% Horas Calle vs Horas en Órdenes)", f"{prom_efectividad:.1f}%")
+                    st.markdown("#### 📅 Desglose Diario por Vehículo (Todo el Periodo)")
+                    st.dataframe(res_diario_m, use_container_width=True, hide_index=True)
 
-                                st.dataframe(df_cruce, use_container_width=True, hide_index=True)
-                                
-                                if df_atrasos is not None and not df_atrasos.empty:
-                                    st.markdown("#### ⚠️ Panel de Atrasos y Justificaciones")
-                                    st.info("Estas son las órdenes que reportaron complicaciones o notas de demora en el mes:")
-                                    cols_show = [c for c in df_atrasos.columns if any(k in str(c).upper() for k in ['TECNICO', 'FECHA', 'TIPO', 'COMENTARIO', 'TIEMPO', 'MINUTOS'])]
-                                    if cols_show:
-                                        st.dataframe(df_atrasos[cols_show], use_container_width=True, hide_index=True)
-                                    else:
-                                        st.dataframe(df_atrasos, use_container_width=True, hide_index=True)
-                            else:
-                                st.error(f"Error en el cruce de datos: {msg_cruce}")
-                                
-                        st.markdown("---")
-                        col_m1, col_m2 = st.columns(2)
-                        with col_m1:
-                            st.download_button(
-                                label="🚀 Descargar Reporte Ejecutivo Mensual (PDF)", 
-                                data=generar_pdf_mensual_tiempos(res_men, f_in, f_out), 
-                                file_name=f"Auditoria_Mensual_{f_in.strftime('%Y%m')}.pdf", 
-                                mime="application/pdf", 
-                                use_container_width=True, 
-                                type="primary"
-                            )
-                    else: 
-                        st.warning(f"⚠️ {msg_men}")
+                    st.markdown("#### 📈 Consolidado Mensual por Vehículo")
+                    st.dataframe(res_mes, use_container_width=True, hide_index=True)
+
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        st.download_button("🚀 Descargar Reporte Mensual (PDF)", generar_pdf_mensual_tiempos(res_diario_m, res_mes, f_in_m, f_out_m), f"Auditoria_Tiempos_Mensual.pdf", "application/pdf", use_container_width=True, type="primary")
+                else: st.warning(f"⚠️ {msg_mes}")
 
     # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
