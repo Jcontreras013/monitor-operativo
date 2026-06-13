@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
+import re
 
 # Importación segura de dependencias desde tools.py
 try:
@@ -17,10 +18,41 @@ try:
 except ImportError as e:
     st.error(f"Error al importar módulos de soporte desde tools.py: {e}")
 
+# Constantes del sistema alineadas con expediente.py
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+
+def obtener_datos_expedientes(conn):
+    """
+    Recupera los datos de expedientes compartiendo la misma llave de sesión 
+    que utiliza el módulo de gestión de expedientes para evitar lecturas duplicadas.
+    """
+    if 'df_exp_memoria' not in st.session_state:
+        st.session_state['df_exp_memoria'] = None
+
+    if st.session_state['df_exp_memoria'] is not None:
+        return st.session_state['df_exp_memoria']
+        
+    if conn is None:
+        return None
+        
+    try:
+        # Reutiliza el mismo orden de prioridad (GCS -> Google Sheets en vivo)
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+        if df is None or df.empty:
+            df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        st.session_state['df_exp_memoria'] = df
+        return df
+    except Exception as e:
+        st.warning(f"No se pudo cargar la base de expedientes automáticamente: {e}")
+        return None
+
 def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **kwargs):
     st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Panel Integral de Rendimiento y Disciplina</h2>", unsafe_allow_html=True)
-    st.caption("Cruce automatizado y consolidación: Órdenes, Tiempos de Atención, Registros GPS y Expedientes Laborales.")
+    st.caption("Cruce consolidado: Órdenes de Trabajo vs Rutas GPS vs Expedientes Laborales de la Nube.")
     st.divider()
+
+    # Carga de la base de datos de expedientes al iniciar la vista
+    df_exp_inicial = obtener_datos_expedientes(conn)
 
     # ==========================================================
     # 1. CARGA Y SINCRONIZACIÓN DE DATOS
@@ -41,46 +73,24 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         st.info("☁️ Expedientes (Llamados/Faltas)")
         st.write("Conexión a Base de Datos:")
         
-        # Sincronización automática silenciosa si no existe en estado de sesión
-        if 'df_expedientes' not in st.session_state:
-            st.session_state['df_expedientes'] = None
-
-        if st.session_state['df_expedientes'] is None and conn is not None:
-            try:
-                NOMBRE_BUCKET = "jovial-trilogy-306216.appspot.com"
-                df_exp = leer_espejo_gcs(NOMBRE_BUCKET, "expedientes_maestro.csv")
-                if df_exp is None or df_exp.empty:
-                    df_exp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                st.session_state['df_expedientes'] = df_exp
-            except Exception:
-                pass
-
         if st.button("🔄 Sincronizar Expedientes de Nube", use_container_width=True):
             if conn:
-                with st.spinner("Descargando historial maestro..."):
+                with st.spinner("Consultando base de datos de expedientes..."):
                     try:
-                        NOMBRE_BUCKET = "jovial-trilogy-306216.appspot.com"
-                        df_exp = None
-                        
-                        try:
-                            df_exp = leer_espejo_gcs(NOMBRE_BUCKET, "expedientes_maestro.csv")
-                        except Exception:
-                            pass
-                            
-                        if df_exp is None or df_exp.empty:
-                            df_exp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                            
-                        st.session_state['df_expedientes'] = df_exp
-                        st.success("✅ ¡Expedientes sincronizados con éxito!")
+                        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                        if df is None or df.empty:
+                            df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                        st.session_state['df_exp_memoria'] = df
+                        st.success("✅ Datos de expedientes sincronizados y actualizados.")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error al conectar con la base de datos: {e}")
+                        st.error(f"❌ Error durante la sincronización: {e}")
             else:
-                st.error("❌ No se detectó conexión activa a la Nube.")
+                st.error("❌ No se detectó conexión activa a la Nube. Verifique la inicialización de 'conn'.")
                 
-        if st.session_state['df_expedientes'] is not None:
-            st.success(f"Archivados: {len(st.session_state['df_expedientes'])} registros.")
+        if st.session_state.get('df_exp_memoria') is not None:
+            st.success(f"Archivados: {len(st.session_state['df_exp_memoria'])} registros en memoria.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -93,7 +103,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         else:
             with st.spinner("Procesando y alineando datos operativos, GPS y recursos humanos..."):
                 try:
-                    # Lectura e inmunización contra fallos de formato ("No tables found", codificaciones, etc.)
+                    # Lectura inmunizada contra fallos de codificación
                     try:
                         df_act_raw = read_file_robust(file_act)
                     except Exception as err_act:
@@ -107,19 +117,27 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         except Exception as err_gps:
                             st.warning(f"No se pudo interpretar el archivo GPS: {err_gps}. El cruce continuará sin telemetría.")
 
-                    # Pre-procesamiento de nombres de columna usando el mapa maestro para estandarizar
+                    # Estandarización de nombres de columnas
                     df_act_mapped = procesar_dataframe_base(df_act_raw)
                     
-                    # Alineación de nombres requeridos específicamente por el procesador integral
                     df_act_ready = df_act_mapped.rename(columns={
                         'HORA_INI': 'FECHA ENTRADA',
                         'HORA_LIQ': 'FECHA LIQUIDADO'
                     })
 
-                    df_exp = st.session_state.get('df_expedientes', None)
+                    # Limpieza defensiva de expedientes antes de enviarlos al motor
+                    df_exp_raw = st.session_state.get('df_exp_memoria', None)
+                    df_exp_ready = None
                     
+                    if df_exp_raw is not None and not df_exp_raw.empty:
+                        df_exp_ready = df_exp_raw.copy()
+                        # Si existe la columna de técnicos, limpiamos cualquier etiqueta de departamento
+                        # como "JOSE PEREZ (SAC)" para convertirlo en "JOSE PEREZ" y que coincida con las órdenes.
+                        if 'TECNICO' in df_exp_ready.columns:
+                            df_exp_ready['TECNICO'] = df_exp_ready['TECNICO'].astype(str).str.replace(r'\s*\(.*\)$', '', regex=True).str.strip()
+
                     # Ejecución del cruce analítico
-                    df_resultado, msg = procesar_rendimiento_integral(df_act_ready, df_gps_raw, df_exp)
+                    df_resultado, msg = procesar_rendimiento_integral(df_act_ready, df_gps_raw, df_exp_ready)
                     
                     if df_resultado is not None:
                         st.session_state['df_rendimiento_integral'] = df_resultado
@@ -194,7 +212,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             hide_index=True
         )
         
-        # Sección de exportación de reportes
+        # Exportación del reporte
         st.markdown("<br>", unsafe_allow_html=True)
         col_dl1, col_dl2 = st.columns([1, 2])
         with col_dl1:
