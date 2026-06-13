@@ -2729,71 +2729,184 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
         return None
         
 # ==============================================================================
-# CRUCE INTELIGENTE: GPS MENSUAL VS REPORTE DE ACTIVIDADES
+# PROCESAMIENTO DE RENDIMIENTO INTEGRAL (ÓRDENES, GPS, EXPEDIENTES)
 # ==============================================================================
-def procesar_cruce_operativo_mensual(df_gps_resumen, df_act):
+def procesar_rendimiento_integral(df_act, df_gps, df_exp):
     import pandas as pd
+    import re
+
     try:
-        # 1. Detectar columnas dinámicamente sin importar cómo se llamen exactamente
-        col_tec = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'NOMBRE' in str(c).upper()), None)
-        col_tipo = next((c for c in df_act.columns if 'TIPO' in str(c).upper() or 'ORDEN' in str(c).upper() or 'TAREA' in str(c).upper()), None)
-        col_comentario = next((c for c in df_act.columns if 'COMENTARIO' in str(c).upper() or 'ATRASO' in str(c).upper() or 'OBSERVACION' in str(c).upper()), None)
-        col_tiempo = next((c for c in df_act.columns if 'TIEMPO' in str(c).upper() or 'MINUTOS' in str(c).upper() or 'DURACION' in str(c).upper()), None)
-        
-        if not col_tec: 
-            return None, None, "El archivo 'rep_actividades' no tiene una columna reconocible de TECNICO."
+        # 1. Procesar Actividades (Órdenes)
+        col_tec = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'TÉCNICO' in str(c).upper()), None)
+        col_ent = next((c for c in df_act.columns if 'ENTRADA' in str(c).upper() or 'INICIO' in str(c).upper()), None)
+        col_liq = next((c for c in df_act.columns if 'LIQUIDADO' in str(c).upper() or 'CIERRE' in str(c).upper()), None)
+        col_num = next((c for c in df_act.columns if 'NUM' in str(c).upper() or 'ORDEN' in str(c).upper()), None)
 
-        # 2. Estandarizar nombres para que el cruce sea exacto
+        if not col_tec or not col_ent or not col_liq:
+            return None, "El archivo 'rep_actividades' no tiene las columnas requeridas (Técnico, Entrada, Liquidado)."
+
         df_act['TEC_KEY'] = df_act[col_tec].astype(str).str.upper().str.strip()
-        df_gps_resumen['TEC_KEY'] = df_gps_resumen['TECNICOS'].astype(str).str.upper().str.strip()
-
-        # 3. Agrupar la productividad total
-        agrupado = df_act.groupby('TEC_KEY').agg(Total_Ordenes=(col_tec, 'count')).reset_index()
-
-        # Separar PLEX y Residencial
-        if col_tipo:
-            res_counts = df_act[df_act[col_tipo].astype(str).str.upper().str.contains('RESIDENCIAL', na=False)].groupby('TEC_KEY').size().reset_index(name='Residenciales')
-            plex_counts = df_act[df_act[col_tipo].astype(str).str.upper().str.contains('PLEX', na=False)].groupby('TEC_KEY').size().reset_index(name='Plex')
-            agrupado = pd.merge(agrupado, res_counts, on='TEC_KEY', how='left')
-            agrupado = pd.merge(agrupado, plex_counts, on='TEC_KEY', how='left')
-            agrupado.fillna(0, inplace=True)
-
-        # Sumar Tiempos Reales de Trabajo
-        if col_tiempo:
-            df_act[col_tiempo] = pd.to_numeric(df_act[col_tiempo], errors='coerce').fillna(0)
-            tiempo_sum = df_act.groupby('TEC_KEY')[col_tiempo].sum().reset_index(name='Minutos_Actividad')
-            agrupado = pd.merge(agrupado, tiempo_sum, on='TEC_KEY', how='left')
-
-        # 4. Cruzar Ambos Mundos (GPS + Actividades)
-        df_final = pd.merge(df_gps_resumen, agrupado, on='TEC_KEY', how='left')
-        df_final.fillna({'Total_Ordenes': 0, 'Residenciales': 0, 'Plex': 0, 'Minutos_Actividad': 0}, inplace=True)
-
-        # 5. Calcular Eficiencia (% de Motor convertido en Trabajo)
-        if col_tiempo and 'Motor Encendido' in df_final.columns:
-            def get_hrs(val):
-                try: 
-                    from tools import time_to_sec_robust
-                    return time_to_sec_robust(val) / 3600
-                except: return 0
-            
-            df_final['Horas_Motor'] = df_final['Motor Encendido'].apply(get_hrs)
-            df_final['Horas_Trabajo'] = df_final['Minutos_Actividad'] / 60
-            
-            df_final['% Productividad'] = (df_final['Horas_Trabajo'] / df_final['Horas_Motor'].replace(0, 0.001)) * 100
-            df_final['% Productividad'] = df_final['% Productividad'].apply(lambda x: min(round(x, 1), 100))
-            
-            df_final['% Productividad'] = df_final['% Productividad'].astype(str) + '%'
-            df_final.drop(columns=['Horas_Motor', 'Horas_Trabajo'], inplace=True)
-
-        df_final.drop(columns=['TEC_KEY'], inplace=True)
-
-        # 6. Extraer Tabla Exclusiva de Atrasos para Auditoría
-        df_atrasos = pd.DataFrame()
-        if col_comentario:
-            mask = df_act[col_comentario].notna() & (df_act[col_comentario].astype(str).str.strip() != '') & (~df_act[col_comentario].astype(str).str.upper().isin(['NAN', 'N/A', 'NONE']))
-            df_atrasos = df_act[mask].copy()
-
-        return df_final, df_atrasos, "Cruce exitoso"
+        df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act[col_ent], errors='coerce', dayfirst=True)
+        df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act[col_liq], errors='coerce', dayfirst=True)
         
+        # Calcular el tiempo invertido en cada orden en minutos
+        df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
+        df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
+
+        # Agrupar datos de productividad pura
+        resumen_act = df_act.groupby('TEC_KEY').agg(
+            Cantidad_Ordenes=(col_num, 'count'),
+            Tiempo_Prom_Minutos=('Minutos_Orden', 'mean'),
+            Primera_Orden=('FECHA_ENTRADA', 'min')
+        ).reset_index()
+
+        resumen_act['Primera_Orden'] = resumen_act['Primera_Orden'].dt.strftime('%H:%M:%S').fillna('--')
+        resumen_act['Tiempo_Prom_Minutos'] = resumen_act['Tiempo_Prom_Minutos'].round(1)
+
+        # 2. Procesar GPS (Zonas y Rutas para extraer salidas/entradas)
+        if df_gps is not None and not df_gps.empty:
+            col_placa = next((c for c in df_gps.columns if 'PLACA' in str(c).upper() or 'ALIAS' in str(c).upper()), None)
+            col_h_in = next((c for c in df_gps.columns if 'HORA INGRESO' in str(c).upper() or 'LLEGADA' in str(c).upper()), None)
+            col_h_out = next((c for c in df_gps.columns if 'HORA SALIDA' in str(c).upper() or 'SALIDA' in str(c).upper()), None)
+
+            if col_placa and col_h_in and col_h_out:
+                df_gps['Hora Ingreso'] = pd.to_datetime(df_gps[col_h_in], errors='coerce')
+                df_gps['Hora Salida'] = pd.to_datetime(df_gps[col_h_out], errors='coerce')
+
+                # Tomamos la primera hora de salida y la última hora de ingreso reportada en el día
+                gps_res = df_gps.groupby(col_placa).agg(
+                    Salida_Plantel=('Hora Salida', 'min'),
+                    Entrada_Plantel=('Hora Ingreso', 'max')
+                ).reset_index()
+
+                # Función inteligente para cruzar el Alias del GPS con el nombre del Técnico
+                def match_tec(placa_alias, tecnicos_list):
+                    placa_alias = str(placa_alias).upper().replace(',', '').replace('.', '')
+                    placa_alias = re.sub(r'MX-\d+', '', placa_alias) # Limpiar el MX-
+                    best_match = None
+                    max_coincidencias = 0
+                    for tec in tecnicos_list:
+                        partes_tec = str(tec).upper().split()
+                        coincidencias = sum(1 for p in partes_tec if len(p) > 2 and p in placa_alias)
+                        if coincidencias > max_coincidencias:
+                            max_coincidencias = coincidencias
+                            best_match = tec
+                    return best_match if max_coincidencias >= 1 else None
+
+                tecnicos_act = resumen_act['TEC_KEY'].unique()
+                gps_res['TEC_KEY'] = gps_res[col_placa].apply(lambda x: match_tec(x, tecnicos_act))
+                
+                gps_res = gps_res.dropna(subset=['TEC_KEY'])
+                gps_res = gps_res.groupby('TEC_KEY').agg({'Salida_Plantel':'min', 'Entrada_Plantel':'max'}).reset_index()
+                
+                gps_res['Salida_Plantel'] = gps_res['Salida_Plantel'].dt.strftime('%H:%M:%S').fillna('--')
+                gps_res['Entrada_Plantel'] = gps_res['Entrada_Plantel'].dt.strftime('%H:%M:%S').fillna('--')
+
+                resumen_final = pd.merge(resumen_act, gps_res, on='TEC_KEY', how='left')
+            else:
+                resumen_final = resumen_act.copy()
+                resumen_final['Salida_Plantel'] = '--'
+                resumen_final['Entrada_Plantel'] = '--'
+        else:
+            resumen_final = resumen_act.copy()
+            resumen_final['Salida_Plantel'] = '--'
+            resumen_final['Entrada_Plantel'] = '--'
+
+        resumen_final.fillna({'Salida_Plantel': '--', 'Entrada_Plantel': '--'}, inplace=True)
+
+        # 3. Procesar Expedientes (Faltas y Llamados de Atención en la Nube)
+        if df_exp is not None and not df_exp.empty:
+            col_tec_exp = next((c for c in df_exp.columns if 'TECNICO' in str(c).upper()), None)
+            col_tipo = next((c for c in df_exp.columns if 'TIPO_FALTA' in str(c).upper() or 'FALTA' in str(c).upper()), None)
+            
+            if col_tec_exp and col_tipo:
+                df_exp['TEC_KEY'] = df_exp[col_tec_exp].astype(str).str.upper().str.strip()
+                
+                # Separar Ausencias de Llamados de Atención
+                def categorizar(falta):
+                    f = str(falta).upper()
+                    if any(k in f for k in ['FALTA', 'AUSENCIA', 'INASISTENCIA', 'DIA', 'DÍA']): return 'Dias_Faltados'
+                    return 'Llamados_Atencion'
+                
+                df_exp['Cat'] = df_exp[col_tipo].apply(categorizar)
+                exp_res = df_exp.pivot_table(index='TEC_KEY', columns='Cat', aggfunc='size', fill_value=0).reset_index()
+                
+                if 'Dias_Faltados' not in exp_res.columns: exp_res['Dias_Faltados'] = 0
+                if 'Llamados_Atencion' not in exp_res.columns: exp_res['Llamados_Atencion'] = 0
+                
+                resumen_final = pd.merge(resumen_final, exp_res[['TEC_KEY', 'Dias_Faltados', 'Llamados_Atencion']], on='TEC_KEY', how='left')
+            else:
+                resumen_final['Dias_Faltados'] = 0
+                resumen_final['Llamados_Atencion'] = 0
+        else:
+            resumen_final['Dias_Faltados'] = 0
+            resumen_final['Llamados_Atencion'] = 0
+
+        resumen_final.fillna({'Dias_Faltados': 0, 'Llamados_Atencion': 0}, inplace=True)
+        resumen_final['Dias_Faltados'] = resumen_final['Dias_Faltados'].astype(int)
+        resumen_final['Llamados_Atencion'] = resumen_final['Llamados_Atencion'].astype(int)
+
+        # Dar formato ejecutivo a la tabla resultante
+        resumen_final.rename(columns={
+            'TEC_KEY': 'TÉCNICO',
+            'Cantidad_Ordenes': 'ÓRDENES EJECUTADAS',
+            'Tiempo_Prom_Minutos': 'TIEMPO PROM. (Min)',
+            'Primera_Orden': 'HORA 1ra ORDEN',
+            'Salida_Plantel': 'SALIDA PLANTEL (GPS)',
+            'Entrada_Plantel': 'RETORNO PLANTEL (GPS)',
+            'Dias_Faltados': 'DÍAS FALTADOS',
+            'Llamados_Atencion': 'LLAMADOS DE ATENCIÓN'
+        }, inplace=True)
+
+        return resumen_final, "Cruce exitoso"
+
     except Exception as e:
-        return None, None, f"Error al procesar el cruce: {e}"
+        return None, f"Error en el cruce integral: {e}"
+
+def generar_pdf_rendimiento_integral(df_resumen):
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        return b""
+        
+    class PDF(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 14)
+            self.cell(0, 10, "REPORTE INTEGRAL DE RENDIMIENTO DE TECNICOS", ln=True, align="C")
+            self.set_font("Helvetica", "", 10)
+            from datetime import datetime
+            fecha_str = f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+            self.cell(0, 6, fecha_str, ln=True, align="C")
+            self.ln(5)
+
+    pdf = PDF(orientation="L") # Orientación horizontal para que quepan las columnas
+    pdf.add_page()
+    
+    if df_resumen is None or df_resumen.empty:
+        pdf.cell(0, 10, "No hay datos para mostrar.", ln=True)
+    else:
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(240, 240, 240)
+        
+        valid_cols = df_resumen.columns.tolist()
+        col_width = 275 / len(valid_cols)
+        
+        for c in valid_cols:
+            pdf.cell(col_width, 8, str(c)[:18], border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in df_resumen.iterrows():
+            for c in valid_cols:
+                val = str(row.get(c, ''))
+                pdf.cell(col_width, 7, val[:22], border=1, align="C")
+            pdf.ln()
+
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+    with open(path, "rb") as f:
+        data = f.read()
+    os.remove(path)
+    return data
