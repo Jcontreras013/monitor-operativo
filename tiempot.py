@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 import re
 
@@ -95,7 +95,6 @@ def obtener_datos_expedientes(conn):
     if st.session_state['df_exp_memoria'] is not None:
         return st.session_state['df_exp_memoria']
         
-    # Intento 1: Cargar directamente de GCS sin requerir 'conn'
     try:
         df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
         if df is not None and not df.empty:
@@ -104,7 +103,6 @@ def obtener_datos_expedientes(conn):
     except Exception:
         pass
         
-    # Intento 2: Intentar conectar mediante conn de Google Sheets
     if conn is not None:
         try:
             df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
@@ -116,9 +114,33 @@ def obtener_datos_expedientes(conn):
     return None
 
 # ==============================================================================
-# MOTOR RE-DISEÑADO DE CRUCE INTEGRAL Y PROCESAMIENTO ANALÍTICO
+# PROCESAMIENTO ANALÍTICO MEJORADO DE CRUCE (EMPAREJAMIENTO DETERMINISTA)
 # ==============================================================================
-def match_tecnico_inteligente(alias_gps, lista_tecnicos):
+def extraer_numero_mx(texto):
+    """Extrae el número identificador del vehículo de manera limpia (ej: MX-10 -> 10)."""
+    if pd.isna(texto) or not str(texto).strip():
+        return None
+    val = str(texto).upper().strip()
+    match = re.search(r'MX[-_ ]*(\d+)', val)
+    if match:
+        return int(match.group(1))
+    match_num = re.search(r'^\s*(\d+)\s*$', val)
+    if match_num:
+        return int(match_num.group(1))
+    return None
+
+def match_tecnico_inteligente(alias_gps, mx_gps, lista_tecnicos, tec_to_mx):
+    """
+    Empareja una fila de GPS con un técnico utilizando el MX como llave primaria.
+    Si no hay MX disponible, se utiliza coincidencia por substrings de texto.
+    """
+    # 1. Intento por coincidencia de vehículo (MX) - Deterministico
+    if mx_gps is not None:
+        for tec, mx_tec in tec_to_mx.items():
+            if mx_tec == mx_gps:
+                return tec
+
+    # 2. Intento de respaldo por substrings de nombre
     alias_clean = str(alias_gps).upper().replace(',', '').replace('.', '')
     alias_clean = re.sub(r'MX-\d+', '', alias_clean)
     
@@ -143,7 +165,7 @@ def formatear_segundos_a_hora(secs):
 
 def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
-        # 1. Estandarizar columnas de Actividades
+        # 1. Estandarizar y mapear actividades
         df_act = procesar_dataframe_base(df_act)
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
@@ -161,17 +183,26 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
         
-        # Filtrar técnicos no válidos
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'] != 'N/D')]
-        
-        # Agrupar Productividad Pura por Técnico
         tecnicos_unicos = df_act['TECNICO'].unique()
 
-        # 2. Procesar GPS con motor de promedios diarios reales (No mínimos globales)
+        # Obtener el mapa de MX asignado a cada técnico desde el archivo de actividades
+        tec_to_mx = {}
+        if 'MX' in df_act.columns:
+            df_act_mx = df_act.dropna(subset=['MX']).groupby('TECNICO')['MX'].first().reset_index()
+            for _, r in df_act_mx.iterrows():
+                mx_val = extraer_numero_mx(r['MX'])
+                if mx_val is not None:
+                    tec_to_mx[r['TECNICO']] = mx_val
+
+        # 2. Procesar GPS con limpieza rigurosa de columnas
         gps_consolidado = {}
         gps_diario = []
 
         if df_gps is not None and not df_gps.empty:
+            # Sanitizar nombres de columnas removiendo comillas adicionales
+            df_gps.columns = [str(c).strip().replace('"', '').replace("'", "") for c in df_gps.columns]
+            
             col_placa = next((c for c in df_gps.columns if 'PLACA' in str(c).upper() or 'ALIAS' in str(c).upper()), None)
             col_h_in = next((c for c in df_gps.columns if 'HORA INGRESO' in str(c).upper() or 'LLEGADA' in str(c).upper()), None)
             col_h_out = next((c for c in df_gps.columns if 'HORA SALIDA' in str(c).upper() or 'SALIDA' in str(c).upper()), None)
@@ -183,14 +214,19 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_gps['Fecha_Ingreso'] = df_gps['Hora_Ingreso_DT'].dt.date
                 df_gps['Fecha_Salida'] = df_gps['Hora_Salida_DT'].dt.date
                 
-                # Asignar técnico al GPS
-                df_gps['TEC_KEY'] = df_gps[col_placa].apply(lambda x: match_tecnico_inteligente(x, tecnicos_unicos))
+                # Extraer MX de la placa de GPS
+                df_gps['MX_GPS'] = df_gps[col_placa].apply(extraer_numero_mx)
+                
+                # Asignar técnico usando mapeo híbrido (MX + substrings)
+                df_gps['TEC_KEY'] = df_gps.apply(
+                    lambda row: match_tecnico_inteligente(row[col_placa], row['MX_GPS'], tecnicos_unicos, tec_to_mx),
+                    axis=1
+                )
                 df_gps_valid = df_gps.dropna(subset=['TEC_KEY'])
 
                 # Extraer tiempos diarios por técnico
                 for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_KEY', 'Fecha_Salida']):
                     primer_salida = sub_df['Hora_Salida_DT'].min()
-                    # Buscar última entrada del mismo día
                     sub_ent = df_gps_valid[(df_gps_valid['TEC_KEY'] == tec) & (df_gps_valid['Fecha_Ingreso'] == fecha)]
                     ult_entrada = sub_ent['Hora_Ingreso_DT'].max() if not sub_ent.empty else pd.NaT
                     
@@ -206,7 +242,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                         'Entrada_Str': ult_entrada.strftime('%H:%M:%S') if pd.notnull(ult_entrada) else '--'
                     })
 
-                # Calcular promedios para la vista consolidada
+                # Calcular promedios consolidados
                 df_gps_diario = pd.DataFrame(gps_diario)
                 if not df_gps_diario.empty:
                     for tec, g in df_gps_diario.groupby('TÉCNICO'):
@@ -234,7 +270,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_exp['Es_Falta'] = df_exp[col_tipo].apply(es_falta)
                 
                 for tec, sub_df in df_exp.groupby('TEC_KEY'):
-                    f_clean = match_tecnico_inteligente(tec, tecnicos_unicos)
+                    f_clean = match_tecnico_inteligente(tec, None, tecnicos_unicos, tec_to_mx)
                     if f_clean:
                         faltas_dict[f_clean] = int(sub_df['Es_Falta'].sum())
                         llamados_dict[f_clean] = int((~sub_df['Es_Falta']).sum())
@@ -282,7 +318,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     st.caption("Consolidación inteligente y cruce de datos: rep_actividades vs. InformeZonasRutas vs. Expedientes de la Nube.")
     st.divider()
 
-    # Carga silenciosa y directa desde GCS para evitar el mensaje de conexión
     df_exp_inicial = obtener_datos_expedientes(conn)
 
     # ==========================================================
@@ -304,7 +339,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         st.info("☁️ Expedientes (Llamados/Faltas)")
         st.write("Sincronización de Base de Datos:")
         
-        # El botón sincroniza directo a GCS evitando requerir 'conn' de Sheets de forma mandatoria
         if st.button("🔄 Sincronizar Expedientes de Nube", use_container_width=True):
             with st.spinner("Conectando con Google Cloud Storage..."):
                 try:
@@ -343,7 +377,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     df_gps_raw = read_file_robust_local(file_gps) if file_gps else None
                     df_exp_raw = st.session_state.get('df_exp_memoria', None)
 
-                    # Ejecución del cruce analítico avanzado
+                    # Ejecución del cruce analítico avanzado con el algoritmo de vehículo MX
                     df_consolidado, df_diario, msg = procesar_rendimiento_avanzado(df_act_raw, df_gps_raw, df_exp_raw)
                     
                     if df_consolidado is not None:
@@ -366,7 +400,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         
         st.markdown("---")
         
-        # Pestañas de Vista (Consolidado vs Detalle Diario)
         tab_consolidada, tab_diaria = st.tabs(["📅 Vista Consolidada (4 Semanas)", "🔍 Detalle Diario (Auditoría GPS)"])
         
         with tab_consolidada:
@@ -415,7 +448,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
             st.dataframe(df_res.style.apply(alert_style, axis=1), use_container_width=True, hide_index=True)
             
-            # Exportar reporte PDF
+            # Exportar PDF
             st.markdown("<br>", unsafe_allow_html=True)
             col_dl1, _ = st.columns([1, 2])
             with col_dl1:
