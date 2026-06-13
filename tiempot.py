@@ -9,7 +9,7 @@ try:
 except ImportError:
     pass
 
-def mostrar_tiempos(conn=None, df_base=None, *args):
+def mostrar_tiempos_tecnicos(conn=None, df_base=None, *args):
     st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Panel Integral de Rendimiento y Disciplina</h2>", unsafe_allow_html=True)
     st.caption("Cruce automatizado: Tiempos de Órdenes vs Registros GPS vs Expedientes Laborales.")
     st.divider()
