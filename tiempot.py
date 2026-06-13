@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import time
-from datetime import datetime, time as dt_time
+from datetime import datetime
 import io
 import re
 import unicodedata
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Importaciones seguras de dependencias desde tools.py
 try:
@@ -21,7 +23,7 @@ except ImportError as e:
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR LOCAL CORREGIDO DE LECTURA DE ARCHIVOS (Evita falsos positivos HTML)
+# MOTOR DE LECTURA DE ARCHIVOS
 # ==============================================================================
 def forzar_columnas_unicas_local(df):
     if df is None or df.empty: 
@@ -42,56 +44,39 @@ def read_file_robust_local(uploaded_file):
     content = uploaded_file.read()
     uploaded_file.seek(0)
     
-    # 1. xlsx/xlsm
     if filename.endswith('.xlsx') or filename.endswith('.xlsm'):
         try:
-            df = pd.read_excel(uploaded_file, engine='openpyxl')
-            return forzar_columnas_unicas_local(df)
-        except Exception:
-            pass
+            return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='openpyxl'))
+        except: pass
 
-    # 2. Archivos XLS antiguos (BIFF8)
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
-            df = pd.read_excel(uploaded_file, engine='xlrd')
-            return forzar_columnas_unicas_local(df)
-        except Exception:
-            pass
+            return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='xlrd'))
+        except: pass
 
-    # 3. Comprobación estricta de HTML plano (Excluye archivos binarios ZIP que inician con PK)
     es_zip_binario = content.startswith(b'PK\x03\x04')
     if not es_zip_binario and (b'<table' in content.lower() or b'<html' in content.lower()):
         try:
             dfs = pd.read_html(io.BytesIO(content))
-            if dfs:
-                return forzar_columnas_unicas_local(max(dfs, key=len))
-        except Exception:
+            if dfs: return forzar_columnas_unicas_local(max(dfs, key=len))
+        except:
             try:
                 dfs = pd.read_html(io.BytesIO(content), encoding='latin-1')
-                if dfs:
-                    return forzar_columnas_unicas_local(max(dfs, key=len))
-            except Exception:
-                pass
-
-    # 4. Alternativas de rescate (Excel genérico o CSV)
-    uploaded_file.seek(0)
-    try:
-        df = pd.read_excel(uploaded_file)
-        return forzar_columnas_unicas_local(df)
-    except Exception:
-        pass
+                if dfs: return forzar_columnas_unicas_local(max(dfs, key=len))
+            except: pass
 
     uploaded_file.seek(0)
-    try:
-        df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
-        return forzar_columnas_unicas_local(df)
+    try: return forzar_columnas_unicas_local(pd.read_excel(uploaded_file))
+    except: pass
+
+    uploaded_file.seek(0)
+    try: return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip'))
     except UnicodeDecodeError:
         uploaded_file.seek(0)
-        df = pd.read_csv(uploaded_file, encoding='latin-1', on_bad_lines='skip')
-        return forzar_columnas_unicas_local(df)
+        return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='latin-1', on_bad_lines='skip'))
 
 # ==============================================================================
-# GESTIÓN DE EXPEDIENTES COMPARTIDA (AUTOSUFICIENTE Y RESILIENTE)
+# GESTIÓN DE EXPEDIENTES (CONEXIÓN ROBUSTA)
 # ==============================================================================
 def obtener_datos_expedientes(conn):
     if 'df_exp_memoria' not in st.session_state:
@@ -105,72 +90,64 @@ def obtener_datos_expedientes(conn):
         if df is not None and not df.empty:
             st.session_state['df_exp_memoria'] = df
             return df
-    except Exception:
-        pass
+    except: pass
         
+    if conn is None:
+        try:
+            from streamlit_gsheets import GSheetsConnection
+            conn = st.connection("gsheets", type=GSheetsConnection)
+        except: pass
+            
     if conn is not None:
         try:
             df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
             st.session_state['df_exp_memoria'] = df
             return df
-        except Exception:
-            pass
+        except: pass
             
     return None
 
 # ==============================================================================
-# MOTOR RE-DISEÑADO DE CRUCE INTEGRAL (EMPAREJAMIENTO POR MX)
+# MOTOR SUPERIOR DE DEPURACIÓN Y EMPAREJAMIENTO DE NOMBRES
 # ==============================================================================
-def normalizar_texto(txt):
-    """Normaliza texto removiendo acentos, dobles espacios y pasando a mayúsculas."""
-    if pd.isna(txt) or not str(txt).strip():
-        return ""
-    txt_normalized = unicodedata.normalize('NFD', str(txt))
-    txt_clean = "".join([c for c in txt_normalized if not unicodedata.combining(c)]).upper()
-    return " ".join(txt_clean.split())
+def limpiar_texto_nombres(texto):
+    """Limpia acentos, caracteres raros y deja solo letras mayúsculas para comparar."""
+    if pd.isna(texto): return ""
+    t = str(texto).upper().strip()
+    # Quitar paréntesis y contenido
+    t = re.sub(r'\(.*?\)', '', t)
+    # Normalizar acentos (á -> a)
+    t = unicodedata.normalize('NFKD', t).encode('ASCII', 'ignore').decode('utf-8')
+    # Dejar solo letras y espacios
+    t = re.sub(r'[^A-Z\s]', '', t)
+    return " ".join(t.split())
 
-def extraer_numero_mx(texto):
-    """Extrae el número identificador del vehículo de manera limpia (ej: MX-10 -> 10)."""
-    if pd.isna(texto) or not str(texto).strip():
-        return None
-    val = normalizar_texto(texto)
-    match = re.search(r'MX[-_ ]*(\d+)', val)
-    if match:
-        return int(match.group(1))
-    match_num = re.search(r'^\s*(\d+)\s*$', val)
-    if match_num:
-        return int(match_num.group(1))
-    return None
-
-def match_tecnico_inteligente(alias_gps, mx_gps, lista_tecnicos, tec_to_mx):
-    """
-    Empareja una fila de GPS con un técnico utilizando el MX como llave primaria.
-    Si no hay MX disponible, se utiliza coincidencia por substrings de texto.
-    """
-    # 1. Coincidencia por vehículo (MX)
-    if mx_gps is not None:
-        for tec, mx_tec in tec_to_mx.items():
-            if mx_tec == mx_gps:
-                return tec
-
-    # 2. Coincidencia de respaldo por substrings de nombre
-    alias_clean = normalizar_texto(alias_gps)
-    alias_clean = re.sub(r'MX-\d+', '', alias_clean)
+def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_original):
+    """Encuentra el nombre del técnico evaluando qué tantas palabras coinciden."""
+    n_buscar = limpiar_texto_nombres(nombre_buscar)
+    if not n_buscar: return None
     
-    best_match = None
-    max_coincidencias = 0
-    for tec in lista_tecnicos:
-        partes_tec = normalizar_texto(tec).split()
-        coincidencias = sum(1 for p in partes_tec if len(p) > 2 and p in alias_clean)
-        if coincidencias > max_coincidencias:
-            max_coincidencias = coincidencias
-            best_match = tec
+    tokens_buscar = set(n_buscar.split())
+    mejor_match = None
+    max_score = 0
+    
+    for i, m_limpio in enumerate(lista_maestros_limpios):
+        tokens_maestro = set(m_limpio.split())
+        # Contar cuántas palabras comparten (Ej: "Juan Perez" y "Perez Juan" comparten 2)
+        score = len(tokens_buscar.intersection(tokens_maestro))
+        
+        if score > max_score:
+            max_score = score
+            mejor_match = lista_original[i]
             
-    return best_match if max_coincidencias >= 1 else None
+    # Si al menos 1 palabra clave (nombre o apellido) coincide, lo damos por bueno
+    return mejor_match if max_score >= 1 else None
 
-def formatear_segundos_a_hora(secs):
-    if pd.isna(secs) or secs is None or secs <= 0:
-        return "--"
+# ==============================================================================
+# PROCESAMIENTO ANALÍTICO CENTRAL
+# ==============================================================================
+def formatear_hora(secs):
+    if pd.isna(secs) or secs is None or secs <= 0: return "--"
     h = int(secs // 3600) % 24
     m = int((secs % 3600) // 60)
     s = int(secs % 60)
@@ -178,350 +155,263 @@ def formatear_segundos_a_hora(secs):
 
 def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
-        # 1. Estandarizar y mapear actividades
+        # --- 1. PROCESAR ÓRDENES (ACTIVIDADES) ---
         df_act = procesar_dataframe_base(df_act)
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
-        df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
         
-        # Calcular segmento
-        act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
-        cli_upper = df_act['CLIENTE'].fillna('').astype(str).str.upper()
-        com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
-        texto_seg = act_upper + " " + cli_upper + " " + com_upper
-        df_act['SEGMENTO'] = pd.Series(
-            ['PLEX' if ('PLEX' in t or 'PEXTERNO' in t or 'SPLITTEROPT' in t) else 'RESIDENCIAL' for t in texto_seg]
-        )
+        # Eliminar registros sin técnico
+        df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
+        
+        # Base de nombres maestros (El catálogo oficial de técnicos)
+        tecnicos_originales = df_act['TECNICO'].unique()
+        tecnicos_limpios = [limpiar_texto_nombres(t) for t in tecnicos_originales]
 
         df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
-        
-        df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'] != 'N/D')]
-        tecnicos_unicos = df_act['TECNICO'].unique()
 
-        # Obtener el mapa de MX asignado a cada técnico
-        tec_to_mx = {}
-        if 'MX' in df_act.columns:
-            df_act_mx = df_act.dropna(subset=['MX']).groupby('TECNICO')['MX'].first().reset_index()
-            for _, r in df_act_mx.iterrows():
-                mx_val = extraer_numero_mx(r['MX'])
-                if mx_val is not None:
-                    tec_to_mx[r['TECNICO']] = mx_val
+        # Extraer métricas de órdenes
+        resumen_act = df_act.groupby('TECNICO').agg(
+            Ordenes_Totales=('NUM', 'count'),
+            Minutos_Promedio=('Minutos_Orden', 'mean'),
+            Hora_Primera_Orden=('FECHA_ENTRADA', 'min')
+        ).reset_index()
 
-        # 2. Procesar GPS con limpieza de columnas y filtrado de zona base (Doble Parqueo Mall)
-        gps_consolidado = {}
-        gps_diario = []
-
+        # --- 2. PROCESAR GPS ---
+        gps_consolidado = []
         if df_gps is not None and not df_gps.empty:
-            # Sanitizar nombres de columnas removiendo comillas adicionales
-            df_gps.columns = [str(c).strip().replace('"', '').replace("'", "") for c in df_gps.columns]
-            
-            col_placa = next((c for c in df_gps.columns if 'PLACA' in str(c).upper() or 'ALIAS' in str(c).upper()), None)
-            col_h_in = next((c for c in df_gps.columns if 'HORA INGRESO' in str(c).upper() or 'LLEGADA' in str(c).upper()), None)
-            col_h_out = next((c for c in df_gps.columns if 'HORA SALIDA' in str(c).upper() or 'SALIDA' in str(c).upper()), None)
-            col_zona = next((c for c in df_gps.columns if 'ZONA' in str(c).upper() or 'RUTA' in str(c).upper()), None)
+            df_gps.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps.columns]
+            col_placa = next((c for c in df_gps.columns if 'PLACA' in c or 'ALIAS' in c), None)
+            col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
+            col_out = next((c for c in df_gps.columns if 'SALIDA' in c), None)
 
-            if col_placa and col_h_in and col_h_out:
-                df_gps['Hora_Ingreso_DT'] = pd.to_datetime(df_gps[col_h_in], errors='coerce')
-                df_gps['Hora_Salida_DT'] = pd.to_datetime(df_gps[col_h_out], errors='coerce')
+            if col_placa and col_in and col_out:
+                df_gps['DT_IN'] = pd.to_datetime(df_gps[col_in], errors='coerce')
+                df_gps['DT_OUT'] = pd.to_datetime(df_gps[col_out], errors='coerce')
+                df_gps['Fecha'] = df_gps['DT_OUT'].dt.date
                 
-                df_gps['Fecha_Ingreso'] = df_gps['Hora_Ingreso_DT'].dt.date
-                df_gps['Fecha_Salida'] = df_gps['Hora_Salida_DT'].dt.date
-                
-                # Filtrar solo registros del plantel/parqueo principal para evitar capturar visitas a clientes
-                if col_zona:
-                    df_gps_base = df_gps[df_gps[col_zona].astype(str).str.upper().str.contains('PARQUEO|PLANTEL|BASE|MALL|DOBLE', na=False)].copy()
-                else:
-                    df_gps_base = df_gps.copy()
+                # Asignar técnico con Motor de Inteligencia Textual
+                df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(lambda x: encontrar_tecnico_maestro(x, tecnicos_limpios, tecnicos_originales))
+                df_gps_valid = df_gps.dropna(subset=['TEC_MAESTRO'])
 
-                # Extraer MX de la placa de GPS
-                df_gps_base['MX_GPS'] = df_gps_base[col_placa].apply(extraer_numero_mx)
-                
-                # Asignar técnico usando mapeo híbrido
-                df_gps_base['TEC_KEY'] = df_gps_base.apply(
-                    lambda row: match_tecnico_inteligente(row[col_placa], row['MX_GPS'], tecnicos_unicos, tec_to_mx),
-                    axis=1
-                )
-                df_gps_valid = df_gps_base.dropna(subset=['TEC_KEY']).copy()
-
-                # Convertir a segundos desde la medianoche para poder calcular promedios matemáticos
-                df_gps_valid['Salida_Secs'] = df_gps_valid['Hora_Salida_DT'].dt.hour * 3600 + df_gps_valid['Hora_Salida_DT'].dt.minute * 60 + df_gps_valid['Hora_Salida_DT'].dt.second
-                df_gps_valid['Ingreso_Secs'] = df_gps_valid['Hora_Ingreso_DT'].dt.hour * 3600 + df_gps_valid['Hora_Ingreso_DT'].dt.minute * 60 + df_gps_valid['Hora_Ingreso_DT'].dt.second
-
-                # Filtrar por ventanas de jornada real (Salida: 5am-1pm | Retorno: 12pm-10pm)
-                df_gps_valid['Salida_Secs_Valida'] = df_gps_valid['Salida_Secs'].apply(lambda x: x if (5*3600 <= x <= 13*3600) else None)
-                df_gps_valid['Ingreso_Secs_Valida'] = df_gps_valid['Ingreso_Secs'].apply(lambda x: x if (12*3600 <= x <= 22*3600) else None)
-
-                # Agrupar y extraer registros de jornada diaria
-                for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_KEY', 'Fecha_Salida']):
-                    # Obtener primer salida del plantel del rango de la mañana
-                    sub_salidas = sub_df['Salida_Secs_Valida'].dropna()
-                    primer_salida_secs = sub_salidas.min() if not sub_salidas.empty else None
+                for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_MAESTRO', 'Fecha']):
+                    p_salida = sub_df['DT_OUT'].min()
+                    u_llegada = sub_df['DT_IN'].max()
                     
-                    # Obtener último ingreso del plantel del rango de la tarde/noche
-                    sub_ent = df_gps_valid[(df_gps_valid['TEC_KEY'] == tec) & (df_gps_valid['Fecha_Ingreso'] == fecha)]
-                    sub_ingresos = sub_ent['Ingreso_Secs_Valida'].dropna()
-                    ult_entrada_secs = sub_ingresos.max() if not sub_ingresos.empty else None
+                    s_salida = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
+                    s_llegada = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
                     
-                    gps_diario.append({
-                        'TÉCNICO': tec,
-                        'Fecha': fecha,
-                        'Salida_Secs': primer_salida_secs,
-                        'Entrada_Secs': ult_entrada_secs,
-                        'Salida_Str': formatear_segundos_a_hora(primer_salida_secs),
-                        'Entrada_Str': formatear_segundos_a_hora(ult_entrada_secs)
+                    gps_consolidado.append({
+                        'TECNICO': tec, 'Fecha': fecha,
+                        'Salida_Secs': s_salida, 'Entrada_Secs': s_llegada,
+                        'Salida_Str': p_salida.strftime('%H:%M:%S') if pd.notnull(p_salida) else '--',
+                        'Entrada_Str': u_llegada.strftime('%H:%M:%S') if pd.notnull(u_llegada) else '--'
                     })
 
-                # Calcular promedios consolidados libres de anomalías
-                df_gps_diario = pd.DataFrame(gps_diario)
-                if not df_gps_diario.empty:
-                    for tec, g in df_gps_diario.groupby('TÉCNICO'):
-                        valid_exits = g['Salida_Secs'].dropna()
-                        valid_entries = g['Entrada_Secs'].dropna()
-                        
-                        prom_salida = valid_exits.mean() if not valid_exits.empty else None
-                        prom_entrada = valid_entries.mean() if not valid_entries.empty else None
-                        
-                        gps_consolidado[tec] = {
-                            'Salida_Plantel': formatear_segundos_a_hora(prom_salida),
-                            'Retorno_Plantel': formatear_segundos_a_hora(prom_entrada)
-                        }
+        df_gps_diario = pd.DataFrame(gps_consolidado)
+        gps_promedios = {}
+        if not df_gps_diario.empty:
+            for tec, g in df_gps_diario.groupby('TECNICO'):
+                p_sal = g['Salida_Secs'].dropna().mean()
+                p_ent = g['Entrada_Secs'].dropna().mean()
+                gps_promedios[tec] = {
+                    'Salida': formatear_hora(p_sal) if pd.notnull(p_sal) else '--',
+                    'Entrada': formatear_hora(p_ent) if pd.notnull(p_ent) else '--'
+                }
 
-        # 3. Procesar Expedientes (Llamados/Faltas)
+        # --- 3. PROCESAR EXPEDIENTES (FALTAS Y LLAMADOS) ---
         faltas_dict = {}
         llamados_dict = {}
+        df_exp_detallado = pd.DataFrame()
+        
         if df_exp is not None and not df_exp.empty:
             col_tec_exp = next((c for c in df_exp.columns if 'TECNICO' in str(c).upper()), None)
             col_tipo = next((c for c in df_exp.columns if 'TIPO_FALTA' in str(c).upper() or 'FALTA' in str(c).upper()), None)
             
             if col_tec_exp and col_tipo:
-                df_exp['TEC_KEY'] = df_exp[col_tec_exp].astype(str).str.upper().str.strip()
+                # Filtrar y emparejar
+                df_exp['TEC_MAESTRO'] = df_exp[col_tec_exp].apply(lambda x: encontrar_tecnico_maestro(x, tecnicos_limpios, tecnicos_originales))
+                df_exp_detallado = df_exp.dropna(subset=['TEC_MAESTRO']).copy()
                 
-                def es_falta(tipo_falta):
-                    t = str(tipo_falta).upper()
-                    return any(k in t for k in ['FALTA', 'AUSENCIA', 'INASISTENCIA', 'DIA', 'DÍA'])
-
-                df_exp['Es_Falta'] = df_exp[col_tipo].apply(es_falta)
+                def es_falta(t): return any(k in str(t).upper() for k in ['FALTA', 'AUSENCIA', 'INASISTENCIA', 'DIA', 'DÍA'])
+                df_exp_detallado['ES_FALTA'] = df_exp_detallado[col_tipo].apply(es_falta)
                 
-                for tec, sub_df in df_exp.groupby('TEC_KEY'):
-                    f_clean = match_tecnico_inteligente(tec, None, tecnicos_unicos, tec_to_mx)
-                    if f_clean:
-                        faltas_dict[f_clean] = int(sub_df['Es_Falta'].sum())
-                        llamados_dict[f_clean] = int((~sub_df['Es_Falta']).sum())
+                for tec, g in df_exp_detallado.groupby('TEC_MAESTRO'):
+                    faltas_dict[tec] = int(g['ES_FALTA'].sum())
+                    llamados_dict[tec] = int((~g['ES_FALTA']).sum())
 
-        # 4. Consolidar métricas finales
-        datos_cons = []
-        for tec in tecnicos_unicos:
-            df_tec_act = df_act[df_act['TECNICO'] == tec]
+        # --- 4. CONSOLIDAR TODO EN LA TABLA MAESTRA ---
+        datos_finales = []
+        for _, row in resumen_act.iterrows():
+            tec = row['TECNICO']
+            h_primera = row['Hora_Primera_Orden'].strftime('%H:%M:%S') if pd.notnull(row['Hora_Primera_Orden']) else '--'
+            gps = gps_promedios.get(tec, {'Salida': '--', 'Entrada': '--'})
             
-            total_ord = len(df_tec_act)
-            t_prom = df_tec_act['Minutos_Orden'].mean() if total_ord > 0 else 0
-            plex_ord = sum(df_tec_act['SEGMENTO'] == 'PLEX')
-            res_ord = sum(df_tec_act['SEGMENTO'] == 'RESIDENCIAL')
-            
-            primera_ord_dt = df_tec_act['FECHA_ENTRADA'].min()
-            primera_ord_str = primera_ord_dt.strftime('%H:%M:%S') if pd.notnull(primera_ord_dt) else '--'
-            
-            gps_data = gps_consolidado.get(tec, {'Salida_Plantel': '--', 'Retorno_Plantel': '--'})
-            
-            datos_cons.append({
+            datos_finales.append({
                 'TÉCNICO': tec,
-                'ÓRDENES EJECUTADAS': int(total_ord),
-                'ÓRDENES PLEX': int(plex_ord),
-                'ÓRDENES RESIDENCIAL': int(res_ord),
-                'TIEMPO PROM. (Min)': round(t_prom, 1),
-                'HORA 1ra ORDEN': primera_ord_str,
-                'SALIDA PLANTEL (GPS)': gps_data['Salida_Plantel'],
-                'RETORNO PLANTEL (GPS)': gps_data['Retorno_Plantel'],
+                'ÓRDENES CANTIDAD': int(row['Ordenes_Totales']),
+                'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
+                'HORA 1ra ORDEN': h_primera,
+                'SALIDA PLANTEL (GPS)': gps['Salida'],
+                'ENTRADA PLANTEL (GPS)': gps['Entrada'],
                 'DÍAS FALTADOS': int(faltas_dict.get(tec, 0)),
-                'LLAMADOS DE ATENCIÓN': int(llamados_dict.get(tec, 0))
+                'LLAMADOS ATENCIÓN': int(llamados_dict.get(tec, 0))
             })
 
-        df_consolidado_final = pd.DataFrame(datos_cons)
-        df_diario_final = pd.DataFrame(gps_diario) if gps_diario else pd.DataFrame()
-        
-        return df_consolidado_final, df_diario_final, "Procesamiento completado con éxito."
+        return pd.DataFrame(datos_finales), df_gps_diario, df_exp_detallado, "Exitoso"
     except Exception as e:
-        return None, None, f"Error en procesamiento analítico: {e}"
+        return None, None, None, f"Error: {e}"
 
 # ==============================================================================
-# MÓDULO INTERFAZ STREAMLIT
+# INTERFAZ STREAMLIT (DASHBOARD)
 # ==============================================================================
 def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **kwargs):
-    st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Panel Integral de Rendimiento y Disciplina</h2>", unsafe_allow_html=True)
-    st.caption("Consolidación inteligente y cruce de datos: rep_actividades vs. InformeZonasRutas vs. Expedientes de la Nube.")
+    st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Dashboard de Rendimiento Integral</h2>", unsafe_allow_html=True)
+    st.caption("Depuración Inteligente: Órdenes + GPS + Expedientes Laborales")
     st.divider()
 
-    df_exp_inicial = obtener_datos_expedientes(conn)
+    obtener_datos_expedientes(conn)
 
-    # ==========================================================
-    # 1. CARGA Y SINCRONIZACIÓN DE DATOS
-    # ==========================================================
-    st.markdown("### 📥 1. Carga y Sincronización de Datos")
-    
-    col_c1, col_c2, col_c3 = st.columns(3)
-    
-    with col_c1:
-        st.info("📦 Órdenes y Tiempos")
-        file_act = st.file_uploader("Sube 'rep_actividades'", type=['csv', 'xlsx', 'xls'], key="uploader_act")
-        
-    with col_c2:
-        st.info("📡 GPS y Entradas/Salidas")
-        file_gps = st.file_uploader("Sube 'InformeZonasRutas'", type=['csv', 'xlsx', 'xls'], key="uploader_gps")
-        
-    with col_c3:
-        st.info("☁️ Expedientes (Llamados/Faltas)")
-        st.write("Sincronización de Base de Datos:")
-        
-        if st.button("🔄 Sincronizar Expedientes de Nube", use_container_width=True):
-            with st.spinner("Conectando con Google Cloud Storage..."):
-                try:
-                    df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                    if df is not None and not df.empty:
+    # ================= 1. CARGA DE ARCHIVOS =================
+    st.markdown("#### 📥 Carga de Archivos Base")
+    c1, c2, c3 = st.columns(3)
+    with c1: act_file = st.file_uploader("1. rep_actividades (Órdenes)", type=['csv', 'xlsx'])
+    with c2: gps_file = st.file_uploader("2. InformeZonasRutas (GPS)", type=['csv', 'xlsx'])
+    with c3:
+        st.write("3. Base de Datos Nube")
+        if st.button("🔄 Sincronizar Expedientes"):
+            with st.spinner("Conectando..."):
+                if conn:
+                    try:
+                        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                        if df is None or df.empty: df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         st.session_state['df_exp_memoria'] = df
-                        st.success("✅ Datos sincronizados directamente desde GCS.")
-                        time.sleep(1)
-                        st.rerun()
-                    elif conn:
-                        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
-                        st.session_state['df_exp_memoria'] = df
-                        st.success("✅ Sincronizado mediante Google Sheets.")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("❌ No se detectaron credenciales ni conexión activa de GCS/Sheets.")
-                except Exception as e:
-                    st.error(f"❌ Error durante la sincronización: {e}")
-                
+                        st.success("✅ BD Sincronizada.")
+                        time.sleep(1); st.rerun()
+                    except Exception as e: st.error(e)
+                else: st.error("Sin conexión.")
         if st.session_state.get('df_exp_memoria') is not None:
-            st.success(f"Archivados: {len(st.session_state['df_exp_memoria'])} registros.")
+            st.success(f"Expedientes listos ({len(st.session_state['df_exp_memoria'])} reg.)")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ==========================================================
-    # 2. MOTOR DE CRUCE Y PROCESAMIENTO
-    # ==========================================================
-    if st.button("🚀 INICIAR ANÁLISIS INTEGRAL", type="primary", use_container_width=True):
-        if file_act is None:
-            st.error("⚠️ Para calcular la eficiencia es necesario subir el archivo 'rep_actividades'.")
+    # ================= 2. BOTÓN DE EJECUCIÓN =================
+    if st.button("🚀 INICIAR ANÁLISIS CRUZADO", type="primary", use_container_width=True):
+        if act_file:
+            with st.spinner("🤖 Depurando nombres de técnicos y cruzando bases de datos..."):
+                df_act = read_file_robust_local(act_file)
+                df_gps = read_file_robust_local(gps_file) if gps_file else None
+                df_exp = st.session_state.get('df_exp_memoria', None)
+
+                df_maestra, df_diario, df_disciplina, msg = procesar_rendimiento_avanzado(df_act, df_gps, df_exp)
+                
+                if df_maestra is not None:
+                    st.session_state['rs_maestra'] = df_maestra
+                    st.session_state['rs_diario'] = df_diario
+                    st.session_state['rs_disciplina'] = df_disciplina
+                    st.rerun()
+                else:
+                    st.error(msg)
         else:
-            with st.spinner("Procesando y alineando datos operativos, GPS y recursos humanos..."):
-                try:
-                    df_act_raw = read_file_robust_local(file_act)
-                    df_gps_raw = read_file_robust_local(file_gps) if file_gps else None
-                    df_exp_raw = st.session_state.get('df_exp_memoria', None)
+            st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-                    # Ejecución del cruce analítico avanzado con el algoritmo de vehículo MX
-                    df_consolidado, df_diario, msg = procesar_rendimiento_avanzado(df_act_raw, df_gps_raw, df_exp_raw)
-                    
-                    if df_consolidado is not None:
-                        st.session_state['df_rendimiento_integral'] = df_consolidado
-                        st.session_state['df_gps_diario_integral'] = df_diario
-                        st.success("✅ Análisis general consolidado con éxito.")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(f"No se pudo procesar: {msg}")
-                except Exception as e:
-                    st.error(f"Ocurrió un error inesperado durante el procesamiento: {e}")
+    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
+    if 'rs_maestra' in st.session_state:
+        df_m = st.session_state['rs_maestra'].copy()
+        df_d = st.session_state['rs_diario']
+        df_exp_det = st.session_state['rs_disciplina']
 
-    # ==========================================================
-    # 3. DASHBOARD Y VISUALIZACIÓN DE RESULTADOS
-    # ==========================================================
-    if 'df_rendimiento_integral' in st.session_state:
-        df_res = st.session_state['df_rendimiento_integral'].copy()
-        df_dia_gps = st.session_state.get('df_gps_diario_integral', pd.DataFrame())
-        
-        st.markdown("---")
-        
-        tab_consolidada, tab_diaria = st.tabs(["📅 Vista Consolidada (4 Semanas)", "🔍 Detalle Diario (Auditoría GPS)"])
-        
-        with tab_consolidada:
-            st.markdown("### 🏆 Tablero de Rendimiento General")
-            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-            with kpi1:
-                st.metric("👥 Técnicos Evaluados", len(df_res))
-            with kpi2:
-                total_ord = df_res['ÓRDENES EJECUTADAS'].sum() if 'ÓRDENES EJECUTADAS' in df_res.columns else 0
-                st.metric("📦 Órdenes Totales", int(total_ord))
-            with kpi3:
-                promedio_tiempo = df_res['TIEMPO PROM. (Min)'].mean() if 'TIEMPO PROM. (Min)' in df_res.columns else 0
-                st.metric("⏳ Promedio de Orden", f"{round(promedio_tiempo, 1)} Min")
-            with kpi4:
-                dias_faltados = df_res['DÍAS FALTADOS'].sum() if 'DÍAS FALTADOS' in df_res.columns else 0
-                llamados_atencion = df_res['LLAMADOS DE ATENCIÓN'].sum() if 'LLAMADOS DE ATENCIÓN' in df_res.columns else 0
-                total_incidencias = int(dias_faltados + llamados_atencion)
-                st.metric("🚨 Total Incidencias", total_incidencias)
-                
-            st.markdown("<br>", unsafe_allow_html=True)
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                filtro_tec = st.multiselect("👤 Filtrar por Técnico:", options=sorted(df_res['TÉCNICO'].unique()), key="filter_consolidado")
-            with col_f2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                ver_con_faltas = st.checkbox("🚨 Mostrar solo técnicos con incidencias (Faltas o Llamados de Atención)", key="chk_consolidado")
-                
-            if filtro_tec:
-                df_res = df_res[df_res['TÉCNICO'].isin(filtro_tec)]
-            if ver_con_faltas:
-                cond_inc = (df_res['DÍAS FALTADOS'] > 0) | (df_res['LLAMADOS DE ATENCIÓN'] > 0)
-                df_res = df_res[cond_inc]
-                
-            def alert_style(row):
-                has_faltas = row.get('DÍAS FALTADOS', 0)
-                has_llamados = row.get('LLAMADOS DE ATENCIÓN', 0)
-                try:
-                    val_faltas = int(float(has_faltas)) if pd.notna(has_faltas) else 0
-                    val_llamados = int(float(has_llamados)) if pd.notna(has_llamados) else 0
-                except:
-                    val_faltas = 0
-                    val_llamados = 0
-                if val_faltas > 0 or val_llamados > 0:
-                    return ['background-color: #fee2e2; color: #991b1b; font-weight: bold'] * len(row)
+        # Filtro global
+        tecs_disp = sorted(df_m['TÉCNICO'].unique())
+        tec_filtro = st.multiselect("🔍 Filtrar Técnico(s) para todo el reporte:", tecs_disp)
+        if tec_filtro:
+            df_m = df_m[df_m['TÉCNICO'].isin(tec_filtro)]
+
+        # --- PESTAÑAS DEL DASHBOARD ---
+        tab_graficos, tab_maestra, tab_gps, tab_exp = st.tabs([
+            "📈 Gráficos y KPIs", 
+            "📋 Tabla Maestra Integral", 
+            "📍 Tiempos GPS Diarios", 
+            "🚨 Registro Disciplinario"
+        ])
+
+        # --- TAB 1: GRÁFICOS Y KPIs ---
+        with tab_graficos:
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("👥 Técnicos Analizados", len(df_m))
+            k2.metric("📦 Total Órdenes", df_m['ÓRDENES CANTIDAD'].sum())
+            k3.metric("⏳ Promedio Gral (Min)", round(df_m['TIEMPO PROM. EN ORDEN (Min)'].mean(), 1))
+            k4.metric("🚨 Total Incidencias", df_m['DÍAS FALTADOS'].sum() + df_m['LLAMADOS ATENCIÓN'].sum())
+            
+            st.markdown("---")
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                # Gráfico de Órdenes
+                fig_ord = px.bar(df_m.sort_values('ÓRDENES CANTIDAD', ascending=True), 
+                                 x='ÓRDENES CANTIDAD', y='TÉCNICO', orientation='h',
+                                 title="📦 Productividad (Cant. Órdenes)", text_auto=True, color_discrete_sequence=['#10B981'])
+                fig_ord.update_layout(height=400, yaxis_title="")
+                st.plotly_chart(fig_ord, use_container_width=True)
+
+            with col_g2:
+                # Gráfico de Tiempo Promedio
+                fig_time = px.bar(df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=False), 
+                                 x='TIEMPO PROM. EN ORDEN (Min)', y='TÉCNICO', orientation='h',
+                                 title="⏳ Tiempo Promedio por Orden (Minutos)", text_auto='.1f', color_discrete_sequence=['#3B82F6'])
+                fig_time.update_layout(height=400, yaxis_title="")
+                st.plotly_chart(fig_time, use_container_width=True)
+
+            # Gráfico de Incidencias (Solo si hay)
+            df_incidencias = df_m[(df_m['DÍAS FALTADOS'] > 0) | (df_m['LLAMADOS ATENCIÓN'] > 0)]
+            if not df_incidencias.empty:
+                df_melt = df_incidencias.melt(id_vars='TÉCNICO', value_vars=['DÍAS FALTADOS', 'LLAMADOS ATENCIÓN'], var_name='Tipo', value_name='Cantidad')
+                fig_inc = px.bar(df_melt, x='TÉCNICO', y='Cantidad', color='Tipo', title="🚨 Mapa de Incidencias Disciplinarias",
+                                 color_discrete_map={'DÍAS FALTADOS': '#EF4444', 'LLAMADOS ATENCIÓN': '#F59E0B'}, text_auto=True)
+                st.plotly_chart(fig_inc, use_container_width=True)
+
+        # --- TAB 2: TABLA MAESTRA INTEGRAL ---
+        with tab_maestra:
+            st.markdown("### 📋 Vista Consolidada")
+            st.caption("Esta tabla contiene el resumen perfecto del rendimiento y disciplina de cada técnico.")
+            
+            # Formato condicional (Rojo para incidencias)
+            def highlight_incidencias(row):
+                if row['DÍAS FALTADOS'] > 0 or row['LLAMADOS ATENCIÓN'] > 0:
+                    return ['background-color: #fee2e2; color: #991b1b'] * len(row)
                 return [''] * len(row)
 
-            st.dataframe(df_res.style.apply(alert_style, axis=1), use_container_width=True, hide_index=True)
-            
-            # Exportar PDF
-            st.markdown("<br>", unsafe_allow_html=True)
-            col_dl1, _ = st.columns([1, 2])
-            with col_dl1:
-                try:
-                    pdf_data = generar_pdf_rendimiento_integral(df_res)
-                    if pdf_data:
-                        st.download_button(
-                            label="📄 Descargar Consolidado (PDF)",
-                            data=pdf_data,
-                            file_name="Consolidado_Rendimiento.pdf",
-                            mime="application/pdf",
-                            type="primary",
-                            use_container_width=True
-                        )
-                except Exception as e:
-                    st.warning(f"No se pudo generar PDF: {e}")
+            st.dataframe(df_m.style.apply(highlight_incidencias, axis=1), use_container_width=True, hide_index=True)
 
-        with tab_diaria:
-            st.markdown("### 🔍 Auditoría Diaria de Tiempos y GPS")
-            if not df_dia_gps.empty:
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    lista_fechas = sorted(df_dia_gps['Fecha'].dropna().unique())
-                    fecha_sel = st.selectbox("📅 Seleccione el día a auditar:", options=lista_fechas, format_func=lambda x: x.strftime('%d/%m/%Y'))
-                
-                df_dia_fil = df_dia_gps[df_dia_gps['Fecha'] == fecha_sel].copy()
-                
-                with col_d2:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    lista_tecs_dia = sorted(df_dia_fil['TÉCNICO'].unique())
-                    filtro_tec_dia = st.multiselect("👤 Filtrar Técnicos para este día:", options=lista_tecs_dia)
-                    
-                if filtro_tec_dia:
-                    df_dia_fil = df_dia_fil[df_dia_fil['TÉCNICO'].isin(filtro_tec_dia)]
-                    
-                df_dia_tabla = df_dia_fil[['TÉCNICO', 'Salida_Str', 'Entrada_Str']].copy()
-                df_dia_tabla.columns = ['TÉCNICO', 'HORA SALIDA PLANTEL (GPS)', 'HORA RETORNO PLANTEL (GPS)']
-                
-                st.dataframe(df_dia_tabla, use_container_width=True, hide_index=True)
+            # Botón de Descarga
+            try:
+                pdf_bytes = generar_pdf_rendimiento_integral(df_m)
+                if pdf_bytes:
+                    st.download_button("📄 Descargar Reporte PDF", data=pdf_bytes, file_name="Reporte_Gerencial.pdf", mime="application/pdf", type="primary")
+            except: pass
+
+        # --- TAB 3: TIEMPOS GPS DIARIOS ---
+        with tab_gps:
+            if not df_d.empty:
+                df_d_fil = df_d[df_d['TECNICO'].isin(tec_filtro)] if tec_filtro else df_d
+                fechas = sorted(df_d_fil['Fecha'].unique())
+                if fechas:
+                    fecha_sel = st.selectbox("📅 Seleccione la fecha:", fechas)
+                    df_d_show = df_d_fil[df_d_fil['Fecha'] == fecha_sel][['TECNICO', 'Salida_Str', 'Entrada_Str']]
+                    df_d_show.columns = ['TÉCNICO', 'SALIDA DEL PLANTEL (GPS)', 'RETORNO AL PLANTEL (GPS)']
+                    st.dataframe(df_d_show, use_container_width=True, hide_index=True)
             else:
-                st.info("💡 Por favor, suba el archivo 'InformeZonasRutas' para habilitar el detalle diario por GPS.")
-                
+                st.info("No se subió archivo GPS o no se lograron cruzar los datos de placa/alias.")
+
+        # --- TAB 4: REGISTRO DISCIPLINARIO ---
+        with tab_exp:
+            if df_exp_det is not None and not df_exp_det.empty:
+                df_e_fil = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tec_filtro)] if tec_filtro else df_exp_det
+                if not df_e_fil.empty:
+                    # Mostrar las columnas más relevantes de la BD
+                    cols_mostrar = [c for c in df_e_fil.columns if c not in ['TEC_MAESTRO', 'ES_FALTA']]
+                    st.dataframe(df_e_fil[cols_mostrar], use_container_width=True, hide_index=True)
+                else:
+                    st.success("✨ ¡Excelente! Los técnicos seleccionados no tienen incidencias ni llamados de atención.")
+            else:
+                st.info("La base de datos de expedientes está limpia o no ha sido sincronizada.")
