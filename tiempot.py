@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
+import io
 import re
 
 # Importación segura de dependencias desde tools.py
 try:
     from tools import (
-        read_file_robust,
         procesar_dataframe_base,
         procesar_fechas_seguro,
         procesar_rendimiento_integral,
@@ -21,6 +21,79 @@ except ImportError as e:
 # Constantes del sistema alineadas con expediente.py
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
+# ==============================================================================
+# MOTOR LOCAL CORREGIDO DE LECTURA DE ARCHIVOS (Evita falsos positivos HTML)
+# ==============================================================================
+def forzar_columnas_unicas_local(df):
+    if df is None or df.empty: 
+        return df
+    df.columns = df.columns.astype(str).str.strip()
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique():
+        dup_indices = cols[cols == dup].index.tolist()
+        for i, idx in enumerate(dup_indices):
+            if i != 0:
+                cols.iat[idx] = f"{dup}_{i}"
+    df.columns = cols
+    return df
+
+def read_file_robust_local(uploaded_file):
+    filename = uploaded_file.name.lower()
+    uploaded_file.seek(0)
+    content = uploaded_file.read()
+    uploaded_file.seek(0)
+    
+    # 1. Forzar motores Excel para formatos modernos comprimidos (.xlsx, .xlsm)
+    if filename.endswith('.xlsx') or filename.endswith('.xlsm'):
+        try:
+            df = pd.read_excel(uploaded_file, engine='openpyxl')
+            return forzar_columnas_unicas_local(df)
+        except Exception:
+            pass
+
+    # 2. Archivos antiguos XLS (BIFF8)
+    if content.startswith(b'\xd0\xcf\x11\xe0'):
+        try:
+            df = pd.read_excel(uploaded_file, engine='xlrd')
+            return forzar_columnas_unicas_local(df)
+        except Exception:
+            pass
+
+    # 3. Comprobación estricta de HTML plano (Excluye archivos binarios ZIP que inician con PK)
+    es_zip_binario = content.startswith(b'PK\x03\x04')
+    if not es_zip_binario and (b'<table' in content.lower() or b'<html' in content.lower()):
+        try:
+            dfs = pd.read_html(io.BytesIO(content))
+            if dfs:
+                return forzar_columnas_unicas_local(max(dfs, key=len))
+        except Exception:
+            try:
+                dfs = pd.read_html(io.BytesIO(content), encoding='latin-1')
+                if dfs:
+                    return forzar_columnas_unicas_local(max(dfs, key=len))
+            except Exception:
+                pass
+
+    # 4. Alternativas de rescate (CSV o lectura por defecto)
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_excel(uploaded_file)
+        return forzar_columnas_unicas_local(df)
+    except Exception:
+        pass
+
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
+        return forzar_columnas_unicas_local(df)
+    except UnicodeDecodeError:
+        uploaded_file.seek(0)
+        df = pd.read_csv(uploaded_file, encoding='latin-1', on_bad_lines='skip')
+        return forzar_columnas_unicas_local(df)
+
+# ==============================================================================
+# GESTIÓN DE EXPEDIENTES COMPARTIDA
+# ==============================================================================
 def obtener_datos_expedientes(conn):
     """
     Recupera los datos de expedientes compartiendo la misma llave de sesión 
@@ -36,7 +109,6 @@ def obtener_datos_expedientes(conn):
         return None
         
     try:
-        # Reutiliza el mismo orden de prioridad (GCS -> Google Sheets en vivo)
         df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
         if df is None or df.empty:
             df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
@@ -51,7 +123,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     st.caption("Cruce consolidado: Órdenes de Trabajo vs Rutas GPS vs Expedientes Laborales de la Nube.")
     st.divider()
 
-    # Carga de la base de datos de expedientes al iniciar la vista
+    # Carga inicial de expedientes
     df_exp_inicial = obtener_datos_expedientes(conn)
 
     # ==========================================================
@@ -103,9 +175,9 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         else:
             with st.spinner("Procesando y alineando datos operativos, GPS y recursos humanos..."):
                 try:
-                    # Lectura inmunizada contra fallos de codificación
+                    # Lectura local corregida sin falsos positivos de HTML
                     try:
-                        df_act_raw = read_file_robust(file_act)
+                        df_act_raw = read_file_robust_local(file_act)
                     except Exception as err_act:
                         st.error(f"No se pudo interpretar el archivo de actividades: {err_act}")
                         return
@@ -113,7 +185,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     df_gps_raw = None
                     if file_gps:
                         try:
-                            df_gps_raw = read_file_robust(file_gps)
+                            df_gps_raw = read_file_robust_local(file_gps)
                         except Exception as err_gps:
                             st.warning(f"No se pudo interpretar el archivo GPS: {err_gps}. El cruce continuará sin telemetría.")
 
@@ -125,14 +197,12 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         'HORA_LIQ': 'FECHA LIQUIDADO'
                     })
 
-                    # Limpieza defensiva de expedientes antes de enviarlos al motor
+                    # Limpieza preventiva de expedientes antes del cruce
                     df_exp_raw = st.session_state.get('df_exp_memoria', None)
                     df_exp_ready = None
                     
                     if df_exp_raw is not None and not df_exp_raw.empty:
                         df_exp_ready = df_exp_raw.copy()
-                        # Si existe la columna de técnicos, limpiamos cualquier etiqueta de departamento
-                        # como "JOSE PEREZ (SAC)" para convertirlo en "JOSE PEREZ" y que coincida con las órdenes.
                         if 'TECNICO' in df_exp_ready.columns:
                             df_exp_ready['TECNICO'] = df_exp_ready['TECNICO'].astype(str).str.replace(r'\s*\(.*\)$', '', regex=True).str.strip()
 
