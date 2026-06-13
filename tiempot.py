@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, time as dt_time
 import io
 import re
+import unicodedata
 
 # Importaciones seguras de dependencias desde tools.py
 try:
@@ -93,17 +94,12 @@ def read_file_robust_local(uploaded_file):
 # GESTIÓN DE EXPEDIENTES COMPARTIDA (AUTOSUFICIENTE Y RESILIENTE)
 # ==============================================================================
 def obtener_datos_expedientes(conn):
-    """
-    Recupera los datos de expedientes compartiendo la misma llave de sesión 
-    que utiliza el módulo de gestión de expedientes. Incorpora fallbacks automáticos.
-    """
     if 'df_exp_memoria' not in st.session_state:
         st.session_state['df_exp_memoria'] = None
 
     if st.session_state['df_exp_memoria'] is not None:
         return st.session_state['df_exp_memoria']
         
-    # Intento 1: Directo a GCS espejo
     try:
         df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
         if df is not None and not df.empty:
@@ -112,15 +108,6 @@ def obtener_datos_expedientes(conn):
     except Exception:
         pass
         
-    # Intento 2: Sheets conn local si no se pasó desde el archivo principal
-    if conn is None:
-        try:
-            from streamlit_gsheets import GSheetsConnection
-            conn = st.connection("gsheets", type=GSheetsConnection)
-        except Exception:
-            pass
-            
-    # Intento 3: Sheets live read
     if conn is not None:
         try:
             df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
@@ -134,11 +121,19 @@ def obtener_datos_expedientes(conn):
 # ==============================================================================
 # MOTOR RE-DISEÑADO DE CRUCE INTEGRAL (EMPAREJAMIENTO POR MX)
 # ==============================================================================
+def normalizar_texto(txt):
+    """Normaliza texto removiendo acentos, dobles espacios y pasando a mayúsculas."""
+    if pd.isna(txt) or not str(txt).strip():
+        return ""
+    txt_normalized = unicodedata.normalize('NFD', str(txt))
+    txt_clean = "".join([c for c in txt_normalized if not unicodedata.combining(c)]).upper()
+    return " ".join(txt_clean.split())
+
 def extraer_numero_mx(texto):
     """Extrae el número identificador del vehículo de manera limpia (ej: MX-10 -> 10)."""
     if pd.isna(texto) or not str(texto).strip():
         return None
-    val = str(texto).upper().strip()
+    val = normalizar_texto(texto)
     match = re.search(r'MX[-_ ]*(\d+)', val)
     if match:
         return int(match.group(1))
@@ -159,13 +154,13 @@ def match_tecnico_inteligente(alias_gps, mx_gps, lista_tecnicos, tec_to_mx):
                 return tec
 
     # 2. Coincidencia de respaldo por substrings de nombre
-    alias_clean = str(alias_gps).upper().replace(',', '').replace('.', '')
+    alias_clean = normalizar_texto(alias_gps)
     alias_clean = re.sub(r'MX-\d+', '', alias_clean)
     
     best_match = None
     max_coincidencias = 0
     for tec in lista_tecnicos:
-        partes_tec = str(tec).upper().split()
+        partes_tec = normalizar_texto(tec).split()
         coincidencias = sum(1 for p in partes_tec if len(p) > 2 and p in alias_clean)
         if coincidencias > max_coincidencias:
             max_coincidencias = coincidencias
@@ -213,7 +208,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 if mx_val is not None:
                     tec_to_mx[r['TECNICO']] = mx_val
 
-        # 2. Procesar GPS con limpieza rigurosa de columnas
+        # 2. Procesar GPS con limpieza de columnas y filtrado de zona base (Doble Parqueo Mall)
         gps_consolidado = {}
         gps_diario = []
 
@@ -224,6 +219,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             col_placa = next((c for c in df_gps.columns if 'PLACA' in str(c).upper() or 'ALIAS' in str(c).upper()), None)
             col_h_in = next((c for c in df_gps.columns if 'HORA INGRESO' in str(c).upper() or 'LLEGADA' in str(c).upper()), None)
             col_h_out = next((c for c in df_gps.columns if 'HORA SALIDA' in str(c).upper() or 'SALIDA' in str(c).upper()), None)
+            col_zona = next((c for c in df_gps.columns if 'ZONA' in str(c).upper() or 'RUTA' in str(c).upper()), None)
 
             if col_placa and col_h_in and col_h_out:
                 df_gps['Hora_Ingreso_DT'] = pd.to_datetime(df_gps[col_h_in], errors='coerce')
@@ -232,35 +228,51 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_gps['Fecha_Ingreso'] = df_gps['Hora_Ingreso_DT'].dt.date
                 df_gps['Fecha_Salida'] = df_gps['Hora_Salida_DT'].dt.date
                 
+                # Filtrar solo registros del plantel/parqueo principal para evitar capturar visitas a clientes
+                if col_zona:
+                    df_gps_base = df_gps[df_gps[col_zona].astype(str).str.upper().str.contains('PARQUEO|PLANTEL|BASE|MALL|DOBLE', na=False)].copy()
+                else:
+                    df_gps_base = df_gps.copy()
+
                 # Extraer MX de la placa de GPS
-                df_gps['MX_GPS'] = df_gps[col_placa].apply(extraer_numero_mx)
+                df_gps_base['MX_GPS'] = df_gps_base[col_placa].apply(extraer_numero_mx)
                 
-                # Asignar técnico usando mapeo híbrido (MX + substrings)
-                df_gps['TEC_KEY'] = df_gps.apply(
+                # Asignar técnico usando mapeo híbrido
+                df_gps_base['TEC_KEY'] = df_gps_base.apply(
                     lambda row: match_tecnico_inteligente(row[col_placa], row['MX_GPS'], tecnicos_unicos, tec_to_mx),
                     axis=1
                 )
-                df_gps_valid = df_gps.dropna(subset=['TEC_KEY'])
+                df_gps_valid = df_gps_base.dropna(subset=['TEC_KEY']).copy()
 
-                # Extraer tiempos diarios por técnico
+                # Convertir a segundos desde la medianoche para poder calcular promedios matemáticos
+                df_gps_valid['Salida_Secs'] = df_gps_valid['Hora_Salida_DT'].dt.hour * 3600 + df_gps_valid['Hora_Salida_DT'].dt.minute * 60 + df_gps_valid['Hora_Salida_DT'].dt.second
+                df_gps_valid['Ingreso_Secs'] = df_gps_valid['Hora_Ingreso_DT'].dt.hour * 3600 + df_gps_valid['Hora_Ingreso_DT'].dt.minute * 60 + df_gps_valid['Hora_Ingreso_DT'].dt.second
+
+                # Filtrar por ventanas de jornada real (Salida: 5am-1pm | Retorno: 12pm-10pm)
+                df_gps_valid['Salida_Secs_Valida'] = df_gps_valid['Salida_Secs'].apply(lambda x: x if (5*3600 <= x <= 13*3600) else None)
+                df_gps_valid['Ingreso_Secs_Valida'] = df_gps_valid['Ingreso_Secs'].apply(lambda x: x if (12*3600 <= x <= 22*3600) else None)
+
+                # Agrupar y extraer registros de jornada diaria
                 for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_KEY', 'Fecha_Salida']):
-                    primer_salida = sub_df['Hora_Salida_DT'].min()
-                    sub_ent = df_gps_valid[(df_gps_valid['TEC_KEY'] == tec) & (df_gps_valid['Fecha_Ingreso'] == fecha)]
-                    ult_entrada = sub_ent['Hora_Ingreso_DT'].max() if not sub_ent.empty else pd.NaT
+                    # Obtener primer salida del plantel del rango de la mañana
+                    sub_salidas = sub_df['Salida_Secs_Valida'].dropna()
+                    primer_salida_secs = sub_salidas.min() if not sub_salidas.empty else None
                     
-                    secs_salida = primer_salida.hour * 3600 + primer_salida.minute * 60 + primer_salida.second if pd.notnull(primer_salida) else None
-                    secs_entrada = ult_entrada.hour * 3600 + ult_entrada.minute * 60 + ult_entrada.second if pd.notnull(ult_entrada) else None
+                    # Obtener último ingreso del plantel del rango de la tarde/noche
+                    sub_ent = df_gps_valid[(df_gps_valid['TEC_KEY'] == tec) & (df_gps_valid['Fecha_Ingreso'] == fecha)]
+                    sub_ingresos = sub_ent['Ingreso_Secs_Valida'].dropna()
+                    ult_entrada_secs = sub_ingresos.max() if not sub_ingresos.empty else None
                     
                     gps_diario.append({
                         'TÉCNICO': tec,
                         'Fecha': fecha,
-                        'Salida_Secs': secs_salida,
-                        'Entrada_Secs': secs_entrada,
-                        'Salida_Str': primer_salida.strftime('%H:%M:%S') if pd.notnull(primer_salida) else '--',
-                        'Entrada_Str': ult_entrada.strftime('%H:%M:%S') if pd.notnull(ult_entrada) else '--'
+                        'Salida_Secs': primer_salida_secs,
+                        'Entrada_Secs': ult_entrada_secs,
+                        'Salida_Str': formatear_segundos_a_hora(primer_salida_secs),
+                        'Entrada_Str': formatear_segundos_a_hora(ult_entrada_secs)
                     })
 
-                # Calcular promedios consolidados
+                # Calcular promedios consolidados libres de anomalías
                 df_gps_diario = pd.DataFrame(gps_diario)
                 if not df_gps_diario.empty:
                     for tec, g in df_gps_diario.groupby('TÉCNICO'):
@@ -399,7 +411,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     df_gps_raw = read_file_robust_local(file_gps) if file_gps else None
                     df_exp_raw = st.session_state.get('df_exp_memoria', None)
 
-                    # Ejecución del cruce analítico avanzado
+                    # Ejecución del cruce analítico avanzado con el algoritmo de vehículo MX
                     df_consolidado, df_diario, msg = procesar_rendimiento_avanzado(df_act_raw, df_gps_raw, df_exp_raw)
                     
                     if df_consolidado is not None:
