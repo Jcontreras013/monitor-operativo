@@ -524,3 +524,4 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.dataframe(df_dia_tabla, use_container_width=True, hide_index=True)
             else:
                 st.info("💡 Por favor, suba el archivo 'InformeZonasRutas' para habilitar el detalle diario por GPS.")
+                
