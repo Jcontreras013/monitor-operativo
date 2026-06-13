@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 import re
 
-# Importaciones seguras desde tools.py
+# Importaciones seguras de dependencias desde tools.py
 try:
     from tools import (
         procesar_dataframe_base,
@@ -15,7 +15,7 @@ try:
         get_honduras_time
     )
 except ImportError as e:
-    st.error(f"Error al importar módulos desde tools.py: {e}")
+    st.error(f"Error al importar módulos de soporte desde tools.py: {e}")
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
@@ -41,6 +41,7 @@ def read_file_robust_local(uploaded_file):
     content = uploaded_file.read()
     uploaded_file.seek(0)
     
+    # 1. xlsx/xlsm
     if filename.endswith('.xlsx') or filename.endswith('.xlsm'):
         try:
             df = pd.read_excel(uploaded_file, engine='openpyxl')
@@ -48,6 +49,7 @@ def read_file_robust_local(uploaded_file):
         except Exception:
             pass
 
+    # 2. Archivos XLS antiguos (BIFF8)
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
             df = pd.read_excel(uploaded_file, engine='xlrd')
@@ -55,6 +57,7 @@ def read_file_robust_local(uploaded_file):
         except Exception:
             pass
 
+    # 3. Comprobación estricta de HTML plano (Excluye archivos binarios ZIP que inician con PK)
     es_zip_binario = content.startswith(b'PK\x03\x04')
     if not es_zip_binario and (b'<table' in content.lower() or b'<html' in content.lower()):
         try:
@@ -69,6 +72,7 @@ def read_file_robust_local(uploaded_file):
             except Exception:
                 pass
 
+    # 4. Alternativas de rescate (Excel genérico o CSV)
     uploaded_file.seek(0)
     try:
         df = pd.read_excel(uploaded_file)
@@ -86,15 +90,20 @@ def read_file_robust_local(uploaded_file):
         return forzar_columnas_unicas_local(df)
 
 # ==============================================================================
-# GESTIÓN DE EXPEDIENTES COMPARTIDA (SIN MENSAJES DE ERROR DE CONEXIÓN)
+# GESTIÓN DE EXPEDIENTES COMPARTIDA (AUTOSUFICIENTE Y RESILIENTE)
 # ==============================================================================
 def obtener_datos_expedientes(conn):
+    """
+    Recupera los datos de expedientes compartiendo la misma llave de sesión 
+    que utiliza el módulo de gestión de expedientes. Incorpora fallbacks automáticos.
+    """
     if 'df_exp_memoria' not in st.session_state:
         st.session_state['df_exp_memoria'] = None
 
     if st.session_state['df_exp_memoria'] is not None:
         return st.session_state['df_exp_memoria']
         
+    # Intento 1: Directo a GCS espejo
     try:
         df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
         if df is not None and not df.empty:
@@ -103,6 +112,15 @@ def obtener_datos_expedientes(conn):
     except Exception:
         pass
         
+    # Intento 2: Sheets conn local si no se pasó desde el archivo principal
+    if conn is None:
+        try:
+            from streamlit_gsheets import GSheetsConnection
+            conn = st.connection("gsheets", type=GSheetsConnection)
+        except Exception:
+            pass
+            
+    # Intento 3: Sheets live read
     if conn is not None:
         try:
             df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
@@ -114,7 +132,7 @@ def obtener_datos_expedientes(conn):
     return None
 
 # ==============================================================================
-# PROCESAMIENTO ANALÍTICO MEJORADO DE CRUCE (EMPAREJAMIENTO DETERMINISTA)
+# MOTOR RE-DISEÑADO DE CRUCE INTEGRAL (EMPAREJAMIENTO POR MX)
 # ==============================================================================
 def extraer_numero_mx(texto):
     """Extrae el número identificador del vehículo de manera limpia (ej: MX-10 -> 10)."""
@@ -134,13 +152,13 @@ def match_tecnico_inteligente(alias_gps, mx_gps, lista_tecnicos, tec_to_mx):
     Empareja una fila de GPS con un técnico utilizando el MX como llave primaria.
     Si no hay MX disponible, se utiliza coincidencia por substrings de texto.
     """
-    # 1. Intento por coincidencia de vehículo (MX) - Deterministico
+    # 1. Coincidencia por vehículo (MX)
     if mx_gps is not None:
         for tec, mx_tec in tec_to_mx.items():
             if mx_tec == mx_gps:
                 return tec
 
-    # 2. Intento de respaldo por substrings de nombre
+    # 2. Coincidencia de respaldo por substrings de nombre
     alias_clean = str(alias_gps).upper().replace(',', '').replace('.', '')
     alias_clean = re.sub(r'MX-\d+', '', alias_clean)
     
@@ -186,7 +204,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'] != 'N/D')]
         tecnicos_unicos = df_act['TECNICO'].unique()
 
-        # Obtener el mapa de MX asignado a cada técnico desde el archivo de actividades
+        # Obtener el mapa de MX asignado a cada técnico
         tec_to_mx = {}
         if 'MX' in df_act.columns:
             df_act_mx = df_act.dropna(subset=['MX']).groupby('TECNICO')['MX'].first().reset_index()
@@ -246,8 +264,12 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_gps_diario = pd.DataFrame(gps_diario)
                 if not df_gps_diario.empty:
                     for tec, g in df_gps_diario.groupby('TÉCNICO'):
-                        prom_salida = g['Salida_Secs'].mean()
-                        prom_entrada = g['Entrada_Secs'].mean()
+                        valid_exits = g['Salida_Secs'].dropna()
+                        valid_entries = g['Entrada_Secs'].dropna()
+                        
+                        prom_salida = valid_exits.mean() if not valid_exits.empty else None
+                        prom_entrada = valid_entries.mean() if not valid_entries.empty else None
+                        
                         gps_consolidado[tec] = {
                             'Salida_Plantel': formatear_segundos_a_hora(prom_salida),
                             'Retorno_Plantel': formatear_segundos_a_hora(prom_entrada)
@@ -377,7 +399,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     df_gps_raw = read_file_robust_local(file_gps) if file_gps else None
                     df_exp_raw = st.session_state.get('df_exp_memoria', None)
 
-                    # Ejecución del cruce analítico avanzado con el algoritmo de vehículo MX
+                    # Ejecución del cruce analítico avanzado
                     df_consolidado, df_diario, msg = procesar_rendimiento_avanzado(df_act_raw, df_gps_raw, df_exp_raw)
                     
                     if df_consolidado is not None:
