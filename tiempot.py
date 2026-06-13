@@ -3,13 +3,13 @@ import pandas as pd
 import time
 from tools import read_file_robust
 
-# Asegurarse de cargar las funciones nuevas (debe ser la última actualización de tools)
+# Asegurarse de cargar las funciones, incluyendo la de lectura de GCS
 try:
-    from tools import procesar_rendimiento_integral, generar_pdf_rendimiento_integral
+    from tools import procesar_rendimiento_integral, generar_pdf_rendimiento_integral, leer_espejo_gcs
 except ImportError:
     pass
 
-def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args):
+def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **kwargs):
     st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Panel Integral de Rendimiento y Disciplina</h2>", unsafe_allow_html=True)
     st.caption("Cruce automatizado: Tiempos de Órdenes vs Registros GPS vs Expedientes Laborales.")
     st.divider()
@@ -32,19 +32,33 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args):
     with col_c3:
         st.info("☁️ Expedientes (Llamados/Faltas)")
         st.write("Conexión a Base de Datos:")
+        
+        # --- NUEVA LÓGICA DE CONEXIÓN EXTRAÍDA DE TU ARCHIVO EXPEDIENTE ---
         if st.button("🔄 Sincronizar Expedientes de Nube", use_container_width=True):
             if conn:
-                with st.spinner("Descargando historial de incidencias..."):
+                with st.spinner("Descargando historial maestro..."):
                     try:
-                        df_exp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                        NOMBRE_BUCKET = "jovial-trilogy-306216.appspot.com"
+                        df_exp = None
+                        
+                        # 1. Intentamos leer el espejo rápido desde Google Cloud Storage
+                        try:
+                            df_exp = leer_espejo_gcs(NOMBRE_BUCKET, "expedientes_maestro.csv")
+                        except Exception:
+                            pass
+                            
+                        # 2. Si GCS falla o está vacío, leemos directo de Sheets
+                        if df_exp is None or df_exp.empty:
+                            df_exp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                            
                         st.session_state['df_expedientes'] = df_exp
-                        st.success("✅ ¡Expedientes sincronizados!")
+                        st.success("✅ ¡Expedientes sincronizados con éxito!")
                     except Exception as e:
-                        st.error(f"Error al conectar con la hoja 'Expedientes': {e}")
+                        st.error(f"❌ Error al conectar con la base de datos: {e}")
             else:
-                st.error("No se detectó conexión activa a la Nube.")
+                st.error("❌ No se detectó conexión activa a la Nube.")
                 
-        if 'df_expedientes' in st.session_state:
+        if 'df_expedientes' in st.session_state and st.session_state['df_expedientes'] is not None:
             st.success(f"Archivados: {len(st.session_state['df_expedientes'])} registros.")
 
     st.markdown("<br>", unsafe_allow_html=True)
