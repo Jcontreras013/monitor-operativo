@@ -212,11 +212,45 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
         # --- 1. PROCESAR ÓRDENES (ACTIVIDADES) ---
         df_act = procesar_dataframe_base(df_act)
+
+        # SALVAGUARDA DE ENTRADA: Alinear nombres de columnas de forma defensiva
+        if 'TECNICO' not in df_act.columns:
+            alt_c = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'TÉCNICO' in str(c).upper() or 'OPERADOR' in str(c).upper()), None)
+            if alt_c:
+                df_act['TECNICO'] = df_act[alt_c]
+            else:
+                df_act['TECNICO'] = "N/D"
+
+        if 'ACTIVIDAD' not in df_act.columns:
+            alt_c = next((c for c in df_act.columns if 'ACTIVIDAD' in str(c).upper() or 'TIPO' in str(c).upper() or 'ORDEN' in str(c).upper()), None)
+            if alt_c:
+                df_act['ACTIVIDAD'] = df_act[alt_c]
+            else:
+                df_act['ACTIVIDAD'] = "OTRO"
+
+        if 'HORA_INI' not in df_act.columns:
+            alt_c = next((c for c in df_act.columns if 'INI' in str(c).upper() or 'ENTRADA' in str(c).upper() or 'INICIO' in str(c).upper()), None)
+            if alt_c:
+                df_act['HORA_INI'] = df_act[alt_c]
+
+        if 'HORA_LIQ' not in df_act.columns:
+            alt_c = next((c for c in df_act.columns if 'LIQ' in str(c).upper() or 'CIERRE' in str(c).upper() or 'SALIDA' in str(c).upper()), None)
+            if alt_c:
+                df_act['HORA_LIQ'] = df_act[alt_c]
+
+        if 'NUM' not in df_act.columns:
+            alt_c = next((c for c in df_act.columns if 'NUM' in str(c).upper() or 'ORDEN' in str(c).upper() or 'ID' in str(c).upper()), None)
+            if alt_c:
+                df_act['NUM'] = df_act[alt_c]
+            else:
+                df_act['NUM'] = range(len(df_act))
+
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
+        df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
 
         # Eliminar registros sin técnico
-        df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
+        df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].astype(str).str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
         # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se elimina David y Melvin) ---
         nombres_excluidos = ['DAVID SABILLON', 'MELVIN', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
@@ -227,8 +261,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
 
         # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
-        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
-        
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
@@ -237,6 +269,10 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             return True
 
         df_act = df_act[df_act.apply(filtrar_ordenes_allan, axis=1)]
+
+        # Salvaguarda: Verificar que el DataFrame no esté vacío tras los filtros
+        if df_act.empty:
+            return None, None, None, None, None, None, "El archivo de actividades quedó vacío tras aplicar los filtros."
 
         # Base de nombres maestros
         tecnicos_originales = df_act['TECNICO'].unique()
