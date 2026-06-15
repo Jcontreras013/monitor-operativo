@@ -304,8 +304,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     p_salida = sub_df['DT_OUT'].min()
                     u_llegada = sub_df['DT_IN'].max()
                     
-                    week_val = p_salida.to_period('W').astype(str) if pd.notnull(p_salida) else '--'
-                    mes_val = p_salida.to_period('M').astype(str) if pd.notnull(p_salida) else '--'
+                    # Corrección: conversión segura a string usando str() sobre objetos Period escalares
+                    week_val = str(p_salida.to_period('W')) if pd.notnull(p_salida) else '--'
+                    mes_val = str(p_salida.to_period('M')) if pd.notnull(p_salida) else '--'
 
                     s_salida = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
                     s_llegada = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
