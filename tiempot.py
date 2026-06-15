@@ -57,12 +57,12 @@ def clasificar_tipo_orden(tipo_valor):
     return 'Otro'
 
 # ==============================================================================
-# DETECTOR DE INASISTENCIAS EN COMENTARIOS DE EXPEDIENTES
+# DETECTOR DE INASISTENCIAS EN COMENTARIOS DE EXPEDIENTES (Se elimina ABANDONO)
 # ==============================================================================
 PALABRAS_INASISTENCIA = [
     'NO SE PRESENTO', 'NO SE PRESENTÓ', 'AUSENTE', 'FALTA',
     'INASISTENCIA', 'NO LABORES', 'NO TRABAJO', 'NO TRABAJÓ',
-    'NO ASISTIO', 'NO ASISTIÓ', 'ABANDONO', 'NO SE PRESENTÓ A LABORES',
+    'NO ASISTIO', 'NO ASISTIÓ', 'NO SE PRESENTÓ A LABORES',
     'NO SE PRESENTO A LABORES', 'NO SE PRESENTO AL TRABAJO',
     'INCAPACIDAD', 'PERMISO SIN GOCE', 'SUSPENSION', 'SUSPENSIÓN'
 ]
@@ -185,7 +185,7 @@ def limpiar_texto_nombres(texto):
     return " ".join(t.split())
 
 def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_original):
-    """Encuentra el nombre del técnico evaluando qué tantas palabras coinciden."""
+    """Encuentra el nombre del técnico evaluando qué tantas palabras coinciden con regla estricta."""
     n_buscar = limpiar_texto_nombres(nombre_buscar)
     if not n_buscar:
         return None
@@ -201,6 +201,10 @@ def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_origi
             max_score = score
             mejor_match = lista_original[i]
 
+    # --- REGLA DE COINCIDENCIA ESTRICTA (Previene falsos positivos de 1 sola palabra común) ---
+    if max_score == 1 and len(tokens_buscar) > 1:
+        return None
+
     return mejor_match if max_score >= 1 else None
 
 # ==============================================================================
@@ -214,6 +218,19 @@ def formatear_hora(secs):
     s = int(secs % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
+def extraer_numero_mx(texto):
+    """Extrae el número identificador del vehículo de manera limpia (ej: MX-10 -> 10)."""
+    if pd.isna(texto) or not str(texto).strip():
+        return None
+    val = str(texto).upper().strip()
+    match = re.search(r'MX[-_ ]*(\d+)', val)
+    if match:
+        return int(match.group(1))
+    match_num = re.search(r'^\s*(\d+)\s*$', val)
+    if match_num:
+        return int(match_num.group(1))
+    return None
+
 def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
         # --- 1. PROCESAR ÓRDENES (ACTIVIDADES) ---
@@ -224,13 +241,27 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # Eliminar registros sin técnico
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
-        # --- FILTRADO DE TÉCNICOS EXCLUIDOS ---
+        # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se elimina David y Melvin) ---
         nombres_excluidos = ['DAVID SABILLON', 'MELVIN BERRIOS', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
         def es_tecnico_excluido(nombre_completo):
             nom_limpio = limpiar_texto_nombres(nombre_completo)
             return any(limpiar_texto_nombres(ex) in nom_limpio for ex in nombres_excluidos)
             
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
+
+        # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes INSEQUIPO) ---
+        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
+        
+        def filtrar_ordenes_allan(row):
+            tec_limpio = limpiar_texto_nombres(row['TECNICO'])
+            if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
+                act_val = str(row.get('ACTIVIDAD', '')).upper()
+                tipo_val = str(row.get(col_tipo_raw, '')) if col_tipo_raw else ""
+                tipo_val = tipo_val.upper()
+                return 'INSEQUIPO' in act_val or 'INSEQUIPO' in tipo_val
+            return True
+
+        df_act = df_act[df_act.apply(filtrar_ordenes_allan, axis=1)]
 
         # Base de nombres maestros
         tecnicos_originales = df_act['TECNICO'].unique()
@@ -240,7 +271,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
 
         # --- Clasificar Segmento (Residencial / Plex) ---
-        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
         if col_tipo_raw:
             df_act['Segmento'] = df_act[col_tipo_raw].apply(clasificar_segmento)
             df_act['TipoOrden'] = df_act[col_tipo_raw].apply(clasificar_tipo_orden)
@@ -256,6 +286,18 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             return row['Segmento']
 
         df_act['Segmento'] = df_act.apply(forzar_segmento_plex, axis=1)
+
+        # Mapeo de MX/Vehículo asignado a cada técnico
+        tec_to_mx = {}
+        mx_to_tec = {}
+        col_mx = next((c for c in df_act.columns if 'MX' in str(c).upper() or 'VEHICULO' in str(c).upper() or 'UNIDAD' in str(c).upper()), None)
+        if col_mx:
+            for tec, g in df_act.groupby('TECNICO'):
+                mx_val = g[col_mx].dropna().iloc[0] if not g[col_mx].dropna().empty else None
+                mx_num = extraer_numero_mx(mx_val)
+                if mx_num:
+                    tec_to_mx[tec] = mx_num
+                    mx_to_tec[mx_num] = tec
 
         # Resumen global por técnico
         resumen_act = df_act.groupby('TECNICO').agg(
@@ -280,10 +322,19 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         gps_promedios_mensuales = pd.DataFrame()
 
         if df_gps is not None and not df_gps.empty:
+            # Sanitizar nombres de columnas removiendo comillas y dobles espacios
             df_gps.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps.columns]
+            
             col_placa = next((c for c in df_gps.columns if 'PLACA' in c or 'ALIAS' in c), None)
-            col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
-            col_out = next((c for c in df_gps.columns if 'SALIDA' in c), None)
+            
+            # CORRECCIÓN DE DETECCIÓN: Asegurar de priorizar columnas de Fecha/Hora e ignorar Latitud/Longitud
+            col_in = next((c for c in df_gps.columns if ('HORA' in c or 'FECHA' in c) and ('INGRESO' in c or 'LLEGADA' in c)), None)
+            if not col_in:
+                col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
+
+            col_out = next((c for c in df_gps.columns if ('HORA' in c or 'FECHA' in c) and 'SALIDA' in c), None)
+            if not col_out:
+                col_out = next((c for c in df_gps.columns if 'SALIDA' in c), None)
 
             if col_placa and col_in and col_out:
                 df_gps['DT_IN'] = pd.to_datetime(df_gps[col_in], errors='coerce')
@@ -292,13 +343,17 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_gps['Mes'] = df_gps['DT_OUT'].dt.to_period('M').astype(str)
                 df_gps['Week'] = df_gps['DT_OUT'].dt.to_period('W').astype(str)
 
-                df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(
-                    lambda x: encontrar_tecnico_maestro(x, tecnicos_limpios, tecnicos_originales)
-                )
-                df_gps_valid = df_gps.dropna(subset=['TEC_MAESTRO'])
+                # Mapeo de técnico híbrido (Coincidencia por Vehículo MX primero, fallback a nombre estricto)
+                def encontrar_tecnico_hibrido(placa_alias):
+                    mx_gps = extraer_numero_mx(placa_alias)
+                    if mx_gps in mx_to_tec:
+                        return mx_to_tec[mx_gps]
+                    return encontrar_tecnico_maestro(placa_alias, tecnicos_limpios, tecnicos_originales)
+
+                df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(encontrar_tecnico_hibrido)
+                df_gps_valid = df_gps.dropna(subset=['TEC_MAESTRO']).copy()
 
                 # --- PIPELINE DE TELEMETRÍA: DIARIO ➡️ SEMANAL ➡️ MENSUAL ---
-                # A. Consolidado Diario (primer egreso y último ingreso diario por técnico)
                 gps_diario_list = []
                 for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_MAESTRO', 'Fecha']):
                     p_salida = sub_df['DT_OUT'].min()
@@ -308,16 +363,21 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     week_val = str(p_salida.to_period('W')) if pd.notnull(p_salida) else '--'
                     mes_val = str(p_salida.to_period('M')) if pd.notnull(p_salida) else '--'
 
-                    s_salida = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
-                    s_llegada = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
+                    # Filtrado de horas operativas reales para descartar ruidos nocturnos
+                    s_secs = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
+                    e_secs = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
+                    
+                    # Salida: entre 5:00 AM y 1:00 PM | Retorno: entre 12:00 PM y 10:00 PM
+                    salida_valida = s_secs if (s_secs and 5*3600 <= s_secs <= 13*3600) else None
+                    entrada_valida = e_secs if (e_secs and 12*3600 <= e_secs <= 22*3600) else None
 
                     gps_diario_list.append({
                         'TECNICO': tec,
                         'Fecha': fecha,
                         'Week': week_val,
                         'Mes': mes_val,
-                        'Salida_Secs': s_salida,
-                        'Entrada_Secs': s_llegada
+                        'Salida_Secs': salida_valida,
+                        'Entrada_Secs': entrada_valida
                     })
                 
                 df_diario_gps = pd.DataFrame(gps_diario_list)
