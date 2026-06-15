@@ -631,13 +631,10 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 actividades_disponibles = sorted(df_tipo_ord['TipoOrden'].unique())
                 
                 try:
-                    # Para versiones recientes de Streamlit (Botoneras tipo píldora)
                     act_filtro = st.pills("🎯 Haz clic en una o varias actividades para aislar el gráfico (Vacío = Muestra todas):", options=actividades_disponibles, selection_mode="multi")
                 except AttributeError:
-                    # Alternativa clásica ultra funcional
                     act_filtro = st.multiselect("🎯 Selecciona la actividad para aislar el gráfico (Vacío = Muestra todas):", actividades_disponibles)
                 
-                # Aplicamos el filtro si hay algo seleccionado
                 df_tipo_show = df_tipo_ord[df_tipo_ord['TipoOrden'].isin(act_filtro)] if act_filtro else df_tipo_ord
 
                 if not df_tipo_show.empty:
@@ -689,7 +686,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.info("ℹ️ No se detectó columna TIPO en el archivo. Mostrando tiempo promedio global.")
 
         # ================================================================
-        # TAB 2: TABLA MAESTRA INTEGRAL (LIMPIA Y CON PDF UNIFICADO)
+        # TAB 2: TABLA MAESTRA INTEGRAL
         # ================================================================
         with tab_maestra:
             st.markdown("### 📋 Vista Consolidada Integral")
@@ -704,7 +701,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 hide_index=True
             )
 
-            # --- BOTÓN DE DESCARGA PDF INTEGRAL 360 ---
             try:
                 pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_exp_det)
                 if pdf_bytes:
@@ -719,7 +715,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
 
         # ================================================================
-        # TAB 3: REGISTRO DISCIPLINARIO
+        # TAB 3: REGISTRO DISCIPLINARIO (MODIFICADO PARA NO SALTAR)
         # ================================================================
         with tab_exp:
             st.markdown("### 🚨 Registro Disciplinario")
@@ -729,28 +725,26 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
                 if not df_e_fil.empty:
                     st.markdown("#### 🔎 Consultar Incidencias por Técnico")
-                    st.caption("Selecciona un técnico de la lista para ver el detalle de sus incidencias registradas en la nube.")
+                    st.caption("Selecciona un técnico de la lista para ver el detalle al instante.")
 
                     tecnicos_con_exp = sorted(df_e_fil['TEC_MAESTRO'].dropna().unique())
+                    
+                    # Selector instantáneo: elimina la necesidad del botón "Ver"
                     tec_seleccionado = st.selectbox(
                         "👤 Seleccionar Técnico:",
                         ["-- Selecciona un técnico --"] + tecnicos_con_exp,
                         key="sel_tec_disciplina"
                     )
 
-                    if tec_seleccionado and tec_seleccionado != "-- Selecciona un técnico --":
-                        if st.button(f"📋 Ver Incidencias de {tec_seleccionado}", type="primary", use_container_width=True):
-                            st.session_state['tec_incidencia_activo'] = tec_seleccionado
-
-                    tec_activo = st.session_state.get('tec_incidencia_activo', None)
-                    if tec_activo and tec_activo in tecnicos_con_exp:
-                        df_inc_tec = df_e_fil[df_e_fil['TEC_MAESTRO'] == tec_activo].copy()
+                    # Si se selecciona a alguien válido, mostramos los datos inmediatamente
+                    if tec_seleccionado != "-- Selecciona un técnico --":
+                        df_inc_tec = df_e_fil[df_e_fil['TEC_MAESTRO'] == tec_seleccionado].copy()
 
                         cols_excluir = {'TEC_MAESTRO', 'ES_FALTA', 'ES_NO_PRESENTADO'}
                         cols_mostrar = [c for c in df_inc_tec.columns if c not in cols_excluir]
 
                         st.markdown(f"---")
-                        st.markdown(f"#### 📁 Incidencias registradas para: **{tec_activo}**")
+                        st.markdown(f"#### 📁 Incidencias registradas para: **{tec_seleccionado}**")
 
                         total_inc = len(df_inc_tec)
                         dias_no_pres = int(df_inc_tec.get('ES_NO_PRESENTADO', pd.Series([False] * len(df_inc_tec))).sum()) if 'ES_NO_PRESENTADO' in df_inc_tec.columns else 0
@@ -779,10 +773,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                             use_container_width=True,
                             hide_index=True
                         )
-
-                        if st.button("❌ Cerrar detalle", key="cerrar_incidencia"):
-                            st.session_state['tec_incidencia_activo'] = None
-                            st.rerun()
+                        # Se eliminó el botón "Cerrar detalle" que causaba el salto
 
                     st.markdown("---")
                     st.markdown("#### 📊 Vista General — Todos los Registros Disciplinarios")
