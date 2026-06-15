@@ -257,13 +257,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].astype(str).str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
-        nombres_excluidos = ['DAVID SABILLON', 'MELVIN', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
-        def es_tecnico_excluido(nombre_completo):
-            nom_limpio = limpiar_texto_nombres(nombre_completo)
-            return any(limpiar_texto_nombres(ex) in nom_limpio for ex in nombres_excluidos)
-            
-        df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
-
+        # --- REGLA EXCLUSIVA PARA ALLAN ECHEVERRY (Solo contabilizar órdenes de INSEQUIPO) ---
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
@@ -284,14 +278,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
-
-        def forzar_segmento_plex(row):
-            tec_limpio = limpiar_texto_nombres(row['TECNICO'])
-            if 'MIGUEL' in tec_limpio or 'RAFAEL' in tec_limpio:
-                return 'Plex'
-            return row['Segmento']
-
-        df_act['Segmento'] = df_act.apply(forzar_segmento_plex, axis=1)
 
         tec_to_mx = {}
         mx_to_tec = {}
