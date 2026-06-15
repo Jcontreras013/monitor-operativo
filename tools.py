@@ -2971,7 +2971,7 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 8)
     
-    # Anchos de columna optimizados para que no se vea sobrecargado
+    # Anchos de columna optimizados
     w = [55, 20, 15, 15, 25, 30, 30, 25, 30] 
     headers = ["TÉCNICO", "ÓRDENES", "PLEX", "RESID.", "PROM(Min)", "GPS SALIDA", "GPS RETORNO", "AUSENCIAS", "LLAMADOS"]
     
@@ -2986,7 +2986,6 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
         pdf.cell(w[2], 6, safestr(row.get('ÓRDENES PLEX', 0)), border=1, align="C")
         pdf.cell(w[3], 6, safestr(row.get('ÓRDENES RESIDENCIAL', 0)), border=1, align="C")
         
-        # Alerta visual en PDF para tiempos altos
         t_prom = row.get('TIEMPO PROM. EN ORDEN (Min)', 0)
         pdf.set_text_color(220, 38, 38) if t_prom > 90 else pdf.set_text_color(0, 0, 0)
         pdf.cell(w[4], 6, safestr(t_prom), border=1, align="C")
@@ -3005,52 +3004,61 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
 
-    # --- PESTAÑA 3: REGISTRO DISCIPLINARIO (Nube RRHH) ---
+    # --- PESTAÑA 3: REGISTRO DISCIPLINARIO CONSOLIDADO ---
     pdf.ln(10)
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(220, 38, 38) # Rojo
-    pdf.cell(0, 8, safestr("3. DETALLE DISCIPLINARIO (Solo técnicos con incidencias)"), ln=True)
+    pdf.cell(0, 8, safestr("3. RESUMEN DISCIPLINARIO (Consolidado por Técnico)"), ln=True)
     
     if df_exp_det is not None and not df_exp_det.empty:
         tecs_en_reporte = df_m['TÉCNICO'].unique()
-        df_exp_filtrado = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tecs_en_reporte)]
+        df_exp_filtrado = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tecs_en_reporte)].copy()
         
         if not df_exp_filtrado.empty:
-            pdf.set_fill_color(254, 226, 226) # Rojo claro corporativo
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Helvetica", "B", 8)
+            # Asegurar la conversión y limpieza de booleanos de inasistencia de forma segura
+            df_exp_filtrado['ES_FALTA'] = df_exp_filtrado.get('ES_FALTA', pd.Series([False]*len(df_exp_filtrado))).fillna(False).astype(bool)
+            df_exp_filtrado['ES_NO_PRESENTADO'] = df_exp_filtrado.get('ES_NO_PRESENTADO', pd.Series([False]*len(df_exp_filtrado))).fillna(False).astype(bool)
             
-            w_exp = [55, 30, 40, 130]
-            h_exp = ["TÉCNICO", "FECHA", "TIPO DE FALTA", "COMENTARIO / OBSERVACIÓN"]
-            for i, h in enumerate(h_exp):
-                pdf.cell(w_exp[i], 7, safestr(h), border=1, fill=True, align="C")
-            pdf.ln()
+            # Clasificar y agrupar de forma binaria (Inasistencias vs Llamados de Atención)
+            df_exp_filtrado['Falta_Absoluta'] = (df_exp_filtrado['ES_FALTA'] | df_exp_filtrado['ES_NO_PRESENTADO']).astype(int)
+            df_exp_filtrado['Llamado_Absoluto'] = (~(df_exp_filtrado['ES_FALTA'] | df_exp_filtrado['ES_NO_PRESENTADO'])).astype(int)
             
-            pdf.set_font("Helvetica", "", 8)
-            for _, row in df_exp_filtrado.iterrows():
-                tec = safestr(row.get('TEC_MAESTRO', ''))[:30]
-                # Extracción dinámica de columnas de fecha y tipo
-                fecha = safestr(row.get('FECHA_REGISTRO', row.get('FECHA_INCIDENCIA', row.get('FECHA', 'N/D'))))[:12]
-                tipo = safestr(row.get('TIPO_FALTA', row.get('TIPO', 'Registro')))[:22]
+            # Generar el agrupamiento unificado solicitado
+            df_res_disciplina = df_exp_filtrado.groupby('TEC_MAESTRO').agg(
+                Total_Llamados=('Llamado_Absoluto', 'sum'),
+                Total_Faltas=('Falta_Absoluta', 'sum')
+            ).reset_index()
+            
+            # Filtrar técnicos para mostrar únicamente a los que registran incidencias
+            df_res_disciplina = df_res_disciplina[(df_res_disciplina['Total_Llamados'] > 0) | (df_res_disciplina['Total_Faltas'] > 0)]
+            
+            if not df_res_disciplina.empty:
+                pdf.set_fill_color(254, 226, 226) # Rojo claro corporativo
+                pdf.set_text_color(0, 0, 0)
+                pdf.set_font("Helvetica", "B", 8)
                 
-                col_com = next((c for c in row.keys() if 'COMENTARIO' in c or 'DESC' in c or 'OBSERV' in c), None)
-                comentario = safestr(row.get(col_com, ''))[:85] # Truncado para evitar que rompa la tabla
+                # Anchos exactos para completar los 275mm del ancho de página horizontal
+                w_exp = [115, 80, 80]
+                h_exp = ["TÉCNICO", "LLAMADOS DE ATENCIÓN / FALTAS DISCIPLINARIAS", "DÍAS FALTADOS EN EL MES"]
                 
-                pdf.cell(w_exp[0], 6, tec, border=1)
-                pdf.cell(w_exp[1], 6, fecha, border=1, align="C")
-                pdf.cell(w_exp[2], 6, tipo, border=1, align="C")
-                pdf.cell(w_exp[3], 6, comentario, border=1)
+                for i, h in enumerate(h_exp):
+                    pdf.cell(w_exp[i], 7, safestr(h), border=1, fill=True, align="C")
                 pdf.ln()
-        else:
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(50, 50, 50)
-            pdf.cell(0, 6, safestr("No se registran incidencias para los técnicos en este reporte."), ln=True)
-    else:
-        pdf.set_font("Helvetica", "I", 9)
-        pdf.set_text_color(50, 50, 50)
-        pdf.cell(0, 6, safestr("La base de datos disciplinaria está limpia."), ln=True)
-
-    try:
-        return pdf.output(dest='S').encode('latin-1')
-    except AttributeError:
-        return bytes(pdf.output())
+                
+                pdf.set_font("Helvetica", "", 8)
+                for _, row_d in df_res_disciplina.iterrows():
+                    tec = safestr(row_d.get('TEC_MAESTRO', ''))[:55]
+                    llamados = int(row_d.get('Total_Llamados', 0))
+                    faltas = int(row_d.get('Total_Faltas', 0))
+                    
+                    pdf.cell(w_exp[0], 6, tec, border=1)
+                    
+                    # Llamados de atención coloreados de naranja preventivo si superan cero
+                    pdf.set_text_color(217, 119, 6) if llamados > 0 else pdf.set_text_color(0, 0, 0)
+                    pdf.cell(w_exp[1], 6, str(llamados), border=1, align="C")
+                    
+                    # Faltas e inasistencias coloreadas de rojo correctivo si superan cero
+                    pdf.set_text_color(220, 38, 38) if faltas > 0 else pdf.set_text_color(0, 0, 0)
+                    pdf.cell(w_exp[2], 6, str(faltas), border=1, align="C")
+                    
+                    pdf.s
