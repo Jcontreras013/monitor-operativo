@@ -19,11 +19,12 @@ except ImportError as e:
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR DE LECTURA Y LIMPIEZA
+# MOTOR DE LECTURA DE ARCHIVOS
 # ==============================================================================
 def forzar_columnas_unicas_local(df):
-    if df is None or df.empty: return df
-    df.columns = df.columns.astype(str).str.strip().str.upper()
+    if df is None or df.empty: 
+        return df
+    df.columns = df.columns.astype(str).str.strip()
     cols = pd.Series(df.columns)
     for dup in cols[cols.duplicated()].unique():
         dup_indices = cols[cols == dup].index.tolist()
@@ -42,18 +43,25 @@ def read_file_robust_local(uploaded_file):
         try: return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='openpyxl'))
         except: pass
 
-    try: return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip'))
-    except: 
-        uploaded_file.seek(0)
-        try: return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='latin-1', on_bad_lines='skip'))
+    es_zip_binario = content.startswith(b'PK\x03\x04')
+    if not es_zip_binario and (b'<table' in content.lower() or b'<html' in content.lower()):
+        try:
+            dfs = pd.read_html(io.BytesIO(content))
+            if dfs: return forzar_columnas_unicas_local(max(dfs, key=len))
         except: pass
-    
+
     uploaded_file.seek(0)
-    try: return forzar_columnas_unicas_local(pd.read_html(io.BytesIO(content))[0])
-    except: return None
+    try: return forzar_columnas_unicas_local(pd.read_excel(uploaded_file))
+    except: pass
+
+    uploaded_file.seek(0)
+    try: return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip'))
+    except UnicodeDecodeError:
+        uploaded_file.seek(0)
+        return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='latin-1', on_bad_lines='skip'))
 
 # ==============================================================================
-# CONEXIÓN A RRHH (EXPEDIENTES)
+# GESTIÓN DE EXPEDIENTES (CONEXIÓN ROBUSTA)
 # ==============================================================================
 def obtener_datos_expedientes(conn):
     if 'df_exp_memoria' not in st.session_state:
@@ -77,40 +85,44 @@ def obtener_datos_expedientes(conn):
     return None
 
 # ==============================================================================
-# MOTOR SUPER AGRESIVO DE EMPAREJAMIENTO DE NOMBRES
+# DEPURACIÓN Y EMPAREJAMIENTO DE NOMBRES / MX
 # ==============================================================================
-def limpiar_texto(texto):
+def limpiar_texto_nombres(texto):
     if pd.isna(texto): return ""
     t = str(texto).upper().strip()
-    t = re.sub(r'[^A-Z0-9\s]', '', unicodedata.normalize('NFD', t).encode('ascii', 'ignore').decode('utf-8'))
+    t = re.sub(r'\(.*?\)', '', t)
+    t = unicodedata.normalize('NFKD', t).encode('ASCII', 'ignore').decode('utf-8')
+    t = re.sub(r'[^A-Z\s]', '', t)
     return " ".join(t.split())
 
-def extraer_mx(texto):
-    match = re.search(r'MX\s*(\d+)', limpiar_texto(texto))
-    return int(match.group(1)) if match else None
+def extraer_numero_mx(texto):
+    if pd.isna(texto) or not str(texto).strip(): return None
+    val = str(texto).upper().strip()
+    match = re.search(r'MX[-_ ]*(\d+)', val)
+    if match: return int(match.group(1))
+    match_num = re.search(r'^\s*(\d+)\s*$', val)
+    if match_num: return int(match_num.group(1))
+    return None
 
-def encontrar_tecnico(texto_busqueda, tec_to_mx, lista_maestros):
-    if not texto_busqueda: return None
-    t_clean = limpiar_texto(texto_busqueda)
-    
-    # 1. Intentar por código MX
-    mx = extraer_mx(t_clean)
-    if mx and mx in tec_to_mx:
-        return tec_to_mx[mx]
+def encontrar_tecnico_maestro(placa_gps, tec_to_mx, lista_maestros_limpios, lista_original):
+    mx_val = extraer_numero_mx(placa_gps)
+    if mx_val is not None and mx_val in tec_to_mx:
+        return tec_to_mx[mx_val]
         
-    # 2. Intentar por coincidencia de palabras clave (nombres/apellidos)
-    palabras_busqueda = set([w for w in t_clean.split() if len(w) > 3])
-    mejor_match = None
-    max_score = 0
+    n_buscar = limpiar_texto_nombres(placa_gps)
+    if not n_buscar: return None
     
-    for maestro in lista_maestros:
-        palabras_maestro = set([w for w in limpiar_texto(maestro).split() if len(w) > 3])
-        score = len(palabras_busqueda.intersection(palabras_maestro))
+    tokens_buscar = set([w for w in n_buscar.split() if len(w) > 3])
+    mejor_match, max_score = None, 0
+    
+    for i, m_limpio in enumerate(lista_maestros_limpios):
+        tokens_maestro = set([w for w in m_limpio.split() if len(w) > 3])
+        score = len(tokens_buscar.intersection(tokens_maestro))
         if score > max_score:
             max_score = score
-            mejor_match = maestro
+            mejor_match = lista_original[i]
             
-    return mejor_match if max_score > 0 else None
+    return mejor_match if max_score >= 1 else None
 
 # ==============================================================================
 # PROCESAMIENTO ANALÍTICO CENTRAL
@@ -124,113 +136,109 @@ def formatear_hora(secs):
 
 def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
-        diagnostico = {"gps_huerfanos": [], "exp_huerfanos": []}
-
-        # --- 1. PROCESAR ÓRDENES ---
-        df_act = df_act.copy()
-        if 'TECNICO' not in df_act.columns:
-            return None, None, None, None, "El archivo de actividades no tiene la columna 'TECNICO'."
-            
+        # --- 1. PROCESAR ÓRDENES (ACTIVIDADES) ---
+        df_act = procesar_dataframe_base(df_act)
+        
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
         df_act = df_act[~df_act['ACTIVIDAD'].astype(str).str.upper().str.contains('ACTUALIZARDATOSTECNICOS')]
         
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
         
-        texto_seg = df_act['ACTIVIDAD'].fillna('') + " " + df_act['CLIENTE'].fillna('') + " " + df_act['COMENTARIO'].fillna('')
-        texto_seg = texto_seg.astype(str).str.upper()
+        # Segmentación PLEX vs Residencial
+        act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
+        cli_upper = df_act['CLIENTE'].fillna('').astype(str).str.upper()
+        com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
+        texto_seg = act_upper + " " + cli_upper + " " + com_upper
         df_act['SEGMENTO'] = ['PLEX' if any(x in t for x in ['PLEX', 'PEXTERNO', 'SPLITTEROPT']) else 'RESIDENCIAL' for t in texto_seg]
 
-        tecnicos_maestros = df_act['TECNICO'].unique().tolist()
+        tecnicos_originales = df_act['TECNICO'].unique()
+        tecnicos_limpios = [limpiar_texto_nombres(t) for t in tecnicos_originales]
 
-        # Extraer MX asignados en rep_actividades
         tec_to_mx = {}
-        col_mx = next((c for c in df_act.columns if 'MX' in c), None)
+        col_mx = next((c for c in df_act.columns if 'MX' in str(c).upper()), None)
         if col_mx:
             for _, r in df_act.dropna(subset=[col_mx]).groupby('TECNICO').first().reset_index().iterrows():
-                m_val = extraer_mx(r[col_mx])
-                if m_val: tec_to_mx[m_val] = r['TECNICO']
+                m_val = extraer_numero_mx(r[col_mx])
+                if m_val is not None: tec_to_mx[m_val] = r['TECNICO']
 
-        df_act['Minutos'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
-        df_act['Minutos'] = df_act['Minutos'].apply(lambda x: x if pd.notnull(x) and x > 0 else 0)
+        tiempo_mins = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
+        df_act['Tiempo_Ejecucion'] = tiempo_mins.apply(lambda x: x if pd.notnull(x) and x > 0 else 0)
 
-        df_time_act = df_act[df_act['Minutos'] > 0].groupby(['TECNICO', 'ACTIVIDAD'])['Minutos'].mean().reset_index()
-        
+        # Matriz para gráfico de tiempos desglosado por actividad
+        df_time_act = df_act[df_act['Tiempo_Ejecucion'] > 0].groupby(['TECNICO', 'ACTIVIDAD'])['Tiempo_Ejecucion'].mean().reset_index()
+        df_time_act['Tiempo_Ejecucion'] = df_time_act['Tiempo_Ejecucion'].round(1)
+
         resumen_act = df_act.groupby('TECNICO').agg(
             Ordenes_Totales=('NUM', 'count'),
             Ordenes_Plex=('SEGMENTO', lambda x: (x == 'PLEX').sum()),
             Ordenes_Res=('SEGMENTO', lambda x: (x == 'RESIDENCIAL').sum()),
-            Minutos_Promedio=('Minutos', lambda x: x[x > 0].mean() if len(x[x > 0]) > 0 else 0),
+            Minutos_Promedio=('Tiempo_Ejecucion', lambda x: x[x > 0].mean() if len(x[x > 0]) > 0 else 0),
         ).reset_index()
 
-        # --- 2. PROCESAR GPS ---
+        # --- 2. PROCESAR GPS (CÁLCULO EXACTO MENSUAL) ---
         gps_promedios = {}
         if df_gps is not None and not df_gps.empty:
+            df_gps.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps.columns]
             col_placa = next((c for c in df_gps.columns if 'PLACA' in c or 'ALIAS' in c), None)
-            col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
+            col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c or 'ENTRADA' in c), None)
             col_out = next((c for c in df_gps.columns if 'SALIDA' in c), None)
 
             if col_placa and col_in and col_out:
-                # Cruce de nombres con diagnóstico
-                def mapear_y_diagnosticar(val):
-                    match = encontrar_tecnico(val, tec_to_mx, tecnicos_maestros)
-                    if not match: diagnostico["gps_huerfanos"].append(val)
-                    return match
-
-                df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(mapear_y_diagnosticar)
-                diagnostico["gps_huerfanos"] = list(set(diagnostico["gps_huerfanos"])) # Limpiar duplicados
-                
+                df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(lambda x: encontrar_tecnico_maestro(x, tec_to_mx, tecnicos_limpios, tecnicos_originales))
                 df_gps_valid = df_gps.dropna(subset=['TEC_MAESTRO']).copy()
-                df_gps_valid['DT_OUT'] = pd.to_datetime(df_gps_valid[col_out], errors='coerce')
-                df_gps_valid['DT_IN'] = pd.to_datetime(df_gps_valid[col_in], errors='coerce')
-                df_gps_valid = df_gps_valid[df_gps_valid['DT_OUT'].dt.year > 2000].copy()
 
-                df_gps_valid['Fecha_Cal'] = df_gps_valid['DT_OUT'].dt.date
-                
-                primeras = df_gps_valid.groupby(['TEC_MAESTRO', 'Fecha_Cal'])['DT_OUT'].min().reset_index()
-                primeras['Secs'] = primeras['DT_OUT'].dt.hour * 3600 + primeras['DT_OUT'].dt.minute * 60 + primeras['DT_OUT'].dt.second
+                df_gps_valid['Hora_Out_DT'] = pd.to_datetime(df_gps_valid[col_out], errors='coerce')
+                df_gps_valid['Hora_In_DT'] = pd.to_datetime(df_gps_valid[col_in], errors='coerce')
+                df_gps_valid = df_gps_valid[df_gps_valid['Hora_Out_DT'].dt.year > 2000].copy()
+
+                # Primera salida del día
+                df_out = df_gps_valid.dropna(subset=['Hora_Out_DT']).copy()
+                df_out['Fecha_Cal'] = df_out['Hora_Out_DT'].dt.date
+                primeras = df_out.groupby(['TEC_MAESTRO', 'Fecha_Cal'])['Hora_Out_DT'].min().reset_index()
+                primeras['Secs'] = primeras['Hora_Out_DT'].dt.hour * 3600 + primeras['Hora_Out_DT'].dt.minute * 60 + primeras['Hora_Out_DT'].dt.second
                 prom_sal = primeras.groupby('TEC_MAESTRO')['Secs'].mean().to_dict()
 
-                ultimas = df_gps_valid.groupby(['TEC_MAESTRO', 'Fecha_Cal'])['DT_IN'].max().reset_index()
-                ultimas['Secs'] = ultimas['DT_IN'].dt.hour * 3600 + ultimas['DT_IN'].dt.minute * 60 + ultimas['DT_IN'].dt.second
+                # Última entrada del día
+                df_in = df_gps_valid.dropna(subset=['Hora_In_DT']).copy()
+                df_in['Fecha_Cal'] = df_in['Hora_In_DT'].dt.date
+                ultimas = df_in.groupby(['TEC_MAESTRO', 'Fecha_Cal'])['Hora_In_DT'].max().reset_index()
+                ultimas['Secs'] = ultimas['Hora_In_DT'].dt.hour * 3600 + ultimas['Hora_In_DT'].dt.minute * 60 + ultimas['Hora_In_DT'].dt.second
                 prom_ent = ultimas.groupby('TEC_MAESTRO')['Secs'].mean().to_dict()
 
-                for tec in tecnicos_maestros:
+                for tec in df_gps_valid['TEC_MAESTRO'].unique():
                     gps_promedios[tec] = {
                         'Salida': formatear_hora(prom_sal.get(tec, None)),
                         'Entrada': formatear_hora(prom_ent.get(tec, None))
                     }
 
-        # --- 3. PROCESAR EXPEDIENTES (RRHH) ---
+        # --- 3. PROCESAR EXPEDIENTES (FALTAS POR COMENTARIO) ---
         faltas_dict = {}
         df_exp_detallado = pd.DataFrame()
         
         if df_exp is not None and not df_exp.empty:
-            df_exp.columns = df_exp.columns.astype(str).str.strip().str.upper()
-            col_tec_exp = next((c for c in df_exp.columns if 'TECNICO' in c or 'NOMBRE' in c), None)
-            col_tipo = next((c for c in df_exp.columns if 'TIPO' in c or 'FALTA' in c), None)
-            col_com = next((c for c in df_exp.columns if 'COMENTARIO' in c or 'DESC' in c), None)
+            col_tec_exp = next((c for c in df_exp.columns if 'TECNICO' in str(c).upper()), None)
+            col_tipo = next((c for c in df_exp.columns if 'TIPO' in str(c).upper() or 'FALTA' in str(c).upper()), None)
+            col_com = next((c for c in df_exp.columns if 'COMENTARIO' in str(c).upper() or 'DESC' in str(c).upper()), None)
             
             if col_tec_exp:
-                def mapear_exp(val):
-                    match = encontrar_tecnico(val, tec_to_mx, tecnicos_maestros)
-                    if not match and pd.notnull(val): diagnostico["exp_huerfanos"].append(val)
-                    return match
-
-                df_exp['TEC_MAESTRO'] = df_exp[col_tec_exp].apply(mapear_exp)
-                diagnostico["exp_huerfanos"] = list(set(diagnostico["exp_huerfanos"]))
-                
+                df_exp['TEC_MAESTRO'] = df_exp[col_tec_exp].apply(lambda x: encontrar_tecnico_maestro(x, tec_to_mx, tecnicos_limpios, tecnicos_originales))
                 df_exp_detallado = df_exp.dropna(subset=['TEC_MAESTRO']).copy()
                 
+                # Función avanzada para escanear ausencias (incluso en los comentarios)
                 def escanear_ausencia(row):
-                    texto = f"{row.get(col_tipo, '')} {row.get(col_com, '')}".upper()
-                    claves = ['FALTA', 'AUSENCIA', 'INASISTENCIA', 'NO SE PRESENT', 'NO ASISTI', 'INCAPACIDAD', 'NO TRABAJO']
-                    return any(p in texto for p in claves)
+                    t = str(row[col_tipo]) if col_tipo else ""
+                    c = str(row[col_com]) if col_com else ""
+                    texto = (t + " " + c).upper()
+                    palabras_clave = ['FALTA', 'AUSENCIA', 'INASISTENCIA', 'NO SE PRESENTO', 'NO SE PRESENTÓ', 'NO ASISTIO', 'NO ASISTIÓ', 'INCAPACIDAD']
+                    return any(p in texto for p in palabras_clave)
 
                 df_exp_detallado['ES_FALTA'] = df_exp_detallado.apply(escanear_ausencia, axis=1)
-                faltas_dict = df_exp_detallado.groupby('TEC_MAESTRO')['ES_FALTA'].sum().to_dict()
+                
+                for tec, g in df_exp_detallado.groupby('TEC_MAESTRO'):
+                    faltas_dict[tec] = int(g['ES_FALTA'].sum())
 
-        # --- 4. CONSOLIDAR MATRIZ FINAL ---
+        # --- 4. CONSOLIDAR EN LA TABLA MAESTRA ---
         datos_finales = []
         for _, row in resumen_act.iterrows():
             tec = row['TECNICO']
@@ -247,153 +255,171 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 'DÍAS FALTADOS': int(faltas_dict.get(tec, 0))
             })
 
-        return pd.DataFrame(datos_finales), df_time_act, df_exp_detallado, diagnostico, "Exitoso"
+        return pd.DataFrame(datos_finales), df_time_act, df_exp_detallado, "Exitoso"
     except Exception as e:
-        return None, None, None, None, f"Error interno: {str(e)}"
+        return None, None, None, f"Error: {e}"
 
 # ==============================================================================
 # INTERFAZ STREAMLIT (DASHBOARD)
 # ==============================================================================
 def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **kwargs):
-    st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Dashboard Integral Operativo</h2>", unsafe_allow_html=True)
-    st.caption("Cruce inteligente de productividad, tiempos GPS y registros de RRHH.")
+    st.markdown("<h2 style='text-align: center; color: #10B981;'>📊 Dashboard de Rendimiento Operativo y Disciplinario</h2>", unsafe_allow_html=True)
+    st.caption("Ajustes dinámicos de Plex vs Residencial, Tiempos por Tipo de Orden y Escáner de Comentarios de RRHH.")
     st.divider()
 
     obtener_datos_expedientes(conn)
 
-    # ================= 1. CARGA DE DATOS =================
+    # ================= 1. CARGA DE ARCHIVOS =================
+    st.markdown("#### 📥 Carga de Archivos y Nube")
     c1, c2, c3 = st.columns(3)
-    with c1: act_file = st.file_uploader("1. rep_actividades (Obligatorio)", type=['csv', 'xlsx'])
+    with c1: act_file = st.file_uploader("1. rep_actividades (Órdenes)", type=['csv', 'xlsx'])
     with c2: gps_file = st.file_uploader("2. InformeZonasRutas (GPS)", type=['csv', 'xlsx'])
     with c3:
-        st.write("3. Base de Datos RRHH")
-        if st.button("🔄 Sincronizar Expedientes"):
-            with st.spinner("Sincronizando..."):
+        st.write("3. Base de Datos Nube (RRHH)")
+        if st.button("🔄 Sincronizar Expedientes", use_container_width=True):
+            with st.spinner("Conectando..."):
                 if conn:
                     try:
-                        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+                        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                        if df is None or df.empty: df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
                         st.session_state['df_exp_memoria'] = df
                         st.success("✅ BD Sincronizada.")
                         time.sleep(1); st.rerun()
                     except Exception as e: st.error(e)
+                else: st.error("Sin conexión.")
         if st.session_state.get('df_exp_memoria') is not None:
             st.success(f"Expedientes listos ({len(st.session_state['df_exp_memoria'])} reg.)")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ================= 2. BOTÓN EJECUCIÓN =================
-    if st.button("🚀 INICIAR ANÁLISIS CRUZADO", type="primary", use_container_width=True):
+    # ================= 2. BOTÓN DE EJECUCIÓN =================
+    if st.button("🚀 INICIAR ANÁLISIS", type="primary", use_container_width=True):
         if act_file:
-            with st.spinner("🤖 Analizando y cruzando bases de datos..."):
+            with st.spinner("🤖 Procesando tiempos, separando segmentos y evaluando ausencias..."):
                 df_act = read_file_robust_local(act_file)
                 df_gps = read_file_robust_local(gps_file) if gps_file else None
                 df_exp = st.session_state.get('df_exp_memoria', None)
 
-                df_maestra, df_time_act, df_disciplina, diag, msg = procesar_rendimiento_avanzado(df_act, df_gps, df_exp)
+                df_maestra, df_time_act, df_disciplina, msg = procesar_rendimiento_avanzado(df_act, df_gps, df_exp)
                 
                 if df_maestra is not None:
                     st.session_state['rs_maestra'] = df_maestra
                     st.session_state['rs_time_act'] = df_time_act
                     st.session_state['rs_disciplina'] = df_disciplina
-                    st.session_state['rs_diag'] = diag
                     st.rerun()
                 else:
                     st.error(msg)
         else:
             st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-    # ================= 3. RENDERIZADO DE RESULTADOS =================
+    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
     if 'rs_maestra' in st.session_state:
         df_m = st.session_state['rs_maestra'].copy()
-        df_time_act = st.session_state['rs_time_act']
-        df_exp_det = st.session_state['rs_disciplina']
-        diag = st.session_state['rs_diag']
+        df_time_act = st.session_state.get('rs_time_act', pd.DataFrame())
+        df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
 
-        # --- PANEL DE DIAGNÓSTICO DE ERRORES ---
-        if diag['gps_huerfanos'] or diag['exp_huerfanos']:
-            with st.expander("⚠️ Alertas de Sincronización (Datos no cruzados)", expanded=False):
-                st.warning("Los siguientes registros no se pudieron asignar a ningún técnico porque el nombre no coincide con el archivo de actividades:")
-                if diag['gps_huerfanos']:
-                    st.write("**Vehículos GPS no identificados:**", ", ".join(str(x) for x in diag['gps_huerfanos']))
-                if diag['exp_huerfanos']:
-                    st.write("**Nombres en RRHH no identificados:**", ", ".join(str(x) for x in diag['exp_huerfanos']))
-
-        # Filtro global
         tecs_disp = sorted(df_m['TÉCNICO'].unique())
         tec_filtro = st.multiselect("🔍 Filtrar Técnico(s):", tecs_disp)
-        if tec_filtro: df_m = df_m[df_m['TÉCNICO'].isin(tec_filtro)]
+        if tec_filtro:
+            df_m = df_m[df_m['TÉCNICO'].isin(tec_filtro)]
 
-        # --- PESTAÑAS ---
-        tab_graficos, tab_maestra, tab_exp = st.tabs(["📈 Gráficos y KPIs", "📋 Tabla Maestra", "🚨 Registro Disciplinario"])
+        # --- PESTAÑAS DEL DASHBOARD (AHORA SON 3) ---
+        tab_graficos, tab_maestra, tab_exp = st.tabs([
+            "📈 Gráficos y KPIs", 
+            "📋 Tabla Maestra",
+            "🚨 Registro Disciplinario"
+        ])
 
+        # ================= PESTAÑA 1: GRÁFICOS =================
         with tab_graficos:
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("👥 Técnicos", len(df_m))
-            k2.metric("📦 Órdenes", df_m['TOTAL ÓRDENES'].sum())
-            k3.metric("⏳ Promedio (Min)", round(df_m['TIEMPO PROM. (Min)'].mean(), 1))
-            k4.metric("🚨 Días Ausencia", df_m['DÍAS FALTADOS'].sum())
+            k1.metric("👥 Técnicos Analizados", len(df_m))
+            k2.metric("📦 Total Órdenes", df_m['TOTAL ÓRDENES'].sum())
+            k3.metric("⏳ Promedio Gral (Min)", round(df_m['TIEMPO PROM. (Min)'].mean(), 1))
+            k4.metric("🚨 Días de Ausencia", df_m['DÍAS FALTADOS'].sum())
             
             st.markdown("---")
             
-            # Gráfico 1: PLEX vs RESIDENCIAL (Stackeado)
+            # Gráfico 1: Productividad dividida en PLEX y RESIDENCIAL
             df_segmentado = df_m[['TÉCNICO', 'PLEX', 'RESIDENCIAL']].melt(id_vars='TÉCNICO', var_name='Segmento', value_name='Cantidad')
             df_segmentado = df_segmentado[df_segmentado['Cantidad'] > 0]
-            orden_tecnicos = df_m.sort_values('TOTAL ÓRDENES', ascending=True)['TÉCNICO'].tolist()
             
-            alto_g1 = max(450, len(df_m) * 35)
+            orden_tecnicos = df_m.sort_values('TOTAL ÓRDENES', ascending=True)['TÉCNICO'].tolist()
+            alto_grafico1 = max(400, len(df_m) * 35) # Ajuste dinámico para mostrar todos los técnicos
+            
             fig_ord = px.bar(df_segmentado, x='Cantidad', y='TÉCNICO', color='Segmento', orientation='h',
                              title="📦 Productividad (PLEX vs Residencial)", text_auto=True, 
                              color_discrete_map={'PLEX': '#8B5CF6', 'RESIDENCIAL': '#10B981'})
             fig_ord.update_yaxes(categoryorder='array', categoryarray=orden_tecnicos)
-            fig_ord.update_layout(height=alto_g1, barmode='stack', yaxis_title="")
+            fig_ord.update_layout(height=alto_grafico1, yaxis_title="", barmode='stack')
             st.plotly_chart(fig_ord, use_container_width=True)
 
-            # Gráfico 2: Tiempos por ACTIVIDAD (Stackeado)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Gráfico 2: Tiempo Promedio dividido por Tipo de Orden
             if not df_time_act.empty:
                 df_time_fil = df_time_act[df_time_act['TECNICO'].isin(tec_filtro)] if tec_filtro else df_time_act
-                alto_g2 = max(450, len(df_time_fil['TECNICO'].unique()) * 40)
+                alto_grafico2 = max(450, len(df_time_fil['TECNICO'].unique()) * 40)
                 
-                fig_time = px.bar(df_time_fil, x='Minutos', y='TECNICO', color='ACTIVIDAD', orientation='h',
+                fig_time = px.bar(df_time_fil, x='Tiempo_Ejecucion', y='TECNICO', color='ACTIVIDAD', orientation='h',
                                  title="⏳ Tiempo Promedio (Dividido por Tipo de Orden)", text_auto='.1f', barmode='stack')
-                fig_time.update_layout(height=alto_g2, yaxis_title="")
+                fig_time.update_layout(height=alto_grafico2, yaxis_title="")
                 st.plotly_chart(fig_time, use_container_width=True)
 
+        # ================= PESTAÑA 2: TABLA MAESTRA =================
         with tab_maestra:
             st.markdown("### 📋 Tabla de Rendimiento General")
-            def highlight_faltas(row): return ['background-color: #fee2e2; color: #991b1b'] * len(row) if row['DÍAS FALTADOS'] > 0 else [''] * len(row)
+            st.caption("Promedios mensuales del GPS y días de ausencias detectados mediante inteligencia de texto.")
+            
+            # Formato condicional para resaltar ausencias
+            def highlight_faltas(row):
+                if row['DÍAS FALTADOS'] > 0:
+                    return ['background-color: #fee2e2; color: #991b1b'] * len(row)
+                return [''] * len(row)
+
             st.dataframe(df_m.style.apply(highlight_faltas, axis=1), use_container_width=True, hide_index=True)
 
             try:
                 pdf_bytes = generar_pdf_rendimiento_integral(df_m)
-                if pdf_bytes: st.download_button("📄 Descargar PDF", data=pdf_bytes, file_name="Reporte.pdf", mime="application/pdf", type="primary")
+                if pdf_bytes:
+                    st.download_button("📄 Descargar Reporte PDF", data=pdf_bytes, file_name="Reporte_Productividad.pdf", mime="application/pdf", type="primary")
             except: pass
 
+        # ================= PESTAÑA 3: INTERACCIÓN DISCIPLINARIA =================
         with tab_exp:
             st.markdown("### 🚨 Expedientes e Incidencias")
             if df_exp_det is not None and not df_exp_det.empty:
                 df_e_fil = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tec_filtro)] if tec_filtro else df_exp_det
                 if not df_e_fil.empty:
+                    # Crear Selector Interactivo
                     tecnicos_con_incidencias = sorted(df_e_fil['TEC_MAESTRO'].unique())
-                    st.info("💡 Seleccione un técnico para ver sus reportes:")
-                    tec_sel = st.selectbox("👤 Seleccionar Técnico:", ["-- Seleccione --"] + tecnicos_con_incidencias)
                     
-                    if tec_sel != "-- Seleccione --":
-                        for _, row in df_e_fil[df_e_fil['TEC_MAESTRO'] == tec_sel].iterrows():
-                            # Búsqueda dinámica de columnas
-                            fecha = row.get(next((c for c in row.keys() if 'FECHA' in c), 'N/D'), 'Sin fecha')
-                            tipo = row.get(next((c for c in row.keys() if 'TIPO' in c or 'FALTA' in c), 'N/D'), 'Registro')
-                            comentario = row.get(next((c for c in row.keys() if 'COMENTARIO' in c or 'DESC' in c), 'N/D'), 'Sin comentarios.')
+                    st.info("💡 Seleccione un técnico del menú desplegable para ver el detalle exacto de sus incidencias.")
+                    tec_seleccionado = st.selectbox("👤 Seleccionar Técnico:", ["-- Seleccione un Técnico --"] + tecnicos_con_incidencias)
+                    
+                    if tec_seleccionado != "-- Seleccione un Técnico --":
+                        detalles_tec = df_e_fil[df_e_fil['TEC_MAESTRO'] == tec_seleccionado]
+                        st.markdown(f"**Detalle disciplinario para: {tec_seleccionado}**")
+                        
+                        # Generar Tarjetas Interactivas por cada falta/comentario
+                        for _, row in detalles_tec.iterrows():
+                            fecha = row.get('FECHA_INCIDENCIA', row.get('FECHA_REGISTRO', 'Sin fecha'))
+                            tipo = row.get('TIPO_FALTA', 'Registro Administrativo')
+                            comentario = row.get('COMENTARIO', 'Sin comentarios detallados.')
                             
+                            # Identificador visual (Rojo para faltas, Naranja para llamados de atención)
                             es_falta = row.get('ES_FALTA', False)
-                            color = "#ef4444" if es_falta else "#f59e0b"
+                            color_borde = "#ef4444" if es_falta else "#f59e0b"
                             icono = "❌ Ausencia/Falta" if es_falta else "⚠️ Llamado de Atención"
                             
                             st.markdown(f"""
-                            <div style="border-left: 5px solid {color}; padding: 15px; background-color: #f9fafb; margin-bottom: 12px; border-radius: 5px;">
-                                <h4 style="margin: 0px;">{icono}</h4>
-                                <p style="margin: 5px 0px; font-size: 0.9em;"><strong>Fecha:</strong> {fecha} | <strong>Tipo:</strong> {tipo}</p>
-                                <p style="margin: 0px; font-size: 1.05em;"><em>"{comentario}"</em></p>
+                            <div style="border-left: 5px solid {color_borde}; padding: 15px; background-color: #f9fafb; margin-bottom: 12px; border-radius: 5px; box-shadow: 1px 1px 4px rgba(0,0,0,0.1);">
+                                <h4 style="margin: 0px; color: #374151;">{icono}</h4>
+                                <p style="margin: 5px 0px; color: #6b7280; font-size: 0.9em;"><strong>Fecha Registrada:</strong> {fecha} | <strong>Tipo:</strong> {tipo}</p>
+                                <p style="margin: 0px; color: #1f2937; font-size: 1.05em;"><em>"{comentario}"</em></p>
                             </div>
                             """, unsafe_allow_html=True)
-                else: st.success("Los técnicos analizados no tienen incidencias.")
-            else: st.info("No hay datos disciplinarios cargados.")
+                else:
+                    st.success("✨ ¡Excelente! Los técnicos analizados tienen un expediente completamente limpio.")
+            else:
+                st.info("No hay registros disciplinarios o falta sincronizar la base de datos.")
