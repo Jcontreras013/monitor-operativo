@@ -162,27 +162,35 @@ def limpiar_texto_nombres(texto):
     return " ".join(t.split())
 
 def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_original):
-    """Encuentra el nombre del técnico evaluando qué tantas palabras coinciden con regla estricta."""
+    """Encuentra el nombre del técnico evaluando coincidencias y forzando resultados flexibles."""
     n_buscar = limpiar_texto_nombres(nombre_buscar)
     if not n_buscar:
         return None
 
-    tokens_buscar = set(n_buscar.split())
+    # 1. Búsqueda exacta o contenida (Altamente efectiva para cruces directos)
+    for i, m_limpio in enumerate(lista_maestros_limpios):
+        if n_buscar == m_limpio or n_buscar in m_limpio or m_limpio in n_buscar:
+            return lista_original[i]
+
+    # 2. Búsqueda forzada por palabras (Ignorando preposiciones para no romper el algoritmo)
+    palabras_comunes = {'DE', 'EL', 'LA', 'LOS', 'LAS', 'Y'}
+    tokens_buscar = set([w for w in n_buscar.split() if len(w) > 2 and w not in palabras_comunes])
+    
     mejor_match = None
     max_score = 0
 
     for i, m_limpio in enumerate(lista_maestros_limpios):
-        tokens_maestro = set(m_limpio.split())
+        tokens_maestro = set([w for w in m_limpio.split() if len(w) > 2 and w not in palabras_comunes])
         score = len(tokens_buscar.intersection(tokens_maestro))
         if score > max_score:
             max_score = score
             mejor_match = lista_original[i]
 
-    # --- REGLA DE COINCIDENCIA ESTRICTA (Previene falsos positivos de 1 sola palabra común) ---
-    if max_score == 1 and len(tokens_buscar) > 1:
-        return None
+    # Forzamos el match si comparten al menos 1 palabra fuerte (ej. un apellido o un nombre raro)
+    if max_score >= 1:
+        return mejor_match
 
-    return mejor_match if max_score >= 1 else None
+    return None
 
 # ==============================================================================
 # PROCESAMIENTO ANALÍTICO CENTRAL
@@ -252,7 +260,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # Eliminar registros sin técnico
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].astype(str).str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
-        # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se elimina David y Melvin) ---
+        # --- FILTRADO DE TÉCNICOS EXCLUIDOS ---
         nombres_excluidos = ['DAVID SABILLON', 'MELVIN', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
         def es_tecnico_excluido(nombre_completo):
             nom_limpio = limpiar_texto_nombres(nombre_completo)
@@ -261,8 +269,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
 
         # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
-        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
-        
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
@@ -283,10 +289,8 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
 
-        # --- Clasificar Segmento y Tipo de Orden mediante la columna estándar 'ACTIVIDAD' ---
+        # --- Clasificar Segmento y Tipo de Orden ---
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
-        
-        # CORRECCIÓN: Usar todas las actividades reales sin agrupaciones simplificadas
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
 
         # --- RECLASIFICACIÓN DE SEGMENTO PARA MIGUEL Y RAFAEL ---
@@ -328,7 +332,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             MinProm=('Minutos_Orden', 'mean')
         ).reset_index()
 
-        # --- 2. PROCESAR GPS ---
+        # --- 2. PROCESAR GPS CON FUERZA ---
         gps_promedios = {}
         gps_promedios_mensuales = pd.DataFrame()
 
@@ -338,7 +342,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             
             col_placa = next((c for c in df_gps.columns if 'PLACA' in c or 'ALIAS' in c), None)
             
-            # CORRECCIÓN DE DETECCIÓN: Asegurar de priorizar columnas de Fecha/Hora e ignorar Latitud/Longitud
             col_in = next((c for c in df_gps.columns if ('HORA' in c or 'FECHA' in c) and ('INGRESO' in c or 'LLEGADA' in c)), None)
             if not col_in:
                 col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
@@ -354,31 +357,41 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_gps['Mes'] = df_gps['DT_OUT'].dt.to_period('M').astype(str)
                 df_gps['Week'] = df_gps['DT_OUT'].dt.to_period('W').astype(str)
 
-                # Mapeo de técnico híbrido (Coincidencia por Vehículo MX primero, fallback a nombre estricto)
+                # Mapeo de técnico híbrido FORZADO
                 def encontrar_tecnico_hibrido(placa_alias):
                     mx_gps = extraer_numero_mx(placa_alias)
-                    if mx_gps in mx_to_tec:
+                    if mx_gps and mx_gps in mx_to_tec:
                         return mx_to_tec[mx_gps]
-                    return encontrar_tecnico_maestro(placa_alias, tecnicos_limpios, tecnicos_originales)
+                        
+                    # Búsqueda ultra flexible
+                    match = encontrar_tecnico_maestro(placa_alias, tecnicos_limpios, tecnicos_originales)
+                    if match:
+                        return match
+                        
+                    # Backup extremo: Extraer fragmentos y cruzar
+                    placa_clean = limpiar_texto_nombres(placa_alias)
+                    for original, limpio in zip(tecnicos_originales, tecnicos_limpios):
+                        partes = [p for p in limpio.split() if len(p) > 3]
+                        if any(p in placa_clean for p in partes):
+                            return original
+                    
+                    return None
 
                 df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(encontrar_tecnico_hibrido)
                 df_gps_valid = df_gps.dropna(subset=['TEC_MAESTRO']).copy()
 
-                # --- PIPELINE DE TELEMETRÍA: DIARIO ➡️ SEMANAL ➡️ MENSUAL ---
+                # --- PIPELINE DE TELEMETRÍA ---
                 gps_diario_list = []
                 for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_MAESTRO', 'Fecha']):
                     p_salida = sub_df['DT_OUT'].min()
                     u_llegada = sub_df['DT_IN'].max()
                     
-                    # Corrección: conversión segura a string usando str() sobre objetos Period escalares
                     week_val = str(p_salida.to_period('W')) if pd.notnull(p_salida) else '--'
                     mes_val = str(p_salida.to_period('M')) if pd.notnull(p_salida) else '--'
 
-                    # Filtrado de horas operativas reales para descartar ruidos nocturnos
                     s_secs = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
                     e_secs = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
                     
-                    # Salida: entre 5:00 AM y 1:00 PM | Retorno: entre 12:00 PM y 10:00 PM
                     salida_valida = s_secs if (s_secs and 5*3600 <= s_secs <= 13*3600) else None
                     entrada_valida = e_secs if (e_secs and 12*3600 <= e_secs <= 22*3600) else None
 
@@ -394,19 +407,16 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_diario_gps = pd.DataFrame(gps_diario_list)
 
                 if not df_diario_gps.empty:
-                    # B. Agrupar de forma Semanal para obtener el promedio semanal
                     df_semanal_gps = df_diario_gps.groupby(['TECNICO', 'Week']).agg(
                         Semanal_Salida=('Salida_Secs', 'mean'),
                         Semanal_Entrada=('Entrada_Secs', 'mean')
                     ).reset_index()
 
-                    # C. Agrupar a Mensual a partir de los promedios semanales obtenidos
                     df_mensual_final = df_semanal_gps.groupby('TECNICO').agg(
                         Mensual_Salida=('Semanal_Salida', 'mean'),
                         Mensual_Entrada=('Semanal_Entrada', 'mean')
                     ).reset_index()
 
-                    # Mapear los resultados consolidados al formato de visualización final
                     for _, row_m in df_mensual_final.iterrows():
                         tec = row_m['TECNICO']
                         gps_promedios[tec] = {
@@ -529,7 +539,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     # ================= 2. BOTÓN DE EJECUCIÓN =================
     if st.button("🚀 INICIAR ANÁLISIS CRUZADO", type="primary", use_container_width=True):
         if act_file:
-            with st.spinner("🤖 Depurando nombres de técnicos y cruzando bases de datos..."):
+            with st.spinner("🤖 Depurando nombres de técnicos y cruzando bases de datos de forma ultra-flexible..."):
                 df_act = read_file_robust_local(act_file)
                 df_gps = read_file_robust_local(gps_file) if gps_file else None
                 df_exp = st.session_state.get('df_exp_memoria', None)
@@ -553,7 +563,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
     if 'rs_maestra' in st.session_state:
         df_m = st.session_state['rs_maestra'].copy()
-        df_d = st.session_state.get('rs_diario', pd.DataFrame())
         df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
         df_seg = st.session_state.get('rs_segmento', pd.DataFrame())
         df_tipo_ord = st.session_state.get('rs_tipo_orden', pd.DataFrame())
@@ -579,7 +588,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         # TAB 1: GRÁFICOS Y KPIs
         # ================================================================
         with tab_graficos:
-            # 1.1 Fila de KPIs de Alto Impacto
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("👥 Técnicos Analizados", len(df_m))
             k2.metric("📦 Total Órdenes", int(df_m['ÓRDENES CANTIDAD'].sum()))
@@ -588,34 +596,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 "🚨 Total Incidencias",
                 int(df_m['DÍAS FALTADOS'].sum() + df_m['LLAMADOS ATENCIÓN'].sum() + df_m['DÍAS NO PRESENTADO'].sum())
             )
-
-            # 1.2 Logros Destacados (Insights Dinámicos)
-            if not df_m.empty:
-                st.markdown("<br>", unsafe_allow_html=True)
-                best_vol_row = df_m.loc[df_m['ÓRDENES CANTIDAD'].idxmax()]
-                
-                df_valid_speed = df_m[df_m['ÓRDENES CANTIDAD'] > 5]
-                if not df_valid_speed.empty:
-                    fastest_row = df_valid_speed.loc[df_valid_speed['TIEMPO PROM. EN ORDEN (Min)'].idxmin()]
-                else:
-                    fastest_row = df_m.loc[df_m['TIEMPO PROM. EN ORDEN (Min)'].idxmin()]
-                    
-                best_plex_tec = "N/D"
-                max_plex_val = 0
-                if not df_seg.empty:
-                    df_plex_only = df_seg[df_seg['Segmento'] == 'Plex']
-                    if not df_plex_only.empty:
-                        best_plex_row = df_plex_only.loc[df_plex_only['Ordenes'].idxmax()]
-                        best_plex_tec = best_plex_row['TECNICO']
-                        max_plex_val = best_plex_row['Ordenes']
-
-                col_ins1, col_ins2, col_ins3 = st.columns(3)
-                with col_ins1:
-                    st.info(f"🏆 **Mayor Volumen:**\n\n**{best_vol_row['TÉCNICO']}**\n\n({best_vol_row['ÓRDENES CANTIDAD']} órdenes ejecutadas)")
-                with col_ins2:
-                    st.info(f"⚡ **Más Veloz Promedio:**\n\n**{fastest_row['TÉCNICO']}**\n\n({fastest_row['TIEMPO PROM. EN ORDEN (Min)']} min/orden)")
-                with col_ins3:
-                    st.info(f"💼 **Líder de Cuentas PLEX:**\n\n**{best_plex_tec}**\n\n({max_plex_val} órdenes)")
 
             st.markdown("---")
 
@@ -693,6 +673,8 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
                     ).round(1).reset_index()
                     df_tipo_pivot.columns.name = None
+                    # Comando para reemplazar None / NaN por cuadros en blanco
+                    df_tipo_pivot = df_tipo_pivot.fillna("")
                     st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
             else:
                 fig_time = px.bar(
@@ -705,86 +687,23 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.plotly_chart(fig_time, use_container_width=True)
                 st.info("ℹ️ No se detectó columna TIPO en el archivo. Mostrando tiempo promedio global.")
 
-            st.markdown("---")
-
-            # ---- GRÁFICO 3: INCIDENCIAS DISCIPLINARIAS ----
-            df_incidencias = df_m[
-                (df_m['DÍAS FALTADOS'] > 0) |
-                (df_m['LLAMADOS ATENCIÓN'] > 0) |
-                (df_m['DÍAS NO PRESENTADO'] > 0)
-            ]
-            if not df_incidencias.empty:
-                st.markdown("#### 🚨 Desglose de Incidencias Disciplinarias")
-                df_melt = df_incidencias.melt(
-                    id_vars='TÉCNICO',
-                    value_vars=['DÍAS FALTADOS', 'LLAMADOS ATENCIÓN', 'DÍAS NO PRESENTADO'],
-                    var_name='Tipo',
-                    value_name='Cantidad'
-                )
-                df_melt = df_melt[df_melt['Cantidad'] > 0]
-                fig_inc = px.bar(
-                    df_melt, x='TÉCNICO', y='Cantidad', color='Tipo',
-                    title="🚨 Incidencias por Técnico",
-                    color_discrete_map={
-                        'DÍAS FALTADOS': '#EF4444',
-                        'LLAMADOS ATENCIÓN': '#F59E0B',
-                        'DÍAS NO PRESENTADO': '#DC2626'
-                    },
-                    text_auto=True, barmode='group'
-                )
-                st.plotly_chart(fig_inc, use_container_width=True)
-
         # ================================================================
-        # TAB 2: TABLA MAESTRA INTEGRAL (REDISEÑADA CON CONTROLES DINÁMICOS)
+        # TAB 2: TABLA MAESTRA INTEGRAL (LIMPIA)
         # ================================================================
         with tab_maestra:
-            st.markdown("### 📋 Vista Consolidada y Formato Dinámico")
-            st.caption("Filtre, busque y personalice las reglas de marcado de incidencias o tiempos excesivos sobre la marcha.")
-
-            # Buscador rápido local
-            buscar_nombre = st.text_input("👤 Buscar por nombre de técnico:", "", key="search_tecnico_maestra")
+            st.markdown("### 📋 Vista Consolidada Integral")
             
-            # Controles de Umbrales dinámicos
-            with st.expander("🎨 Opciones de Formato y Destacado Condicional", expanded=True):
-                c_h1, c_h2 = st.columns(2)
-                with c_h1:
-                    umbral_minutos = st.slider("⚠️ Destacar técnicos si el tiempo promedio supera (Minutos):", 30, 240, 120, step=10)
-                with c_h2:
-                    umbral_incidencias = st.number_input("🚨 Destacar técnicos con incidencias totales mayores o iguales a:", min_value=1, value=1)
-
-            # Aplicar filtro de búsqueda si corresponde
-            df_m_filtrada = df_m.copy()
-            if buscar_nombre:
-                df_m_filtrada = df_m_filtrada[df_m_filtrada['TÉCNICO'].str.contains(buscar_nombre.upper(), na=False)]
-
-            total_no_presentados = df_m_filtrada['DÍAS NO PRESENTADO'].sum()
+            total_no_presentados = df_m['DÍAS NO PRESENTADO'].sum()
             if total_no_presentados > 0:
                 st.warning(f"⚠️ Se detectaron **{total_no_presentados} día(s)** con comentarios de inasistencia en la nube para el grupo actual.")
 
-            # Función de formateado condicional dinámica basada en los controles del usuario
-            def highlight_maestra_dinamica(row):
-                mins = row.get('TIEMPO PROM. EN ORDEN (Min)', 0)
-                faltas = row.get('DÍAS FALTADOS', 0)
-                llamados = row.get('LLAMADOS ATENCIÓN', 0)
-                no_pres = row.get('DÍAS NO PRESENTADO', 0)
-                total_inc = faltas + llamados + no_pres
-                
-                # Regla 1: Alerta crítica por incidencias de disciplina
-                if total_inc >= umbral_incidencias:
-                    return ['background-color: #fee2e2; color: #991b1b; font-weight: bold'] * len(row)
-                # Regla 2: Alerta preventiva por excesos de tiempo
-                if mins >= umbral_minutos:
-                    return ['background-color: #fef3c7; color: #92400e; font-weight: bold'] * len(row)
-                return [''] * len(row)
-
-            # Renderizado de la única Tabla Maestra Integral con promedios mensuales consolidados
             st.dataframe(
-                df_m_filtrada.style.apply(highlight_maestra_dinamica, axis=1),
+                df_m,
                 use_container_width=True,
                 hide_index=True
             )
 
-            # Botón de Descarga PDF
+            # Botón de Descarga PDF enlazado a la función de tools.py
             try:
                 pdf_bytes = generar_pdf_rendimiento_integral(df_m)
                 if pdf_bytes:
@@ -795,11 +714,11 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         mime="application/pdf",
                         type="primary"
                     )
-            except:
-                pass
+            except Exception as e:
+                st.error(f"No se pudo generar el PDF: {e}")
 
         # ================================================================
-        # TAB 3: REGISTRO DISCIPLINARIO (Sigue INTACTA y funcional)
+        # TAB 3: REGISTRO DISCIPLINARIO
         # ================================================================
         with tab_exp:
             st.markdown("### 🚨 Registro Disciplinario")
