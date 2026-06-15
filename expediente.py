@@ -721,7 +721,7 @@ def mostrar_modulo_expedientes(conn, df_base):
         
         # --- TABLA Y VISTA EXCLUSIVA DE ADMINISTRATIVO (SAC) ---
         df_view_admin = obtener_datos_memoria(conn)
-        if 'TECNICO' in df_view_admin.columns:
+        if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
             df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
             df_view_admin['TECNICO'] = df_view_admin['TECNICO'].replace(r'\s+', ' ', regex=True)
             # Filtramos solo los que SÍ tienen la etiqueta de departamento al final
