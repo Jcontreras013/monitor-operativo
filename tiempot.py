@@ -13,7 +13,7 @@ try:
     from tools import (
         procesar_dataframe_base,
         procesar_fechas_seguro,
-        generar_pdf_rendimiento_integral,
+        generar_pdf_rendimiento_integral_360, # <--- IMPORTACIÓN ACTUALIZADA
         leer_espejo_gcs,
         get_honduras_time
     )
@@ -689,7 +689,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.info("ℹ️ No se detectó columna TIPO en el archivo. Mostrando tiempo promedio global.")
 
         # ================================================================
-        # TAB 2: TABLA MAESTRA INTEGRAL (LIMPIA)
+        # TAB 2: TABLA MAESTRA INTEGRAL (LIMPIA Y CON PDF UNIFICADO)
         # ================================================================
         with tab_maestra:
             st.markdown("### 📋 Vista Consolidada Integral")
@@ -704,18 +704,19 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 hide_index=True
             )
 
+            # --- BOTÓN DE DESCARGA PDF INTEGRAL 360 ---
             try:
-                pdf_bytes = generar_pdf_rendimiento_integral(df_m)
+                pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_exp_det)
                 if pdf_bytes:
                     st.download_button(
-                        "📄 Descargar Reporte PDF",
+                        "📄 Descargar Reporte PDF 360°",
                         data=pdf_bytes,
-                        file_name="Reporte_Gerencial.pdf",
+                        file_name="Reporte_Gerencial_Integral.pdf",
                         mime="application/pdf",
                         type="primary"
                     )
             except Exception as e:
-                st.error(f"No se pudo generar el PDF: {e}")
+                st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
 
         # ================================================================
         # TAB 3: REGISTRO DISCIPLINARIO
