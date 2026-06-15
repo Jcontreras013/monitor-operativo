@@ -254,7 +254,8 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # --- FILTRAR SÓLO ÓRDENES CERRADAS/LIQUIDADAS PARA TODO EL EQUIPO (EXCLUIR ANULADAS) ---
         if 'ESTADO' in df_act.columns:
             estado_upper = df_act['ESTADO'].astype(str).str.upper().str.strip()
-            df_act = df_act[estado_upper.str.contains('CERRADA|LIQUIDADA|FINALIZADA|COMPLETADA', na=False)]
+            # SE CORRIGE EL REGEX PARA ADMITIR GÉNERO MASCULINO Y FEMENINO (CERRADO, LIQUIDADO, REALIZADO, ETC.)
+            df_act = df_act[estado_upper.str.contains('CERRAD|LIQUID|FINALIZ|COMPLET|REALIZAD', na=False)]
 
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
@@ -374,12 +375,15 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     p_salida = sub_df['DT_OUT'].min()
                     u_llegada = sub_df['DT_IN'].max()
                     
+                    # Corrección: conversión segura a string usando str() sobre objetos Period escalares
                     week_val = str(p_salida.to_period('W')) if pd.notnull(p_salida) else '--'
                     mes_val = str(p_salida.to_period('M')) if pd.notnull(p_salida) else '--'
 
+                    # Filtrado de horas operativas reales para descartar ruidos nocturnos
                     s_secs = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
                     e_secs = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
                     
+                    # Salida: entre 5:00 AM y 1:00 PM | Retorno: entre 12:00 PM y 10:00 PM
                     salida_valida = s_secs if (s_secs and 5*3600 <= s_secs <= 13*3600) else None
                     entrada_valida = e_secs if (e_secs and 12*3600 <= e_secs <= 22*3600) else None
 
