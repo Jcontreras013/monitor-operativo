@@ -24,35 +24,35 @@ NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
 # CLASIFICADOR DE TIPO DE ORDEN
-# Detecta si es Residencial, Plex o tipo SOP/SOPFibra/etc. según el campo TIPO
+# Detecta si es Residencial, Plex o tipo SOP/SOPFibra/etc. según el campo ACTIVIDAD
 # ==============================================================================
-def clasificar_segmento(tipo_valor):
-    """Clasifica una orden como Residencial o Plex según el campo TIPO de la orden."""
-    t = str(tipo_valor).upper().strip()
-    if any(k in t for k in ['PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME']):
+def clasificar_segmento(actividad_valor):
+    """Clasifica una orden como Residencial o Plex según la ACTIVIDAD realizada."""
+    t = str(actividad_valor).upper().strip()
+    if any(k in t for k in ['PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT']):
         return 'Plex'
     return 'Residencial'
 
-def clasificar_tipo_orden(tipo_valor):
+def clasificar_tipo_orden(actividad_valor):
     """
-    Devuelve el tipo específico de orden: SOP, SOPFibra, Instalacion, etc.
-    Se basa en el campo TIPO o SUBTIPO del archivo rep_actividades.
+    Devuelve el tipo específico de orden: SOP, SOPFibra, Instalación, etc.
+    Se basa en el campo ACTIVIDAD ya mapeado y estandarizado.
     """
-    t = str(tipo_valor).upper().strip()
+    t = str(actividad_valor).upper().strip()
     # SOP Fibra tiene prioridad sobre SOP genérico
-    if 'SOPFIB' in t or ('SOP' in t and 'FIBR' in t):
+    if 'SOPFIB' in t or ('SOP' in t and 'FIB' in t):
         return 'SOPFibra'
-    if 'SOP' in t:
+    if 'SOP' in t or 'FALLA' in t:
         return 'SOP'
-    if 'INSTAL' in t:
+    if 'INSTAL' in t or 'NUEVA' in t:
         return 'Instalación'
-    if 'MANTEN' in t or 'MTTO' in t:
+    if 'MANTEN' in t or 'MTTO' in t or 'MANT' in t:
         return 'Mantenimiento'
-    if 'RETIRO' in t or 'DESCONEX' in t:
+    if 'RETIRO' in t or 'DESCONEX' in t or 'RECU' in t:
         return 'Retiro'
-    if 'MIGRACI' in t:
+    if 'MIGRACI' in t or 'MIGR' in t:
         return 'Migración'
-    if 'VISITA' in t:
+    if 'VISITA' in t or 'VISI' in t:
         return 'Visita'
     return 'Otro'
 
@@ -241,24 +241,20 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # Eliminar registros sin técnico
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
-        # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se elimina David y Melvin) ---
-        nombres_excluidos = ['DAVID SABILLON', 'MELVIN BERRIOS', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
+        # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se eliminan David y Melvin) ---
+        nombres_excluidos = ['DAVID SABILLON', 'MELVIN', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
         def es_tecnico_excluido(nombre_completo):
             nom_limpio = limpiar_texto_nombres(nombre_completo)
             return any(limpiar_texto_nombres(ex) in nom_limpio for ex in nombres_excluidos)
             
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
 
-        # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes INSEQUIPO) ---
-        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
-        
+        # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
                 act_val = str(row.get('ACTIVIDAD', '')).upper()
-                tipo_val = str(row.get(col_tipo_raw, '')) if col_tipo_raw else ""
-                tipo_val = tipo_val.upper()
-                return 'INSEQUIPO' in act_val or 'INSEQUIPO' in tipo_val
+                return 'INSEQUIPO' in act_val
             return True
 
         df_act = df_act[df_act.apply(filtrar_ordenes_allan, axis=1)]
@@ -270,13 +266,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
 
-        # --- Clasificar Segmento (Residencial / Plex) ---
-        if col_tipo_raw:
-            df_act['Segmento'] = df_act[col_tipo_raw].apply(clasificar_segmento)
-            df_act['TipoOrden'] = df_act[col_tipo_raw].apply(clasificar_tipo_orden)
-        else:
-            df_act['Segmento'] = 'Residencial'
-            df_act['TipoOrden'] = 'Otro'
+        # --- Clasificar Segmento y Tipo de Orden mediante la columna estándar 'ACTIVIDAD' ---
+        df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
+        df_act['TipoOrden'] = df_act['ACTIVIDAD'].apply(clasificar_tipo_orden)
 
         # --- RECLASIFICACIÓN DE SEGMENTO PARA MIGUEL Y RAFAEL ---
         def forzar_segmento_plex(row):
