@@ -595,7 +595,7 @@ def mostrar_modulo_expedientes(conn, df_base):
         
         # --- TABLA Y VISTA EXCLUSIVA DE TÉCNICOS ---
         df_view = obtener_datos_memoria(conn)
-        if 'TECNICO' in df_view.columns:
+        if df_view is not None and not df_view.empty and 'TECNICO' in df_view.columns:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
             # Filtramos todos los que NO tienen la etiqueta de departamento al final ej. "(SAC)"
