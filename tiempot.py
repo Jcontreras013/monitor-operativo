@@ -261,6 +261,8 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
 
         # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
+        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
+        
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
@@ -705,45 +707,13 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
             st.markdown("---")
 
-            # ---- GRÁFICO 3: BUBBLE CHART (Matriz de Desempeño Operativo vs. Incidencias) ----
-            st.markdown("#### 🎯 Matriz de Desempeño Operativo y Disciplina")
-            st.caption("Eje X: Cantidad de Órdenes | Eje Y: Tiempo Promedio (Minutos) | Tamaño de Burbuja: Total Incidencias.")
-            
-            if not df_m.empty:
-                df_bubble = df_m.copy()
-                df_bubble['Total_Incidencias'] = (
-                    df_bubble['DÍAS FALTADOS'] + df_bubble['LLAMADOS ATENCIÓN'] + df_bubble['DÍAS NO PRESENTADO']
-                )
-                df_bubble['Tamaño_Burbuja'] = df_bubble['Total_Incidencias'] + 3
-                
-                fig_bubble = px.scatter(
-                    df_bubble,
-                    x='ÓRDENES CANTIDAD',
-                    y='TIEMPO PROM. EN ORDEN (Min)',
-                    size='Tamaño_Burbuja',
-                    color='Total_Incidencias',
-                    hover_name='TÉCNICO',
-                    text='TÉCNICO',
-                    title="Análisis Relativo: Rendimiento y Cumplimiento de Disciplina",
-                    labels={
-                        'ÓRDENES CANTIDAD': 'Cantidad de Órdenes',
-                        'TIEMPO PROM. EN ORDEN (Min)': 'Tiempo Promedio (Min)',
-                        'Total_Incidencias': 'Incidencias Totales'
-                    },
-                    color_continuous_scale='YlOrRd',
-                    height=450
-                )
-                fig_bubble.update_traces(textposition='top center')
-                st.plotly_chart(fig_bubble, use_container_width=True)
-
-            # ---- GRÁFICO 4: INCIDENCIAS DISCIPLINARIAS ----
+            # ---- GRÁFICO 3: INCIDENCIAS DISCIPLINARIAS ----
             df_incidencias = df_m[
                 (df_m['DÍAS FALTADOS'] > 0) |
                 (df_m['LLAMADOS ATENCIÓN'] > 0) |
                 (df_m['DÍAS NO PRESENTADO'] > 0)
             ]
             if not df_incidencias.empty:
-                st.markdown("---")
                 st.markdown("#### 🚨 Desglose de Incidencias Disciplinarias")
                 df_melt = df_incidencias.melt(
                     id_vars='TÉCNICO',
