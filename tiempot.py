@@ -302,6 +302,19 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             tiempos_validos = x[x > 4] # Ignoramos cierres automáticos menores a 4 minutos
             return tiempos_validos.mean() if len(tiempos_validos) > 0 else 0
 
+        # --- CÁLCULO DE PROMEDIO DE ÚLTIMA ORDEN CERRADA ---
+        last_order_dict = {}
+        if not df_act.empty:
+            # Obtener el último timestamp de liquidación por técnico por día
+            df_last_daily = df_act.dropna(subset=['FECHA_LIQUIDADO']).groupby(['TECNICO', 'Fecha_Dia'])['FECHA_LIQUIDADO'].max().reset_index()
+            # Convertir a segundos desde la medianoche
+            df_last_daily['Last_Secs'] = df_last_daily['FECHA_LIQUIDADO'].dt.hour * 3600 + df_last_daily['FECHA_LIQUIDADO'].dt.minute * 60 + df_last_daily['FECHA_LIQUIDADO'].dt.second
+            # Promediar segundos por técnico
+            df_last_avg = df_last_daily.groupby('TECNICO')['Last_Secs'].mean().reset_index()
+            # Guardar hora formateada
+            for _, r in df_last_avg.iterrows():
+                last_order_dict[r['TECNICO']] = formatear_hora(r['Last_Secs'])
+
         resumen_act = df_act.groupby('TECNICO').agg(
             Ordenes_Totales=('NUM', 'count'),
             Minutos_Promedio=('Minutos_Orden', calcular_promedio_real),
@@ -440,6 +453,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         for _, row in resumen_act.iterrows():
             tec = row['TECNICO']
             h_primera = row['Hora_Primera_Orden'].strftime('%H:%M:%S') if pd.notnull(row['Hora_Primera_Orden']) else '--'
+            h_ultima = last_order_dict.get(tec, '--')
             gps = gps_promedios.get(tec, {'Salida': '--', 'Entrada': '--'})
             
             plex_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Plex')]['Ordenes'].sum())
@@ -452,6 +466,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 'ÓRDENES RESIDENCIAL': res_ord,
                 'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
                 'HORA 1ra ORDEN': h_primera,
+                'HORA ÚLT. ORDEN': h_ultima,  # <--- NUEVA COLUMNA CONSOLIDADA
                 'SALIDA PLANTEL (GPS)': gps['Salida'],
                 'ENTRADA PLANTEL (GPS)': gps['Entrada'],
                 'DÍAS NO PRESENTADO': int(dias_no_presentados_dict.get(tec, 0)),
@@ -655,12 +670,12 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     )
                     st.plotly_chart(fig_time, use_container_width=True)
 
-                    with st.expander("📊 Ver detalle numérico de las actividades seleccionadas"):
-                        df_tipo_pivot = df_tipo_show.pivot_table(
+                    # --- RESTAURACIÓN DEL ESTILO ANTERIOR DE LA TABLA DINÁMICA ---
+                    with st.expander("📊 Ver detalle numérico por tipo de orden"):
+                        df_tipo_pivot = df_tipo_ord.pivot_table(
                             index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
                         ).round(1).reset_index()
                         df_tipo_pivot.columns.name = None
-                        df_tipo_pivot = df_tipo_pivot.fillna("")
                         st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
                 else:
                     st.warning("⚠️ No hay datos para la actividad seleccionada.")
