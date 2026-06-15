@@ -251,6 +251,11 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             else:
                 df_act['NUM'] = range(len(df_act))
 
+        # --- FILTRAR SÓLO ÓRDENES CERRADAS/LIQUIDADAS PARA TODO EL EQUIPO (EXCLUIR ANULADAS) ---
+        if 'ESTADO' in df_act.columns:
+            estado_upper = df_act['ESTADO'].astype(str).str.upper().str.strip()
+            df_act = df_act[estado_upper.str.contains('CERRADA|LIQUIDADA|FINALIZADA|COMPLETADA', na=False)]
+
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
         df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
@@ -268,7 +273,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[df_act.apply(filtrar_ordenes_allan, axis=1)]
 
         if df_act.empty:
-            return None, None, None, None, None, None, "El archivo de actividades quedó vacío tras aplicar los filtros."
+            return None, None, None, None, None, None, "El archivo de actividades quedó vacío tras aplicar los filtros de órdenes cerradas."
 
         tecnicos_originales = df_act['TECNICO'].unique()
         tecnicos_limpios = [limpiar_texto_nombres(t) for t in tecnicos_originales]
