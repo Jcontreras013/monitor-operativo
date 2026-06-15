@@ -529,43 +529,103 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     # ================= 2. BOTÓN DE EJECUCIÓN =================
     if st.button("🚀 INICIAR ANÁLISIS CRUZADO", type="primary", use_container_width=True):
         if act_file:
-            with st.spinner("🤖 Depurando tiempos reales y cruzando bases de datos..."):
-                df_act = read_file_robust_local(act_file)
-                df_gps = read_file_robust_local(gps_file) if gps_file else None
-                df_exp = st.session_state.get('df_exp_memoria', None)
+            with st.spinner("🤖 Depurando tiempos reales y cargando bases de datos..."):
+                df_act_raw = read_file_robust_local(act_file)
+                df_gps_raw = read_file_robust_local(gps_file) if gps_file else None
+                df_exp_raw = st.session_state.get('df_exp_memoria', None)
 
-                resultado = procesar_rendimiento_avanzado(df_act, df_gps, df_exp)
-                df_maestra, df_diario, df_disciplina, df_seg, df_tipo_ord, df_gps_mens, msg = resultado
-
-                if df_maestra is not None:
-                    st.session_state['rs_maestra'] = df_maestra
-                    st.session_state['rs_diario'] = df_diario
-                    st.session_state['rs_disciplina'] = df_disciplina
-                    st.session_state['rs_segmento'] = df_seg
-                    st.session_state['rs_tipo_orden'] = df_tipo_ord
-                    st.session_state['rs_gps_mensual'] = df_gps_mens
-                    st.rerun()
-                else:
-                    st.error(msg)
+                # Guardar crudos en session_state para poder filtrar por fechas dinámicamente
+                st.session_state['df_act_raw_store'] = df_act_raw
+                st.session_state['df_gps_raw_store'] = df_gps_raw
+                st.session_state['df_exp_raw_store'] = df_exp_raw
+                st.rerun()
         else:
             st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
-    if 'rs_maestra' in st.session_state:
-        df_m = st.session_state['rs_maestra'].copy()
-        df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
-        df_seg = st.session_state.get('rs_segmento', pd.DataFrame())
-        df_tipo_ord = st.session_state.get('rs_tipo_orden', pd.DataFrame())
+    # ================= 3. FILTRADO Y VISUALIZACIÓN DEL DASHBOARD =================
+    if 'df_act_raw_store' in st.session_state:
+        df_act_raw = st.session_state['df_act_raw_store']
+        df_gps_raw = st.session_state.get('df_gps_raw_store', None)
+        df_exp_raw = st.session_state.get('df_exp_raw_store', None)
 
-        # Filtro global
-        tecs_disp = sorted(df_m['TÉCNICO'].unique())
-        tec_filtro = st.multiselect("🔍 Filtrar Técnico(s) para todo el reporte:", tecs_disp)
-        if tec_filtro:
-            df_m = df_m[df_m['TÉCNICO'].isin(tec_filtro)]
-            if not df_seg.empty:
-                df_seg = df_seg[df_seg['TECNICO'].isin(tec_filtro)]
-            if not df_tipo_ord.empty:
-                df_tipo_ord = df_tipo_ord[df_tipo_ord['TECNICO'].isin(tec_filtro)]
+        # Calcular límites de fecha del archivo de actividades de manera segura
+        df_act_temp = df_act_raw.copy()
+        df_act_temp = procesar_dataframe_base(df_act_temp)
+        df_act_temp['FECHA_ENT_TEMP'] = pd.to_datetime(df_act_temp['HORA_INI'], errors='coerce')
+        df_act_temp['FECHA_LIQ_TEMP'] = pd.to_datetime(df_act_temp['HORA_LIQ'], errors='coerce')
+        df_act_temp = df_act_temp.dropna(subset=['FECHA_LIQ_TEMP'])
+        
+        if not df_act_temp.empty:
+            min_date = df_act_temp['FECHA_LIQ_TEMP'].min().date()
+            max_date = df_act_temp['FECHA_LIQ_TEMP'].max().date()
+        else:
+            min_date = datetime.now().date() - timedelta(days=30)
+            max_date = datetime.now().date()
+
+        # --- FILTRO GLOBAL DE FECHAS EN EL TOP ---
+        st.markdown("### 📅 Rango de Evaluación Temporal")
+        st.caption("Ajuste las fechas para re-evaluar la productividad, GPS y disciplina de todas las pestañas al instante.")
+        
+        rango_fechas = st.date_input(
+            "Seleccione el rango de fechas para el reporte:",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="filtro_global_fechas"
+        )
+        
+        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+            start_date, end_date = rango_fechas
+            
+            # Filtrar actividades
+            df_act_filtered = df_act_temp[
+                (df_act_temp['FECHA_LIQ_TEMP'].dt.date >= start_date) & 
+                (df_act_temp['FECHA_LIQ_TEMP'].dt.date <= end_date)
+            ].copy()
+            
+            # Filtrar GPS
+            df_gps_filtered = None
+            if df_gps_raw is not None and not df_gps_raw.empty:
+                df_gps_temp = df_gps_raw.copy()
+                df_gps_temp.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps_temp.columns]
+                col_out_temp = next((c for c in df_gps_temp.columns if ('HORA' in c or 'FECHA' in c) and 'SALIDA' in c), None)
+                if not col_out_temp:
+                    col_out_temp = next((c for c in df_gps_temp.columns if 'SALIDA' in c), None)
+                
+                if col_out_temp:
+                    df_gps_temp['DT_OUT_TEMP'] = pd.to_datetime(df_gps_temp[col_out_temp], errors='coerce')
+                    df_gps_filtered = df_gps_temp[
+                        (df_gps_temp['DT_OUT_TEMP'].dt.date >= start_date) & 
+                        (df_gps_temp['DT_OUT_TEMP'].dt.date <= end_date)
+                    ].copy()
+                else:
+                    df_gps_filtered = df_gps_raw.copy()
+            
+            # Filtrar Expedientes
+            df_exp_filtered = None
+            if df_exp_raw is not None and not df_exp_raw.empty:
+                df_exp_temp = df_exp_raw.copy()
+                col_fec_temp = next((c for c in df_exp_temp.columns if any(k in str(c).upper() for k in ['FECHA', 'REGISTRO', 'INCIDENCIA'])), None)
+                if col_fec_temp:
+                    df_exp_temp['FECHA_DT_TEMP'] = pd.to_datetime(df_exp_temp[col_fec_temp], errors='coerce')
+                    df_exp_filtered = df_exp_temp[
+                        (df_exp_temp['FECHA_DT_TEMP'].dt.date >= start_date) & 
+                        (df_exp_temp['FECHA_DT_TEMP'].dt.date <= end_date)
+                    ].copy()
+                else:
+                    df_exp_filtered = df_exp_raw.copy()
+                    
+            # Re-ejecutar el análisis cruzado sobre el subconjunto de fechas exactas
+            resultado = procesar_rendimiento_avanzado(df_act_filtered, df_gps_filtered, df_exp_filtered)
+            
+            if resultado[0] is not None:
+                df_m, df_d, df_exp_det, df_seg, df_tipo_ord, _, _ = resultado
+            else:
+                st.warning("⚠️ No se encontraron órdenes cerradas en el rango de fechas seleccionado.")
+                return
+        else:
+            st.info("💡 Por favor, complete la selección de ambas fechas (inicio y fin) para procesar el reporte.")
+            return
 
         # --- PESTAÑAS DEL DASHBOARD (solo 3) ---
         tab_graficos, tab_maestra, tab_exp = st.tabs([
@@ -727,7 +787,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             st.markdown("### 🚨 Registro Disciplinario")
 
             if df_exp_det is not None and not df_exp_det.empty:
-                df_e_fil = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tec_filtro)] if tec_filtro else df_exp_det.copy()
+                df_e_fil = df_exp_det.copy() # Sincronizado con la fecha de evaluación
 
                 if not df_e_fil.empty:
                     st.markdown("#### 🔎 Consultar Incidencias por Técnico")
