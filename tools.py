@@ -3019,11 +3019,11 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
             df_exp_filtrado['ES_FALTA'] = df_exp_filtrado.get('ES_FALTA', pd.Series([False]*len(df_exp_filtrado))).fillna(False).astype(bool)
             df_exp_filtrado['ES_NO_PRESENTADO'] = df_exp_filtrado.get('ES_NO_PRESENTADO', pd.Series([False]*len(df_exp_filtrado))).fillna(False).astype(bool)
             
-            # Clasificar y agrupar de forma binaria (Inasistencias vs Llamados de Atención)
+            # Clasificar de forma binaria (Inasistencias vs Llamados de Atención)
             df_exp_filtrado['Falta_Absoluta'] = (df_exp_filtrado['ES_FALTA'] | df_exp_filtrado['ES_NO_PRESENTADO']).astype(int)
             df_exp_filtrado['Llamado_Absoluto'] = (~(df_exp_filtrado['ES_FALTA'] | df_exp_filtrado['ES_NO_PRESENTADO'])).astype(int)
             
-            # Generar el agrupamiento unificado solicitado
+            # Generar el agrupamiento unificado
             df_res_disciplina = df_exp_filtrado.groupby('TEC_MAESTRO').agg(
                 Total_Llamados=('Llamado_Absoluto', 'sum'),
                 Total_Faltas=('Falta_Absoluta', 'sum')
@@ -3053,12 +3053,28 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
                     
                     pdf.cell(w_exp[0], 6, tec, border=1)
                     
-                    # Llamados de atención coloreados de naranja preventivo si superan cero
+                    # Llamados de atención coloreados de naranja preventivo
                     pdf.set_text_color(217, 119, 6) if llamados > 0 else pdf.set_text_color(0, 0, 0)
                     pdf.cell(w_exp[1], 6, str(llamados), border=1, align="C")
                     
-                    # Faltas e inasistencias coloreadas de rojo correctivo si superan cero
+                    # Faltas e inasistencias coloreadas de rojo correctivo
                     pdf.set_text_color(220, 38, 38) if faltas > 0 else pdf.set_text_color(0, 0, 0)
                     pdf.cell(w_exp[2], 6, str(faltas), border=1, align="C")
                     
-                    pdf.s
+                    pdf.set_text_color(0, 0, 0) # Resetear color de texto
+                    pdf.ln()
+            else:
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(50, 50, 50)
+                pdf.cell(0, 6, safestr("No se registran incidencias para los técnicos en este reporte."), ln=True)
+        else:
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(50, 50, 50)
+            pdf.cell(0, 6, safestr("No se registran incidencias para los técnicos en este reporte."), ln=True)
+    else:
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(50, 50, 50)
+        pdf.cell(0, 6, safestr("La base de datos disciplinaria está limpia o no ha sido sincronizada."), ln=True)
+
+    # Retorno unificado utilizando el motor seguro ya probado en tools.py
+    return finalizar_pdf(pdf)
