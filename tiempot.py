@@ -33,29 +33,6 @@ def clasificar_segmento(actividad_valor):
         return 'Plex'
     return 'Residencial'
 
-def clasificar_tipo_orden(actividad_valor):
-    """
-    Devuelve el tipo específico de orden: SOP, SOPFibra, Instalación, etc.
-    Se basa en el campo ACTIVIDAD ya mapeado y estandarizado.
-    """
-    t = str(actividad_valor).upper().strip()
-    # SOP Fibra tiene prioridad sobre SOP genérico
-    if 'SOPFIB' in t or ('SOP' in t and 'FIB' in t):
-        return 'SOPFibra'
-    if 'SOP' in t or 'FALLA' in t:
-        return 'SOP'
-    if 'INSTAL' in t or 'NUEVA' in t:
-        return 'Instalación'
-    if 'MANTEN' in t or 'MTTO' in t or 'MANT' in t:
-        return 'Mantenimiento'
-    if 'RETIRO' in t or 'DESCONEX' in t or 'RECU' in t:
-        return 'Retiro'
-    if 'MIGRACI' in t or 'MIGR' in t:
-        return 'Migración'
-    if 'VISITA' in t or 'VISI' in t:
-        return 'Visita'
-    return 'Otro'
-
 # ==============================================================================
 # DETECTOR DE INASISTENCIAS EN COMENTARIOS DE EXPEDIENTES (Se elimina ABANDONO)
 # ==============================================================================
@@ -241,7 +218,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # Eliminar registros sin técnico
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
-        # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se eliminan David y Melvin) ---
+        # --- FILTRADO DE TÉCNICOS EXCLUIDOS (Se elimina David y Melvin) ---
         nombres_excluidos = ['DAVID SABILLON', 'MELVIN', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
         def es_tecnico_excluido(nombre_completo):
             nom_limpio = limpiar_texto_nombres(nombre_completo)
@@ -250,6 +227,8 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
 
         # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
+        col_tipo_raw = next((c for c in df_act.columns if 'TIPO' in str(c).upper()), None)
+        
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
@@ -268,7 +247,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 
         # --- Clasificar Segmento y Tipo de Orden mediante la columna estándar 'ACTIVIDAD' ---
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
-        df_act['TipoOrden'] = df_act['ACTIVIDAD'].apply(clasificar_tipo_orden)
+        
+        # CORRECCIÓN: Usar todas las actividades reales sin agrupaciones simplificadas
+        df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
 
         # --- RECLASIFICACIÓN DE SEGMENTO PARA MIGUEL Y RAFAEL ---
         def forzar_segmento_plex(row):
@@ -655,7 +636,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     y='TECNICO',
                     color='TipoOrden',
                     orientation='h',
-                    title="⏳ Tiempo Promedio por Orden (Min) — Por Tipo de Orden",
+                    title="⏳ Tiempo Promedio por Orden (Min) — Por Tipo de Actividad Realizada",
                     text_auto='.1f',
                     color_discrete_sequence=px.colors.qualitative.Set2,
                     category_orders={'TECNICO': orden_tecs_tiempo},
@@ -664,7 +645,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 fig_time.update_layout(
                     height=max(400, len(orden_tecs_tiempo) * 40),
                     yaxis_title="",
-                    legend_title="Tipo de Orden",
+                    legend_title="Tipo de Actividad",
                     xaxis_title="Minutos Promedio"
                 )
                 st.plotly_chart(fig_time, use_container_width=True)
