@@ -2910,3 +2910,147 @@ def generar_pdf_rendimiento_integral(df_resumen):
         data = f.read()
     os.remove(path)
     return data
+
+# ==============================================================================
+# REPORTE INTEGRAL 360 (PRODUCTIVIDAD, GPS Y RRHH) - PARA TIEMPOT.PY
+# ==============================================================================
+class ReporteIntegral360PDF(FPDF):
+    def header(self):
+        # Logo corporativo
+        if os.path.exists('logo.png'):
+            self.image('logo.png', 10, 8, 33)
+        self.set_y(12)
+        self.set_x(50)
+        self.set_text_color(40, 40, 40)
+        self.set_font("Helvetica", "B", 14)
+        self.cell(0, 6, safestr("REPORTE INTEGRAL 360° - OPERACIONES Y RRHH"), ln=True, align="R")
+        self.set_x(50)
+        self.set_font("Helvetica", "", 10)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 5, safestr("Maxcom PRO - Módulo Gerencial Avanzado"), ln=True, align="R")
+        
+        self.set_draw_color(200, 200, 200)
+        self.line(10, 25, 287, 25) # Línea divisoria en formato Horizontal
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, f"Página {self.page_no()}", align="C")
+
+def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
+    pdf = ReporteIntegral360PDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    
+    # --- PESTAÑA 1: RESUMEN GERENCIAL (KPIs) ---
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(16, 185, 129) # Verde
+    pdf.cell(0, 8, safestr("1. RESUMEN GERENCIAL (Indicadores Clave)"), ln=True)
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(50, 50, 50)
+    total_tecs = len(df_m)
+    total_ords = int(df_m['ÓRDENES CANTIDAD'].sum()) if 'ÓRDENES CANTIDAD' in df_m else 0
+    prom_gral = round(df_m['TIEMPO PROM. EN ORDEN (Min)'].mean(), 1) if not df_m.empty else 0
+    tot_inc = int(df_m['DÍAS FALTADOS'].sum() + df_m['LLAMADOS ATENCIÓN'].sum() + df_m['DÍAS NO PRESENTADO'].sum())
+    
+    kpi_text = (f"Técnicos Analizados: {total_tecs}   |   "
+                f"Total Órdenes Ejecutadas: {total_ords}   |   "
+                f"Tiempo Promedio Global: {prom_gral} min   |   "
+                f"Total Incidencias y Faltas: {tot_inc}")
+    pdf.cell(0, 6, safestr(kpi_text), ln=True)
+    pdf.ln(5)
+    
+    # --- PESTAÑA 2: TABLA MAESTRA INTEGRAL ---
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(59, 130, 246) # Azul
+    pdf.cell(0, 8, safestr("2. TABLA MAESTRA (Productividad + Tiempos GPS)"), ln=True)
+    
+    pdf.set_fill_color(240, 245, 250)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 8)
+    
+    # Anchos de columna optimizados para que no se vea sobrecargado
+    w = [55, 20, 15, 15, 25, 30, 30, 25, 30] 
+    headers = ["TÉCNICO", "ÓRDENES", "PLEX", "RESID.", "PROM(Min)", "GPS SALIDA", "GPS RETORNO", "AUSENCIAS", "LLAMADOS"]
+    
+    for i, h in enumerate(headers):
+        pdf.cell(w[i], 7, safestr(h), border=1, fill=True, align="C")
+    pdf.ln()
+    
+    pdf.set_font("Helvetica", "", 8)
+    for _, row in df_m.iterrows():
+        pdf.cell(w[0], 6, safestr(row.get('TÉCNICO', ''))[:30], border=1)
+        pdf.cell(w[1], 6, safestr(row.get('ÓRDENES CANTIDAD', 0)), border=1, align="C")
+        pdf.cell(w[2], 6, safestr(row.get('ÓRDENES PLEX', 0)), border=1, align="C")
+        pdf.cell(w[3], 6, safestr(row.get('ÓRDENES RESIDENCIAL', 0)), border=1, align="C")
+        
+        # Alerta visual en PDF para tiempos altos
+        t_prom = row.get('TIEMPO PROM. EN ORDEN (Min)', 0)
+        pdf.set_text_color(220, 38, 38) if t_prom > 90 else pdf.set_text_color(0, 0, 0)
+        pdf.cell(w[4], 6, safestr(t_prom), border=1, align="C")
+        pdf.set_text_color(0, 0, 0)
+        
+        pdf.cell(w[5], 6, safestr(row.get('SALIDA PLANTEL (GPS)', '--')), border=1, align="C")
+        pdf.cell(w[6], 6, safestr(row.get('ENTRADA PLANTEL (GPS)', '--')), border=1, align="C")
+        
+        faltas_tot = row.get('DÍAS FALTADOS', 0) + row.get('DÍAS NO PRESENTADO', 0)
+        pdf.set_text_color(220, 38, 38) if faltas_tot > 0 else pdf.set_text_color(0, 0, 0)
+        pdf.cell(w[7], 6, safestr(faltas_tot), border=1, align="C")
+        
+        llamados = row.get('LLAMADOS ATENCIÓN', 0)
+        pdf.set_text_color(217, 119, 6) if llamados > 0 else pdf.set_text_color(0, 0, 0)
+        pdf.cell(w[8], 6, safestr(llamados), border=1, align="C")
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln()
+
+    # --- PESTAÑA 3: REGISTRO DISCIPLINARIO (Nube RRHH) ---
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(220, 38, 38) # Rojo
+    pdf.cell(0, 8, safestr("3. DETALLE DISCIPLINARIO (Solo técnicos con incidencias)"), ln=True)
+    
+    if df_exp_det is not None and not df_exp_det.empty:
+        tecs_en_reporte = df_m['TÉCNICO'].unique()
+        df_exp_filtrado = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tecs_en_reporte)]
+        
+        if not df_exp_filtrado.empty:
+            pdf.set_fill_color(254, 226, 226) # Rojo claro corporativo
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font("Helvetica", "B", 8)
+            
+            w_exp = [55, 30, 40, 130]
+            h_exp = ["TÉCNICO", "FECHA", "TIPO DE FALTA", "COMENTARIO / OBSERVACIÓN"]
+            for i, h in enumerate(h_exp):
+                pdf.cell(w_exp[i], 7, safestr(h), border=1, fill=True, align="C")
+            pdf.ln()
+            
+            pdf.set_font("Helvetica", "", 8)
+            for _, row in df_exp_filtrado.iterrows():
+                tec = safestr(row.get('TEC_MAESTRO', ''))[:30]
+                # Extracción dinámica de columnas de fecha y tipo
+                fecha = safestr(row.get('FECHA_REGISTRO', row.get('FECHA_INCIDENCIA', row.get('FECHA', 'N/D'))))[:12]
+                tipo = safestr(row.get('TIPO_FALTA', row.get('TIPO', 'Registro')))[:22]
+                
+                col_com = next((c for c in row.keys() if 'COMENTARIO' in c or 'DESC' in c or 'OBSERV' in c), None)
+                comentario = safestr(row.get(col_com, ''))[:85] # Truncado para evitar que rompa la tabla
+                
+                pdf.cell(w_exp[0], 6, tec, border=1)
+                pdf.cell(w_exp[1], 6, fecha, border=1, align="C")
+                pdf.cell(w_exp[2], 6, tipo, border=1, align="C")
+                pdf.cell(w_exp[3], 6, comentario, border=1)
+                pdf.ln()
+        else:
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(50, 50, 50)
+            pdf.cell(0, 6, safestr("No se registran incidencias para los técnicos en este reporte."), ln=True)
+    else:
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(50, 50, 50)
+        pdf.cell(0, 6, safestr("La base de datos disciplinaria está limpia."), ln=True)
+
+    try:
+        return pdf.output(dest='S').encode('latin-1')
+    except AttributeError:
+        return bytes(pdf.output())
