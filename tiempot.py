@@ -255,7 +255,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         if 'ESTADO' in df_act.columns:
             estado_upper = df_act['ESTADO'].astype(str).str.upper().str.strip()
             # SE CORRIGE EL REGEX PARA ADMITIR GÉNERO MASCULINO Y FEMENINO (CERRADO, LIQUIDADO, REALIZADO, ETC.)
-            df_act = df_act[estado_upper.str.contains('CERRAD|LIQUID|FINALIZ|COMPLET|REALIZAD', na=False)]
+            es_estado_cerrado = estado_upper.str.contains('CERRAD|LIQUID|FINALIZ|COMPLET|REALIZAD', na=False)
+            tiene_fecha_liq = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce').notna()
+            df_act = df_act[es_estado_cerrado | tiene_fecha_liq]
 
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
@@ -555,13 +557,20 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         # Calcular límites de fecha del archivo de actividades de manera segura
         df_act_temp = df_act_raw.copy()
         df_act_temp = procesar_dataframe_base(df_act_temp)
-        df_act_temp['FECHA_ENT_TEMP'] = pd.to_datetime(df_act_temp['HORA_INI'], errors='coerce')
-        df_act_temp['FECHA_LIQ_TEMP'] = pd.to_datetime(df_act_temp['HORA_LIQ'], errors='coerce')
-        df_act_temp = df_act_temp.dropna(subset=['FECHA_LIQ_TEMP'])
+        
+        # --- CASCADA DE FECHAS DEFENSIVA: PRIORIZACIÓN TEMPORAL ---
+        # Evita descarte de órdenes completas que carecen de marca de liquidación exacta
+        df_act_temp['HORA_LIQ_DT'] = pd.to_datetime(df_act_temp['HORA_LIQ'], errors='coerce')
+        df_act_temp['HORA_INI_DT'] = pd.to_datetime(df_act_temp['HORA_INI'], errors='coerce')
+        df_act_temp['FECHA_APE_DT'] = pd.to_datetime(df_act_temp['FECHA_APE'], errors='coerce')
+
+        # Evaluación en cascada: Liquidación -> Inicio -> Apertura
+        df_act_temp['FECHA_EVAL_DT'] = df_act_temp['HORA_LIQ_DT'].combine_first(df_act_temp['HORA_INI_DT']).combine_first(df_act_temp['FECHA_APE_DT'])
+        df_act_temp = df_act_temp.dropna(subset=['FECHA_EVAL_DT'])
         
         if not df_act_temp.empty:
-            min_date = df_act_temp['FECHA_LIQ_TEMP'].min().date()
-            max_date = df_act_temp['FECHA_LIQ_TEMP'].max().date()
+            min_date = df_act_temp['FECHA_EVAL_DT'].min().date()
+            max_date = df_act_temp['FECHA_EVAL_DT'].max().date()
         else:
             min_date = datetime.now().date() - timedelta(days=30)
             max_date = datetime.now().date()
@@ -581,10 +590,10 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
             start_date, end_date = rango_fechas
             
-            # Filtrar actividades
+            # Filtrar actividades basándonos en la fecha de evaluación unificada
             df_act_filtered = df_act_temp[
-                (df_act_temp['FECHA_LIQ_TEMP'].dt.date >= start_date) & 
-                (df_act_temp['FECHA_LIQ_TEMP'].dt.date <= end_date)
+                (df_act_temp['FECHA_EVAL_DT'].dt.date >= start_date) & 
+                (df_act_temp['FECHA_EVAL_DT'].dt.date <= end_date)
             ].copy()
             
             # Filtrar GPS
