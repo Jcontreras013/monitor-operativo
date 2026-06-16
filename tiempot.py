@@ -24,17 +24,15 @@ NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
 # CLASIFICADOR DE TIPO DE ORDEN
-# Detecta si es Residencial, Plex o tipo SOP/SOPFibra/etc. según el campo ACTIVIDAD
 # ==============================================================================
 def clasificar_segmento(actividad_valor):
-    """Clasifica una orden como Residencial o Plex según la ACTIVIDAD realizada."""
     t = str(actividad_valor).upper().strip()
     if any(k in t for k in ['PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT']):
         return 'Plex'
     return 'Residencial'
 
 # ==============================================================================
-# DETECTOR DE INASISTENCIAS EN COMENTARIOS DE EXPEDIENTES
+# DETECTOR DE INASISTENCIAS EN COMENTARIOS
 # ==============================================================================
 PALABRAS_INASISTENCIA = [
     'NO SE PRESENTO', 'NO SE PRESENTÓ', 'AUSENTE', 'FALTA',
@@ -45,7 +43,6 @@ PALABRAS_INASISTENCIA = [
 ]
 
 def es_comentario_inasistencia(comentario):
-    """Devuelve True si el comentario de expediente indica que el técnico no se presentó."""
     if pd.isna(comentario):
         return False
     c = str(comentario).upper().strip()
@@ -75,40 +72,30 @@ def read_file_robust_local(uploaded_file):
     uploaded_file.seek(0)
 
     if filename.endswith('.xlsx') or filename.endswith('.xlsm'):
-        try:
-            return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='openpyxl'))
-        except:
-            pass
+        try: return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='openpyxl'))
+        except: pass
 
     if content.startswith(b'\xd0\xcf\x11\xe0'):
-        try:
-            return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='xlrd'))
-        except:
-            pass
+        try: return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='xlrd'))
+        except: pass
 
     es_zip_binario = content.startswith(b'PK\x03\x04')
     if not es_zip_binario and (b'<table' in content.lower() or b'<html' in content.lower()):
         try:
             dfs = pd.read_html(io.BytesIO(content))
-            if dfs:
-                return forzar_columnas_unicas_local(max(dfs, key=len))
+            if dfs: return forzar_columnas_unicas_local(max(dfs, key=len))
         except:
             try:
                 dfs = pd.read_html(io.BytesIO(content), encoding='latin-1')
-                if dfs:
-                    return forzar_columnas_unicas_local(max(dfs, key=len))
-            except:
-                pass
+                if dfs: return forzar_columnas_unicas_local(max(dfs, key=len))
+            except: pass
 
     uploaded_file.seek(0)
-    try:
-        return forzar_columnas_unicas_local(pd.read_excel(uploaded_file))
-    except:
-        pass
+    try: return forzar_columnas_unicas_local(pd.read_excel(uploaded_file))
+    except: pass
 
     uploaded_file.seek(0)
-    try:
-        return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip'))
+    try: return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip'))
     except UnicodeDecodeError:
         uploaded_file.seek(0)
         return forzar_columnas_unicas_local(pd.read_csv(uploaded_file, encoding='latin-1', on_bad_lines='skip'))
@@ -128,33 +115,27 @@ def obtener_datos_expedientes(conn):
         if df is not None and not df.empty:
             st.session_state['df_exp_memoria'] = df
             return df
-    except:
-        pass
+    except: pass
 
     if conn is None:
         try:
             from streamlit_gsheets import GSheetsConnection
             conn = st.connection("gsheets", type=GSheetsConnection)
-        except:
-            pass
+        except: pass
 
     if conn is not None:
         try:
             df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
             st.session_state['df_exp_memoria'] = df
             return df
-        except:
-            pass
-
+        except: pass
     return None
 
 # ==============================================================================
-# MOTOR SUPERIOR DE DEPURACIÓN Y EMPAREJAMIENTO DE NOMBRES
+# MOTOR SUPERIOR DE DEPURACIÓN DE NOMBRES
 # ==============================================================================
 def limpiar_texto_nombres(texto):
-    """Limpia acentos, caracteres raros y deja solo letras mayúsculas para comparar."""
-    if pd.isna(texto):
-        return ""
+    if pd.isna(texto): return ""
     t = str(texto).upper().strip()
     t = re.sub(r'\(.*?\)', '', t)
     t = unicodedata.normalize('NFKD', t).encode('ASCII', 'ignore').decode('utf-8')
@@ -162,10 +143,8 @@ def limpiar_texto_nombres(texto):
     return " ".join(t.split())
 
 def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_original):
-    """Encuentra el nombre del técnico evaluando coincidencias y forzando resultados flexibles."""
     n_buscar = limpiar_texto_nombres(nombre_buscar)
-    if not n_buscar:
-        return None
+    if not n_buscar: return None
 
     for i, m_limpio in enumerate(lista_maestros_limpios):
         if n_buscar == m_limpio or n_buscar in m_limpio or m_limpio in n_buscar:
@@ -186,79 +165,68 @@ def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_origi
 
     if max_score >= 1:
         return mejor_match
-
     return None
 
-# ==============================================================================
-# PROCESAMIENTO ANALÍTICO CENTRAL
-# ==============================================================================
 def formatear_hora(secs):
-    if pd.isna(secs) or secs is None or secs <= 0:
-        return "--"
+    if pd.isna(secs) or secs is None or secs <= 0: return "--"
     h = int(secs // 3600) % 24
     m = int((secs % 3600) // 60)
     s = int(secs % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def extraer_numero_mx(texto):
-    if pd.isna(texto) or not str(texto).strip():
-        return None
+    if pd.isna(texto) or not str(texto).strip(): return None
     val = str(texto).upper().strip()
     match = re.search(r'MX[-_ ]*(\d+)', val)
-    if match:
-        return int(match.group(1))
+    if match: return int(match.group(1))
     match_num = re.search(r'^\s*(\d+)\s*$', val)
-    if match_num:
-        return int(match_num.group(1))
+    if match_num: return int(match_num.group(1))
     return None
 
-def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
+# ==============================================================================
+# PROCESAMIENTO ANALÍTICO CENTRAL (AHORA CON FILTRO DE FECHA MAESTRO)
+# ==============================================================================
+def procesar_rendimiento_avanzado(df_act, df_gps, df_exp, fecha_analisis):
     try:
         # --- 1. PROCESAR ÓRDENES (ACTIVIDADES) ---
         df_act = procesar_dataframe_base(df_act)
 
-        # ====================================================================
-        # NUEVO FILTRO ESTRICTO DE ESTADO (Destruye anuladas y pendientes)
-        # ====================================================================
         if 'ESTADO' in df_act.columns:
             estados_validos = ['FINALIZADA', 'CERRADA', 'LIQUIDADA', 'ATENDIDO']
             df_act = df_act[df_act['ESTADO'].astype(str).str.upper().str.strip().isin(estados_validos)]
-        # ====================================================================
 
         if 'TECNICO' not in df_act.columns:
             alt_c = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'TÉCNICO' in str(c).upper() or 'OPERADOR' in str(c).upper()), None)
-            if alt_c:
-                df_act['TECNICO'] = df_act[alt_c]
-            else:
-                df_act['TECNICO'] = "N/D"
+            df_act['TECNICO'] = df_act[alt_c] if alt_c else "N/D"
 
         if 'ACTIVIDAD' not in df_act.columns:
             alt_c = next((c for c in df_act.columns if 'ACTIVIDAD' in str(c).upper() or 'TIPO' in str(c).upper() or 'ORDEN' in str(c).upper()), None)
-            if alt_c:
-                df_act['ACTIVIDAD'] = df_act[alt_c]
-            else:
-                df_act['ACTIVIDAD'] = "OTRO"
+            df_act['ACTIVIDAD'] = df_act[alt_c] if alt_c else "OTRO"
 
         if 'HORA_INI' not in df_act.columns:
             alt_c = next((c for c in df_act.columns if 'INI' in str(c).upper() or 'ENTRADA' in str(c).upper() or 'INICIO' in str(c).upper()), None)
-            if alt_c:
-                df_act['HORA_INI'] = df_act[alt_c]
+            if alt_c: df_act['HORA_INI'] = df_act[alt_c]
 
         if 'HORA_LIQ' not in df_act.columns:
             alt_c = next((c for c in df_act.columns if 'LIQ' in str(c).upper() or 'CIERRE' in str(c).upper() or 'SALIDA' in str(c).upper()), None)
-            if alt_c:
-                df_act['HORA_LIQ'] = df_act[alt_c]
+            if alt_c: df_act['HORA_LIQ'] = df_act[alt_c]
 
         if 'NUM' not in df_act.columns:
             alt_c = next((c for c in df_act.columns if 'NUM' in str(c).upper() or 'ORDEN' in str(c).upper() or 'ID' in str(c).upper()), None)
-            if alt_c:
-                df_act['NUM'] = df_act[alt_c]
-            else:
-                df_act['NUM'] = range(len(df_act))
+            df_act['NUM'] = df_act[alt_c] if alt_c else range(len(df_act))
 
-        df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
-        df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
+        # --- PARSEO DE FECHAS SEGURO (Previene confusión entre Mes/Día) ---
+        df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], dayfirst=True, errors='coerce')
+        df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], dayfirst=True, errors='coerce')
         df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
+
+        # ====================================================================
+        # FILTRO MAESTRO DE FECHA PARA LAS ACTIVIDADES
+        # ====================================================================
+        if fecha_analisis:
+            df_act = df_act[df_act['Fecha_Dia'] == fecha_analisis]
+            if df_act.empty:
+                return None, None, None, None, None, None, f"El archivo no contiene órdenes cerradas para la fecha seleccionada ({fecha_analisis.strftime('%d/%m/%Y')})."
 
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].astype(str).str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
@@ -269,7 +237,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             
         df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
 
-        # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
             if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'ECHEVERRY' in tec_limpio) or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
@@ -280,7 +247,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[df_act.apply(filtrar_ordenes_allan, axis=1)]
 
         if df_act.empty:
-            return None, None, None, None, None, None, "El archivo de actividades quedó vacío tras aplicar los filtros."
+            return None, None, None, None, None, None, "El archivo quedó vacío tras aplicar los filtros y reglas especiales de exclusión."
 
         tecnicos_originales = df_act['TECNICO'].unique()
         tecnicos_limpios = [limpiar_texto_nombres(t) for t in tecnicos_originales]
@@ -329,7 +296,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             MinProm=('Minutos_Orden', calcular_promedio_real)
         ).reset_index()
 
-        # --- 2. PROCESAR GPS CON FUERZA ---
+        # --- 2. PROCESAR GPS ---
         gps_promedios = {}
         gps_promedios_mensuales = pd.DataFrame()
 
@@ -337,26 +304,25 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             df_gps.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps.columns]
             
             col_placa = next((c for c in df_gps.columns if 'PLACA' in c or 'ALIAS' in c), None)
-            
             col_in = next((c for c in df_gps.columns if ('HORA' in c or 'FECHA' in c) and ('INGRESO' in c or 'LLEGADA' in c)), None)
-            if not col_in:
-                col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
-
+            if not col_in: col_in = next((c for c in df_gps.columns if 'INGRESO' in c or 'LLEGADA' in c), None)
             col_out = next((c for c in df_gps.columns if ('HORA' in c or 'FECHA' in c) and 'SALIDA' in c), None)
-            if not col_out:
-                col_out = next((c for c in df_gps.columns if 'SALIDA' in c), None)
+            if not col_out: col_out = next((c for c in df_gps.columns if 'SALIDA' in c), None)
 
             if col_placa and col_in and col_out:
-                df_gps['DT_IN'] = pd.to_datetime(df_gps[col_in], errors='coerce')
-                df_gps['DT_OUT'] = pd.to_datetime(df_gps[col_out], errors='coerce')
+                df_gps['DT_IN'] = pd.to_datetime(df_gps[col_in], dayfirst=True, errors='coerce')
+                df_gps['DT_OUT'] = pd.to_datetime(df_gps[col_out], dayfirst=True, errors='coerce')
                 df_gps['Fecha'] = df_gps['DT_OUT'].dt.date
-                df_gps['Mes'] = df_gps['DT_OUT'].dt.to_period('M').astype(str)
-                df_gps['Week'] = df_gps['DT_OUT'].dt.to_period('W').astype(str)
+                
+                # ====================================================================
+                # FILTRO MAESTRO DE FECHA PARA GPS
+                # ====================================================================
+                if fecha_analisis:
+                    df_gps = df_gps[df_gps['Fecha'] == fecha_analisis]
 
                 def encontrar_tecnico_hibrido(placa_alias):
                     mx_gps = extraer_numero_mx(placa_alias)
-                    if mx_gps and mx_gps in mx_to_tec:
-                        return mx_to_tec[mx_gps]
+                    if mx_gps and mx_gps in mx_to_tec: return mx_to_tec[mx_gps]
                     match = encontrar_tecnico_maestro(placa_alias, tecnicos_limpios, tecnicos_originales)
                     if match: return match
                     placa_clean = limpiar_texto_nombres(placa_alias)
@@ -368,13 +334,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 df_gps['TEC_MAESTRO'] = df_gps[col_placa].apply(encontrar_tecnico_hibrido)
                 df_gps_valid = df_gps.dropna(subset=['TEC_MAESTRO']).copy()
 
-                gps_diario_list = []
-                for (tec, fecha), sub_df in df_gps_valid.groupby(['TEC_MAESTRO', 'Fecha']):
+                for tec, sub_df in df_gps_valid.groupby('TEC_MAESTRO'):
                     p_salida = sub_df['DT_OUT'].min()
                     u_llegada = sub_df['DT_IN'].max()
-                    
-                    week_val = str(p_salida.to_period('W')) if pd.notnull(p_salida) else '--'
-                    mes_val = str(p_salida.to_period('M')) if pd.notnull(p_salida) else '--'
 
                     s_secs = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
                     e_secs = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
@@ -382,34 +344,10 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     salida_valida = s_secs if (s_secs and 5*3600 <= s_secs <= 13*3600) else None
                     entrada_valida = e_secs if (e_secs and 12*3600 <= e_secs <= 22*3600) else None
 
-                    gps_diario_list.append({
-                        'TECNICO': tec,
-                        'Fecha': fecha,
-                        'Week': week_val,
-                        'Mes': mes_val,
-                        'Salida_Secs': salida_valida,
-                        'Entrada_Secs': entrada_valida
-                    })
-                
-                df_diario_gps = pd.DataFrame(gps_diario_list)
-
-                if not df_diario_gps.empty:
-                    df_semanal_gps = df_diario_gps.groupby(['TECNICO', 'Week']).agg(
-                        Semanal_Salida=('Salida_Secs', 'mean'),
-                        Semanal_Entrada=('Entrada_Secs', 'mean')
-                    ).reset_index()
-
-                    df_mensual_final = df_semanal_gps.groupby('TECNICO').agg(
-                        Mensual_Salida=('Semanal_Salida', 'mean'),
-                        Mensual_Entrada=('Semanal_Entrada', 'mean')
-                    ).reset_index()
-
-                    for _, row_m in df_mensual_final.iterrows():
-                        tec = row_m['TECNICO']
-                        gps_promedios[tec] = {
-                            'Salida': formatear_hora(row_m['Mensual_Salida']),
-                            'Entrada': formatear_hora(row_m['Mensual_Entrada'])
-                        }
+                    gps_promedios[tec] = {
+                        'Salida': formatear_hora(salida_valida),
+                        'Entrada': formatear_hora(entrada_valida)
+                    }
 
         # --- 3. PROCESAR EXPEDIENTES ---
         faltas_dict = {}
@@ -418,6 +356,14 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_exp_detallado = pd.DataFrame()
 
         if df_exp is not None and not df_exp.empty:
+            # ====================================================================
+            # FILTRO MAESTRO DE FECHA PARA EXPEDIENTES (Mostrar solo las faltas de ese día)
+            # ====================================================================
+            col_fecha_exp = next((c for c in df_exp.columns if 'FECHA' in str(c).upper()), None)
+            if col_fecha_exp and fecha_analisis:
+                df_exp['Fecha_Parseada'] = pd.to_datetime(df_exp[col_fecha_exp], dayfirst=True, errors='coerce').dt.date
+                df_exp = df_exp[df_exp['Fecha_Parseada'] == fecha_analisis]
+
             col_tec_exp = next((c for c in df_exp.columns if 'TECNICO' in str(c).upper()), None)
             col_tipo = next((c for c in df_exp.columns if 'TIPO_FALTA' in str(c).upper() or 'FALTA' in str(c).upper()), None)
             col_comentario = next((c for c in df_exp.columns if any(k in str(c).upper() for k in [
@@ -473,7 +419,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 
         return (
             pd.DataFrame(datos_finales),
-            df_diario_gps if df_gps is not None else pd.DataFrame(),
+            pd.DataFrame(),
             df_exp_detallado,
             resumen_segmento,
             resumen_tipo,
@@ -523,15 +469,22 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ================= 2. BOTÓN DE EJECUCIÓN =================
+    # ================= 2. SELECCIÓN DE FECHA =================
+    col_f1, col_f2 = st.columns([1, 2])
+    with col_f1:
+        fecha_analisis = st.date_input("📅 Seleccione la fecha a analizar:", value=get_honduras_time().date())
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ================= 3. BOTÓN DE EJECUCIÓN =================
     if st.button("🚀 INICIAR ANÁLISIS CRUZADO", type="primary", use_container_width=True):
         if act_file:
-            with st.spinner("🤖 Depurando tiempos reales y cruzando bases de datos..."):
+            with st.spinner(f"🤖 Procesando datos exclusivamente para el día {fecha_analisis.strftime('%d/%m/%Y')}..."):
                 df_act = read_file_robust_local(act_file)
                 df_gps = read_file_robust_local(gps_file) if gps_file else None
                 df_exp = st.session_state.get('df_exp_memoria', None)
 
-                resultado = procesar_rendimiento_avanzado(df_act, df_gps, df_exp)
+                resultado = procesar_rendimiento_avanzado(df_act, df_gps, df_exp, fecha_analisis)
                 df_maestra, df_diario, df_disciplina, df_seg, df_tipo_ord, df_gps_mens, msg = resultado
 
                 if df_maestra is not None:
@@ -547,7 +500,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         else:
             st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
+    # ================= 4. VISUALIZACIÓN DEL DASHBOARD =================
     if 'rs_maestra' in st.session_state:
         df_m = st.session_state['rs_maestra'].copy()
         df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
@@ -629,10 +582,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             # ---- GRÁFICO 2: TIEMPO PROMEDIO por técnico y tipo de orden ----
             st.markdown("#### ⏳ Tiempo Promedio por Orden — Todos los Técnicos por Tipo")
             if not df_tipo_ord.empty:
-                
-                # BOTONERA DE FILTRO (Pills o Multiselect interactivo)
                 actividades_disponibles = sorted(df_tipo_ord['TipoOrden'].unique())
-                
                 try:
                     act_filtro = st.pills("🎯 Haz clic en una o varias actividades para aislar el gráfico (Vacío = Muestra todas):", options=actividades_disponibles, selection_mode="multi")
                 except AttributeError:
@@ -676,7 +626,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
                 else:
                     st.warning("⚠️ No hay datos para la actividad seleccionada.")
-
             else:
                 fig_time = px.bar(
                     df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=False),
