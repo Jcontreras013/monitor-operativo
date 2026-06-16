@@ -13,7 +13,7 @@ try:
     from tools import (
         procesar_dataframe_base,
         procesar_fechas_seguro,
-        generar_pdf_rendimiento_integral_360, # <--- IMPORTACIÓN ACTUALIZADA
+        generar_pdf_rendimiento_integral_360,
         leer_espejo_gcs,
         get_honduras_time
     )
@@ -34,7 +34,7 @@ def clasificar_segmento(actividad_valor):
     return 'Residencial'
 
 # ==============================================================================
-# DETECTOR DE INASISTENCIAS EN COMENTARIOS DE EXPEDIENTES (Se elimina ABANDONO)
+# DETECTOR DE INASISTENCIAS EN COMENTARIOS DE EXPEDIENTES
 # ==============================================================================
 PALABRAS_INASISTENCIA = [
     'NO SE PRESENTO', 'NO SE PRESENTÓ', 'AUSENTE', 'FALTA',
@@ -167,12 +167,10 @@ def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_origi
     if not n_buscar:
         return None
 
-    # 1. Búsqueda exacta o contenida
     for i, m_limpio in enumerate(lista_maestros_limpios):
         if n_buscar == m_limpio or n_buscar in m_limpio or m_limpio in n_buscar:
             return lista_original[i]
 
-    # 2. Búsqueda forzada por palabras (Ignorando preposiciones)
     palabras_comunes = {'DE', 'EL', 'LA', 'LOS', 'LAS', 'Y'}
     tokens_buscar = set([w for w in n_buscar.split() if len(w) > 2 and w not in palabras_comunes])
     
@@ -203,7 +201,6 @@ def formatear_hora(secs):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def extraer_numero_mx(texto):
-    """Extrae el número identificador del vehículo de manera limpia (ej: MX-10 -> 10)."""
     if pd.isna(texto) or not str(texto).strip():
         return None
     val = str(texto).upper().strip()
@@ -219,6 +216,14 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
         # --- 1. PROCESAR ÓRDENES (ACTIVIDADES) ---
         df_act = procesar_dataframe_base(df_act)
+
+        # ====================================================================
+        # NUEVO FILTRO ESTRICTO DE ESTADO (Destruye anuladas y pendientes)
+        # ====================================================================
+        if 'ESTADO' in df_act.columns:
+            estados_validos = ['FINALIZADA', 'CERRADA', 'LIQUIDADA', 'ATENDIDO']
+            df_act = df_act[df_act['ESTADO'].astype(str).str.upper().str.strip().isin(estados_validos)]
+        # ====================================================================
 
         if 'TECNICO' not in df_act.columns:
             alt_c = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'TÉCNICO' in str(c).upper() or 'OPERADOR' in str(c).upper()), None)
@@ -251,24 +256,23 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             else:
                 df_act['NUM'] = range(len(df_act))
 
-        # --- FILTRAR SÓLO ÓRDENES CERRADAS/LIQUIDADAS PARA TODO EL EQUIPO (EXCLUIR ANULADAS) ---
-        if 'ESTADO' in df_act.columns:
-            estado_upper = df_act['ESTADO'].astype(str).str.upper().str.strip()
-            # SE CORRIGE EL REGEX PARA ADMITIR GÉNERO MASCULINO Y FEMENINO (CERRADO, LIQUIDADO, REALIZADO, ETC.)
-            es_estado_cerrado = estado_upper.str.contains('CERRAD|LIQUID|FINALIZ|COMPLET|REALIZAD', na=False)
-            tiene_fecha_liq = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce').notna()
-            df_act = df_act[es_estado_cerrado | tiene_fecha_liq]
-
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
         df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
 
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].astype(str).str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
 
-        # --- REGLA EXCLUSIVA PARA ALLAN ECHEVERRY (Solo contabilizar órdenes de INSEQUIPO) ---
+        nombres_excluidos = ['DAVID SABILLON', 'MELVIN', 'DAVID ANTONIO RIVERA SABILLON', 'RIVERA SABILLON']
+        def es_tecnico_excluido(nombre_completo):
+            nom_limpio = limpiar_texto_nombres(nombre_completo)
+            return any(limpiar_texto_nombres(ex) in nom_limpio for ex in nombres_excluidos)
+            
+        df_act = df_act[~df_act['TECNICO'].apply(es_tecnico_excluido)]
+
+        # --- FILTRO ESPECÍFICO PARA ALLAN (Solo órdenes que contengan INSEQUIPO en Actividad) ---
         def filtrar_ordenes_allan(row):
             tec_limpio = limpiar_texto_nombres(row['TECNICO'])
-            if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
+            if 'ECHEVERRY' in tec_limpio or ('ALLAN' in tec_limpio and 'ECHEVERRY' in tec_limpio) or ('ALLAN' in tec_limpio and 'RICARDO' in tec_limpio):
                 act_val = str(row.get('ACTIVIDAD', '')).upper()
                 return 'INSEQUIPO' in act_val
             return True
@@ -276,7 +280,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act = df_act[df_act.apply(filtrar_ordenes_allan, axis=1)]
 
         if df_act.empty:
-            return None, None, None, None, None, None, "El archivo de actividades quedó vacío tras aplicar los filtros de órdenes cerradas."
+            return None, None, None, None, None, None, "El archivo de actividades quedó vacío tras aplicar los filtros."
 
         tecnicos_originales = df_act['TECNICO'].unique()
         tecnicos_limpios = [limpiar_texto_nombres(t) for t in tecnicos_originales]
@@ -286,6 +290,14 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
+
+        def forzar_segmento_plex(row):
+            tec_limpio = limpiar_texto_nombres(row['TECNICO'])
+            if 'MIGUEL' in tec_limpio or 'RAFAEL' in tec_limpio:
+                return 'Plex'
+            return row['Segmento']
+
+        df_act['Segmento'] = df_act.apply(forzar_segmento_plex, axis=1)
 
         tec_to_mx = {}
         mx_to_tec = {}
@@ -298,25 +310,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     tec_to_mx[tec] = mx_num
                     mx_to_tec[mx_num] = tec
 
-        # ---------------------------------------------------------
-        # FUNCIÓN DE CÁLCULO DE TIEMPO REAL (Filtra la basura de 0-3 min)
-        # ---------------------------------------------------------
         def calcular_promedio_real(x):
-            tiempos_validos = x[x > 4] # Ignoramos cierres automáticos menores a 4 minutos
+            tiempos_validos = x[x > 4] 
             return tiempos_validos.mean() if len(tiempos_validos) > 0 else 0
-
-        # --- CÁLCULO DE PROMEDIO DE ÚLTIMA ORDEN CERRADA ---
-        last_order_dict = {}
-        if not df_act.empty:
-            # Obtener el último timestamp de liquidación por técnico por día
-            df_last_daily = df_act.dropna(subset=['FECHA_LIQUIDADO']).groupby(['TECNICO', 'Fecha_Dia'])['FECHA_LIQUIDADO'].max().reset_index()
-            # Convertir a segundos desde la medianoche
-            df_last_daily['Last_Secs'] = df_last_daily['FECHA_LIQUIDADO'].dt.hour * 3600 + df_last_daily['FECHA_LIQUIDADO'].dt.minute * 60 + df_last_daily['FECHA_LIQUIDADO'].dt.second
-            # Promediar segundos por técnico
-            df_last_avg = df_last_daily.groupby('TECNICO')['Last_Secs'].mean().reset_index()
-            # Guardar hora formateada
-            for _, r in df_last_avg.iterrows():
-                last_order_dict[r['TECNICO']] = formatear_hora(r['Last_Secs'])
 
         resumen_act = df_act.groupby('TECNICO').agg(
             Ordenes_Totales=('NUM', 'count'),
@@ -377,15 +373,12 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     p_salida = sub_df['DT_OUT'].min()
                     u_llegada = sub_df['DT_IN'].max()
                     
-                    # Corrección: conversión segura a string usando str() sobre objetos Period escalares
                     week_val = str(p_salida.to_period('W')) if pd.notnull(p_salida) else '--'
                     mes_val = str(p_salida.to_period('M')) if pd.notnull(p_salida) else '--'
 
-                    # Filtrado de horas operativas reales para descartar ruidos nocturnos
                     s_secs = p_salida.hour * 3600 + p_salida.minute * 60 + p_salida.second if pd.notnull(p_salida) else None
                     e_secs = u_llegada.hour * 3600 + u_llegada.minute * 60 + u_llegada.second if pd.notnull(u_llegada) else None
                     
-                    # Salida: entre 5:00 AM y 1:00 PM | Retorno: entre 12:00 PM y 10:00 PM
                     salida_valida = s_secs if (s_secs and 5*3600 <= s_secs <= 13*3600) else None
                     entrada_valida = e_secs if (e_secs and 12*3600 <= e_secs <= 22*3600) else None
 
@@ -459,7 +452,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         for _, row in resumen_act.iterrows():
             tec = row['TECNICO']
             h_primera = row['Hora_Primera_Orden'].strftime('%H:%M:%S') if pd.notnull(row['Hora_Primera_Orden']) else '--'
-            h_ultima = last_order_dict.get(tec, '--')
             gps = gps_promedios.get(tec, {'Salida': '--', 'Entrada': '--'})
             
             plex_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Plex')]['Ordenes'].sum())
@@ -472,7 +464,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 'ÓRDENES RESIDENCIAL': res_ord,
                 'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
                 'HORA 1ra ORDEN': h_primera,
-                'HORA ÚLT. ORDEN': h_ultima,  # <--- NUEVA COLUMNA CONSOLIDADA
                 'SALIDA PLANTEL (GPS)': gps['Salida'],
                 'ENTRADA PLANTEL (GPS)': gps['Entrada'],
                 'DÍAS NO PRESENTADO': int(dias_no_presentados_dict.get(tec, 0)),
@@ -535,110 +526,43 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     # ================= 2. BOTÓN DE EJECUCIÓN =================
     if st.button("🚀 INICIAR ANÁLISIS CRUZADO", type="primary", use_container_width=True):
         if act_file:
-            with st.spinner("🤖 Depurando tiempos reales y cargando bases de datos..."):
-                df_act_raw = read_file_robust_local(act_file)
-                df_gps_raw = read_file_robust_local(gps_file) if gps_file else None
-                df_exp_raw = st.session_state.get('df_exp_memoria', None)
+            with st.spinner("🤖 Depurando tiempos reales y cruzando bases de datos..."):
+                df_act = read_file_robust_local(act_file)
+                df_gps = read_file_robust_local(gps_file) if gps_file else None
+                df_exp = st.session_state.get('df_exp_memoria', None)
 
-                # Guardar crudos en session_state para poder filtrar por fechas dinámicamente
-                st.session_state['df_act_raw_store'] = df_act_raw
-                st.session_state['df_gps_raw_store'] = df_gps_raw
-                st.session_state['df_exp_raw_store'] = df_exp_raw
-                st.rerun()
+                resultado = procesar_rendimiento_avanzado(df_act, df_gps, df_exp)
+                df_maestra, df_diario, df_disciplina, df_seg, df_tipo_ord, df_gps_mens, msg = resultado
+
+                if df_maestra is not None:
+                    st.session_state['rs_maestra'] = df_maestra
+                    st.session_state['rs_diario'] = df_diario
+                    st.session_state['rs_disciplina'] = df_disciplina
+                    st.session_state['rs_segmento'] = df_seg
+                    st.session_state['rs_tipo_orden'] = df_tipo_ord
+                    st.session_state['rs_gps_mensual'] = df_gps_mens
+                    st.rerun()
+                else:
+                    st.error(msg)
         else:
             st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-    # ================= 3. FILTRADO Y VISUALIZACIÓN DEL DASHBOARD =================
-    if 'df_act_raw_store' in st.session_state:
-        df_act_raw = st.session_state['df_act_raw_store']
-        df_gps_raw = st.session_state.get('df_gps_raw_store', None)
-        df_exp_raw = st.session_state.get('df_exp_raw_store', None)
+    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
+    if 'rs_maestra' in st.session_state:
+        df_m = st.session_state['rs_maestra'].copy()
+        df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
+        df_seg = st.session_state.get('rs_segmento', pd.DataFrame())
+        df_tipo_ord = st.session_state.get('rs_tipo_orden', pd.DataFrame())
 
-        # Calcular límites de fecha del archivo de actividades de manera segura
-        df_act_temp = df_act_raw.copy()
-        df_act_temp = procesar_dataframe_base(df_act_temp)
-        
-        # --- CASCADA DE FECHAS DEFENSIVA: PRIORIZACIÓN TEMPORAL ---
-        # Evita descarte de órdenes completas que carecen de marca de liquidación exacta
-        df_act_temp['HORA_LIQ_DT'] = pd.to_datetime(df_act_temp['HORA_LIQ'], errors='coerce')
-        df_act_temp['HORA_INI_DT'] = pd.to_datetime(df_act_temp['HORA_INI'], errors='coerce')
-        df_act_temp['FECHA_APE_DT'] = pd.to_datetime(df_act_temp['FECHA_APE'], errors='coerce')
-
-        # Evaluación en cascada: Liquidación -> Inicio -> Apertura
-        df_act_temp['FECHA_EVAL_DT'] = df_act_temp['HORA_LIQ_DT'].combine_first(df_act_temp['HORA_INI_DT']).combine_first(df_act_temp['FECHA_APE_DT'])
-        df_act_temp = df_act_temp.dropna(subset=['FECHA_EVAL_DT'])
-        
-        if not df_act_temp.empty:
-            min_date = df_act_temp['FECHA_EVAL_DT'].min().date()
-            max_date = df_act_temp['FECHA_EVAL_DT'].max().date()
-        else:
-            min_date = datetime.now().date() - timedelta(days=30)
-            max_date = datetime.now().date()
-
-        # --- FILTRO GLOBAL DE FECHAS EN EL TOP ---
-        st.markdown("### 📅 Rango de Evaluación Temporal")
-        st.caption("Ajuste las fechas para re-evaluar la productividad, GPS y disciplina de todas las pestañas al instante.")
-        
-        rango_fechas = st.date_input(
-            "Seleccione el rango de fechas para el reporte:",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-            key="filtro_global_fechas"
-        )
-        
-        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
-            start_date, end_date = rango_fechas
-            
-            # Filtrar actividades basándonos en la fecha de evaluación unificada
-            df_act_filtered = df_act_temp[
-                (df_act_temp['FECHA_EVAL_DT'].dt.date >= start_date) & 
-                (df_act_temp['FECHA_EVAL_DT'].dt.date <= end_date)
-            ].copy()
-            
-            # Filtrar GPS
-            df_gps_filtered = None
-            if df_gps_raw is not None and not df_gps_raw.empty:
-                df_gps_temp = df_gps_raw.copy()
-                df_gps_temp.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps_temp.columns]
-                col_out_temp = next((c for c in df_gps_temp.columns if ('HORA' in c or 'FECHA' in c) and 'SALIDA' in c), None)
-                if not col_out_temp:
-                    col_out_temp = next((c for c in df_gps_temp.columns if 'SALIDA' in c), None)
-                
-                if col_out_temp:
-                    df_gps_temp['DT_OUT_TEMP'] = pd.to_datetime(df_gps_temp[col_out_temp], errors='coerce')
-                    df_gps_filtered = df_gps_temp[
-                        (df_gps_temp['DT_OUT_TEMP'].dt.date >= start_date) & 
-                        (df_gps_temp['DT_OUT_TEMP'].dt.date <= end_date)
-                    ].copy()
-                else:
-                    df_gps_filtered = df_gps_raw.copy()
-            
-            # Filtrar Expedientes
-            df_exp_filtered = None
-            if df_exp_raw is not None and not df_exp_raw.empty:
-                df_exp_temp = df_exp_raw.copy()
-                col_fec_temp = next((c for c in df_exp_temp.columns if any(k in str(c).upper() for k in ['FECHA', 'REGISTRO', 'INCIDENCIA'])), None)
-                if col_fec_temp:
-                    df_exp_temp['FECHA_DT_TEMP'] = pd.to_datetime(df_exp_temp[col_fec_temp], errors='coerce')
-                    df_exp_filtered = df_exp_temp[
-                        (df_exp_temp['FECHA_DT_TEMP'].dt.date >= start_date) & 
-                        (df_exp_temp['FECHA_DT_TEMP'].dt.date <= end_date)
-                    ].copy()
-                else:
-                    df_exp_filtered = df_exp_raw.copy()
-                    
-            # Re-ejecutar el análisis cruzado sobre el subconjunto de fechas exactas
-            resultado = procesar_rendimiento_avanzado(df_act_filtered, df_gps_filtered, df_exp_filtered)
-            
-            if resultado[0] is not None:
-                df_m, df_d, df_exp_det, df_seg, df_tipo_ord, _, _ = resultado
-            else:
-                st.warning("⚠️ No se encontraron órdenes cerradas en el rango de fechas seleccionado.")
-                return
-        else:
-            st.info("💡 Por favor, complete la selección de ambas fechas (inicio y fin) para procesar el reporte.")
-            return
+        # Filtro global
+        tecs_disp = sorted(df_m['TÉCNICO'].unique())
+        tec_filtro = st.multiselect("🔍 Filtrar Técnico(s) para todo el reporte:", tecs_disp)
+        if tec_filtro:
+            df_m = df_m[df_m['TÉCNICO'].isin(tec_filtro)]
+            if not df_seg.empty:
+                df_seg = df_seg[df_seg['TECNICO'].isin(tec_filtro)]
+            if not df_tipo_ord.empty:
+                df_tipo_ord = df_tipo_ord[df_tipo_ord['TECNICO'].isin(tec_filtro)]
 
         # --- PESTAÑAS DEL DASHBOARD (solo 3) ---
         tab_graficos, tab_maestra, tab_exp = st.tabs([
@@ -743,12 +667,12 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     )
                     st.plotly_chart(fig_time, use_container_width=True)
 
-                    # --- RESTAURACIÓN DEL ESTILO ANTERIOR DE LA TABLA DINÁMICA ---
-                    with st.expander("📊 Ver detalle numérico por tipo de orden"):
-                        df_tipo_pivot = df_tipo_ord.pivot_table(
+                    with st.expander("📊 Ver detalle numérico de las actividades seleccionadas"):
+                        df_tipo_pivot = df_tipo_show.pivot_table(
                             index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
                         ).round(1).reset_index()
                         df_tipo_pivot.columns.name = None
+                        df_tipo_pivot = df_tipo_pivot.fillna("")
                         st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
                 else:
                     st.warning("⚠️ No hay datos para la actividad seleccionada.")
@@ -794,13 +718,13 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
 
         # ================================================================
-        # TAB 3: REGISTRO DISCIPLINARIO (MODIFICADO PARA NO SALTAR)
+        # TAB 3: REGISTRO DISCIPLINARIO
         # ================================================================
         with tab_exp:
             st.markdown("### 🚨 Registro Disciplinario")
 
             if df_exp_det is not None and not df_exp_det.empty:
-                df_e_fil = df_exp_det.copy() # Sincronizado con la fecha de evaluación
+                df_e_fil = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tec_filtro)] if tec_filtro else df_exp_det.copy()
 
                 if not df_e_fil.empty:
                     st.markdown("#### 🔎 Consultar Incidencias por Técnico")
@@ -808,14 +732,12 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
                     tecnicos_con_exp = sorted(df_e_fil['TEC_MAESTRO'].dropna().unique())
                     
-                    # Selector instantáneo: elimina la necesidad del botón "Ver"
                     tec_seleccionado = st.selectbox(
                         "👤 Seleccionar Técnico:",
                         ["-- Selecciona un técnico --"] + tecnicos_con_exp,
                         key="sel_tec_disciplina"
                     )
 
-                    # Si se selecciona a alguien válido, mostramos los datos inmediatamente
                     if tec_seleccionado != "-- Selecciona un técnico --":
                         df_inc_tec = df_e_fil[df_e_fil['TEC_MAESTRO'] == tec_seleccionado].copy()
 
@@ -852,7 +774,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                             use_container_width=True,
                             hide_index=True
                         )
-                        # Se eliminó el botón "Cerrar detalle" que causaba el salto
 
                     st.markdown("---")
                     st.markdown("#### 📊 Vista General — Todos los Registros Disciplinarios")
