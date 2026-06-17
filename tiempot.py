@@ -691,6 +691,70 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.plotly_chart(fig_time, use_container_width=True)
                 st.info("ℹ️ No se detectó columna TIPO en el archivo. Mostrando tiempo promedio global.")
 
+        # ... (Mantenemos todo el inicio igual hasta llegar a la visualización de la pestaña de Gráficos)
+
+        with tab_graficos:
+            # (Mantenemos los KPIs y los 2 gráficos anteriores igual...)
+            # ... 
+
+            st.markdown("---")
+            st.markdown("#### 📊 Matriz Detallada: Volumen vs. Tiempo por Actividad")
+            st.caption("Esta tabla combina la cantidad de trabajos realizados con el tiempo promedio real invertido en cada uno.")
+
+            if not df_tipo_ord.empty:
+                # 1. Preparar los datos para la matriz unificada
+                # Usamos el filtro de actividades (pills) si existe, sino mostramos todo
+                df_matriz_input = df_tipo_ord[df_tipo_ord['TipoOrden'].isin(act_filtro)] if act_filtro else df_tipo_ord
+                
+                # Creamos una columna combinada para mostrar "Cant | Tiempo"
+                df_matriz_final = df_matriz_input.copy()
+                
+                # Pivotamos para tener Técnicos en filas y Actividades en columnas
+                # Primero para Cantidad
+                df_pivot_cant = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='Ordenes').fillna(0).astype(int)
+                # Luego para Tiempo
+                df_pivot_time = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='MinProm').fillna(0).round(1)
+
+                # Creamos una vista combinada estética
+                tab_vista_cant, tab_vista_time = st.tabs(["📦 Solo Cantidad", "⏳ Solo Tiempo Promedio"])
+
+                with tab_vista_cant:
+                    st.dataframe(
+                        df_pivot_cant.style.background_gradient(cmap='Greens', axis=0),
+                        use_container_width=True
+                    )
+
+                with tab_vista_time:
+                    # Estilo para el tiempo: Rojo si es muy alto (>90 min), Verde si es bajo (<45 min)
+                    def color_tiempos(val):
+                        if val == 0: return 'color: #475569'
+                        color = '#10B981' if val < 45 else ('#F59E0B' if val < 90 else '#EF4444')
+                        return f'color: {color}; font-weight: bold'
+
+                    st.dataframe(
+                        df_pivot_time.style.applymap(color_tiempos),
+                        use_container_width=True
+                    )
+
+                # --- NUEVA TABLA CONSOLIDADA (LA QUE PEDISTE) ---
+                with st.expander("📝 Ver Resumen Listado (Técnico | Tipo | Cantidad | Promedio)", expanded=True):
+                    df_listado_unido = df_matriz_input.sort_values(['TECNICO', 'Ordenes'], ascending=[True, False])
+                    
+                    st.dataframe(
+                        df_listado_unido,
+                        column_config={
+                            "TECNICO": "👨‍🔧 Técnico",
+                            "TipoOrden": "🛠️ Tipo de Actividad",
+                            "Ordenes": st.column_config.NumberColumn("📦 Cantidad", format="%d 🏗️"),
+                            "MinProm": st.column_config.ProgressColumn("⏳ Tiempo Promedio", help="Minutos promedio por orden", min_value=0, max_value=180, format="%.1f min")
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
+            else:
+                st.info("No hay datos suficientes para generar la matriz de actividad.")
+
+
         # ================================================================
         # TAB 2: TABLA MAESTRA INTEGRAL
         # ================================================================
