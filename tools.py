@@ -3078,3 +3078,51 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
 
     # Retorno unificado utilizando el motor seguro ya probado en tools.py
     return finalizar_pdf(pdf)
+
+
+# ==============================================================================
+# BLINDAJE CORE - USO EXCLUSIVO PARA APP.PY (CEREBRO PRINCIPAL)
+# ==============================================================================
+def sanitizar_core_monitor(df):
+    """
+    Filtro puro e inquebrantable para el Monitor Diario.
+    Destruye duplicados, filtra actividades basura, estados pendientes y fechas viejas.
+    """
+    import pandas as pd
+    
+    if df is None or df.empty:
+        return df
+        
+    df = df.copy()
+    df.columns = df.columns.astype(str).str.strip().str.upper()
+    
+    # 1. DESTRUIR DUPLICADOS EXACTOS (Si el sistema exportó la misma orden 3 veces)
+    col_num = next((c for c in df.columns if 'NUM' in c or 'ORDEN' in c or 'ID' in c), None)
+    if col_num:
+        df = df.drop_duplicates(subset=[col_num], keep='last')
+    else:
+        df = df.drop_duplicates()
+        
+    # 2. DESTRUIR ESTADOS INVÁLIDOS (Solo pasan las reales)
+    if 'ESTADO' in df.columns:
+        estados_validos = ['FINALIZADA', 'CERRADA', 'LIQUIDADA', 'ATENDIDO']
+        df = df[df['ESTADO'].astype(str).str.strip().str.upper().isin(estados_validos)]
+        
+    # 3. FILTRAR SOLO ACTIVIDADES PRINCIPALES (Ignorar basura)
+    col_act = next((c for c in df.columns if 'ACTIVIDAD' in c or 'TIPO' in c), None)
+    if col_act:
+        actividades_clave = ['INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT']
+        def es_valida(act):
+            return any(k in str(act).upper() for k in actividades_clave)
+        df = df[df[col_act].apply(es_valida)]
+        
+    # 4. FILTRO DE FECHA INQUEBRANTABLE (SOLO HOY)
+    col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c), None)
+    if col_liq:
+        fecha_hoy = get_honduras_time().date()
+        # Parseo seguro priorizando el día primero (ej. 12/06/2026 = 12 de Junio)
+        df['FECHA_TMP'] = pd.to_datetime(df[col_liq], dayfirst=True, errors='coerce').dt.date
+        df = df[df['FECHA_TMP'] == fecha_hoy]
+        df = df.drop(columns=['FECHA_TMP'])
+        
+    return df
