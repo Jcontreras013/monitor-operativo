@@ -26,9 +26,6 @@ from ui_components import (
     mostrar_seguimientos_tecnico
 )
 
-
-from tools import get_honduras_time, sanitizar_core_monitor
-
 import settings 
 
 try:
@@ -474,6 +471,27 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
+    # ==============================================================================
+    # 🛡️ BLINDAJE ESTRUCTURAL INYECTADO AQUÍ 🛡️
+    # Destruye basura, copias duplicadas y limita el sistema a tus actividades vitales.
+    # ==============================================================================
+    if not df_base.empty:
+        # 1. FILTRO ESTRICTO DE ACTIVIDADES CLAVE
+        if 'ACTIVIDAD' in df_base.columns:
+            actividades_clave = ['INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT']
+            def es_actividad_valida(act):
+                val = str(act).upper().strip()
+                return any(k in val for k in actividades_clave)
+            df_base = df_base[df_base['ACTIVIDAD'].apply(es_actividad_valida)]
+        
+        # 2. LIMPIEZA DE DUPLICADOS EXTREMOS
+        df_base = df_base.drop_duplicates()
+        
+        # 3. PARSEO SEGURO DE FECHAS (Prioriza el Día sobre el Mes)
+        if 'HORA_LIQ' in df_base.columns:
+            df_base['HORA_LIQ'] = pd.to_datetime(df_base['HORA_LIQ'], dayfirst=True, errors='coerce')
+    # ==============================================================================
+    
     if 'ACTIVIDAD' in df_base.columns:
         mask_basura_global = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
         df_base = df_base[~mask_basura_global].copy()
@@ -872,12 +890,12 @@ def main():
                         )
 
                         colores_solidos = {
-                            "SOPFIBRA": "#d32f2f",          
-                            "SOP": "#d32f2f",               
-                            "INSFIBRA": "#1976d2",          
-                            "INSFIBRACORP": "#0d47a1",      
-                            "PEXTERNO": "#f57c00",          
-                            "PLEXISCA": "#e65100",          
+                            "SOPFIBRA": "#d32f2f",         
+                            "SOP": "#d32f2f",                
+                            "INSFIBRA": "#1976d2",         
+                            "INSFIBRACORP": "#0d47a1",     
+                            "PEXTERNO": "#f57c00",         
+                            "PLEXISCA": "#e65100",         
                             "TRASLADOEXTFIBRA": "#8e24aa",  
                             "SOPRECONHFC": "#c2185b",       
                             "TVADICIONAL": "#00897b"        
@@ -1453,12 +1471,12 @@ def main():
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                             
                             colores_solidos = {
-                                "SOPFIBRA": "#d32f2f",          
-                                "SOP": "#d32f2f",               
-                                "INSFIBRA": "#1976d2",          
-                                "INSFIBRACORP": "#0d47a1",      
-                                "PEXTERNO": "#f57c00",          
-                                "PLEXISCA": "#e65100",          
+                                "SOPFIBRA": "#d32f2f",         
+                                "SOP": "#d32f2f",                
+                                "INSFIBRA": "#1976d2",         
+                                "INSFIBRACORP": "#0d47a1",     
+                                "PEXTERNO": "#f57c00",         
+                                "PLEXISCA": "#e65100",         
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONHFC": "#c2185b",       
                                 "TVADICIONAL": "#00897b"        
@@ -1485,22 +1503,6 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
-                            
-                          #  tecnicos_activos = sorted(df_para_gantt_final['TECNICO'].unique())
-                            
-                           # opcion_tec = st.radio(
-                               # "Selección de Historial:",
-                               # options=["[ Ocultar Historiales ]"] + tecnicos_activos,
-                              #  horizontal=True,
-                             #   label_visibility="collapsed" 
-                            #)
-                            
-                            #if opcion_tec != "[ Ocultar Historiales ]":
-                            #    df_seg = extraer_seguimientos_tecnico_unificado(st.session_state.df_base, opcion_tec)
-                           #     mostrar_seguimientos_tecnico(opcion_tec, df_seg)
-                                    
-                    #    else:
-                   #         st.info("No hay actividades aperturadas hoy para mostrar en la línea de tiempo.")
 
             st.markdown("---")
         if st.session_state.get('config_ver_panel', True):
@@ -1599,14 +1601,14 @@ def main():
                     else:
                         st.warning("No hay registros disponibles para mostrar.")
 
-                    with t_graphs_v:
-                        st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
-                    
-                        df_graficas = df_base.copy()
-                        df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
-                    
-                        df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
-                    
+                with t_graphs_v:
+                    st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+                
+                    df_graficas = df_base.copy()
+                    df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+                
+                    df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
+                
                     if not df_productividad_v.empty:
                         df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
                         conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
