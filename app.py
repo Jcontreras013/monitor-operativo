@@ -27,7 +27,9 @@ from ui_components import (
 )
 
 
-import settings # <--- IMPORTAMOS LA CONFIGURACIÓN AQUÍ
+from tools import get_honduras_time, sanitizar_core_monitor
+
+import settings 
 
 try:
     from streamlit_option_menu import option_menu
