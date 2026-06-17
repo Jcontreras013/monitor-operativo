@@ -471,18 +471,12 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-    # ==============================================================================
+ # ==============================================================================
     # 🛡️ BLINDAJE ESTRUCTURAL INYECTADO AQUÍ 🛡️
-    # Destruye basura, copias duplicadas y limita el sistema a tus actividades vitales.
+    # Destruye copias duplicadas y protege las fechas, pero permite TODAS las actividades.
     # ==============================================================================
     if not df_base.empty:
-        # 1. FILTRO ESTRICTO DE ACTIVIDADES CLAVE
-        if 'ACTIVIDAD' in df_base.columns:
-            actividades_clave = ['INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT']
-            def es_actividad_valida(act):
-                val = str(act).upper().strip()
-                return any(k in val for k in actividades_clave)
-            df_base = df_base[df_base['ACTIVIDAD'].apply(es_actividad_valida)]
+        # 1. (Eliminamos el filtro estricto de actividades para no desaparecer técnicos)
         
         # 2. LIMPIEZA DE DUPLICADOS EXTREMOS
         df_base = df_base.drop_duplicates()
