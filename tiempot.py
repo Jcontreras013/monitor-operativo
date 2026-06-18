@@ -732,7 +732,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         return f'color: {color}; font-weight: bold'
 
                     st.dataframe(
-                        df_pivot_time.style.applymap(color_tiempos),
+                        df_pivot_time.style.map(color_tiempos),
                         use_container_width=True
                     )
 
