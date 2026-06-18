@@ -13,7 +13,7 @@ try:
     from tools import (
         procesar_dataframe_base,
         procesar_fechas_seguro,
-        generar_pdf_rendimiento_integral_360, # <--- IMPORTACIÓN ACTUALIZADA
+        generar_pdf_rendimiento_integral_360, 
         leer_espejo_gcs,
         get_honduras_time
     )
@@ -466,7 +466,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 'ÓRDENES RESIDENCIAL': res_ord,
                 'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
                 'HORA 1ra ORDEN': h_primera,
-                'HORA ÚLT. ORDEN': h_ultima,  # <--- NUEVA COLUMNA CONSOLIDADA
+                'HORA ÚLT. ORDEN': h_ultima, 
                 'SALIDA PLANTEL (GPS)': gps['Salida'],
                 'ENTRADA PLANTEL (GPS)': gps['Entrada'],
                 'DÍAS NO PRESENTADO': int(dias_no_presentados_dict.get(tec, 0)),
@@ -550,7 +550,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         else:
             st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-# ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
+    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
     if 'rs_maestra' in st.session_state:
         df_m = st.session_state['rs_maestra'].copy()
         df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
@@ -558,9 +558,9 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         df_tipo_ord = st.session_state.get('rs_tipo_orden', pd.DataFrame())
 
         # =========================================================
-        # 📅 NUEVO FILTRO GLOBAL POR FECHAS
+        # 📅 NUEVO FILTRO GLOBAL POR FECHAS (Reparado y robusto)
         # =========================================================
-        col_fecha = 'HORA_LIQ' if 'HORA_LIQ' in df_m.columns else ('FECHA' if 'FECHA' in df_m.columns else None)
+        col_fecha = next((c for c in df_m.columns if c in ['HORA_LIQ', 'FECHA', 'HORA_INI', 'FECHA_LIQUIDACION', 'Fecha_Dia']), None)
         
         if col_fecha:
             fechas_validas = pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date.dropna()
@@ -597,6 +597,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             "📋 Tabla Maestra Integral",
             "🚨 Registro Disciplinario"
         ])
+        
         # ================================================================
         # TAB 1: GRÁFICOS Y KPIs
         # ================================================================
@@ -714,12 +715,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.plotly_chart(fig_time, use_container_width=True)
                 st.info("ℹ️ No se detectó columna TIPO en el archivo. Mostrando tiempo promedio global.")
 
-        # ... (Mantenemos todo el inicio igual hasta llegar a la visualización de la pestaña de Gráficos)
-
-        with tab_graficos:
-            # (Mantenemos los KPIs y los 2 gráficos anteriores igual...)
-            # ... 
-
             st.markdown("---")
             st.markdown("#### 📊 Matriz Detallada: Volumen vs. Tiempo por Actividad")
             st.caption("Esta tabla combina la cantidad de trabajos realizados con el tiempo promedio real invertido en cada uno.")
@@ -777,7 +772,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             else:
                 st.info("No hay datos suficientes para generar la matriz de actividad.")
 
-
         # ================================================================
         # TAB 2: TABLA MAESTRA INTEGRAL
         # ================================================================
@@ -808,13 +802,15 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
 
         # ================================================================
-        # TAB 3: REGISTRO DISCIPLINARIO (MODIFICADO PARA NO SALTAR)
+        # TAB 3: REGISTRO DISCIPLINARIO (TOTALMENTE INDEPENDIENTE Y REPARADO)
         # ================================================================
         with tab_exp:
             st.markdown("### 🚨 Registro Disciplinario")
 
             if df_exp_det is not None and not df_exp_det.empty:
-                df_e_fil = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tec_filtro)] if tec_filtro else df_exp_det.copy()
+                # Aquí estaba el error. "tec_filtro" ya no existe porque lo cambiamos por fecha.
+                # Ahora simplemente hacemos una copia de los expedientes para trabajar con ellos libremente.
+                df_e_fil = df_exp_det.copy()
 
                 if not df_e_fil.empty:
                     st.markdown("#### 🔎 Consultar Incidencias por Técnico")
@@ -866,7 +862,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                             use_container_width=True,
                             hide_index=True
                         )
-                        # Se eliminó el botón "Cerrar detalle" que causaba el salto
 
                     st.markdown("---")
                     st.markdown("#### 📊 Vista General — Todos los Registros Disciplinarios")
