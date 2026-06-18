@@ -2912,7 +2912,7 @@ def generar_pdf_rendimiento_integral(df_resumen):
     return data
 
 # ==============================================================================
-# REPORTE INTEGRAL 360 (PRODUCTIVIDAD, GPS Y RRHH) - PARA TIEMPOT.PY
+# REPORTE INTEGRAL 360 (PRODUCTIVIDAD, GPS Y RRHH)
 # ==============================================================================
 class ReporteIntegral360PDF(FPDF):
     def header(self):
@@ -2930,7 +2930,7 @@ class ReporteIntegral360PDF(FPDF):
         self.cell(0, 5, safestr("Maxcom PRO - Módulo Gerencial Avanzado"), ln=True, align="R")
         
         self.set_draw_color(200, 200, 200)
-        self.line(10, 25, 287, 25) # Línea divisoria en formato Horizontal
+        self.line(10, 25, 287, 25)
         self.ln(10)
 
     def footer(self):
@@ -2939,11 +2939,11 @@ class ReporteIntegral360PDF(FPDF):
         self.set_text_color(128, 128, 128)
         self.cell(0, 10, f"Página {self.page_no()}", align="C")
 
-def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
+def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     pdf = ReporteIntegral360PDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # --- PESTAÑA 1: RESUMEN GERENCIAL (KPIs) ---
+    # --- MÓDULO 1: RESUMEN GERENCIAL (KPIs) ---
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(16, 185, 129) # Verde
     pdf.cell(0, 8, safestr("1. RESUMEN GERENCIAL (Indicadores Clave)"), ln=True)
@@ -2962,124 +2962,118 @@ def generar_pdf_rendimiento_integral_360(df_m, df_exp_det):
     pdf.cell(0, 6, safestr(kpi_text), ln=True)
     pdf.ln(5)
     
-    # --- PESTAÑA 2: TABLA MAESTRA INTEGRAL ---
+    # --- MÓDULO 2: PRODUCTIVIDAD EN CAMPO ---
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(59, 130, 246) # Azul
-    pdf.cell(0, 8, safestr("2. TABLA MAESTRA (Productividad + Tiempos GPS)"), ln=True)
+    pdf.cell(0, 8, safestr("2. EJECUCIÓN OPERATIVA (Productividad y Tiempos de Cierre)"), ln=True)
     
     pdf.set_fill_color(240, 245, 250)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 8)
     
-    # Anchos de columna optimizados
-    w = [55, 20, 15, 15, 25, 30, 30, 25, 30] 
-    headers = ["TÉCNICO", "ÓRDENES", "PLEX", "RESID.", "PROM(Min)", "GPS SALIDA", "GPS RETORNO", "AUSENCIAS", "LLAMADOS"]
+    w1 = [60, 20, 20, 20, 25, 30, 30] 
+    h1 = ["TÉCNICO", "TOTAL", "PLEX", "RESID.", "PROM(Min)", "1ra ORDEN", "ÚLT. ORDEN"]
     
-    for i, h in enumerate(headers):
-        pdf.cell(w[i], 7, safestr(h), border=1, fill=True, align="C")
+    for i, h in enumerate(h1):
+        pdf.cell(w1[i], 7, safestr(h), border=1, fill=True, align="C")
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 8)
     for _, row in df_m.iterrows():
-        pdf.cell(w[0], 6, safestr(row.get('TÉCNICO', ''))[:30], border=1)
-        pdf.cell(w[1], 6, safestr(row.get('ÓRDENES CANTIDAD', 0)), border=1, align="C")
-        pdf.cell(w[2], 6, safestr(row.get('ÓRDENES PLEX', 0)), border=1, align="C")
-        pdf.cell(w[3], 6, safestr(row.get('ÓRDENES RESIDENCIAL', 0)), border=1, align="C")
+        pdf.cell(w1[0], 6, safestr(row.get('TÉCNICO', ''))[:35], border=1)
+        pdf.cell(w1[1], 6, safestr(row.get('ÓRDENES CANTIDAD', 0)), border=1, align="C")
+        pdf.cell(w1[2], 6, safestr(row.get('ÓRDENES PLEX', 0)), border=1, align="C")
+        pdf.cell(w1[3], 6, safestr(row.get('ÓRDENES RESIDENCIAL', 0)), border=1, align="C")
         
         t_prom = row.get('TIEMPO PROM. EN ORDEN (Min)', 0)
         pdf.set_text_color(220, 38, 38) if t_prom > 90 else pdf.set_text_color(0, 0, 0)
-        pdf.cell(w[4], 6, safestr(t_prom), border=1, align="C")
+        pdf.cell(w1[4], 6, safestr(t_prom), border=1, align="C")
         pdf.set_text_color(0, 0, 0)
         
-        pdf.cell(w[5], 6, safestr(row.get('SALIDA PLANTEL (GPS)', '--')), border=1, align="C")
-        pdf.cell(w[6], 6, safestr(row.get('ENTRADA PLANTEL (GPS)', '--')), border=1, align="C")
-        
+        pdf.cell(w1[5], 6, safestr(row.get('HORA 1ra ORDEN', '--')), border=1, align="C")
+        pdf.cell(w1[6], 6, safestr(row.get('HORA ÚLT. ORDEN', '--')), border=1, align="C")
+        pdf.ln()
+
+    # --- MÓDULO 3: LOGÍSTICA Y RRHH (GPS y Disciplina) ---
+    pdf.ln(8)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(245, 158, 11) # Naranja/Ambar
+    pdf.cell(0, 8, safestr("3. LOGÍSTICA Y RRHH (Control de Flotilla y Asistencia)"), ln=True)
+    
+    pdf.set_fill_color(254, 243, 199)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 8)
+    
+    w2 = [60, 35, 35, 35, 40]
+    h2 = ["TÉCNICO", "SALIDA GPS", "ENTRADA GPS", "DÍAS FALTADOS", "LLAMADOS ATENCIÓN"]
+    
+    for i, h in enumerate(h2):
+        pdf.cell(w2[i], 7, safestr(h), border=1, fill=True, align="C")
+    pdf.ln()
+    
+    pdf.set_font("Helvetica", "", 8)
+    for _, row in df_m.iterrows():
+        # Solo mostrar técnicos que tengan algún dato logístico o incidencia (opcional, o mostrar todos)
         faltas_tot = row.get('DÍAS FALTADOS', 0) + row.get('DÍAS NO PRESENTADO', 0)
-        pdf.set_text_color(220, 38, 38) if faltas_tot > 0 else pdf.set_text_color(0, 0, 0)
-        pdf.cell(w[7], 6, safestr(faltas_tot), border=1, align="C")
-        
         llamados = row.get('LLAMADOS ATENCIÓN', 0)
+        gps_s = row.get('SALIDA PLANTEL (GPS)', '--')
+        gps_e = row.get('ENTRADA PLANTEL (GPS)', '--')
+        
+        pdf.cell(w2[0], 6, safestr(row.get('TÉCNICO', ''))[:35], border=1)
+        pdf.cell(w2[1], 6, safestr(gps_s), border=1, align="C")
+        pdf.cell(w2[2], 6, safestr(gps_e), border=1, align="C")
+        
+        pdf.set_text_color(220, 38, 38) if faltas_tot > 0 else pdf.set_text_color(0, 0, 0)
+        pdf.cell(w2[3], 6, safestr(faltas_tot), border=1, align="C")
+        
         pdf.set_text_color(217, 119, 6) if llamados > 0 else pdf.set_text_color(0, 0, 0)
-        pdf.cell(w[8], 6, safestr(llamados), border=1, align="C")
+        pdf.cell(w2[4], 6, safestr(llamados), border=1, align="C")
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
 
-    # --- PESTAÑA 3: REGISTRO DISCIPLINARIO CONSOLIDADO ---
-    pdf.ln(10)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(220, 38, 38) # Rojo
-    pdf.cell(0, 8, safestr("3. RESUMEN DISCIPLINARIO (Consolidado por Técnico)"), ln=True)
-    
-    if df_exp_det is not None and not df_exp_det.empty:
-        tecs_en_reporte = df_m['TÉCNICO'].unique()
-        df_exp_filtrado = df_exp_det[df_exp_det['TEC_MAESTRO'].isin(tecs_en_reporte)].copy()
-        
-        if not df_exp_filtrado.empty:
-            # Asegurar la conversión y limpieza de booleanos de inasistencia de forma segura
-            df_exp_filtrado['ES_FALTA'] = df_exp_filtrado.get('ES_FALTA', pd.Series([False]*len(df_exp_filtrado))).fillna(False).astype(bool)
-            df_exp_filtrado['ES_NO_PRESENTADO'] = df_exp_filtrado.get('ES_NO_PRESENTADO', pd.Series([False]*len(df_exp_filtrado))).fillna(False).astype(bool)
-            
-            # Clasificar de forma binaria (Inasistencias vs Llamados de Atención)
-            df_exp_filtrado['Falta_Absoluta'] = (df_exp_filtrado['ES_FALTA'] | df_exp_filtrado['ES_NO_PRESENTADO']).astype(int)
-            df_exp_filtrado['Llamado_Absoluto'] = (~(df_exp_filtrado['ES_FALTA'] | df_exp_filtrado['ES_NO_PRESENTADO'])).astype(int)
-            
-            # Generar el agrupamiento unificado
-            df_res_disciplina = df_exp_filtrado.groupby('TEC_MAESTRO').agg(
-                Total_Llamados=('Llamado_Absoluto', 'sum'),
-                Total_Faltas=('Falta_Absoluta', 'sum')
-            ).reset_index()
-            
-            # Filtrar técnicos para mostrar únicamente a los que registran incidencias
-            df_res_disciplina = df_res_disciplina[(df_res_disciplina['Total_Llamados'] > 0) | (df_res_disciplina['Total_Faltas'] > 0)]
-            
-            if not df_res_disciplina.empty:
-                pdf.set_fill_color(254, 226, 226) # Rojo claro corporativo
-                pdf.set_text_color(0, 0, 0)
-                pdf.set_font("Helvetica", "B", 8)
-                
-                # Anchos exactos para completar los 275mm del ancho de página horizontal
-                w_exp = [115, 80, 80]
-                h_exp = ["TÉCNICO", "LLAMADOS DE ATENCIÓN / FALTAS DISCIPLINARIAS", "DÍAS FALTADOS EN EL MES"]
-                
-                for i, h in enumerate(h_exp):
-                    pdf.cell(w_exp[i], 7, safestr(h), border=1, fill=True, align="C")
-                pdf.ln()
-                
-                pdf.set_font("Helvetica", "", 8)
-                for _, row_d in df_res_disciplina.iterrows():
-                    tec = safestr(row_d.get('TEC_MAESTRO', ''))[:55]
-                    llamados = int(row_d.get('Total_Llamados', 0))
-                    faltas = int(row_d.get('Total_Faltas', 0))
-                    
-                    pdf.cell(w_exp[0], 6, tec, border=1)
-                    
-                    # Llamados de atención coloreados de naranja preventivo
-                    pdf.set_text_color(217, 119, 6) if llamados > 0 else pdf.set_text_color(0, 0, 0)
-                    pdf.cell(w_exp[1], 6, str(llamados), border=1, align="C")
-                    
-                    # Faltas e inasistencias coloreadas de rojo correctivo
-                    pdf.set_text_color(220, 38, 38) if faltas > 0 else pdf.set_text_color(0, 0, 0)
-                    pdf.cell(w_exp[2], 6, str(faltas), border=1, align="C")
-                    
-                    pdf.set_text_color(0, 0, 0) # Resetear color de texto
-                    pdf.ln()
-            else:
-                pdf.set_font("Helvetica", "I", 9)
-                pdf.set_text_color(50, 50, 50)
-                pdf.cell(0, 6, safestr("No se registran incidencias para los técnicos en este reporte."), ln=True)
-        else:
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(50, 50, 50)
-            pdf.cell(0, 6, safestr("No se registran incidencias para los técnicos en este reporte."), ln=True)
-    else:
+    # --- MÓDULO 4: DESGLOSE POR ACTIVIDAD ---
+    if df_tipo_ord is not None and not df_tipo_ord.empty:
+        pdf.add_page() # Nueva página para evitar cortes abruptos
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(139, 92, 246) # Morado
+        pdf.cell(0, 8, safestr("4. MATRIZ DE RENDIMIENTO POR TIPO DE ACTIVIDAD"), ln=True)
         pdf.set_font("Helvetica", "I", 9)
-        pdf.set_text_color(50, 50, 50)
-        pdf.cell(0, 6, safestr("La base de datos disciplinaria está limpia o no ha sido sincronizada."), ln=True)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 5, safestr("Detalle de volumen y tiempo de ejecución por categoría técnica."), ln=True)
+        pdf.ln(3)
 
-    # Retorno unificado utilizando el motor seguro ya probado en tools.py
-    return finalizar_pdf(pdf)
+        pdf.set_fill_color(243, 232, 255)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 8)
+        
+        w3 = [80, 75, 25, 25]
+        h3 = ["TÉCNICO", "TIPO DE ACTIVIDAD", "CANTIDAD", "PROM(Min)"]
+        
+        for i, h in enumerate(h3):
+            pdf.cell(w3[i], 7, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 8)
+        df_listado = df_tipo_ord.sort_values(['TECNICO', 'Ordenes'], ascending=[True, False])
+        
+        tec_actual = ""
+        for _, row_t in df_listado.iterrows():
+            # Limpiar nombre del técnico para no repetirlo visualmente si es el mismo
+            tec_print = safestr(row_t['TECNICO'])[:45] if row_t['TECNICO'] != tec_actual else ""
+            tec_actual = row_t['TECNICO']
+            
+            pdf.cell(w3[0], 6, tec_print, border='L' if tec_print == "" else 1)
+            pdf.cell(w3[1], 6, safestr(row_t['TipoOrden'])[:40], border=1)
+            pdf.cell(w3[2], 6, safestr(row_t['Ordenes']), border=1, align="C")
+            
+            t_min = round(row_t['MinProm'], 1)
+            pdf.set_text_color(220, 38, 38) if t_min > 90 else (pdf.set_text_color(16, 185, 129) if t_min < 45 else pdf.set_text_color(0, 0, 0))
+            pdf.cell(w3[3], 6, safestr(t_min), border=1, align="C")
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln()
 
-
+    return finalizar_pdf(pdf) # Asegúrate de que esta función exista en tools.py
+    
 # ==============================================================================
 # BLINDAJE CORE - USO EXCLUSIVO PARA APP.PY (CEREBRO PRINCIPAL)
 # ==============================================================================
