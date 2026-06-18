@@ -17,6 +17,7 @@ import expediente
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
+
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
     aplicar_estilos_nativos, 
@@ -471,17 +472,28 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
- # ==============================================================================
-    # 🛡️ BLINDAJE ESTRUCTURAL INYECTADO AQUÍ 🛡️
-    # Destruye copias duplicadas y protege las fechas, pero permite TODAS las actividades.
+# ==============================================================================
+    # 🛡️ FILTRADO SIMPLIFICADO: TÉCNICO Y ACTIVIDAD 🛡️
+    # Garantiza mostrar solo órdenes con Técnico asignado y Actividad válida.
     # ==============================================================================
     if not df_base.empty:
-        # 1. (Eliminamos el filtro estricto de actividades para no desaparecer técnicos)
-        
-        # 2. LIMPIEZA DE DUPLICADOS EXTREMOS
+        # 1. Limpieza y filtro del Técnico que abrió/tiene la orden
+        if 'TECNICO' in df_base.columns:
+            df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
+            # Descartamos filas donde no hay un técnico real asignado
+            valores_invalidos_tec = ['NONE', 'NAN', 'N/D', 'NULL', '', '0']
+            df_base = df_base[~df_base['TECNICO'].isin(valores_invalidos_tec) & df_base['TECNICO'].notna()]
+            
+        # 2. Limpieza y filtro de la columna Actividades
+        if 'ACTIVIDAD' in df_base.columns:
+            df_base['ACTIVIDAD'] = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper()
+            # Descartamos filas sin actividad registrada
+            df_base = df_base[(df_base['ACTIVIDAD'] != '') & (df_base['ACTIVIDAD'] != 'NAN') & df_base['ACTIVIDAD'].notna()]
+
+        # 3. Aniquilación de duplicados puros para mantener limpios los KPIs
         df_base = df_base.drop_duplicates()
         
-        # 3. PARSEO SEGURO DE FECHAS (Prioriza el Día sobre el Mes)
+        # 4. Parseo seguro de fechas (Evita errores de lectura día/mes)
         if 'HORA_LIQ' in df_base.columns:
             df_base['HORA_LIQ'] = pd.to_datetime(df_base['HORA_LIQ'], dayfirst=True, errors='coerce')
     # ==============================================================================
