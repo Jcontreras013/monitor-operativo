@@ -774,18 +774,19 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         st.dataframe(df_m, use_container_width=True, hide_index=True)
 
         try:
-            pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_exp_det)
-            if pdf_bytes:
-                st.download_button(
-                    "📄 Descargar Reporte PDF 360°",
-                    data=pdf_bytes,
-                    file_name="Reporte_Gerencial_Integral.pdf",
-                    mime="application/pdf",
-                    type="primary"
-                )
-        except Exception as e:
-            st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
-
+                # 🛠️ AQUÍ AÑADIMOS df_tipo_ord COMO SEGUNDO PARÁMETRO
+             pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det)
+                
+             if pdf_bytes:
+                 st.download_button(
+                        "📄 Descargar Reporte PDF 360°",
+                        data=pdf_bytes,
+                        file_name="Reporte_Gerencial_Integral.pdf",
+                        mime="application/pdf",
+                        type="primary"
+                    )
+            except Exception as e:
+                st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
     # ================================================================
     # TAB 3: REGISTRO DISCIPLINARIO
     # ================================================================
