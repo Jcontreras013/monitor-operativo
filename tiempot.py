@@ -246,8 +246,11 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             estado_upper = df_act['ESTADO'].astype(str).str.upper().str.strip()
             df_act = df_act[estado_upper.str.contains('CERRADA|LIQUIDADA|FINALIZADA|COMPLETADA', na=False)]
 
-        df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
-        df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
+        # IMPORTANTE: dayfirst=True porque el sistema fuente exporta fechas en formato DD/MM/YYYY.
+        # Sin esto, pandas asume MM/DD/YYYY (estilo US) y cualquier fecha con día > 12 se vuelve
+        # NaT silenciosamente, descartando esas órdenes del conteo y del filtro de fechas.
+        df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce', dayfirst=True)
+        df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce', dayfirst=True)
         df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
 
         df_act = df_act[df_act['TECNICO'].notna() & (df_act['TECNICO'].astype(str).str.strip() != '') & (df_act['TECNICO'] != 'N/D')]
