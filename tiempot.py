@@ -761,24 +761,27 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         else:
             st.info("No hay datos suficientes para generar la matriz de actividad.")
 
-    # ================================================================
-    # TAB 2: TABLA MAESTRA INTEGRAL
-    # ================================================================
-    with tab_maestra:
-        st.markdown("### 📋 Vista Consolidada Integral")
+        # ================================================================
+        # TAB 2: TABLA MAESTRA INTEGRAL
+        # ================================================================
+        with tab_maestra:
+            st.markdown("### 📋 Vista Consolidada Integral")
+            
+            total_no_presentados = df_m['DÍAS NO PRESENTADO'].sum()
+            if total_no_presentados > 0:
+                st.warning(f"⚠️ Se detectaron **{total_no_presentados} día(s)** con comentarios de inasistencia en la nube para el grupo actual.")
 
-        total_no_presentados = df_m['DÍAS NO PRESENTADO'].sum()
-        if total_no_presentados > 0:
-            st.warning(f"⚠️ Se detectaron **{total_no_presentados} día(s)** con comentarios de inasistencia en la nube para el grupo actual.")
+            st.dataframe(
+                df_m,
+                use_container_width=True,
+                hide_index=True
+            )
 
-        st.dataframe(df_m, use_container_width=True, hide_index=True)
-
-        try:
-                # 🛠️ AQUÍ AÑADIMOS df_tipo_ord COMO SEGUNDO PARÁMETRO
-             pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det)
-                
-             if pdf_bytes:
-                 st.download_button(
+            try:
+                # 🛠️ Generación del nuevo PDF con la tabla de actividades
+                pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det)
+                if pdf_bytes:
+                    st.download_button(
                         "📄 Descargar Reporte PDF 360°",
                         data=pdf_bytes,
                         file_name="Reporte_Gerencial_Integral.pdf",
