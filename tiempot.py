@@ -305,13 +305,9 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # --- CÁLCULO DE PROMEDIO DE ÚLTIMA ORDEN CERRADA ---
         last_order_dict = {}
         if not df_act.empty:
-            # Obtener el último timestamp de liquidación por técnico por día
             df_last_daily = df_act.dropna(subset=['FECHA_LIQUIDADO']).groupby(['TECNICO', 'Fecha_Dia'])['FECHA_LIQUIDADO'].max().reset_index()
-            # Convertir a segundos desde la medianoche
             df_last_daily['Last_Secs'] = df_last_daily['FECHA_LIQUIDADO'].dt.hour * 3600 + df_last_daily['FECHA_LIQUIDADO'].dt.minute * 60 + df_last_daily['FECHA_LIQUIDADO'].dt.second
-            # Promediar segundos por técnico
             df_last_avg = df_last_daily.groupby('TECNICO')['Last_Secs'].mean().reset_index()
-            # Guardar hora formateada
             for _, r in df_last_avg.iterrows():
                 last_order_dict[r['TECNICO']] = formatear_hora(r['Last_Secs'])
 
@@ -333,6 +329,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # --- 2. PROCESAR GPS CON FUERZA ---
         gps_promedios = {}
         gps_promedios_mensuales = pd.DataFrame()
+        df_diario_gps = pd.DataFrame()
 
         if df_gps is not None and not df_gps.empty:
             df_gps.columns = [str(c).strip().upper().replace('"', '').replace("'", "") for c in df_gps.columns]
@@ -459,6 +456,11 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             plex_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Plex')]['Ordenes'].sum())
             res_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Residencial')]['Ordenes'].sum())
 
+            # ── NUEVO: rango de fechas de órdenes por técnico (para el filtro de fecha) ──
+            df_tec_dias = df_act[df_act['TECNICO'] == tec]['Fecha_Dia'].dropna()
+            fecha_min_tec = df_tec_dias.min() if not df_tec_dias.empty else None
+            fecha_max_tec = df_tec_dias.max() if not df_tec_dias.empty else None
+
             datos_finales.append({
                 'TÉCNICO': tec,
                 'ÓRDENES CANTIDAD': int(row['Ordenes_Totales']),
@@ -466,17 +468,19 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 'ÓRDENES RESIDENCIAL': res_ord,
                 'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
                 'HORA 1ra ORDEN': h_primera,
-                'HORA ÚLT. ORDEN': h_ultima, 
+                'HORA ÚLT. ORDEN': h_ultima,
                 'SALIDA PLANTEL (GPS)': gps['Salida'],
                 'ENTRADA PLANTEL (GPS)': gps['Entrada'],
                 'DÍAS NO PRESENTADO': int(dias_no_presentados_dict.get(tec, 0)),
                 'DÍAS FALTADOS': int(faltas_dict.get(tec, 0)),
-                'LLAMADOS ATENCIÓN': int(llamados_dict.get(tec, 0))
+                'LLAMADOS ATENCIÓN': int(llamados_dict.get(tec, 0)),
+                '_FECHA_MIN': fecha_min_tec,   # columna interna — se oculta en la vista
+                '_FECHA_MAX': fecha_max_tec,   # columna interna — se oculta en la vista
             })
 
         return (
             pd.DataFrame(datos_finales),
-            df_diario_gps if df_gps is not None else pd.DataFrame(),
+            df_diario_gps,
             df_exp_detallado,
             resumen_segmento,
             resumen_tipo,
@@ -558,37 +562,50 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         df_tipo_ord = st.session_state.get('rs_tipo_orden', pd.DataFrame())
 
         # =========================================================
-        # 📅 NUEVO FILTRO GLOBAL POR FECHAS (Reparado y robusto)
+        # 📅 FILTRO GLOBAL POR FECHAS (corregido — opera sobre _FECHA_MIN/_FECHA_MAX)
         # =========================================================
-        col_fecha = next((c for c in df_m.columns if c in ['HORA_LIQ', 'FECHA', 'HORA_INI', 'FECHA_LIQUIDACION', 'Fecha_Dia']), None)
-        
-        if col_fecha:
-            fechas_validas = pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date.dropna()
-            
-            if not fechas_validas.empty:
-                min_date, max_date = fechas_validas.min(), fechas_validas.max()
-                
-                rango_fechas = st.date_input(
-                    "📅 Filtrar por Rango de Fechas para todo el reporte:", 
-                    value=[min_date, max_date], 
-                    min_value=min_date, 
-                    max_value=max_date
+        fechas_min_vals = pd.to_datetime(df_m['_FECHA_MIN'], errors='coerce').dropna()
+        fechas_max_vals = pd.to_datetime(df_m['_FECHA_MAX'], errors='coerce').dropna()
+
+        if not fechas_min_vals.empty and not fechas_max_vals.empty:
+            min_date = fechas_min_vals.min().date()
+            max_date = fechas_max_vals.max().date()
+
+            rango_fechas = st.date_input(
+                "📅 Filtrar por Rango de Fechas (afecta gráficos y tabla maestra):",
+                value=[min_date, max_date],
+                min_value=min_date,
+                max_value=max_date
+            )
+
+            if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) >= 1:
+                fecha_inicio = rango_fechas[0]
+                fecha_fin = rango_fechas[1] if len(rango_fechas) > 1 else rango_fechas[0]
+
+                # Filtrar técnicos cuyo rango de actividad toca el período seleccionado
+                mascara_tec = (
+                    pd.to_datetime(df_m['_FECHA_MIN'], errors='coerce').dt.date <= fecha_fin
+                ) & (
+                    pd.to_datetime(df_m['_FECHA_MAX'], errors='coerce').dt.date >= fecha_inicio
                 )
-                
-                if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) > 0:
-                    fecha_inicio = rango_fechas[0]
-                    fecha_fin = rango_fechas[1] if len(rango_fechas) > 1 else rango_fechas[0]
-                    
-                    df_m = df_m[(pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date >= fecha_inicio) & 
-                                (pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date <= fecha_fin)]
-                    
-                    if not df_seg.empty and col_fecha in df_seg.columns:
-                        df_seg = df_seg[(pd.to_datetime(df_seg[col_fecha], errors='coerce').dt.date >= fecha_inicio) & 
-                                        (pd.to_datetime(df_seg[col_fecha], errors='coerce').dt.date <= fecha_fin)]
-                    
-                    if not df_tipo_ord.empty and col_fecha in df_tipo_ord.columns:
-                        df_tipo_ord = df_tipo_ord[(pd.to_datetime(df_tipo_ord[col_fecha], errors='coerce').dt.date >= fecha_inicio) & 
-                                                  (pd.to_datetime(df_tipo_ord[col_fecha], errors='coerce').dt.date <= fecha_fin)]
+                df_m = df_m[mascara_tec]
+
+                # Filtrar df_seg si tiene Fecha_Dia
+                if not df_seg.empty and 'Fecha_Dia' in df_seg.columns:
+                    df_seg = df_seg[
+                        (pd.to_datetime(df_seg['Fecha_Dia'], errors='coerce').dt.date >= fecha_inicio) &
+                        (pd.to_datetime(df_seg['Fecha_Dia'], errors='coerce').dt.date <= fecha_fin)
+                    ]
+
+                # Filtrar df_tipo_ord si tiene Fecha_Dia
+                if not df_tipo_ord.empty and 'Fecha_Dia' in df_tipo_ord.columns:
+                    df_tipo_ord = df_tipo_ord[
+                        (pd.to_datetime(df_tipo_ord['Fecha_Dia'], errors='coerce').dt.date >= fecha_inicio) &
+                        (pd.to_datetime(df_tipo_ord['Fecha_Dia'], errors='coerce').dt.date <= fecha_fin)
+                    ]
+
+        # Eliminar columnas internas antes de mostrar la tabla al usuario
+        df_m = df_m.drop(columns=['_FECHA_MIN', '_FECHA_MAX'], errors='ignore')
         # =========================================================
 
         # --- PESTAÑAS DEL DASHBOARD (solo 3) ---
@@ -657,7 +674,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             st.markdown("#### ⏳ Tiempo Promedio por Orden — Todos los Técnicos por Tipo")
             if not df_tipo_ord.empty:
                 
-                # BOTONERA DE FILTRO (Pills o Multiselect interactivo)
                 actividades_disponibles = sorted(df_tipo_ord['TipoOrden'].unique())
                 
                 try:
@@ -694,7 +710,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     )
                     st.plotly_chart(fig_time, use_container_width=True)
 
-                    # --- RESTAURACIÓN DEL ESTILO ANTERIOR DE LA TABLA DINÁMICA ---
                     with st.expander("📊 Ver detalle numérico por tipo de orden"):
                         df_tipo_pivot = df_tipo_ord.pivot_table(
                             index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
@@ -720,20 +735,13 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             st.caption("Esta tabla combina la cantidad de trabajos realizados con el tiempo promedio real invertido en cada uno.")
 
             if not df_tipo_ord.empty:
-                # 1. Preparar los datos para la matriz unificada
-                # Usamos el filtro de actividades (pills) si existe, sino mostramos todo
                 df_matriz_input = df_tipo_ord[df_tipo_ord['TipoOrden'].isin(act_filtro)] if act_filtro else df_tipo_ord
                 
-                # Creamos una columna combinada para mostrar "Cant | Tiempo"
                 df_matriz_final = df_matriz_input.copy()
                 
-                # Pivotamos para tener Técnicos en filas y Actividades en columnas
-                # Primero para Cantidad
                 df_pivot_cant = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='Ordenes').fillna(0).astype(int)
-                # Luego para Tiempo
                 df_pivot_time = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='MinProm').fillna(0).round(1)
 
-                # Creamos una vista combinada estética
                 tab_vista_cant, tab_vista_time = st.tabs(["📦 Solo Cantidad", "⏳ Solo Tiempo Promedio"])
 
                 with tab_vista_cant:
@@ -743,7 +751,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     )
 
                 with tab_vista_time:
-                    # Estilo para el tiempo: Rojo si es muy alto (>90 min), Verde si es bajo (<45 min)
                     def color_tiempos(val):
                         if val == 0: return 'color: #475569'
                         color = '#10B981' if val < 45 else ('#F59E0B' if val < 90 else '#EF4444')
@@ -754,7 +761,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         use_container_width=True
                     )
 
-                # --- NUEVA TABLA CONSOLIDADA (LA QUE PEDISTE) ---
                 with st.expander("📝 Ver Resumen Listado (Técnico | Tipo | Cantidad | Promedio)", expanded=True):
                     df_listado_unido = df_matriz_input.sort_values(['TECNICO', 'Ordenes'], ascending=[True, False])
                     
@@ -808,8 +814,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             st.markdown("### 🚨 Registro Disciplinario")
 
             if df_exp_det is not None and not df_exp_det.empty:
-                # Aquí estaba el error. "tec_filtro" ya no existe porque lo cambiamos por fecha.
-                # Ahora simplemente hacemos una copia de los expedientes para trabajar con ellos libremente.
                 df_e_fil = df_exp_det.copy()
 
                 if not df_e_fil.empty:
@@ -818,14 +822,12 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
                     tecnicos_con_exp = sorted(df_e_fil['TEC_MAESTRO'].dropna().unique())
                     
-                    # Selector instantáneo: elimina la necesidad del botón "Ver"
                     tec_seleccionado = st.selectbox(
                         "👤 Seleccionar Técnico:",
                         ["-- Selecciona un técnico --"] + tecnicos_con_exp,
                         key="sel_tec_disciplina"
                     )
 
-                    # Si se selecciona a alguien válido, mostramos los datos inmediatamente
                     if tec_seleccionado != "-- Selecciona un técnico --":
                         df_inc_tec = df_e_fil[df_e_fil['TEC_MAESTRO'] == tec_seleccionado].copy()
 
