@@ -550,24 +550,24 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         else:
             st.warning("Debe subir al menos el archivo 'rep_actividades'.")
 
-    # ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
+# ================= 3. VISUALIZACIÓN DEL DASHBOARD =================
     if 'rs_maestra' in st.session_state:
         df_m = st.session_state['rs_maestra'].copy()
         df_exp_det = st.session_state.get('rs_disciplina', pd.DataFrame())
         df_seg = st.session_state.get('rs_segmento', pd.DataFrame())
         df_tipo_ord = st.session_state.get('rs_tipo_orden', pd.DataFrame())
 
-        # Filtro de fechas
-       col_fecha = 'HORA_LIQ' if 'HORA_LIQ' in df_m.columns else ('FECHA' if 'FECHA' in df_m.columns else None)
+        # =========================================================
+        # 📅 NUEVO FILTRO GLOBAL POR FECHAS
+        # =========================================================
+        col_fecha = 'HORA_LIQ' if 'HORA_LIQ' in df_m.columns else ('FECHA' if 'FECHA' in df_m.columns else None)
         
         if col_fecha:
-            # Extraemos las fechas válidas para armar el calendario
             fechas_validas = pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date.dropna()
             
             if not fechas_validas.empty:
                 min_date, max_date = fechas_validas.min(), fechas_validas.max()
                 
-                # Dibujamos el selector en pantalla
                 rango_fechas = st.date_input(
                     "📅 Filtrar por Rango de Fechas para todo el reporte:", 
                     value=[min_date, max_date], 
@@ -575,24 +575,21 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     max_value=max_date
                 )
                 
-                # 2. Aplicamos el filtro a todas las tablas si se seleccionó una fecha
                 if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) > 0:
                     fecha_inicio = rango_fechas[0]
                     fecha_fin = rango_fechas[1] if len(rango_fechas) > 1 else rango_fechas[0]
                     
-                    # Filtramos la tabla maestra (df_m)
                     df_m = df_m[(pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date >= fecha_inicio) & 
                                 (pd.to_datetime(df_m[col_fecha], errors='coerce').dt.date <= fecha_fin)]
                     
-                    # Filtramos df_seg de forma segura (si contiene la columna de fecha)
                     if not df_seg.empty and col_fecha in df_seg.columns:
                         df_seg = df_seg[(pd.to_datetime(df_seg[col_fecha], errors='coerce').dt.date >= fecha_inicio) & 
                                         (pd.to_datetime(df_seg[col_fecha], errors='coerce').dt.date <= fecha_fin)]
                     
-                    # Filtramos df_tipo_ord de forma segura (si contiene la columna de fecha)
                     if not df_tipo_ord.empty and col_fecha in df_tipo_ord.columns:
                         df_tipo_ord = df_tipo_ord[(pd.to_datetime(df_tipo_ord[col_fecha], errors='coerce').dt.date >= fecha_inicio) & 
                                                   (pd.to_datetime(df_tipo_ord[col_fecha], errors='coerce').dt.date <= fecha_fin)]
+        # =========================================================
 
         # --- PESTAÑAS DEL DASHBOARD (solo 3) ---
         tab_graficos, tab_maestra, tab_exp = st.tabs([
@@ -600,7 +597,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             "📋 Tabla Maestra Integral",
             "🚨 Registro Disciplinario"
         ])
-
         # ================================================================
         # TAB 1: GRÁFICOS Y KPIs
         # ================================================================
