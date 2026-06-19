@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import time
 import requests
 import base64
 import tempfile
