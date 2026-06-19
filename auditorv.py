@@ -17,7 +17,9 @@ from tools import (
     procesar_matriz_telemetria,
     generar_pdf_auditoria_tiempos,
     generar_pdf_semanal_tiempos,
-    generar_pdf_telemetria_matriz
+    generar_pdf_telemetria_matriz,
+    generar_pdf_telemetria_matriz,
+    generar_pdf_gastos_vehiculo
 )
 
 # --- IMPORTACIONES BLINDADAS ---
@@ -445,136 +447,136 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         except Exception as e: st.error(f"❌ Error de procesamiento: {e}")
         else: st.info("📱 La carga masiva está reservada para PC.")
 
-    # --- PESTAÑA 3: MÉTRICA DE EFICIENCIA TOTAL ---
-    with tab_eficiencia:
-        col_e1, col_e2 = st.columns([4, 1])
-        with col_e2: 
-            if st.button("🔄 Refrescar", key="ref_e"): st.rerun()
-            
-        st.markdown("### ⚖️ Cruce de Productividad vs Tiempos GPS")
-        st.caption("Calcula el porcentaje real de tiempo que el técnico estuvo produciendo mientras estaba en la calle.")
-        st.info("💡 Sube tu archivo de Actividades y tus reportes de GPS para cruzarlos instantáneamente.")
-        
-        col_up1, col_up2 = st.columns(2)
-        with col_up1:
-            archivo_act = st.file_uploader("1️⃣ Sube 'rep_actividades' (Órdenes)", type=['csv', 'xlsx', 'xls'], key="up_act_efi")
-        with col_up2:
-            archivos_detallados = st.file_uploader("2️⃣ Sube 'DetencionDetallado' (GPS)", type=['csv', 'xlsx', 'xls'], accept_multiple_files=True, key="up_detallado")
-            
-        if st.button("🚀 Calcular Eficiencia", use_container_width=True, type="primary"):
-            
-            df_base_local = None
-            if archivo_act:
-                df_base_local = read_file_robust(archivo_act)
-                if df_base_local is not None:
-                    cols_upper = {c: str(c).upper() for c in df_base_local.columns}
-                    col_liq = next((c for c, up in cols_upper.items() if 'LIQUIDADO' in up or 'CIERRE' in up), None)
-                    col_ini = next((c for c, up in cols_upper.items() if 'INICIO' in up or 'ENTRADA' in up), None)
-                    col_tec = next((c for c, up in cols_upper.items() if 'TECNICO' in up or 'TÉCNICO' in up or 'USER' in up), None)
-                    col_est = next((c for c, up in cols_upper.items() if 'ESTADO' in up or 'STATUS' in up), None)
-                    col_num = next((c for c, up in cols_upper.items() if 'NUM' in up or 'ORDEN' in up or 'ID' in up), None)
+      # ==============================================================================
+        # TAB 3: MÓDULO DE VEHÍCULOS (GASTOS Y FACTURAS)
+        # ==============================================================================
+        with tab_eficiencia:
+            st.markdown("### 🚙 Gestión Financiera de Flota (Gastos por Vehículo)")
+            st.caption("Registra facturas, combustible y mantenimientos. Descarga el historial en PDF.")
 
-                    if col_liq and col_ini and col_tec and col_est and col_num:
-                        df_base_local = df_base_local.rename(columns={col_liq: 'HORA_LIQ', col_ini: 'HORA_INI', col_tec: 'TECNICO', col_est: 'ESTADO', col_num: 'NUM'})
-            elif 'df_base' in st.session_state and st.session_state.df_base is not None:
-                df_base_local = st.session_state.df_base
-
-            if df_base_local is None: 
-                st.error("❌ Faltan los datos de Actividades. Sube el archivo 'rep_actividades' en la caja 1.")
-            elif not archivos_detallados:
-                st.warning("⚠️ Sube al menos un archivo 'DetencionDetallado' del GPS en la caja 2.")
-            else:
-                with st.spinner("🧠 Procesando Inteligencia..."):
+            worksheet_gastos = "Gastos_Flota"
+            
+            # 1. Cargar Base de Datos de Gastos
+            if 'df_gastos_flota' not in st.session_state:
+                if 'conn' in locals() and conn is not None:
                     try:
-                        df_gps_list = []
-                        dict_ralenti_secs = {}
-                        for file_det in archivos_detallados:
-                            df_temp = read_file_robust(file_det)
-                            if df_temp is not None and not df_temp.empty:
-                                col_placa_temp = next((c for c in df_temp.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
-                                if not col_placa_temp:
-                                    for i in range(min(15, len(df_temp))):
-                                        row_str = " ".join([str(x) for x in df_temp.iloc[i].values]).upper()
-                                        if 'PLACA' in row_str or 'VEHICULO' in row_str or 'ALIAS' in row_str:
-                                            df_temp.columns = [str(x).strip() for x in df_temp.iloc[i].values]
-                                            from tools import forzar_columnas_unicas
-                                            df_temp = forzar_columnas_unicas(df_temp)
-                                            df_temp = df_temp.iloc[i+1:].reset_index(drop=True)
-                                            break
-                                df_gps_list.append(df_temp)
-                                
-                            file_det.seek(0)
-                            lineas = file_det.getvalue().decode('utf-8', errors='ignore').splitlines()
-                            if len(lineas) < 5: 
-                                file_det.seek(0)
-                                lineas = file_det.getvalue().decode('latin1', errors='ignore').splitlines()
-                            for linea in lineas:
-                                if "Tiempo de detencion con motor encendido" in linea:
-                                    m = re.search(r'Placa:?\s*(.*?)(?:",|$)', linea)
-                                    if m:
-                                        p = m.group(1).replace('"', '').strip()
-                                        t = linea.split(',')[-1].strip()
-                                        if not t: t = linea.split(',')[-2].strip()
-                                        dict_ralenti_secs[p] = dict_ralenti_secs.get(p, 0) + time_to_sec_robust(t)
+                        df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
+                    except Exception:
+                        df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO"])
+                else:
+                    df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO"])
+                st.session_state['df_gastos_flota'] = df_g
+            else:
+                df_g = st.session_state['df_gastos_flota']
+
+            # Extraer lista de vehículos (Del historial + base estándar MX-1 a MX-40)
+            vehiculos_base = [f"MX-{i}" for i in range(1, 41)]
+            vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
+            lista_vehiculos = sorted(list(set(vehiculos_base + vehiculos_historicos)))
+
+            # 2. Selectores de Cabecera
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad:", ["-- Seleccione --"] + lista_vehiculos)
+            with col_sel2:
+                # Usa get_hn_time() para tener la fecha correcta de Honduras
+                fecha_hoy = get_hn_time().date()
+                rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[fecha_hoy - timedelta(days=30), fecha_hoy])
+                
+            st.markdown("---")
+
+            # 3. Interfaz de Doble Columna
+            if vehiculo_seleccionado != "-- Seleccione --":
+                c1, c2 = st.columns([1.2, 2])
+                
+                # --- IZQUIERDA: FORMULARIO DE INGRESO ---
+                with c1:
+                    st.markdown("#### 📝 Registrar Nuevo Gasto")
+                    with st.form("form_gasto"):
+                        fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date())
+                        tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
+                        desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Filtro Aire)")
+                        monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0)
                         
-                        if df_gps_list:
-                            res_diario, res_gps, msg_gps, f_in, f_out = procesar_auditoria_semanal(pd.concat(df_gps_list, ignore_index=True))
-                            if res_gps is not None:
-                                df_act = df_base_local.copy()
-                                df_act['HORA_LIQ'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce')
-                                df_act['HORA_INI'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce')
+                        btn_guardar = st.form_submit_button("💾 Guardar Registro", use_container_width=True)
+                        
+                        if btn_guardar:
+                            if desc_gasto.strip() and monto_gasto > 0:
+                                nuevo_registro = pd.DataFrame([{
+                                    "FECHA": pd.to_datetime(fecha_gasto).strftime('%Y-%m-%d'),
+                                    "VEHICULO": vehiculo_seleccionado,
+                                    "TIPO_GASTO": tipo_gasto,
+                                    "DESCRIPCION": desc_gasto,
+                                    "MONTO": float(monto_gasto)
+                                }])
                                 
-                                df_act['Fecha_Ord'] = df_act['HORA_LIQ'].dt.date
-                                df_act = df_act.dropna(subset=['Fecha_Ord'])
-                                df_act = df_act[df_act['ESTADO'].astype(str).str.upper().str.contains('CERRADA', na=False)]
+                                df_g = pd.concat([df_g, nuevo_registro], ignore_index=True)
+                                st.session_state['df_gastos_flota'] = df_g
                                 
-                                df_act['Segundos_Prod'] = (df_act['HORA_LIQ'] - df_act['HORA_INI']).dt.total_seconds().clip(lower=0)
-                                resumen_prod = df_act.groupby('TECNICO').agg(Ordenes=('NUM', 'count'), Seg_Prod=('Segundos_Prod', 'sum')).reset_index()
-                                
-                                def time_to_sec(t):
-                                    parts = str(t).split(':')
-                                    return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2]) if len(parts)==3 else 0
-                                
-                                res_gps['Seg_Calle'] = res_gps['Tiempo Total Semana'].apply(time_to_sec)
-                                res_gps['Motor_Encendido_Secs'] = res_gps['Vehículo / Placa'].map(dict_ralenti_secs).fillna(0)
-                                
-                                def finding_placa(tec):
-                                    if pd.isnull(tec): return None
-                                    pt = str(tec).upper().replace(',', '').replace('.', '').split()
-                                    required_matches = 2 if len(pt) >= 2 else 1
-                                    
-                                    for pl in res_gps['Vehículo / Placa']:
-                                        pl_up = str(pl).upper()
-                                        coincidencias = sum(1 for p in pt if len(p) > 2 and p in pl_up)
-                                        if coincidencias >= required_matches: return pl
-                                    return None
-                                
-                                resumen_prod['Placa_Match'] = resumen_prod['TECNICO'].apply(finding_placa)
-                                df_final = pd.merge(resumen_prod, res_gps, left_on='Placa_Match', right_on='Vehículo / Placa', how='inner')
-                                
-                                if not df_final.empty:
-                                    df_final['% Eficiencia'] = (df_final['Seg_Prod'] / df_final['Seg_Calle'] * 100).fillna(0).clip(upper=100)
-                                    
-                                    def sec_to_human(s):
-                                        h, r = divmod(int(s), 3600); m, _ = divmod(r, 60)
-                                        return f"{h:02d}h {m:02d}m"
-
-                                    df_final['Trabajo (Órdenes)'] = df_final['Seg_Prod'].apply(sec_to_human)
-                                    df_final['En Calle (GPS)'] = df_final['Seg_Calle'].apply(sec_to_human)
-                                    df_final['Motor Encendido'] = df_final['Motor_Encendido_Secs'].apply(sec_to_human)
-                                    
-                                    st.success(f"✅ Cruce completado. Mostrando eficiencia para {len(df_final)} técnicos.")
-                                    st.dataframe(df_final[['TECNICO', 'Ordenes', 'Trabajo (Órdenes)', 'En Calle (GPS)', '% Eficiencia', 'Motor Encendido']].style.format({'% Eficiencia': "{:.1f}%"}).map(
-                                        lambda x: 'background-color: #2ea043; color: white' if x >= 65 else ('background-color: #d32f2f; color: white' if x < 40 else ''), subset=['% Eficiencia']
-                                    ), use_container_width=True, hide_index=True)
+                                # Sincronizar con Nube
+                                if 'conn' in locals() and conn is not None:
+                                    try:
+                                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
+                                        st.success("✅ Gasto guardado y sincronizado en la Nube.")
+                                    except Exception as e:
+                                        st.warning("⚠️ Guardado localmente. Recuerda crear la pestaña 'Gastos_Flota' en tu Google Sheets.")
                                 else:
-                                    st.warning("⚠️ No se encontraron técnicos que coincidan entre el archivo de Actividades y las placas del GPS.")
+                                    st.success("✅ Gasto guardado en memoria.")
+                                
+                                time.sleep(1.5)
+                                st.rerun()
                             else:
-                                st.error(f"❌ Error al procesar datos del GPS: {msg_gps}")
-                        else:
-                            st.error("❌ No se detectaron datos válidos en los archivos GPS subidos.")
-                    except Exception as e: st.error(f"❌ Error interno en el cruce: {e}")
+                                st.error("⚠️ Por favor ingresa una descripción y un monto mayor a L. 0.00")
 
+                # --- DERECHA: HISTORIAL Y PDF ---
+                with c2:
+                    st.markdown(f"#### 📊 Historial Financiero: {vehiculo_seleccionado}")
+                    
+                    df_filtro = df_g[df_g['VEHICULO'] == vehiculo_seleccionado].copy()
+                    
+                    if not df_filtro.empty:
+                        df_filtro['FECHA_DT'] = pd.to_datetime(df_filtro['FECHA'], errors='coerce').dt.date
+                        
+                        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+                            df_filtro = df_filtro[(df_filtro['FECHA_DT'] >= rango_fechas[0]) & (df_filtro['FECHA_DT'] <= rango_fechas[1])]
+                        elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
+                            df_filtro = df_filtro[df_filtro['FECHA_DT'] == rango_fechas[0]]
+                        
+                        df_filtro = df_filtro.drop(columns=['FECHA_DT'])
+
+                    if not df_filtro.empty:
+                        # Asegurar que el monto sea sumable
+                        df_filtro['MONTO'] = pd.to_numeric(df_filtro['MONTO'], errors='coerce').fillna(0.0)
+                        total_gastado = df_filtro['MONTO'].sum()
+                        
+                        k1, k2 = st.columns(2)
+                        k1.metric("🛒 Facturas en el periodo", len(df_filtro))
+                        k2.metric("💰 Total Gastado", f"L. {total_gastado:,.2f}")
+                        
+                        st.dataframe(
+                            df_filtro.sort_values('FECHA', ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "MONTO": st.column_config.NumberColumn("Monto (L.)", format="L. %.2f")
+                            }
+                        )
+                        
+                        try:
+                            pdf_bytes = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado, rango_fechas, total_gastado)
+                            st.download_button(
+                                "📄 Descargar Reporte en PDF",
+                                data=pdf_bytes,
+                                file_name=f"Reporte_Gastos_{vehiculo_seleccionado}.pdf",
+                                mime="application/pdf",
+                                type="primary",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"Error generando PDF: {e}")
+                            
+                    else:
+                        st.info("No hay facturas o gastos registrados en este rango de fechas.")
     # ==========================================================================
     # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR ---
     # ==========================================================================
