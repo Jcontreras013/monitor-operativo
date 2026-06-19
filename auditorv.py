@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
 import re
-import time
 import requests
 import base64
 import tempfile
 import os
 import io
+import time
 from datetime import datetime, timedelta, timezone
 
 from tools import (
@@ -19,8 +19,7 @@ from tools import (
     generar_pdf_auditoria_tiempos,
     generar_pdf_semanal_tiempos,
     generar_pdf_telemetria_matriz,
-    generar_pdf_telemetria_matriz,
-    generar_pdf_gastos_vehiculo
+    generar_pdf_gastos_vehiculo  # <--- Importación del nuevo reporte de gastos
 )
 
 # --- IMPORTACIONES BLINDADAS ---
@@ -279,7 +278,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
     tab_tiempos, tab_velocidad, tab_eficiencia, tab_checklist = st.tabs([
         "⏱️ Auditoría de Tiempos", 
         "🚀 Telemetría", 
-        "⚖️ Eficiencia Total",
+        "⚖️ Gastos y Flota",
         "📋 Gestión Documental"
     ])
 
@@ -448,136 +447,181 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         except Exception as e: st.error(f"❌ Error de procesamiento: {e}")
         else: st.info("📱 La carga masiva está reservada para PC.")
 
-      # ==============================================================================
-        # TAB 3: MÓDULO DE VEHÍCULOS (GASTOS Y FACTURAS)
-        # ==============================================================================
-        with tab_eficiencia:
-            st.markdown("### 🚙 Gestión Financiera de Flota (Gastos por Vehículo)")
-            st.caption("Registra facturas, combustible y mantenimientos. Descarga el historial en PDF.")
+    # --- PESTAÑA 3: MÉTRICA DE EFICIENCIA TOTAL (REDISEÑADA A GASTOS Y FACTURAS) ---
+    with tab_eficiencia:
+        st.markdown("### 🚙 Gestión Financiera de Flota (Gastos por Vehículo)")
+        st.caption("Registra facturas, combustible y mantenimientos. Descarga el historial en PDF.")
 
-            worksheet_gastos = "Gastos_Flota"
-            
-            # 1. Cargar Base de Datos de Gastos
-            if 'df_gastos_flota' not in st.session_state:
-                if 'conn' in locals() and conn is not None:
-                    try:
-                        df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
-                    except Exception:
-                        df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO"])
-                else:
+        worksheet_gastos = "Gastos_Flota"
+        
+        # 1. Cargar Base de Datos de Gastos
+        if 'df_gastos_flota' not in st.session_state:
+            if 'conn' in locals() and conn is not None:
+                try:
+                    df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
+                except Exception:
                     df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO"])
-                st.session_state['df_gastos_flota'] = df_g
             else:
-                df_g = st.session_state['df_gastos_flota']
+                df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO"])
+            st.session_state['df_gastos_flota'] = df_g
+        else:
+            df_g = st.session_state['df_gastos_flota']
 
-            # Extraer lista de vehículos (Del historial + base estándar MX-1 a MX-40)
-            vehiculos_base = [f"MX-{i}" for i in range(1, 41)]
-            vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
-            lista_vehiculos = sorted(list(set(vehiculos_base + vehiculos_historicos)))
+        # Extraer lista de vehículos (Del historial + base estándar MX-1 a MX-40)
+        vehiculos_base = [f"MX-{i}" for i in range(1, 41)]
+        vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
+        lista_vehiculos = sorted(list(set(vehiculos_base + vehiculos_historicos)))
 
-            # 2. Selectores de Cabecera
-            col_sel1, col_sel2 = st.columns(2)
-            with col_sel1:
-                vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad:", ["-- Seleccione --"] + lista_vehiculos)
-            with col_sel2:
-                # Usa get_hn_time() para tener la fecha correcta de Honduras
-                fecha_hoy = get_hn_time().date()
-                rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[fecha_hoy - timedelta(days=30), fecha_hoy])
-                
-            st.markdown("---")
+        # 2. Selectores de Cabecera
+        col_sel1, col_sel2 = st.columns(2)
+        with col_sel1:
+            vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad:", ["-- Seleccione --"] + lista_vehiculos)
+        with col_sel2:
+            fecha_hoy = get_hn_time().date()
+            rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[fecha_hoy - timedelta(days=30), fecha_hoy])
+            
+        st.markdown("---")
 
-            # 3. Interfaz de Doble Columna
-            if vehiculo_seleccionado != "-- Seleccione --":
-                c1, c2 = st.columns([1.2, 2])
-                
-                # --- IZQUIERDA: FORMULARIO DE INGRESO ---
-                with c1:
-                    st.markdown("#### 📝 Registrar Nuevo Gasto")
-                    with st.form("form_gasto"):
-                        fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date())
-                        tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
-                        desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Filtro Aire)")
-                        monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0)
-                        
-                        btn_guardar = st.form_submit_button("💾 Guardar Registro", use_container_width=True)
-                        
-                        if btn_guardar:
-                            if desc_gasto.strip() and monto_gasto > 0:
-                                nuevo_registro = pd.DataFrame([{
-                                    "FECHA": pd.to_datetime(fecha_gasto).strftime('%Y-%m-%d'),
-                                    "VEHICULO": vehiculo_seleccionado,
-                                    "TIPO_GASTO": tipo_gasto,
-                                    "DESCRIPCION": desc_gasto,
-                                    "MONTO": float(monto_gasto)
-                                }])
-                                
-                                df_g = pd.concat([df_g, nuevo_registro], ignore_index=True)
-                                st.session_state['df_gastos_flota'] = df_g
-                                
-                                # Sincronizar con Nube
-                                if 'conn' in locals() and conn is not None:
-                                    try:
-                                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
-                                        st.success("✅ Gasto guardado y sincronizado en la Nube.")
-                                    except Exception as e:
-                                        st.warning("⚠️ Guardado localmente. Recuerda crear la pestaña 'Gastos_Flota' en tu Google Sheets.")
-                                else:
-                                    st.success("✅ Gasto guardado en memoria.")
-                                
-                                time.sleep(1.5)
-                                st.rerun()
-                            else:
-                                st.error("⚠️ Por favor ingresa una descripción y un monto mayor a L. 0.00")
-
-                # --- DERECHA: HISTORIAL Y PDF ---
-                with c2:
-                    st.markdown(f"#### 📊 Historial Financiero: {vehiculo_seleccionado}")
+        # 3. Interfaz de Doble Columna
+        if vehiculo_seleccionado != "-- Seleccione --":
+            c1, c2 = st.columns([1.2, 2])
+            
+            # --- IZQUIERDA: FORMULARIO DE INGRESO ---
+            with c1:
+                st.markdown("#### 📝 Registrar Nuevo Gasto")
+                with st.form("form_gasto"):
+                    fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date())
+                    tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
+                    desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Filtro Aire)")
+                    monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0)
                     
-                    df_filtro = df_g[df_g['VEHICULO'] == vehiculo_seleccionado].copy()
+                    btn_guardar = st.form_submit_button("💾 Guardar Registro", use_container_width=True)
                     
-                    if not df_filtro.empty:
-                        df_filtro['FECHA_DT'] = pd.to_datetime(df_filtro['FECHA'], errors='coerce').dt.date
-                        
-                        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
-                            df_filtro = df_filtro[(df_filtro['FECHA_DT'] >= rango_fechas[0]) & (df_filtro['FECHA_DT'] <= rango_fechas[1])]
-                        elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
-                            df_filtro = df_filtro[df_filtro['FECHA_DT'] == rango_fechas[0]]
-                        
-                        df_filtro = df_filtro.drop(columns=['FECHA_DT'])
-
-                    if not df_filtro.empty:
-                        # Asegurar que el monto sea sumable
-                        df_filtro['MONTO'] = pd.to_numeric(df_filtro['MONTO'], errors='coerce').fillna(0.0)
-                        total_gastado = df_filtro['MONTO'].sum()
-                        
-                        k1, k2 = st.columns(2)
-                        k1.metric("🛒 Facturas en el periodo", len(df_filtro))
-                        k2.metric("💰 Total Gastado", f"L. {total_gastado:,.2f}")
-                        
-                        st.dataframe(
-                            df_filtro.sort_values('FECHA', ascending=False),
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "MONTO": st.column_config.NumberColumn("Monto (L.)", format="L. %.2f")
-                            }
-                        )
-                        
-                        try:
-                            pdf_bytes = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado, rango_fechas, total_gastado)
-                            st.download_button(
-                                "📄 Descargar Reporte en PDF",
-                                data=pdf_bytes,
-                                file_name=f"Reporte_Gastos_{vehiculo_seleccionado}.pdf",
-                                mime="application/pdf",
-                                type="primary",
-                                use_container_width=True
-                            )
-                        except Exception as e:
-                            st.error(f"Error generando PDF: {e}")
+                    if btn_guardar:
+                        if desc_gasto.strip() and monto_gasto > 0:
+                            nuevo_registro = pd.DataFrame([{
+                                "FECHA": pd.to_datetime(fecha_gasto).strftime('%Y-%m-%d'),
+                                "VEHICULO": vehiculo_seleccionado,
+                                "TIPO_GASTO": tipo_gasto,
+                                "DESCRIPCION": desc_gasto,
+                                "MONTO": float(monto_gasto)
+                            }])
                             
-                    else:
-                        st.info("No hay facturas o gastos registrados en este rango de fechas.")
+                            df_g = pd.concat([df_g, nuevo_registro], ignore_index=True)
+                            st.session_state['df_gastos_flota'] = df_g
+                            
+                            # Sincronizar con Nube
+                            if 'conn' in locals() and conn is not None:
+                                try:
+                                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
+                                    st.success("✅ Gasto guardado y sincronizado en la Nube.")
+                                except Exception as e:
+                                    st.warning("⚠️ Guardado localmente. Recuerda crear la pestaña 'Gastos_Flota' en tu Google Sheets.")
+                            else:
+                                st.success("✅ Gasto guardado en memoria.")
+                            
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("⚠️ Por favor ingresa una descripción y un monto mayor a L. 0.00")
+
+            # --- DERECHA: HISTORIAL Y PDF ---
+            with c2:
+                st.markdown(f"#### 📊 Historial Financiero: {vehiculo_seleccionado}")
+                
+                df_filtro = df_g[df_g['VEHICULO'] == vehiculo_seleccionado].copy()
+                
+                if not df_filtro.empty:
+                    df_filtro['FECHA_DT'] = pd.to_datetime(df_filtro['FECHA'], errors='coerce').dt.date
+                    
+                    if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+                        df_filtro = df_filtro[(df_filtro['FECHA_DT'] >= rango_fechas[0]) & (df_filtro['FECHA_DT'] <= rango_fechas[1])]
+                    elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
+                        df_filtro = df_filtro[df_filtro['FECHA_DT'] == rango_fechas[0]]
+                    
+                    df_filtro = df_filtro.drop(columns=['FECHA_DT'])
+
+                if not df_filtro.empty:
+                    # Asegurar que el monto sea sumable
+                    df_filtro['MONTO'] = pd.to_numeric(df_filtro['MONTO'], errors='coerce').fillna(0.0)
+                    total_gastado = df_filtro['MONTO'].sum()
+                    
+                    k1, k2 = st.columns(2)
+                    k1.metric("🛒 Facturas en el periodo", len(df_filtro))
+                    k2.metric("💰 Total Gastado", f"L. {total_gastado:,.2f}")
+                    
+                    st.dataframe(
+                        df_filtro.sort_values('FECHA', ascending=False),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "MONTO": st.column_config.NumberColumn("Monto (L.)", format="L. %.2f")
+                        }
+                    )
+                    
+                    try:
+                        pdf_bytes = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado, rango_fechas, total_gastado)
+                        st.download_button(
+                            "📄 Descargar Reporte en PDF",
+                            data=pdf_bytes,
+                            file_name=f"Reporte_Gastos_{vehiculo_seleccionado}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Error generando PDF: {e}")
+                        
+                    # =========================================================
+                    # 🛡️ ZONA EXCLUSIVA PARA ADMINISTRADORES (ELIMINAR REGISTROS)
+                    # =========================================================
+                    # Nota: Cambia "rol" por el nombre exacto de tu variable de sesión 
+                    # si en tu sistema de login la llamas diferente (ej: "role", "perfil", etc.)
+                    
+                    if st.session_state.get("rol") == "admin": 
+                        st.markdown("---")
+                        st.markdown("#### 🛠️ Zona de Administración")
+                        with st.expander("🗑️ Eliminar un registro de este vehículo"):
+                            
+                            # Crear un diccionario legible para que el admin sepa qué borra
+                            opciones_borrar = {
+                                idx: f"ID: {idx} | {row['FECHA']} | {row['TIPO_GASTO']} | L. {row['MONTO']}" 
+                                for idx, row in df_filtro.iterrows()
+                            }
+                            
+                            if opciones_borrar:
+                                registro_a_borrar = st.selectbox(
+                                    "Selecciona con cuidado el registro a eliminar:", 
+                                    options=list(opciones_borrar.keys()), 
+                                    format_func=lambda x: opciones_borrar[x]
+                                )
+                                
+                                # Botón rojo de advertencia
+                                if st.button("🚨 Confirmar Eliminación Permanente", type="primary"):
+                                    # Eliminar la fila exacta usando su ID (índice)
+                                    df_g = df_g.drop(registro_a_borrar).reset_index(drop=True)
+                                    st.session_state['df_gastos_flota'] = df_g
+                                    
+                                    # Sincronizar el borrado con la nube (Google Sheets)
+                                    if 'conn' in locals() and conn is not None:
+                                        try:
+                                            # Limpiamos la hoja antes de subir el nuevo df para evitar residuos
+                                            conn.clear(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos)
+                                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
+                                            st.success("✅ Registro eliminado y base de datos actualizada.")
+                                        except Exception as e:
+                                            st.error(f"⚠️ Se borró localmente pero falló la nube: {e}")
+                                    else:
+                                        st.success("✅ Registro eliminado en memoria local.")
+                                    
+                                    time.sleep(1.5)
+                                    st.rerun()
+                            else:
+                                st.info("No hay registros disponibles para eliminar.")
+                    # =========================================================
+                else:
+                    st.info("No hay facturas o gastos registrados en este rango de fechas.")
+
     # ==========================================================================
     # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR ---
     # ==========================================================================
