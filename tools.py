@@ -3120,3 +3120,94 @@ def sanitizar_core_monitor(df):
         df = df.drop(columns=['FECHA_TMP'])
         
     return df
+
+# ==============================================================================
+# MOTOR PDF: REPORTE DE GASTOS Y MANTENIMIENTO DE FLOTA (auditorv.py)
+# ==============================================================================
+class ReporteGastosPDF(FPDF):
+    def header(self):
+        # Logo corporativo
+        if os.path.exists('logo.png'):
+            self.image('logo.png', 10, 8, 33)
+        self.set_y(12)
+        self.set_x(50)
+        self.set_text_color(40, 40, 40)
+        self.set_font("Helvetica", "B", 14)
+        self.cell(0, 6, safestr("REPORTE DE GASTOS Y MANTENIMIENTO VEHICULAR"), ln=True, align="R")
+        self.set_x(50)
+        self.set_font("Helvetica", "", 10)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 5, safestr("Control Operativo Financiero de Flota"), ln=True, align="R")
+        
+        self.set_draw_color(200, 200, 200)
+        self.line(10, 25, 200, 25)
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, safestr(f"Página {self.page_no()}"), align="C")
+
+def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
+    pdf = ReporteGastosPDF(orientation='P', unit='mm', format='A4')
+    pdf.add_page()
+    
+    # Info de cabecera
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(16, 185, 129) # Verde
+    pdf.cell(0, 8, safestr(f"1. RESUMEN DE GASTOS - UNIDAD: {vehiculo}"), ln=True)
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(50, 50, 50)
+    
+    if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+        fecha_txt = f"{rango_fechas[0].strftime('%d/%m/%Y')} al {rango_fechas[1].strftime('%d/%m/%Y')}"
+    elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
+        fecha_txt = f"{rango_fechas[0].strftime('%d/%m/%Y')}"
+    else:
+        fecha_txt = "Todas las fechas"
+
+    kpi_text = f"Periodo: {fecha_txt}   |   Total Facturas: {len(df_gastos)}   |   Monto Invertido: L. {total:,.2f}"
+    pdf.cell(0, 6, safestr(kpi_text), ln=True)
+    pdf.ln(5)
+    
+    # Tabla de detalle
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(59, 130, 246) # Azul
+    pdf.cell(0, 8, safestr("2. HISTORIAL DETALLADO DE FACTURAS Y SERVICIOS"), ln=True)
+    
+    pdf.set_fill_color(240, 245, 250)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 9)
+    
+    w = [25, 45, 90, 30] 
+    h = ["FECHA", "CATEGORÍA", "DESCRIPCIÓN / FACTURA", "MONTO (L)"]
+    
+    for i, head in enumerate(h):
+        pdf.cell(w[i], 7, safestr(head), border=1, fill=True, align="C")
+    pdf.ln()
+    
+    pdf.set_font("Helvetica", "", 9)
+    for _, row in df_gastos.iterrows():
+        desc = safestr(row.get('DESCRIPCION', ''))[:55]
+        cat = safestr(row.get('TIPO_GASTO', ''))[:20]
+        
+        pdf.cell(w[0], 6, safestr(row.get('FECHA', '')), border=1, align="C")
+        pdf.cell(w[1], 6, cat, border=1, align="C")
+        pdf.cell(w[2], 6, desc, border=1)
+        pdf.cell(w[3], 6, safestr(f"{float(row.get('MONTO', 0)):,.2f}"), border=1, align="R")
+        pdf.ln()
+        
+    # Totales finales en la tabla
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(220, 230, 240)
+    pdf.cell(w[0] + w[1] + w[2], 7, safestr("TOTAL GASTOS DEL PERIODO:"), border=1, align="R", fill=True)
+    pdf.cell(w[3], 7, safestr(f"L. {total:,.2f}"), border=1, align="R", fill=True)
+    
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+    with open(path, "rb") as f: data = f.read()
+    os.remove(path)
+    return data
