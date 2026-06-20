@@ -13,7 +13,7 @@ from tools import (
     get_hn_time,
     read_file_robust,
     time_to_sec_robust,
-    procesar_auditoria_vehiculos,
+    procesar_auditoria_vehiculos,F
     procesar_auditoria_semanal,
     procesar_matriz_telemetria,
     generar_pdf_auditoria_tiempos,
@@ -649,7 +649,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
 
             col_sel1, col_sel2 = st.columns(2)
             with col_sel1: vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad a revisar:", ["-- Seleccione --"] + lista_vehiculos)
-            with col_sel2: rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=30), get_hn_time().date()])
+           with col_sel2: rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=30), get_hn_time().date()], key="filtro_rango_flota")
                 
             st.markdown("---")
 
@@ -660,7 +660,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 with c1:
                     st.markdown("#### 📝 Registrar Nuevo Gasto")
                     with st.form("form_gasto"):
-                        fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date())
+                        fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date(), key="fecha_registro_factura")
                         tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
                         desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Compra de Batería)")
                         monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0)
@@ -878,7 +878,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         with col_upload:
             st.markdown("#### 2️⃣ Subir Documento Escaneado")
             with st.form("form_subida_escaner"):
-                fecha_escaneo = st.date_input("Fecha de Inspección:", value=get_hn_time().date())
+                fecha_escaneo = st.date_input("Fecha de Inspección:", value=get_hn_time().date(), key="fecha_escaner_documento")
                 placa_vehiculo = st.text_input("🚗 Placa del Vehículo:*", placeholder="Ej: HAA-1234")
                 archivo_escaner = st.file_uploader("📥 Sube el Documento Escaneado (PDF o Imagen):", type=['pdf', 'png', 'jpg', 'jpeg'])
                 observaciones = st.text_input("Notas / Hallazgos principales:", placeholder="Breve descripción del estado del vehículo...")
