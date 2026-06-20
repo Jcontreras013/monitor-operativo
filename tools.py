@@ -3211,3 +3211,85 @@ def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
     with open(path, "rb") as f: data = f.read()
     os.remove(path)
     return data
+
+def generar_pdf_reporte_general_gastos(df_gastos):
+    pdf = ReporteGastosPDF(orientation='P', unit='mm', format='A4')
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(16, 185, 129)
+    pdf.cell(0, 8, safestr("REPORTE GENERAL: GASTOS POR VEHÍCULO Y CATEGORÍA"), ln=True, align="C")
+    pdf.ln(5)
+
+    if df_gastos.empty:
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(0, 6, "No hay gastos registrados en el sistema.", ln=True)
+        import tempfile, os
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        pdf.output(path)
+        with open(path, "rb") as f: data = f.read()
+        os.remove(path)
+        return data
+
+    # Asegurar que los montos sean números para poder sumarlos
+    df_gastos['MONTO'] = pd.to_numeric(df_gastos['MONTO'], errors='coerce').fillna(0)
+    
+    # Agrupar matemáticamente por Vehículo y luego por Categoría
+    resumen = df_gastos.groupby(['VEHICULO', 'TIPO_GASTO']).agg(
+        Cantidad=('TIPO_GASTO', 'count'),
+        Total=('MONTO', 'sum')
+    ).reset_index()
+
+    # Ordenar por Vehículo y luego por los gastos más caros
+    resumen = resumen.sort_values(by=['VEHICULO', 'Total'], ascending=[True, False])
+
+    for vehiculo, df_vehiculo in resumen.groupby('VEHICULO'):
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(59, 130, 246) # Azul
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 7, safestr(f" UNIDAD: {vehiculo}"), border=1, ln=True, fill=True)
+        
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(240, 245, 250)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(80, 6, "CATEGORÍA", border=1, fill=True, align="C")
+        pdf.cell(40, 6, "FRECUENCIA", border=1, fill=True, align="C")
+        pdf.cell(70, 6, "TOTAL INVERTIDO (L.)", border=1, fill=True, align="C")
+        pdf.ln()
+
+        subtotal_vehiculo = 0
+        pdf.set_font("Helvetica", "", 9)
+        for _, row in df_vehiculo.iterrows():
+            cat = safestr(row['TIPO_GASTO'])[:35]
+            cant = str(row['Cantidad'])
+            tot = float(row['Total'])
+            subtotal_vehiculo += tot
+            
+            pdf.cell(80, 6, cat, border=1)
+            pdf.cell(40, 6, cant, border=1, align="C")
+            pdf.cell(70, 6, safestr(f"{tot:,.2f}"), border=1, align="R")
+            pdf.ln()
+        
+        # Fila de Subtotal por Vehículo
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(220, 230, 240)
+        pdf.cell(120, 6, "SUBTOTAL VEHÍCULO:", border=1, align="R", fill=True)
+        pdf.cell(70, 6, safestr(f"L. {subtotal_vehiculo:,.2f}"), border=1, align="R", fill=True)
+        pdf.ln(5)
+        
+    # Gran Total al final del documento
+    gran_total = resumen['Total'].sum()
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_fill_color(16, 185, 129)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(120, 8, "GRAN TOTAL INVERTIDO EN FLOTA:", border=1, align="R", fill=True)
+    pdf.cell(70, 8, safestr(f"L. {gran_total:,.2f}"), border=1, align="R", fill=True)
+
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+    with open(path, "rb") as f: data = f.read()
+    os.remove(path)
+    return data
