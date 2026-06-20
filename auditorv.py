@@ -19,9 +19,40 @@ from tools import (
     generar_pdf_auditoria_tiempos,
     generar_pdf_semanal_tiempos,
     generar_pdf_telemetria_matriz,
-    generar_pdf_gastos_vehiculo  # <--- Importación del nuevo reporte de gastos
+    generar_pdf_gastos_vehiculo,
+    generar_pdf_reporte_general_gastos
 )
+# --- MOTOR DE FIREBASE (NUBE) ---
+try:
+    import firebase_admin
+    from firebase_admin import credentials, storage
+    FIREBASE_DISPONIBLE = True
+except ImportError:
+    FIREBASE_DISPONIBLE = False
 
+def subir_factura_nube(file_buffer, file_name, mimetype):
+    """Sube a Firebase si está disponible, sino usa Google Drive como plan B"""
+    if FIREBASE_DISPONIBLE:
+        try:
+            if not firebase_admin._apps:
+                cred_dict = dict(st.secrets["firebase"])
+                if '\\n' in cred_dict.get('private_key', ''):
+                    cred_dict['private_key'] = cred_dict['private_key'].replace('\\n', '\n')
+                cred = credentials.Certificate(cred_dict)
+                # Cambia el bucket si es necesario, he puesto el tuyo por defecto
+                firebase_admin.initialize_app(cred, {'storageBucket': "jovial-trilogy-306216.appspot.com"})
+            
+            bucket = storage.bucket()
+            blob = bucket.blob(f"Facturas_Flota/{file_name}")
+            blob.upload_from_string(file_buffer.getvalue(), content_type=mimetype)
+            blob.make_public()
+            return blob.public_url, None
+        except Exception as e:
+            return None, f"Error Firebase: {e}"
+    else:
+        # Usa tu función actual de Google Drive como respaldo automático
+        return subir_archivo_drive(io.BytesIO(file_buffer.getvalue()), file_name, mimetype)
+        
 # --- IMPORTACIONES BLINDADAS ---
 try:
     from tools import leer_espejo_gcs, sobrescribir_archivo_gcs
@@ -572,56 +603,233 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
                         
-                    # =========================================================
-                    # 🛡️ ZONA EXCLUSIVA PARA ADMINISTRADORES (ELIMINAR REGISTROS)
-                    # =========================================================
-                    # Nota: Cambia "rol" por el nombre exacto de tu variable de sesión 
-                    # si en tu sistema de login la llamas diferente (ej: "role", "perfil", etc.)
-                    
-                    if st.session_state.get("rol") == "admin": 
-                        st.markdown("---")
-                        st.markdown("#### 🛠️ Zona de Administración")
-                        with st.expander("🗑️ Eliminar un registro de este vehículo"):
-                            
-                            # Crear un diccionario legible para que el admin sepa qué borra
-                            opciones_borrar = {
-                                idx: f"ID: {idx} | {row['FECHA']} | {row['TIPO_GASTO']} | L. {row['MONTO']}" 
-                                for idx, row in df_filtro.iterrows()
-                            }
-                            
-                            if opciones_borrar:
-                                registro_a_borrar = st.selectbox(
-                                    "Selecciona con cuidado el registro a eliminar:", 
-                                    options=list(opciones_borrar.keys()), 
-                                    format_func=lambda x: opciones_borrar[x]
-                                )
-                                
-                                # Botón rojo de advertencia
-                                if st.button("🚨 Confirmar Eliminación Permanente", type="primary"):
-                                    # Eliminar la fila exacta usando su ID (índice)
-                                    df_g = df_g.drop(registro_a_borrar).reset_index(drop=True)
-                                    st.session_state['df_gastos_flota'] = df_g
-                                    
-                                    # Sincronizar el borrado con la nube (Google Sheets)
-                                    if 'conn' in locals() and conn is not None:
-                                        try:
-                                            # Limpiamos la hoja antes de subir el nuevo df para evitar residuos
-                                            conn.clear(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos)
-                                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
-                                            st.success("✅ Registro eliminado y base de datos actualizada.")
-                                        except Exception as e:
-                                            st.error(f"⚠️ Se borró localmente pero falló la nube: {e}")
-                                    else:
-                                        st.success("✅ Registro eliminado en memoria local.")
-                                    
-                                    time.sleep(1.5)
-                                    st.rerun()
-                            else:
-                                st.info("No hay registros disponibles para eliminar.")
-                    # =========================================================
-                else:
-                    st.info("No hay facturas o gastos registrados en este rango de fechas.")
+        # ==============================================================================
+        # TAB 3: MÓDULO DE VEHÍCULOS (GASTOS Y FACTURAS)
+        # ==============================================================================
+        with tab_eficiencia:
+            st.markdown("### 🚙 Gestión Financiera de Flota (Gastos por Vehículo)")
+            st.caption("Registra facturas, adjunta comprobantes y descarga los reportes contables.")
 
+            worksheet_gastos = "Gastos_Flota"
+            
+            # Cargar Base de Datos de Gastos
+            if 'df_gastos_flota' not in st.session_state:
+                if 'conn' in locals() and conn is not None:
+                    try: df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
+                    except Exception: df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
+                else: df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
+                
+                # Asegurar que la columna comprobante exista si era una base antigua
+                if "COMPROBANTE" not in df_g.columns: df_g["COMPROBANTE"] = ""
+                st.session_state['df_gastos_flota'] = df_g
+            else:
+                df_g = st.session_state['df_gastos_flota']
+
+            vehiculos_base = [f"MX-{i}" for i in range(1, 41)]
+            vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
+            lista_vehiculos = sorted(list(set(vehiculos_base + vehiculos_historicos)))
+
+            st.markdown("---")
+            # --- BOTÓN DE REPORTE GENERAL PARA TODA LA FLOTA ---
+            col_gen1, col_gen2 = st.columns([1, 2])
+            with col_gen1:
+                if not df_g.empty:
+                    try:
+                        pdf_gen = generar_pdf_reporte_general_gastos(df_g)
+                        st.download_button(
+                            "📊 Descargar Reporte General de TODA la Flota",
+                            data=pdf_gen,
+                            file_name=f"Reporte_General_Flota_{get_hn_time().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                        )
+                    except Exception as e: st.error(f"Error PDF General: {e}")
+            st.markdown("---")
+
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1: vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad a revisar:", ["-- Seleccione --"] + lista_vehiculos)
+            with col_sel2: rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=30), get_hn_time().date()])
+                
+            st.markdown("---")
+
+            if vehiculo_seleccionado != "-- Seleccione --":
+                c1, c2 = st.columns([1.2, 2])
+                
+# --- IZQUIERDA: FORMULARIO + SUBIDA DE ARCHIVO ---
+                with c1:
+                    st.markdown("#### 📝 Registrar Nuevo Gasto")
+                    with st.form("form_gasto"):
+                        fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date())
+                        tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
+                        desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Compra de Batería)")
+                        monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0)
+                        
+                        archivo_comprobante = st.file_uploader("📎 Adjuntar Factura/Recibo (Opcional)", type=['pdf', 'png', 'jpg', 'jpeg'])
+                        
+                        btn_guardar = st.form_submit_button("💾 Guardar Registro", use_container_width=True)
+                        
+                        if btn_guardar:
+                            if desc_gasto.strip() and monto_gasto > 0:
+                                url_archivo = ""
+                                
+                                # =======================================================
+                                # 🚨 MOTOR DE ALERTA TEMPRANA (ÚLTIMOS 3 MESES)
+                                # =======================================================
+                                # Ignoramos palabras súper comunes para no dar falsas alarmas (ej. combustible)
+                                palabras_ignorar = {'para', 'como', 'factura', 'fac', 'cambio', 'pago', 'compra', 'reparacion', 'mantenimiento', 'gasolina', 'combustible', 'diesel', 'galones'}
+                                palabras_clave = [p.lower() for p in re.findall(r'\b\w+\b', desc_gasto) if len(p) > 3 and p.lower() not in palabras_ignorar]
+                                
+                                # Calcular límite de 90 días hacia atrás
+                                fecha_limite = pd.to_datetime(fecha_gasto) - pd.Timedelta(days=90)
+                                df_reciente = df_g[
+                                    (df_g['VEHICULO'] == vehiculo_seleccionado) & 
+                                    (pd.to_datetime(df_g['FECHA'], errors='coerce') >= fecha_limite)
+                                ]
+                                
+                                alerta_msg = None
+                                # Buscamos si la palabra clave (ej. "bomba", "llanta", "bateria") ya se compró
+                                for _, row_hist in df_reciente.iterrows():
+                                    desc_hist = str(row_hist['DESCRIPCION']).lower()
+                                    for palabra in palabras_clave:
+                                        if palabra in desc_hist:
+                                            alerta_msg = f"**ALERTA DE CONTROL:** Hace menos de 3 meses (el {row_hist['FECHA']}) ya se registró algo similar: *'{row_hist['DESCRIPCION']}'*. Verifique garantía, pieza defectuosa o posible mal uso de la unidad."
+                                            break
+                                    if alerta_msg:
+                                        break
+                                
+                                # Guardamos la alerta en la sesión para mostrarla en rojo luego de recargar
+                                if alerta_msg:
+                                    st.session_state['alerta_repuesto'] = alerta_msg
+                                # =======================================================
+
+                                if archivo_comprobante:
+                                    with st.spinner("☁️ Subiendo documento a la nube..."):
+                                        mimetype = "application/pdf" if archivo_comprobante.name.lower().endswith('.pdf') else "image/jpeg"
+                                        nombre_file = f"FAC_{vehiculo_seleccionado}_{fecha_gasto.strftime('%Y%m%d')}_{archivo_comprobante.name}"
+                                        url_archivo, err = subir_factura_nube(archivo_comprobante, nombre_file, mimetype)
+                                        if err: st.error(err)
+
+                                nuevo_registro = pd.DataFrame([{
+                                    "FECHA": pd.to_datetime(fecha_gasto).strftime('%Y-%m-%d'),
+                                    "VEHICULO": vehiculo_seleccionado,
+                                    "TIPO_GASTO": tipo_gasto,
+                                    "DESCRIPCION": desc_gasto,
+                                    "MONTO": float(monto_gasto),
+                                    "COMPROBANTE": url_archivo if url_archivo else ""
+                                }])
+                                
+                                df_g = pd.concat([df_g, nuevo_registro], ignore_index=True)
+                                st.session_state['df_gastos_flota'] = df_g
+                                
+                                if 'conn' in locals() and conn is not None:
+                                    try:
+                                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
+                                        st.success("✅ Gasto y documento sincronizados en la Nube.")
+                                    except Exception as e: st.warning("⚠️ Guardado localmente.")
+                                
+                                time.sleep(1.5)
+                                st.rerun()
+                            else:
+                                st.error("⚠️ Por favor ingresa una descripción y un monto mayor a L. 0.00")
+
+                # --- DERECHA: HISTORIAL Y PDF ---
+                with c2:
+                    st.markdown(f"#### 📊 Historial Financiero: {vehiculo_seleccionado}")
+                    
+                    # === MOSTRAR ALERTA EN ROJO SI SE ACTIVÓ ===
+                    if 'alerta_repuesto' in st.session_state:
+                        st.error(st.session_state['alerta_repuesto'], icon="🚨")
+                        del st.session_state['alerta_repuesto'] # Se elimina para que desaparezca si el usuario cambia de pestaña
+                    # ============================================
+                    
+                    df_filtro = df_g[df_g['VEHICULO'] == vehiculo_seleccionado].copy()
+                    
+                    if not df_filtro.empty:
+                        df_filtro['FECHA_DT'] = pd.to_datetime(df_filtro['FECHA'], errors='coerce').dt.date
+                        
+                        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+                            df_filtro = df_filtro[(df_filtro['FECHA_DT'] >= rango_fechas[0]) & (df_filtro['FECHA_DT'] <= rango_fechas[1])]
+                        elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
+                            df_filtro = df_filtro[df_filtro['FECHA_DT'] == rango_fechas[0]]
+                        
+                        df_filtro = df_filtro.drop(columns=['FECHA_DT'])
+
+                    if not df_filtro.empty:
+                        # Asegurar que el monto sea sumable
+                        df_filtro['MONTO'] = pd.to_numeric(df_filtro['MONTO'], errors='coerce').fillna(0.0)
+                        total_gastado = df_filtro['MONTO'].sum()
+                        
+                        k1, k2 = st.columns(2)
+                        k1.metric("🛒 Facturas en el periodo", len(df_filtro))
+                        k2.metric("💰 Total Gastado", f"L. {total_gastado:,.2f}")
+                        
+                        st.dataframe(
+                            df_filtro.sort_values('FECHA', ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "MONTO": st.column_config.NumberColumn("Monto (L.)", format="L. %.2f"),
+                                "COMPROBANTE": st.column_config.LinkColumn("📄 Comprobante", display_text="Ver Documento")
+                            }
+                        )
+                        
+                        try:
+                            pdf_bytes = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado, rango_fechas, total_gastado)
+                            st.download_button(
+                                "📄 Descargar Reporte en PDF",
+                                data=pdf_bytes,
+                                file_name=f"Reporte_Gastos_{vehiculo_seleccionado}.pdf",
+                                mime="application/pdf",
+                                type="secondary",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"Error generando PDF: {e}")
+                            
+                        # =========================================================
+                        # 🛡️ ZONA EXCLUSIVA PARA ADMINISTRADORES (ELIMINAR REGISTROS)
+                        # =========================================================
+                        rol_actual = str(st.session_state.get("rol", st.session_state.get("role", ""))).strip().lower()
+                        usuario_actual = str(st.session_state.get("username", st.session_state.get("usuario", ""))).strip().lower()
+                        
+                        if rol_actual == "admin" or usuario_actual == "jaison": 
+                            st.markdown("---")
+                            st.markdown("#### 🛠️ Zona de Administración")
+                            with st.expander("🗑️ Eliminar un registro de este vehículo"):
+                                opciones_borrar = {
+                                    idx: f"ID: {idx} | {row['FECHA']} | {row['TIPO_GASTO']} | L. {row['MONTO']}" 
+                                    for idx, row in df_filtro.iterrows()
+                                }
+                                
+                                if opciones_borrar:
+                                    registro_a_borrar = st.selectbox(
+                                        "Selecciona con cuidado el registro a eliminar:", 
+                                        options=list(opciones_borrar.keys()), 
+                                        format_func=lambda x: opciones_borrar[x]
+                                    )
+                                    if st.button("🚨 Confirmar Eliminación Permanente", type="primary"):
+                                        df_g = df_g.drop(registro_a_borrar).reset_index(drop=True)
+                                        st.session_state['df_gastos_flota'] = df_g
+                                        
+                                        if 'conn' in locals() and conn is not None:
+                                            try:
+                                                conn.clear(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos)
+                                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
+                                                st.success("✅ Registro eliminado y base de datos actualizada.")
+                                            except Exception as e:
+                                                st.error(f"⚠️ Se borró localmente pero falló la nube: {e}")
+                                        else:
+                                            st.success("✅ Registro eliminado en memoria local.")
+                                        
+                                        time.sleep(1.5)
+                                        st.rerun()
+                                else:
+                                    st.info("No hay registros disponibles para eliminar.")
+                        # =========================================================
+                    else:
+                        st.info("No hay facturas o gastos registrados en este rango de fechas.")
+                        
     # ==========================================================================
     # --- PESTAÑA 4: CHECKLIST INSPECCIÓN VEHICULAR ---
     # ==========================================================================
