@@ -9,6 +9,8 @@ import io
 import time
 from datetime import datetime, timedelta, timezone
 
+st.session_state['username'] = 'jaison'
+
 from tools import (
     get_hn_time,
     read_file_robust,
