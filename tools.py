@@ -2357,6 +2357,14 @@ def generar_pdf_memorandum(row):
     import tempfile
     import os
     
+    # --- DICCIONARIO INTERNO DE GRAVEDAD ---
+    def clasificar_gravedad(motivo):
+        m = str(motivo).upper().strip()
+        faltas_graves = ["ABANDONO DE RUTA", "DAÑO A EQUIPO", "FUSIONADORA", "DAÑO AL VEH", "ÓRDENES PENDIENTES", "AUSENCIAS LABORALES"]
+        if "LLEGADAS TARDES" in m and "GRAVE" not in m: return "LEVE"
+        if any(g in m for g in faltas_graves) or "GRAVE" in m: return "GRAVE"
+        return "OTRO"
+    
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -2366,12 +2374,17 @@ def generar_pdf_memorandum(row):
     pdf.cell(0, 10, safestr("MEMORANDUM: LLAMADO DE ATENCION"), border=0, ln=True, align="C")
     pdf.ln(5)
     
+    motivo_original = str(row.get('TIPO_FALTA', ''))
+    nivel_gravedad = clasificar_gravedad(motivo_original)
+    
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 6, "Para: Recursos Humanos / Gerencia", ln=True)
     pdf.cell(0, 6, safestr(f"Tecnico Implicado: {row.get('TECNICO', '')}"), ln=True)
     pdf.cell(0, 6, safestr(f"Fecha de Incidencia: {row.get('FECHA_INCIDENCIA', '')}"), ln=True)
-    pdf.cell(0, 6, safestr(f"Tipo de Falta: {row.get('TIPO_FALTA', '')}"), ln=True)
+    
+    # --- AQUÍ INYECTAMOS LA GRAVEDAD VISUAL EN EL PDF INDIVIDUAL ---
+    pdf.cell(0, 6, safestr(f"Tipo de Falta: {motivo_original} [{nivel_gravedad}]"), ln=True)
     pdf.ln(5)
     
     pdf.seccion_titulo("Detalle de los hechos:")
@@ -2397,12 +2410,11 @@ def generar_pdf_memorandum(row):
                 with open(tmppath, 'wb') as f:
                     f.write(response.content)
                 
-                # Si no hay espacio en la hoja para la foto, creamos una página nueva
                 if pdf.get_y() > 170:
                     pdf.add_page()
                     
                 pdf.image(tmppath, x=15, w=180)
-                os.remove(tmppath) # Borramos la foto local para no dejar rastro
+                os.remove(tmppath)
             else:
                 pdf.set_font("Helvetica", "I", 9)
                 pdf.cell(0, 5, "(Nota: No se pudo descargar la evidencia grafica desde el servidor).", ln=True)
