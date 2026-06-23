@@ -3091,8 +3091,8 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
 # ==============================================================================
 def sanitizar_core_monitor(df):
     """
-    Filtro puro e inquebrantable para el Monitor Diario.
-    Destruye duplicados, filtra actividades basura, estados pendientes y fechas viejas.
+    Filtro inteligente para el Monitor Diario.
+    Protege las órdenes válidas y elimina solo la basura real.
     """
     import pandas as pd
     
@@ -3102,37 +3102,54 @@ def sanitizar_core_monitor(df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip().str.upper()
     
-    # 1. DESTRUIR DUPLICADOS EXACTOS (Si el sistema exportó la misma orden 3 veces)
-    col_num = next((c for c in df.columns if 'NUM' in c or 'ORDEN' in c or 'ID' in c), None)
+    # 1. DESTRUIR DUPLICADOS (Evitando la trampa de borrar por ID de Técnico)
+    # Solo buscamos columnas que estrictamente suenen a un identificador de orden
+    col_num = next((c for c in df.columns if any(k in c for k in ['ORDEN', 'TICKET', 'OT', 'REQ'])), None)
     if col_num:
         df = df.drop_duplicates(subset=[col_num], keep='last')
     else:
         df = df.drop_duplicates()
         
-    # 2. DESTRUIR ESTADOS INVÁLIDOS (Solo pasan las reales)
+    # 2. ESTADOS INVÁLIDOS (Ignorando género y plurales)
     if 'ESTADO' in df.columns:
-        estados_validos = ['FINALIZADA', 'CERRADA', 'LIQUIDADA', 'ATENDIDO']
-        df = df[df['ESTADO'].astype(str).str.strip().str.upper().isin(estados_validos)]
+        # Usamos la raíz de la palabra para atrapar 'FINALIZADO' y 'FINALIZADA' por igual
+        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD']
+        def estado_valido(est):
+            est_str = str(est).strip().upper()
+            return any(raiz in est_str for raiz in raices_validas)
+        df = df[df['ESTADO'].apply(estado_valido)]
         
-    # 3. FILTRAR SOLO ACTIVIDADES PRINCIPALES (Ignorar basura)
-    col_act = next((c for c in df.columns if 'ACTIVIDAD' in c or 'TIPO' in c), None)
+    # 3. FILTRAR ACTIVIDADES PRINCIPALES (Red ampliada definitiva)
+    col_act = next((c for c in df.columns if 'ACTIVIDAD' in c or 'TIPO' in c or 'TAREA' in c), None)
     if col_act:
-        actividades_clave = ['INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT']
+        # Aquí agregamos CEQUI, SOP y cualquier otra variante operativa
+        actividades_clave = [
+            'INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'SOP', 
+            'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT',
+            'AVERIA', 'TRASLADO', 'MUDANZA', 'REUBICACION', 'RETIRO', 'VISITA', 'MANTENIMIENTO',
+            'CEQUI', 'CAMBIO', 'MIGRACION', 'DESINSTALACION', 'CORTE', 'RECONEXION', 'REVISION'
+        ]
         def es_valida(act):
-            return any(k in str(act).upper() for k in actividades_clave)
+            act_str = str(act).upper()
+            return any(k in act_str for k in actividades_clave)
         df = df[df[col_act].apply(es_valida)]
         
-    # 4. FILTRO DE FECHA INQUEBRANTABLE (SOLO HOY)
-    col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c), None)
+    # 4. FILTRO DE FECHA (Manejo de formatos mixtos)
+    col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c or 'FECHA' in c), None)
     if col_liq:
-        fecha_hoy = get_honduras_time().date()
-        # Parseo seguro priorizando el día primero (ej. 12/06/2026 = 12 de Junio)
-        df['FECHA_TMP'] = pd.to_datetime(df[col_liq], dayfirst=True, errors='coerce').dt.date
+        try:
+            from tools import get_honduras_time
+            fecha_hoy = get_honduras_time().date()
+        except ImportError:
+            from datetime import datetime, timedelta, timezone
+            fecha_hoy = (datetime.now(timezone.utc) - timedelta(hours=6)).date()
+            
+        # 'format=mixed' evita que fechas como 05/06/2026 se inviertan accidentalmente
+        df['FECHA_TMP'] = pd.to_datetime(df[col_liq], format='mixed', dayfirst=True, errors='coerce').dt.date
         df = df[df['FECHA_TMP'] == fecha_hoy]
         df = df.drop(columns=['FECHA_TMP'])
         
     return df
-
 # ==============================================================================
 # MOTOR PDF: REPORTE DE GASTOS Y MANTENIMIENTO DE FLOTA (auditorv.py)
 # ==============================================================================
