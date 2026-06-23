@@ -3092,9 +3092,10 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
 def sanitizar_core_monitor(df):
     """
     Filtro inteligente para el Monitor Diario.
-    Protege las órdenes válidas y elimina solo la basura real.
+    Protege las órdenes válidas, ignora tildes y evita trampas de fechas.
     """
     import pandas as pd
+    import unicodedata
     
     if df is None or df.empty:
         return df
@@ -3102,27 +3103,29 @@ def sanitizar_core_monitor(df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip().str.upper()
     
-    # 1. DESTRUIR DUPLICADOS (Evitando la trampa de borrar por ID de Técnico)
-    # Solo buscamos columnas que estrictamente suenen a un identificador de orden
+    # 1. DESTRUIR DUPLICADOS
     col_num = next((c for c in df.columns if any(k in c for k in ['ORDEN', 'TICKET', 'OT', 'REQ'])), None)
     if col_num:
         df = df.drop_duplicates(subset=[col_num], keep='last')
     else:
         df = df.drop_duplicates()
         
-    # 2. ESTADOS INVÁLIDOS (Ignorando género y plurales)
+    # --- HERRAMIENTA ANTI-TILDES ---
+    def quitar_tildes(texto):
+        if pd.isna(texto): return ""
+        return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii').upper()
+
+    # 2. ESTADOS INVÁLIDOS (Protegido contra tildes y plurales)
     if 'ESTADO' in df.columns:
-        # Usamos la raíz de la palabra para atrapar 'FINALIZADO' y 'FINALIZADA' por igual
-        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD']
+        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD', 'TERMINAD']
         def estado_valido(est):
-            est_str = str(est).strip().upper()
+            est_str = quitar_tildes(est)
             return any(raiz in est_str for raiz in raices_validas)
         df = df[df['ESTADO'].apply(estado_valido)]
         
-    # 3. FILTRAR ACTIVIDADES PRINCIPALES (Red ampliada definitiva)
+    # 3. FILTRAR ACTIVIDADES PRINCIPALES (Protegido contra tildes)
     col_act = next((c for c in df.columns if 'ACTIVIDAD' in c or 'TIPO' in c or 'TAREA' in c), None)
     if col_act:
-        # Aquí agregamos CEQUI, SOP y cualquier otra variante operativa
         actividades_clave = [
             'INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'SOP', 
             'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT',
@@ -3130,12 +3133,17 @@ def sanitizar_core_monitor(df):
             'CEQUI', 'CAMBIO', 'MIGRACION', 'DESINSTALACION', 'CORTE', 'RECONEXION', 'REVISION'
         ]
         def es_valida(act):
-            act_str = str(act).upper()
+            act_str = quitar_tildes(act)
             return any(k in act_str for k in actividades_clave)
         df = df[df[col_act].apply(es_valida)]
         
-    # 4. FILTRO DE FECHA (Manejo de formatos mixtos)
-    col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c or 'FECHA' in c), None)
+    # 4. FILTRO DE FECHA (Priorizando ESTRICTAMENTE la fecha de Cierre/Liquidado)
+    # Evita agarrar "FECHA DE APERTURA" o "ENTRADA" por accidente.
+    col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c or 'FIN' in c), None)
+    if not col_liq:
+        # Solo como último recurso agarramos algo genérico que diga FECHA
+        col_liq = next((c for c in df.columns if 'FECHA' in c), None)
+        
     if col_liq:
         try:
             from tools import get_honduras_time
@@ -3144,7 +3152,6 @@ def sanitizar_core_monitor(df):
             from datetime import datetime, timedelta, timezone
             fecha_hoy = (datetime.now(timezone.utc) - timedelta(hours=6)).date()
             
-        # 'format=mixed' evita que fechas como 05/06/2026 se inviertan accidentalmente
         df['FECHA_TMP'] = pd.to_datetime(df[col_liq], format='mixed', dayfirst=True, errors='coerce').dt.date
         df = df[df['FECHA_TMP'] == fecha_hoy]
         df = df.drop(columns=['FECHA_TMP'])
