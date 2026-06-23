@@ -3091,12 +3091,13 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
 # ==============================================================================
 def sanitizar_core_monitor(df):
     """
-    Filtro de Apertura Total:
-    Si la orden tiene un técnico asignado y se cerró hoy, ENTRA. 
-    Se eliminan las restricciones por nombre de actividad.
+    Filtro de Cero Fricción + Reparador Automático de Fechas (Formato MaxCom)
+    Garantiza que toda orden trabajada hoy, sin importar la actividad, aparezca.
     """
     import pandas as pd
     import unicodedata
+    import re
+    from datetime import datetime, date, timezone, timedelta
     
     if df is None or df.empty:
         return df
@@ -3104,33 +3105,33 @@ def sanitizar_core_monitor(df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip().str.upper()
     
-    # 1. DESTRUIR DUPLICADOS EXACTOS (Sin tocar números de orden)
+    # 1. DESTRUIR DUPLICADOS (Sin borrar órdenes del mismo técnico)
     df = df.drop_duplicates()
         
     def quitar_tildes(texto):
         if pd.isna(texto): return ""
         return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii').upper()
 
-    # 2. REGLA DE ORO: TIENE QUE HABER UN TÉCNICO ASIGNADO
-    col_tec = next((c for c in df.columns if 'TECNICO' in c or 'EMPLEADO' in c or 'ASIGNADO' in c or 'RECURSO' in c), None)
+    # --- 2. REGLA DEL TÉCNICO (A prueba de balas) ---
+    col_tec = next((c for c in df.columns if any(k in c for k in ['TECNICO', 'EMPLEADO', 'ASIGNADO', 'RECURSO', 'OPERADOR', 'USER'])), None)
     if col_tec:
-        # Quitamos celdas vacías o nulas
         df = df[df[col_tec].notna()]
         df = df[df[col_tec].astype(str).str.strip() != '']
         df = df[~df[col_tec].astype(str).str.upper().isin(['NAN', 'NONE', 'NULL', 'NO ASIGNADO', 'SIN ASIGNAR'])]
 
-    # 3. ESTADOS VÁLIDOS (Tiene que estar cerrada para poder calcular sus tiempos)
-    if 'ESTADO' in df.columns:
-        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD', 'TERMINAD', 'OK']
+    # --- 3. ESTADOS VÁLIDOS (Súper Ampliado) ---
+    col_est = next((c for c in df.columns if 'ESTADO' in c or 'STATUS' in c), None)
+    if col_est:
+        # Añadidos: RESUELT, ENTREGAD, OK
+        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD', 'TERMINAD', 'OK', 'RESUELT', 'ENTREGAD']
         def estado_valido(est):
             est_str = quitar_tildes(est)
+            # Si el sistema dejó el estado en blanco, la dejamos pasar para no perderla
+            if not est_str or est_str in ['NAN', 'NONE', '']: return True
             return any(raiz in est_str for raiz in raices_validas)
-        df = df[df['ESTADO'].apply(estado_valido)]
-        
-    # --- ¡SE ELIMINÓ EL FILTRO DE NOMBRES DE ACTIVIDAD! ---
-    # Ya no importa si se llama "Acometida", "Prueba" o "Soporte", todas pasan.
+        df = df[df[col_est].apply(estado_valido)]
 
-    # 4. FILTRO DE FECHA (Para que cuadre con el día monitoreado)
+    # --- 4. EL ASESINO DE ÓRDENES: FORMATO "a.m. / p.m." ---
     col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c or 'FIN' in c), None)
     if not col_liq:
         col_liq = next((c for c in df.columns if 'FECHA' in c), None)
@@ -3140,12 +3141,25 @@ def sanitizar_core_monitor(df):
             from tools import get_honduras_time
             fecha_hoy = get_honduras_time().date()
         except ImportError:
-            from datetime import datetime, timedelta, timezone
             fecha_hoy = (datetime.now(timezone.utc) - timedelta(hours=6)).date()
             
-        df['FECHA_TMP'] = pd.to_datetime(df[col_liq], format='mixed', dayfirst=True, errors='coerce').dt.date
+        def limpiar_fecha_maxcom(val):
+            if pd.isna(val): return pd.NaT
+            # Si ya es un formato de tiempo nativo, lo respetamos
+            if isinstance(val, (pd.Timestamp, datetime, date)): return val
+            
+            str_val = str(val).strip()
+            # MAGIA: Curamos el "a.m." y "p.m." que hacía que Pandas borrara las filas
+            str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
+            str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
+            return str_val
+
+        df['FECHA_CURADA'] = df[col_liq].apply(limpiar_fecha_maxcom)
+        df['FECHA_TMP'] = pd.to_datetime(df['FECHA_CURADA'], format='mixed', dayfirst=True, errors='coerce').dt.date
+        
+        # Nos quedamos estrictamente con las cerradas el día de HOY
         df = df[df['FECHA_TMP'] == fecha_hoy]
-        df = df.drop(columns=['FECHA_TMP'])
+        df = df.drop(columns=['FECHA_TMP', 'FECHA_CURADA'])
         
     return df
 # ==============================================================================
