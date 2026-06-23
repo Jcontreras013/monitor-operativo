@@ -3091,8 +3091,7 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
 # ==============================================================================
 def sanitizar_core_monitor(df):
     """
-    Filtro inteligente para el Monitor Diario.
-    Protege las órdenes válidas, ignora tildes y evita trampas de fechas.
+    Filtro purificado: No borra tareas del mismo ticket y permite TODAS las operativas.
     """
     import pandas as pd
     import unicodedata
@@ -3103,45 +3102,43 @@ def sanitizar_core_monitor(df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip().str.upper()
     
-    # 1. DESTRUIR DUPLICADOS
-    col_num = next((c for c in df.columns if any(k in c for k in ['ORDEN', 'TICKET', 'OT', 'REQ'])), None)
-    if col_num:
-        df = df.drop_duplicates(subset=[col_num], keep='last')
-    else:
-        df = df.drop_duplicates()
+    # 1. DESTRUIR DUPLICADOS (CORRECCIÓN CRÍTICA)
+    # Ya NO borramos por número de orden. Si dos técnicos tocan la misma orden,
+    # o si tiene dos tareas (ej. avería y luego cambio de equipo), ambas deben aparecer.
+    # Solo borramos filas que sean 100% idénticas por error de exportación del sistema.
+    df = df.drop_duplicates()
         
     # --- HERRAMIENTA ANTI-TILDES ---
     def quitar_tildes(texto):
         if pd.isna(texto): return ""
         return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii').upper()
 
-    # 2. ESTADOS INVÁLIDOS (Protegido contra tildes y plurales)
+    # 2. ESTADOS INVÁLIDOS
     if 'ESTADO' in df.columns:
-        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD', 'TERMINAD']
+        raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD', 'TERMINAD', 'OK']
         def estado_valido(est):
             est_str = quitar_tildes(est)
             return any(raiz in est_str for raiz in raices_validas)
         df = df[df['ESTADO'].apply(estado_valido)]
         
-    # 3. FILTRAR ACTIVIDADES PRINCIPALES (Protegido contra tildes)
+    # 3. FILTRAR ACTIVIDADES PRINCIPALES (Lista MASIVA y a prueba de balas)
     col_act = next((c for c in df.columns if 'ACTIVIDAD' in c or 'TIPO' in c or 'TAREA' in c), None)
     if col_act:
         actividades_clave = [
             'INSEQUIPO', 'INSFIBRA', 'SOPFIBRA', 'INSTALACION', 'SOPORTE', 'SOP', 
             'PLEX', 'EMPRESA', 'CORPORAT', 'BUSINESS', 'SME', 'PEXTERNO', 'SPLITTEROPT',
             'AVERIA', 'TRASLADO', 'MUDANZA', 'REUBICACION', 'RETIRO', 'VISITA', 'MANTENIMIENTO',
-            'CEQUI', 'CAMBIO', 'MIGRACION', 'DESINSTALACION', 'CORTE', 'RECONEXION', 'REVISION'
+            'CEQUI', 'CAMBIO', 'MIGRACION', 'DESINSTALACION', 'CORTE', 'RECONEXION', 'REVISION',
+            'REPARACION', 'ACTIVACION', 'ACOMETIDA', 'CONFIGURACION', 'NODO', 'ENLACE', 'FIBRA', 'DIAGNOSTICO'
         ]
         def es_valida(act):
             act_str = quitar_tildes(act)
             return any(k in act_str for k in actividades_clave)
         df = df[df[col_act].apply(es_valida)]
         
-    # 4. FILTRO DE FECHA (Priorizando ESTRICTAMENTE la fecha de Cierre/Liquidado)
-    # Evita agarrar "FECHA DE APERTURA" o "ENTRADA" por accidente.
+    # 4. FILTRO DE FECHA (Priorizando ESTRICTAMENTE la fecha de Cierre)
     col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c or 'FIN' in c), None)
     if not col_liq:
-        # Solo como último recurso agarramos algo genérico que diga FECHA
         col_liq = next((c for c in df.columns if 'FECHA' in c), None)
         
     if col_liq:
