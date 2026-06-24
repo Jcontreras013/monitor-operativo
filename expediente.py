@@ -49,19 +49,23 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
     try:
         if not os.path.exists(filepath): return personal
         with open(filepath, 'r', encoding='utf-8') as f:
+            # Quitamos los saltos de línea reales para procesar el ';' como Enter
             contenido = f.read().replace('\n', ' ')
         
+        # 1. Separamos por departamentos usando el punto
         bloques_departamentos = contenido.split('.')
         
         for bloque in bloques_departamentos:
             bloque = bloque.strip()
             if not bloque: continue
             
+            # 2. Separamos el nombre del departamento del resto usando la primera coma
             partes = bloque.split(',', 1)
             
             if len(partes) > 0:
                 departamento = partes[0].strip().upper()
                 
+                # 3. Separamos los nombres en cascada usando el punto y coma (;)
                 if len(partes) > 1:
                     empleados = [e.strip().upper() for e in partes[1].split(';') if e.strip()]
                 else:
@@ -95,7 +99,7 @@ def asignar_rubro_automatico(motivo, comentario):
         return "GPS"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_gps): 
         return "GPS"
-    if "LLEGADA TARDE" in motivo_str or "LLEGADAS TARDES" in motivo_str: 
+    if "LLEGADA TARDE" in motivo_str: 
         return "BIOMÉTRICO"
     if any(clv in motivo_str or clv in comentario_str for clv in claves_biometrico): 
         return "BIOMÉTRICO"
@@ -492,25 +496,16 @@ def mostrar_modulo_expedientes(conn, df_base):
             with c1:
                 lista_nombres = cargar_personal("personal_tecnico.txt")
                 
-                # --- NUEVA CLASIFICACIÓN DE MOTIVOS (GRAVES Y LEVES) ---
-                FALTAS_LEVES = ["Llegadas tardes"]
-                FALTAS_GRAVES = ["Abandono de ruta", "Daño a equipo de la empresa (Fusionadora, etc.)", "Daño al vehículo", "Órdenes Pendientes", "Ausencias Laborales"]
-                OTRAS = ["Exceso de Velocidad", "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"]
-                
-                opciones_faltas = ["-- Seleccione --"] + FALTAS_LEVES + FALTAS_GRAVES + OTRAS
-
-                tipo_falta_base = st.selectbox("🚫 Motivo:", opciones_faltas, key="sel_falta")
+                tipo_falta_base = st.selectbox("🚫 Motivo:", [
+                    "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
+                    "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"
+                ], key="sel_falta")
                 
                 if tipo_falta_base == "Reco / Cambio de Postes":
                     tipo_falta = "RECO / CAMBIO DE POSTES"
                     opciones_tecnicos = ["RECO"]
                     idx_defecto = 0
                     disabled_tec = True
-                elif tipo_falta_base == "-- Seleccione --":
-                    tipo_falta = ""
-                    opciones_tecnicos = ["---"] + lista_nombres
-                    idx_defecto = 0
-                    disabled_tec = False
                 else:
                     tipo_falta = tipo_falta_base
                     if tipo_falta_base == "Otro":
@@ -531,8 +526,6 @@ def mostrar_modulo_expedientes(conn, df_base):
             if st.button("💾 GUARDAR EN EXPEDIENTE OPERATIVO", type="primary", use_container_width=True):
                 if colaborador_sel == "---" or not comentario:
                     st.error("⚠️ Complete el nombre y el comentario.")
-                elif tipo_falta_base == "-- Seleccione --":
-                    st.error("⚠️ Por favor, seleccione un motivo válido de la lista.")
                 elif tipo_falta_base == "Otro" and not tipo_falta:
                     st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
                 else:
@@ -556,34 +549,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with st.spinner("Guardando en la Nube y en Sheets..."):
                             df_actual = obtener_datos_memoria(conn)
                                 
-                            # ==========================================================
-                            # 🚨 SEMÁFORO INTELIGENTE: REGLA DE 3 LLEGADAS TARDES
-                            # ==========================================================
-                            if tipo_falta == "Llegadas tardes":
-                                if df_actual is not None and not df_actual.empty:
-                                    # Filtramos el historial de este colaborador específico
-                                    df_tec = df_actual[df_actual['TECNICO'] == colaborador_sel].copy()
-                                    df_tec['FECHA_DT'] = pd.to_datetime(df_tec['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
-                                    
-                                    # Filtramos solo para el mes y año actuales de la falta que se está registrando
-                                    df_mes = df_tec[(df_tec['FECHA_DT'].dt.month == fecha_inc.month) & (df_tec['FECHA_DT'].dt.year == fecha_inc.year)]
-                                    df_mes = df_mes.sort_values('FECHA_DT')
-                                    
-                                    # Verificamos las dos últimas faltas del mes
-                                    if len(df_mes) >= 2:
-                                        ultimas_dos = df_mes.tail(2)['TIPO_FALTA'].str.upper().tolist()
-                                        if ultimas_dos == ["LLEGADAS TARDES", "LLEGADAS TARDES"]:
-                                            tipo_falta = "FALTA GRAVE (ACUMULACIÓN 3 LLEGADAS TARDES)"
-                                            st.warning("🚨 Semáforo Activado: Esta es la 3ra llegada tarde consecutiva en el mes. Se registra como FALTA GRAVE automáticamente.")
-                                            time.sleep(2) # Pausa breve para que el supervisor lea la alerta
-                            # ==========================================================
-
                             cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
                             
                             nueva_fila = [
                                 get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
                                 colaborador_sel,
-                                tipo_falta.upper(), # Aseguramos mayúsculas
+                                tipo_falta,
                                 fecha_inc.strftime("%d/%m/%Y"),
                                 comentario,
                                 ", ".join(urls),
