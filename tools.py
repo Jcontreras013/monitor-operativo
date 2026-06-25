@@ -71,13 +71,49 @@ def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
     except:
         return pd.NaT
 
-def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFrame:
-    df = df_input.copy()
-    for col in columnas:
+def procesar_fechas_seguro(df, columnas_fecha):
+    """
+    Convierte las columnas a datetime de forma segura.
+    Repara órdenes sin HORA_INI para que NO desaparezcan del Gantt Chart.
+    """
+    import pandas as pd
+    
+    if df is None or df.empty:
+        return df
+        
+    df = df.copy()
+    
+    # 1. Parseo seguro de todas las fechas solicitadas
+    for col in columnas_fecha:
         if col in df.columns:
-            df[col] = df[col].apply(parse_date_ultra_safe)
-            # CRÍTICO: Forzar formato de pandas para evitar errores de ploteo en el Gantt
-            df[col] = pd.to_datetime(df[col], errors='coerce')
+            # format='mixed' previene errores si algunas fechas vienen como 05/06 y otras como 2026-06-05
+            df[col] = pd.to_datetime(df[col], errors='coerce', format='mixed', dayfirst=True)
+            
+    # 2. EL SALVAVIDAS DEL GANTT CHART (Para órdenes CEQUI y operaciones rápidas)
+    # Si la orden fue liquidada pero el técnico no marcó "Inicio", la HORA_INI es nula.
+    # El gráfico de Gantt de Plotly destruye las filas sin inicio. Aquí lo reparamos.
+    if 'HORA_INI' in df.columns and 'HORA_LIQ' in df.columns:
+        # Buscar filas que tienen liquidación pero NO tienen inicio
+        mask_sin_inicio = df['HORA_INI'].isna() & df['HORA_LIQ'].notna()
+        if mask_sin_inicio.any():
+            # Inyectamos una duración visual de 30 minutos hacia atrás para que se pueda graficar
+            df.loc[mask_sin_inicio, 'HORA_INI'] = df.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
+            
+    # 3. Reparación a la inversa (Por si la iniciaron pero sigue "En Ruta" o "En Proceso")
+    # Esto asegura que la barra del Gantt llegue hasta la hora actual y se vea "viva"
+    if 'HORA_INI' in df.columns and 'HORA_LIQ' in df.columns:
+        mask_sin_fin = df['HORA_LIQ'].isna() & df['HORA_INI'].notna()
+        if mask_sin_fin.any():
+            try:
+                from tools import get_honduras_time
+                ahora = get_honduras_time()
+            except ImportError:
+                from datetime import datetime, timedelta, timezone
+                ahora = datetime.now(timezone.utc) - timedelta(hours=6)
+            
+            # Extendemos la barra hasta el minuto actual para que la gráfica muestre que siguen trabajando
+            df.loc[mask_sin_fin, 'HORA_LIQ'] = pd.to_datetime(ahora)
+            
     return df
 
 # ==============================================================================
