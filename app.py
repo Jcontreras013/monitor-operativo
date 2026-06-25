@@ -159,7 +159,13 @@ def sincronizar_datos_nube(conn):
                     temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
                     df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
                     df_nube = df_nube.sort_values(by='FECHA_SORT', na_position='first')
-                    df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
+                    
+                    # 🔥 LA CURA: Agrupamos por NUM y ACTIVIDAD para proteger los CEQUI y sub-tareas
+                    if 'ACTIVIDAD' in df_nube.columns:
+                        df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM', 'ACTIVIDAD'], keep='last')
+                    else:
+                        df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
+                        
                     df_invalidos = df_nube[df_nube['NUM'] == 'N/D']
                     df_nube = pd.concat([df_validos, df_invalidos]).drop(columns=['FECHA_SORT'], errors='ignore')
                         
