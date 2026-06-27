@@ -948,7 +948,7 @@ def main():
                                 )
                         st.markdown("---")
             else:
-            st.info("No hay actividades registradas en esta fecha para generar el Gantt.")
+                st.info("No hay actividades registradas en esta fecha para generar el Gantt.")
 
             if not df_cerradas_espejo.empty:
                 st.markdown("### 📊 Desglose de Producción")
