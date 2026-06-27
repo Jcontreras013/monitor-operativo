@@ -1449,26 +1449,25 @@ def main():
                         # 🔥 SALVAVIDAS 1: Inyectar 30 min. a las que no tienen inicio ANTES del filtro destructivo
                         mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
+                      # ==============================================================================
+                        # 🔥 REPARACIÓN DE APERTURA TOTAL (Para que veas todo desde el inicio)
+                        # ==============================================================================
+                        # 1. Filtramos solo por el día de hoy (Aperturadas o Liquidadas)
+                        mask_fecha_hoy = (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor) | \
+                                         (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
                         
-# ==============================================================================
-# 🔥 REPARACIÓN DE APERTURA TOTAL (Para que veas todo desde el inicio)
-# ==============================================================================
-# 1. Filtramos solo por el día de hoy (Aperturadas o Liquidadas)
-                mask_fecha_hoy = (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor) | \
-                                 (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-
-                df_para_gantt_final = df_monitor_filtrado[mask_fecha_hoy].copy()
-
-# 2. SALVAVIDAS: Si no tiene HORA_INI, usamos la FECHA_APE como inicio virtual
-# Esto hará que aparezcan en el Gantt aunque el técnico no haya marcado inicio
-                df_para_gantt_final['HORA_INI'] = df_para_gantt_final['HORA_INI'].fillna(df_para_gantt_final['FECHA_APE'])
-
-# 3. SALVAVIDAS: Si no tiene HORA_LIQ, usamos el momento actual (Ahora)
-                ahora_hx = get_honduras_time()
-                df_para_gantt_final['HORA_LIQ'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
-
-                    # 4. Eliminamos el filtro destructivo que borraba las que no tenían hora
-                    # (Eliminamos: df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy())
+                        df_para_gantt_final = df_monitor_filtrado[mask_fecha_hoy].copy()
+                        
+                        # 2. SALVAVIDAS: Si no tiene HORA_INI, usamos la FECHA_APE como inicio virtual
+                        # Esto hará que aparezcan en el Gantt aunque el técnico no haya marcado inicio
+                        df_para_gantt_final['HORA_INI'] = df_para_gantt_final['HORA_INI'].fillna(df_para_gantt_final['FECHA_APE'])
+                        
+                        # 3. SALVAVIDAS: Si no tiene HORA_LIQ, usamos el momento actual (Ahora)
+                        ahora_hx = get_honduras_time()
+                        df_para_gantt_final['HORA_LIQ'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
+                        
+                        # 4. Eliminamos el filtro destructivo que borraba las que no tenían hora
+                        # (Eliminamos: df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy())
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
                             
