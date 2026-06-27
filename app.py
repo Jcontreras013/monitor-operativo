@@ -1439,49 +1439,41 @@ def main():
             # ==============================================================================
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
-                    with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
-                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                        mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
+                        # 🔥 1. REGLA DEL USUARIO: Entra TODO lo que se haya movido HOY (Abierto, Iniciado o Cerrado)
+                        es_de_hoy = (
+                            (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) |
+                            (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) |
+                            (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor)
+                        )
                         
-                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+                        df_para_gantt_final = df_monitor_filtrado[es_de_hoy].copy()
                         
-                        # 🔥 SALVAVIDAS 1: Inyectar 30 min. a las que no tienen inicio ANTES del filtro destructivo
-                        mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
-                        df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
-                      # ==============================================================================
-                        # 🔥 REPARACIÓN DE APERTURA TOTAL (Para que veas todo desde el inicio)
-                        # ==============================================================================
-                        # 1. Filtramos solo por el día de hoy (Aperturadas o Liquidadas)
-                        mask_fecha_hoy = (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor) | \
-                                         (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                        
-                        df_para_gantt_final = df_monitor_filtrado[mask_fecha_hoy].copy()
-                        
-                        # 2. SALVAVIDAS: Si no tiene HORA_INI, usamos la FECHA_APE como inicio virtual
-                        # Esto hará que aparezcan en el Gantt aunque el técnico no haya marcado inicio
-                        df_para_gantt_final['HORA_INI'] = df_para_gantt_final['HORA_INI'].fillna(df_para_gantt_final['FECHA_APE'])
-                        
-                        # 3. SALVAVIDAS: Si no tiene HORA_LIQ, usamos el momento actual (Ahora)
-                        ahora_hx = get_honduras_time()
-                        df_para_gantt_final['HORA_LIQ'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
-                        
-                        # 4. Eliminamos el filtro destructivo que borraba las que no tenían hora
-                        # (Eliminamos: df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy())
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
                             
-                            df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
+                            # 🔥 2. LA MAGIA DE LA APERTURA: 
+                            # Si el técnico no ha marcado "Inicio", usamos la fecha en que se APERTURÓ la orden para que aparezca de inmediato.
+                            df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI'].fillna(df_para_gantt_final['FECHA_APE'])
+                            
+                            # Rescate extremo: Si no tiene ni Apertura ni Inicio, pero sí Cierre (rarísimo), le restamos 30 mins al cierre.
+                            mask_sin_inicio = df_para_gantt_final['GANTT_START'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
+                            df_para_gantt_final.loc[mask_sin_inicio, 'GANTT_START'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
+                            
+                            # Eliminamos las que definitivamente estén corruptas sin fechas
+                            df_para_gantt_final = df_para_gantt_final.dropna(subset=['GANTT_START']).copy()
+                            
+                            # 🔥 3. DIBUJO EN TIEMPO REAL:
+                            # Si ya se cerró, la barra termina en su hora de cierre. Si sigue ABIERTA, la barra llega hasta la hora actual (ahora_hx).
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
                             
-                            # 🔥 SALVAVIDAS 2: Si el CEQUI duró 0 minutos (Inicio y Cierre a la misma hora), Plotly no lo dibuja
-                            mask_cero_min = df_para_gantt_final['GANTT_START'] == df_para_gantt_final['GANTT_END']
-                            df_para_gantt_final.loc[mask_cero_min, 'GANTT_START'] = df_para_gantt_final.loc[mask_cero_min, 'GANTT_END'] - pd.Timedelta(minutes=30)
+                            # Evitar barras invisibles (si abren y cierran en el mismo exacto minuto)
+                            mask_cero_min = df_para_gantt_final['GANTT_START'] >= df_para_gantt_final['GANTT_END']
+                            df_para_gantt_final.loc[mask_cero_min, 'GANTT_END'] = df_para_gantt_final.loc[mask_cero_min, 'GANTT_START'] + pd.Timedelta(minutes=30)
                             
-                            mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
-                            df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
-                            
-                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
+                            # Textos para los recuadros
+                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M').fillna("Pendiente (Usa Hr. Apertura)")
                             df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
@@ -1494,12 +1486,11 @@ def main():
                                 "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
                                 "COLONIA=" + df_para_gantt_final['COLONIA'].astype(str) + "<br>" +
                                 "ESTADO=" + df_para_gantt_final['ESTADO'].astype(str) + "<br>" +
-                                "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
-                                "Cierre=" + df_para_gantt_final['Cierre'].astype(str) + "<br>" +
-                                "Tiempo Total=" + df_para_gantt_final['TIEMPO_REAL'].astype(str)
+                                "Inicio Real=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
+                                "Cierre=" + df_para_gantt_final['Cierre'].astype(str)
                             )
 
-                            st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
+                            st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades En Curso / Cerradas)</h5>", unsafe_allow_html=True)
                             
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",         
@@ -1511,7 +1502,7 @@ def main():
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONHFC": "#c2185b",       
                                 "TVADICIONAL": "#00897b",
-                                "CEQUI": "#fbc02d",          # Color amarillo vibrante para los Cambios de Equipo
+                                "CEQUI": "#fbc02d",          
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
                                 "REVISION": "#0288d1"
@@ -1538,7 +1529,6 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
-
             st.markdown("---")
             if st.session_state.get('config_ver_panel', True):
                 with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
