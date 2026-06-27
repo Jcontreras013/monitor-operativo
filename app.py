@@ -1439,7 +1439,7 @@ def main():
             # ==============================================================================
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
-                with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                    with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
                         # 🔥 1. REGLA DEL USUARIO: Entra TODO lo que se haya movido HOY (Abierto, Iniciado o Cerrado)
                         es_de_hoy = (
