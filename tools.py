@@ -1526,6 +1526,10 @@ def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
 
         if hasattr(file_activ, 'read'): file_activ.seek(0)
         df_act, df_hst = depurar_archivos_en_crudo(file_activ, file_dispos_obj)
+        cols_busqueda = [c for c in ['MOTIVO', 'RAZON CIERRE', 'RAZÓN CIERRE', 'RAZON DE CIERRE SOP', 'COMENTARIO'] if c in df_act.columns]
+        for col in cols_busqueda:
+            mask_cequi_oculto = df_act[col].astype(str).str.upper().str.contains('CEQUI|CAMBIO DE EQUIPO|CAMBIO EQUIPO|CAMBIO DE ONU', regex=True, na=False)
+            df_act.loc[mask_cequi_oculto, 'ACTIVIDAD'] = 'CEQUI'
         df_act = procesar_fechas_seguro(df_act, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
         ahora_momento_ts = pd.Timestamp(get_honduras_time())
         fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
