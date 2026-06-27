@@ -861,7 +861,7 @@ def main():
             # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
-                    with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
                         # 1. REGLA UNIVERSAL: Entra TODO lo que tenga fecha de hoy (Apertura, Inicio o Liquidación)
                         es_de_hoy = (
