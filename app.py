@@ -910,14 +910,33 @@ def main():
                             # ==========================================================
 
                             # Gráfica sin el diccionario de colores para forzar a Plotly a pintar todo lo que encuentre
+                          # 1. Recuperamos tus colores originales (incluyendo el amarillo para CEQUI)
+                            colores_solidos = {
+                                "SOPFIBRA": "#d32f2f",         
+                                "SOP": "#d32f2f",                
+                                "INSFIBRA": "#1976d2",         
+                                "INSFIBRACORP": "#0d47a1",     
+                                "PEXTERNO": "#f57c00",         
+                                "PLEXISCA": "#e65100",         
+                                "TRASLADOEXTFIBRA": "#8e24aa",  
+                                "SOPRECONHFC": "#c2185b",       
+                                "TVADICIONAL": "#00897b",
+                                "CEQUI": "#fbc02d",          
+                                "CAMBIO": "#fbc02d",
+                                "MANTENIMIENTO": "#512da8",
+                                "REVISION": "#0288d1"
+                            }
+
+                            # 2. Volteamos los ejes a la normalidad
                             fig_gantt = px.timeline(
                                 df_para_gantt_final, 
                                 x_start="GANTT_START", 
                                 x_end="GANTT_END", 
-                                y="TECNICO", 
+                                y="TECNICO",         # <--- EL EJE Y VUELVE A SER EL TÉCNICO
                                 color="ACTIVIDAD", 
-                                text="ACTIVIDAD",  
+                                text="ACTIVIDAD",    # <--- EL TEXTO ADENTRO ES LA ACTIVIDAD
                                 custom_data=["INFO_HOVER"], 
+                                color_discrete_map=colores_solidos,
                                 height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                             )
                             
