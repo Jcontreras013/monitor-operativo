@@ -1445,6 +1445,12 @@ def main():
                         mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
                         
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+                        
+                        # 🔥 SALVAVIDAS 1: Inyectar 30 min. a las que no tienen inicio ANTES del filtro destructivo
+                        mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
+                        df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
+                        
+                        # Ahora sí, filtramos (ya los CEQUI pasaron a salvo)
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
@@ -1452,6 +1458,10 @@ def main():
                             
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
+                            
+                            # 🔥 SALVAVIDAS 2: Si el CEQUI duró 0 minutos (Inicio y Cierre a la misma hora), Plotly no lo dibuja
+                            mask_cero_min = df_para_gantt_final['GANTT_START'] == df_para_gantt_final['GANTT_END']
+                            df_para_gantt_final.loc[mask_cero_min, 'GANTT_START'] = df_para_gantt_final.loc[mask_cero_min, 'GANTT_END'] - pd.Timedelta(minutes=30)
                             
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                             df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
@@ -1485,7 +1495,11 @@ def main():
                                 "PLEXISCA": "#e65100",         
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONHFC": "#c2185b",       
-                                "TVADICIONAL": "#00897b"        
+                                "TVADICIONAL": "#00897b",
+                                "CEQUI": "#fbc02d",          # Color amarillo vibrante para los Cambios de Equipo
+                                "CAMBIO": "#fbc02d",
+                                "MANTENIMIENTO": "#512da8",
+                                "REVISION": "#0288d1"
                             }
 
                             fig_gantt = px.timeline(
@@ -1511,28 +1525,28 @@ def main():
                             st.plotly_chart(fig_gantt, use_container_width=True)
 
             st.markdown("---")
-        if st.session_state.get('config_ver_panel', True):
-            with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
-                if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
-                    st.session_state.st_btn_v_active = "PENDIENTE"
-                    
-                if es_movil:
-                    st.write("Filtros:")
-                    if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
-                        st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                    col_m1, col_m2 = st.columns(2)
-                    if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                    if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
-                else:
-                    col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
-                    if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
-                        st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                    if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                    if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
+            if st.session_state.get('config_ver_panel', True):
+                with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
+                    if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
+                        st.session_state.st_btn_v_active = "PENDIENTE"
+                        
+                    if es_movil:
+                        st.write("Filtros:")
+                        if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+                            st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
+                        col_m1, col_m2 = st.columns(2)
+                        if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
+                        if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
+                    else:
+                        col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
+                        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+                            st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
+                        if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
+                        if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
 
                 status_final_btn = st.session_state.st_btn_v_active
 
