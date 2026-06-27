@@ -137,99 +137,377 @@ def sanitizar(texto):
 # 2. GENERADORES DE DOCUMENTOS PDF
 # ==============================================================================
 def generar_pdf_consolidado(df):
-    pdf = MemoPDF(); pdf.alias_nb_pages(); pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16); pdf.set_text_color(40, 50, 100)
+    # ==========================================================================
+    # MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS
+    # ==========================================================================
+    def _es_llegada_tarde(tipo_u, com_u):
+        """
+        Detecta si la incidencia es una llegada tarde.
+        Excluye casos de almuerzo/break excedido que también contienen 'TARDE'.
+        """
+        EXCL = ['ALMUERZO', 'BREAK', 'DESCANSO']
+        KWS  = ['LLEGADA TARDE', 'LLEGADA TARDIA', 'LLEGADA TARDÍA', 'TARDANZA']
+        for kw in KWS:
+            if kw in tipo_u and not any(ex in tipo_u for ex in EXCL):
+                return True
+        # El tipo puede ser simplemente la opción del selectbox: "LLEGADA TARDE"
+        if tipo_u.strip() in ('LLEGADA TARDE', 'TARDE'):
+            return True
+        # En comentario, solo si hay frase explícita (no palabra suelta)
+        for kw in KWS:
+            if kw in com_u and not any(ex in com_u for ex in EXCL):
+                return True
+        return False
+
+    def _clasificar_row(row, conteo_tardes):
+        """
+        Clasifica cada incidencia como LEVE, GRAVE u OTRO analizando
+        TIPO_FALTA y COMENTARIO. Las llegadas tardes superando 3 por técnico
+        se promueven automáticamente a GRAVE.
+        """
+        tipo       = str(row.get('TIPO_FALTA', '')).upper().strip()
+        comentario = str(row.get('COMENTARIO', '')).upper().strip()
+        texto      = tipo + ' ' + comentario
+        tecnico    = str(row.get('TECNICO', '')).upper().strip()
+
+        # ── PALABRAS CLAVE: FALTAS GRAVES ─────────────────────────────────────
+        GRAVES_SIMPLES = [
+            # Daño a equipos
+            'DAÑO A EQUIPO', 'DAÑO AL EQUIPO', 'DAÑO DE EQUIPO',
+            'DAÑO HERRAMIENTA', 'DAÑO A HERRAMIENTA', 'FUSIONADORA',
+            'EQUIPO DAÑADO', 'HERRAMIENTA DAÑADA',
+            # Daño a vehículo
+            'DAÑO A VEHICULO', 'DAÑO AL VEHICULO', 'DAÑO AL VEHÍCULO',
+            'DAÑO DE VEHICULO', 'DAÑO AL CARRO', 'DAÑO A UNIDAD',
+            'ACCIDENTE VEHICULAR', 'CHOQUE', 'COLISION', 'COLISIÓN',
+            # Órdenes pendientes
+            'DEJAR ORDENES', 'DEJAR ÓRDENES',
+            'ORDENES PENDIENTES', 'ÓRDENES PENDIENTES', 'ORDEN PENDIENTE',
+            'INCUMPLIMIENTO DE ORDENES', 'INCUMPLIMIENTO DE ÓRDENES',
+            # Abandono de ruta
+            'ABANDONO DE RUTA', 'ABANDONO RUTA',
+            # Faltas de respeto
+            'FALTA DE RESPETO', 'FALTA DE RESPET',
+            'IRRESPETO', 'INSULTO', 'INSULTOS',
+            'AGRESION', 'AGRESIÓN', 'AMENAZA', 'HOSTIGAMIENTO',
+            # Ausencias sin justificación
+            'AUSENCIA SIN AVISO', 'AUSENCIA SIN JUSTIF',
+            'INASISTENCIA SIN JUSTIF', 'INASISTENCIA SIN AVISO',
+            'NO SE PRESENTÓ SIN', 'NO SE PRESENTO SIN',
+            # Exceso de velocidad (peligro de tránsito)
+            'EXCESO DE VELOCIDAD',
+        ]
+        GRAVES_COMBOS = [
+            ('ABANDONO', 'RUTA'),
+            ('DAÑO', 'EQUIPO'), ('DAÑO', 'VEHICULO'),
+            ('DAÑO', 'VEHÍCULO'), ('DAÑO', 'CARRO'), ('DAÑO', 'UNIDAD'),
+            ('FALTA', 'RESPETO'),
+            ('RESPETO', 'COMPAÑERO'), ('RESPETO', 'SUPERVISOR'),
+            ('ORDENES', 'PENDIENTES'), ('ÓRDENES', 'PENDIENTES'),
+            ('AUSENCIA', 'AVISO'), ('AUSENCIA', 'JUSTIF'),
+            ('INASISTENCIA', 'AVISO'), ('INASISTENCIA', 'JUSTIF'),
+            ('IRRESPETO', 'COMPAÑERO'), ('IRRESPETO', 'SUPERVISOR'),
+        ]
+
+        for kw in GRAVES_SIMPLES:
+            if kw in texto:
+                return 'GRAVE'
+        for w1, w2 in GRAVES_COMBOS:
+            if w1 in texto and w2 in texto:
+                return 'GRAVE'
+
+        # ── LLEGADAS TARDE: regla de los 3 (> 3 → GRAVE) ─────────────────────
+        if _es_llegada_tarde(tipo, comentario):
+            n_tardes = conteo_tardes.get(tecnico, 0)
+            return 'GRAVE' if n_tardes > 3 else 'LEVE'
+
+        # ── PALABRAS CLAVE: FALTAS LEVES ──────────────────────────────────────
+        LEVES_SIMPLES = [
+            # Almuerzo excedido
+            'ALMUERZO EXCEDIDO', 'HORA ALMUERZO', 'HORA DE ALMUERZO',
+            'EXCEDIÓ ALMUERZO', 'EXCEDIO ALMUERZO',
+            'TIEMPO DE ALMUERZO', 'TIEMPO ALMUERZO', 'EXCESO ALMUERZO',
+            # Break excedido
+            'BREAK EXCEDIDO', 'HORA BREAK', 'HORA DE BREAK',
+            'EXCEDIÓ BREAK', 'EXCEDIO BREAK',
+            'TIEMPO DE BREAK', 'TIEMPO BREAK', 'EXCESO BREAK',
+            'DESCANSO EXCEDIDO',
+            # Marcajes faltantes
+            'NO MARCÓ', 'NO MARCO', 'SIN MARCAJE', 'MARCAJE FALTANTE',
+            'NO MARCÓ ENTRADA', 'NO MARCÓ SALIDA',
+            'NO MARCO ENTRADA', 'NO MARCO SALIDA',
+            'NO REGISTRO ENTRADA', 'NO REGISTRO SALIDA',
+            'OLVIDO MARCAJE', 'FALTA DE MARCAJE', 'OLVIDO DE MARCAJE',
+            # Mala documentación (falta administrativa menor)
+            'MALA DOCUMENTACION', 'MALA DOCUMENTACIÓN',
+        ]
+        LEVES_COMBOS = [
+            ('HORA', 'ALMUERZO'), ('HORA', 'BREAK'),
+            ('EXCEDIÓ', 'ALMUERZO'), ('EXCEDIÓ', 'BREAK'),
+            ('NO', 'MARCÓ'), ('NO', 'MARCO'),
+            ('SIN', 'MARCAJE'), ('SIN', 'MARCA'),
+            ('MALA', 'DOCUMENTACION'), ('MALA', 'DOCUMENTACIÓN'),
+        ]
+
+        for kw in LEVES_SIMPLES:
+            if kw in texto:
+                return 'LEVE'
+        for w1, w2 in LEVES_COMBOS:
+            if w1 in texto and w2 in texto:
+                return 'LEVE'
+
+        return 'OTRO'
+
+    # ==========================================================================
+    # PREPARAR DATOS Y CLASIFICAR
+    # ==========================================================================
+    df_work = pd.DataFrame()
+    df_leves = df_graves = df_otros = pd.DataFrame()
+    conteo_tardes = {}
+
+    if not df.empty:
+        df_work = df.copy()
+
+        # Contar llegadas tarde por técnico en el conjunto visible
+        mask_tarde = df_work.apply(
+            lambda r: _es_llegada_tarde(
+                str(r.get('TIPO_FALTA', '')).upper(),
+                str(r.get('COMENTARIO', '')).upper()
+            ), axis=1
+        )
+        conteo_tardes = (
+            df_work[mask_tarde]['TECNICO']
+            .astype(str).str.upper().str.strip()
+            .value_counts().to_dict()
+        )
+
+        df_work['_CLASIF'] = df_work.apply(
+            lambda r: _clasificar_row(r, conteo_tardes), axis=1
+        )
+        df_leves  = df_work[df_work['_CLASIF'] == 'LEVE'].copy()
+        df_graves = df_work[df_work['_CLASIF'] == 'GRAVE'].copy()
+        df_otros  = df_work[df_work['_CLASIF'] == 'OTRO'].copy()
+
+    n_leves  = len(df_leves)
+    n_graves = len(df_graves)
+    n_otros  = len(df_otros)
+
+    # ==========================================================================
+    # FUNCIÓN AUXILIAR: DIBUJAR TABLA DE INCIDENCIAS CLASIFICADAS
+    # ==========================================================================
+    def _dibujar_tabla_clasif(pdf_obj, df_t, etiqueta, desc_corta,
+                               hr, hg, hb,        # color header RGB
+                               rr, rg, rb,        # color fila par RGB
+                               thr=255, thg=255, thb=255):  # color texto header
+        """Dibuja el bloque de encabezado + tabla para LEVE, GRAVE u OTRO."""
+        if df_t.empty:
+            return
+
+        n = len(df_t)
+
+        # Encabezado de sección (banner de color)
+        pdf_obj.set_font("Helvetica", "B", 11)
+        pdf_obj.set_fill_color(hr, hg, hb)
+        pdf_obj.set_text_color(thr, thg, thb)
+        pdf_obj.cell(0, 8,
+                     f"  {etiqueta}  ({n} incidencia{'s' if n != 1 else ''})",
+                     border=1, fill=True, ln=True)
+        pdf_obj.set_font("Helvetica", "I", 7)
+        pdf_obj.set_text_color(100, 100, 100)
+        pdf_obj.cell(0, 5, f"  {desc_corta}", ln=True)
+        pdf_obj.ln(2)
+
+        # Anchos de columna (suma = 190mm)
+        W    = [25, 48, 42, 55, 20]
+        HDRS = ["FECHA", "COLABORADOR", "TIPO DE FALTA", "DESCRIPCION", "SUPERVISOR"]
+
+        # Fila de encabezados de columna
+        pdf_obj.set_fill_color(hr, hg, hb)
+        pdf_obj.set_text_color(thr, thg, thb)
+        pdf_obj.set_font("Helvetica", "B", 7)
+        for i, h in enumerate(HDRS):
+            pdf_obj.cell(W[i], 6, h, border=1, fill=True, align="C")
+        pdf_obj.ln()
+
+        # Filas de datos
+        pdf_obj.set_text_color(40, 40, 40)
+        for idx_fila, (_, row) in enumerate(df_t.iterrows()):
+            f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA', ''))[:16])
+            tec   = sanitizar(str(row.get('TECNICO', ''))[:40])
+            mot   = sanitizar(str(row.get('TIPO_FALTA', ''))[:35])
+            com   = sanitizar(str(row.get('COMENTARIO', '')))
+            sup   = sanitizar(str(row.get('SUPERVISOR', ''))[:18])
+
+            lineas = textwrap.wrap(com, width=40)
+            if not lineas:
+                lineas = [""]
+
+            # Alternar color de fila
+            if idx_fila % 2 == 0:
+                pdf_obj.set_fill_color(rr, rg, rb)
+            else:
+                pdf_obj.set_fill_color(255, 255, 255)
+
+            pdf_obj.set_font("Helvetica", "", 7)
+            for i_l, linea in enumerate(lineas):
+                b_t = 'T' if i_l == 0 else ''
+                b_b = 'B' if i_l == len(lineas) - 1 else ''
+                bs  = 'LR' + b_t + b_b
+
+                pdf_obj.cell(W[0], 5, f_inc if i_l == 0 else "", border=bs, fill=True)
+                pdf_obj.cell(W[1], 5, tec   if i_l == 0 else "", border=bs, fill=True)
+                pdf_obj.cell(W[2], 5, mot   if i_l == 0 else "", border=bs, fill=True)
+                pdf_obj.cell(W[3], 5, f" {linea}",               border=bs, fill=True)
+                pdf_obj.cell(W[4], 5, sup   if i_l == 0 else "", border=bs, fill=True, ln=True)
+
+        pdf_obj.ln(6)
+
+    # ==========================================================================
+    # CONSTRUCCIÓN DEL PDF
+    # ==========================================================================
+    pdf = MemoPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    # ── TÍTULO ────────────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, "REPORTE CONSOLIDADO DE EXPEDIENTES", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 10); pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 6, f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}", ln=True, align="C")
-    pdf.ln(10)
-    
+    pdf.ln(8)
+
     if df.empty:
-        pdf.set_font("Helvetica", "I", 12); pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
+        pdf.set_font("Helvetica", "I", 12)
+        pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
-        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Resumen por Tipo de Falta:", ln=True)
-        pdf.set_font("Helvetica", "B", 10); pdf.set_fill_color(240, 240, 240)
-        pdf.cell(140, 8, " Motivo / Falta", border=1, fill=True)
-        pdf.cell(50, 8, " Cantidad Total", border=1, ln=True, align="C", fill=True)
-        pdf.set_font("Helvetica", "", 10)
-        for cat, total in df['TIPO_FALTA'].value_counts().items():
-            pdf.cell(140, 7, f" {sanitizar(cat)}", border=1)
-            pdf.cell(50, 7, str(total), border=1, ln=True, align="C")
-            
+        # ── PANEL KPI: RESUMEN POR GRAVEDAD ───────────────────────────────────
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 6, "RESUMEN DE INCIDENCIAS POR NIVEL DE GRAVEDAD", ln=True)
+        pdf.ln(2)
+
+        W_KPI = 63
+        KPI_DATA = [
+            ("  FALTAS LEVES",        n_leves,  200, 140,  20, 255, 248, 220, 100, 50,  0),
+            ("  FALTAS GRAVES",       n_graves, 180,  30,  30, 255, 235, 235, 255, 255, 255),
+            ("  OTRAS INCIDENCIAS",   n_otros,   80,  95, 115, 235, 238, 245, 255, 255, 255),
+        ]
+        # Fila 1: etiquetas
+        for (label, _, hr, hg, hb, rr, rg, rb, thr, thg, thb) in KPI_DATA:
+            pdf.set_fill_color(hr, hg, hb)
+            pdf.set_text_color(thr, thg, thb)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(W_KPI, 7, label, border=1, fill=True)
+        pdf.ln()
+        # Fila 2: conteos
+        for (_, count, hr, hg, hb, rr, rg, rb, thr, thg, thb) in KPI_DATA:
+            pdf.set_fill_color(rr, rg, rb)
+            pdf.set_text_color(hr, hg, hb)     # texto con el color del header
+            pdf.set_font("Helvetica", "B", 18)
+            pdf.cell(W_KPI, 12, f"  {count}", border=1, fill=True)
+        pdf.ln()
         pdf.ln(10)
-        pdf.set_font("Helvetica", "B", 12); pdf.cell(0, 10, "Desglose de Eventos Registrados:", ln=True)
-        pdf.set_font("Helvetica", "B", 8); pdf.set_fill_color(240, 240, 240)
-        
-        pdf.cell(50, 8, " Colaborador", border=1, fill=True)
-        pdf.cell(30, 8, " Fecha y Hora", border=1, fill=True, align="C")
-        pdf.cell(35, 8, " Motivo", border=1, fill=True)
-        pdf.cell(75, 8, " Observaciones", border=1, ln=True, fill=True)
-        
-        pdf.set_font("Helvetica", "", 7)
+
+        # Nota explicativa sobre la regla de llegadas tardes
+        pdf.set_font("Helvetica", "I", 7)
+        pdf.set_text_color(120, 120, 120)
+        pdf.cell(0, 5,
+                 "Nota: Las llegadas tardes se clasifican como LEVE hasta 3 ocurrencias por colaborador. "
+                 "A partir de la 4a se promueven automaticamente a GRAVE.",
+                 ln=True)
+        pdf.ln(5)
+
+        # ── TABLA: FALTAS LEVES ───────────────────────────────────────────────
+        if n_leves > 0:
+            _dibujar_tabla_clasif(
+                pdf, df_leves,
+                etiqueta   = "FALTAS LEVES",
+                desc_corta = "Llegadas tardes (<=3), almuerzo/break excedido, no marco entrada/salida, mala documentacion",
+                hr=200, hg=140, hb=20,
+                rr=255, rg=248, rb=220,
+                thr=255, thg=255, thb=255,
+            )
+
+        # ── TABLA: FALTAS GRAVES ──────────────────────────────────────────────
+        if n_graves > 0:
+            if pdf.get_y() > 200:
+                pdf.add_page()
+            _dibujar_tabla_clasif(
+                pdf, df_graves,
+                etiqueta   = "FALTAS GRAVES",
+                desc_corta = "Daños a equipo/vehiculo, abandono de ruta, ausencias sin justificacion, irrespeto, tardes >3",
+                hr=180, hg=30, hb=30,
+                rr=255, rg=235, rb=235,
+                thr=255, thg=255, thb=255,
+            )
+
+        # ── TABLA: OTRAS INCIDENCIAS ──────────────────────────────────────────
+        if n_otros > 0:
+            if pdf.get_y() > 200:
+                pdf.add_page()
+            _dibujar_tabla_clasif(
+                pdf, df_otros,
+                etiqueta   = "OTRAS INCIDENCIAS",
+                desc_corta = "Incidencias medicas, meritos, documentos administrativos y registros sin clasificacion definida",
+                hr=80, hg=95, hb=115,
+                rr=235, rg=238, rb=245,
+                thr=255, thg=255, thb=255,
+            )
+
+    # ── ANEXOS: EVIDENCIA FOTOGRÁFICA ─────────────────────────────────────────
+    tiene_anexos = False
+    for _, row in df.iterrows():
+        urls = str(row.get('URL_FOTO', '')).split(',')
+        if any(u.strip().startswith('http') for u in urls):
+            tiene_anexos = True
+            break
+
+    if tiene_anexos:
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
+        pdf.ln(5)
         for _, row in df.iterrows():
-            f_reg = sanitizar(str(row.get('FECHA_REGISTRO',''))[:16]) 
-            tec = sanitizar(str(row.get('TECNICO',''))[:35])
-            mot = sanitizar(str(row.get('TIPO_FALTA',''))[:30])
-            com = sanitizar(str(row.get('COMENTARIO','')))
-            lineas_com = textwrap.wrap(com, width=55) 
-            if not lineas_com: lineas_com = [""]
-            
-            for i, linea in enumerate(lineas_com):
-                b_top = 'T' if i == 0 else ''
-                b_bot = 'B' if i == len(lineas_com) - 1 else ''
-                b_style = 'LR' + b_top + b_bot
-                
-                col_colab = f" {tec}" if i == 0 else ""
-                col_fecha = f" {f_reg}" if i == 0 else ""
-                col_motivo = f" {mot}" if i == 0 else ""
-                
-                pdf.cell(50, 5, col_colab, border=b_style)
-                pdf.cell(30, 5, col_fecha, border=b_style, align="C")
-                pdf.cell(35, 5, col_motivo, border=b_style)
-                pdf.cell(75, 5, f" {linea}", border=b_style, ln=True)
-        
-        tiene_anexos = False
-        for _, row in df.iterrows():
-            urls = str(row.get('URL_FOTO', '')).split(',')
+            urls    = str(row.get('URL_FOTO', '')).split(',')
             validas = [u.strip() for u in urls if u.strip().startswith('http')]
             if validas:
-                tiene_anexos = True
-                break
-                
-        if tiene_anexos:
-            pdf.add_page()
-            pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(40, 50, 100)
-            pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
-            pdf.ln(5)
-            for _, row in df.iterrows():
-                urls = str(row.get('URL_FOTO', '')).split(',')
-                validas = [u.strip() for u in urls if u.strip().startswith('http')]
-                if validas:
-                    tec_name = sanitizar(str(row.get('TECNICO','')))
-                    f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA','')))
-                    motivo_falta = sanitizar(str(row.get('TIPO_FALTA','')))
-                    for url in validas:
-                        try:
-                            r = requests.get(url, timeout=5)
-                            if r.status_code == 200:
-                                fd, tp = tempfile.mkstemp(suffix=".png"); os.close(fd)
-                                try:
-                                    with open(tp, 'wb') as f: f.write(r.content)
-                                    if pdf.get_y() > 60: pdf.add_page() 
-                                    pdf.set_font("Helvetica", "B", 9); pdf.set_text_color(0, 0, 0)
-                                    pdf.set_fill_color(240, 240, 240)
-                                    pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}", ln=True, fill=True, border=1)
-                                    pdf.ln(3)
-                                    pdf.image(tp, x=20, w=150) 
-                                    pdf.ln(10)
-                                finally:
-                                    if os.path.exists(tp):
-                                        os.remove(tp)
-                        except: pass
-            
-    fd, path = tempfile.mkstemp(suffix=".pdf"); os.close(fd); pdf.output(path)
-    with open(path, "rb") as f: data = f.read()
-    os.remove(path); return data
+                tec_name     = sanitizar(str(row.get('TECNICO', '')))
+                f_inc        = sanitizar(str(row.get('FECHA_INCIDENCIA', '')))
+                motivo_falta = sanitizar(str(row.get('TIPO_FALTA', '')))
+                for url in validas:
+                    try:
+                        r = requests.get(url, timeout=5)
+                        if r.status_code == 200:
+                            fd, tp = tempfile.mkstemp(suffix=".png")
+                            os.close(fd)
+                            try:
+                                with open(tp, 'wb') as f: f.write(r.content)
+                                if pdf.get_y() > 60:
+                                    pdf.add_page()
+                                pdf.set_font("Helvetica", "B", 9)
+                                pdf.set_text_color(0, 0, 0)
+                                pdf.set_fill_color(240, 240, 240)
+                                pdf.cell(0, 8, f" Evidencia: {tec_name} | {motivo_falta} | {f_inc}",
+                                         ln=True, fill=True, border=1)
+                                pdf.ln(3)
+                                pdf.image(tp, x=20, w=150)
+                                pdf.ln(10)
+                            finally:
+                                if os.path.exists(tp):
+                                    os.remove(tp)
+                    except:
+                        pass
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+    with open(path, "rb") as f:
+        data = f.read()
+    os.remove(path)
+    return data
 
 # ==============================================================================
 # MOTOR DE MEMORIA (EVITA PANTALLAZOS BLANCOS)
