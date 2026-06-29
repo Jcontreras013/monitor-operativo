@@ -86,8 +86,11 @@ def asignar_rubro_automatico(motivo, comentario):
     motivo_str = str(motivo).upper().strip()
     comentario_str = str(comentario).upper().strip()
     
-    # 1. El "Cerebro" Lexicográfico (Palabras clave críticas)
-    palabras_graves = [
+    # 1. FRASES EXACTAS DE PENALIZACIÓN GRAVE DIRECTA
+    frases_graves = [
+        "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
+        "NO INICI", "SIN INICIAR", "NO DIO INICIO", "OMISIÓN DE INICIO", "OMISION DE INICIO", 
+        "NO APERTUR", "SIN APERTURAR",
         "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
         "ROBO", "HURTO", "PELEA", "GOLPE", "AGRESIÓN", "AGRESION", "INSULTO", 
         "FALTA DE RESPETO", "ABANDONO", "SIN AVISAR", "INJUSTIFICADA", 
@@ -100,25 +103,33 @@ def asignar_rubro_automatico(motivo, comentario):
         "GAFETE", "SUCIO", "DESORDEN", "OLVIDO", "MINUTOS", "LEVE"
     ]
     
-    # Limpiamos las etiquetas previas por si el usuario las eligió en el selector manualmente
     motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").strip()
     
-    # 2. Toma de Decisión (El texto del comentario tiene prioridad absoluta)
     es_grave = False
     
-    if any(p in comentario_str for p in palabras_graves):
-        es_grave = True
-    elif any(p in comentario_str for p in palabras_leves):
-        es_grave = False
-    # 3. Si el comentario es muy corto o ambiguo, nos apoyamos en lo que dice el motivo del formulario
-    elif "GRAVE" in motivo_str or any(p in motivo_str for p in palabras_graves):
+    # 2. MOTOR DE DETECCIÓN AVANZADA
+    
+    # Regla A: Si contiene una frase o palabra grave explícita (Ej. "no inició", "mal uso")
+    if any(f in comentario_str for f in frases_graves):
         es_grave = True
         
-    # 4. Asignación definitiva para interceptar el motor PDF de tools.py
+    # Regla B (Detección por Contexto): Si mencionan equipo/material/vehículo junto con algo negativo
+    elif any(x in comentario_str for x in ["EQUIPO", "MATERIAL", "VEHICULO", "VEHÍCULO", "UNIDAD", "CARRO", "MOTO"]) and \
+         any(y in comentario_str for y in ["MAL", "QUEBRÓ", "QUEBRO", "ARRIUNÓ", "ARRUINO", "EXTRAVIÓ", "EXTRAVIO", "DESTRUYÓ"]):
+        es_grave = True
+        
+    # Regla C: Si no es grave, verificamos si es leve (Ej. Llegadas tarde)
+    elif any(p in comentario_str for p in palabras_leves):
+        es_grave = False
+        
+    # Regla D: Si el comentario es muy ambiguo, nos guiamos por el motivo seleccionado
+    elif "GRAVE" in motivo_str or any(f in motivo_str for f in frases_graves):
+        es_grave = True
+        
+    # 3. EMPAQUETADO FINAL
     etiqueta = "[GRAVE]" if es_grave else "[LEVE]"
     
-    return f"{etiqueta} {motivo_limpio}"
-    
+    return f"{etiqueta} {motivo_limpio}"    
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
