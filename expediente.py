@@ -80,35 +80,45 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
         return {}
 
 # ==============================================================================
-# LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS
+# LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS (SELECCIONADOR INTELIGENTE)
 # ==============================================================================
 def asignar_rubro_automatico(motivo, comentario):
     motivo_str = str(motivo).upper().strip()
     comentario_str = str(comentario).upper().strip()
     
-    claves_gps = ['VEHICULO', 'CARRO', 'MOTO', 'CONDUCIR', 'LLANTA', 'COLISION', 'CHOQUE', 'VELOCIDAD', 'RUTA', 'GPS', 'GASOLINA', 'KILOMETRAJE']
-    claves_biometrico = ['TARDE', 'LLEGADA', 'TARDANZA', 'BIOMETRICO', 'MARCAJE', 'HORARIO', 'ASISTENCIA']
-    claves_cepheus = ['CEPHEUS', 'DOCUMENTA', 'CERRAR', 'ABRIR', 'ORDEN', 'RETRASO ORDEN', 'LIQUIDAC']
-    claves_reco = ['RECO', 'POSTE', 'POSTES', 'CAMBIO DE POSTE', 'CAMBIO DE POSTES']
+    # 1. El "Cerebro" Lexicográfico (Palabras clave críticas)
+    palabras_graves = [
+        "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
+        "ROBO", "HURTO", "PELEA", "GOLPE", "AGRESIÓN", "AGRESION", "INSULTO", 
+        "FALTA DE RESPETO", "ABANDONO", "SIN AVISAR", "INJUSTIFICADA", 
+        "DAÑO", "PÉRDIDA", "PERDIDA", "FRAUDE", "NEGLIGENCIA", "OFENSA", 
+        "AMENAZA", "REINCIDENCIA", "DORMIDO", "GRAVE", "IRRESPONSABILIDAD"
+    ]
     
-    if "RECO" in motivo_str or "POSTE" in motivo_str: 
-        return "RECO"
-    if any(clv in motivo_str or clv in comentario_str for clv in claves_reco): 
-        return "RECO"
-    if "EXCESO DE VELOCIDAD" in motivo_str or "ABANDONO DE RUTA" in motivo_str: 
-        return "GPS"
-    if any(clv in motivo_str or clv in comentario_str for clv in claves_gps): 
-        return "GPS"
-    if "LLEGADA TARDE" in motivo_str: 
-        return "BIOMÉTRICO"
-    if any(clv in motivo_str or clv in comentario_str for clv in claves_biometrico): 
-        return "BIOMÉTRICO"
-    if "MALA DOCUMENTACIÓN" in motivo_str or "MALA DOCUMENTACION" in motivo_str: 
-        return "CEPHEUS"
-    if any(clv in motivo_str or clv in comentario_str for clv in claves_cepheus): 
-        return "CEPHEUS"
-    return "OTROS"
-
+    palabras_leves = [
+        "TARDE", "RETRASO", "TRÁFICO", "TRAFICO", "LLANTA", "UNIFORME",
+        "GAFETE", "SUCIO", "DESORDEN", "OLVIDO", "MINUTOS", "LEVE"
+    ]
+    
+    # Limpiamos las etiquetas previas por si el usuario las eligió en el selector manualmente
+    motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").strip()
+    
+    # 2. Toma de Decisión (El texto del comentario tiene prioridad absoluta)
+    es_grave = False
+    
+    if any(p in comentario_str for p in palabras_graves):
+        es_grave = True
+    elif any(p in comentario_str for p in palabras_leves):
+        es_grave = False
+    # 3. Si el comentario es muy corto o ambiguo, nos apoyamos en lo que dice el motivo del formulario
+    elif "GRAVE" in motivo_str or any(p in motivo_str for p in palabras_graves):
+        es_grave = True
+        
+    # 4. Asignación definitiva para interceptar el motor PDF de tools.py
+    etiqueta = "[GRAVE]" if es_grave else "[LEVE]"
+    
+    return f"{etiqueta} {motivo_limpio}"
+    
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
@@ -219,7 +229,7 @@ def generar_pdf_consolidado(df):
         # ── LLEGADAS TARDE: regla de los 3 (> 3 → GRAVE) ─────────────────────
         if _es_llegada_tarde(tipo, comentario):
             n_tardes = conteo_tardes.get(tecnico, 0)
-            return 'GRAVE' if n_tardes > 3 else 'LEVE'
+            return 'GRAVE' if n_tardes >= 3 else 'LEVE'
 
         # ── PALABRAS CLAVE: FALTAS LEVES ──────────────────────────────────────
         LEVES_SIMPLES = [
