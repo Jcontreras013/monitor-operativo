@@ -193,24 +193,32 @@ def generar_pdf_consolidado(df):
 
         # ── PALABRAS CLAVE: FALTAS GRAVES ─────────────────────────────────────
         GRAVES_SIMPLES = [
-            # Daño a equipos
+            # Daño a equipos / Materiales / Mal uso
             'DAÑO A EQUIPO', 'DAÑO AL EQUIPO', 'DAÑO DE EQUIPO',
             'DAÑO HERRAMIENTA', 'DAÑO A HERRAMIENTA', 'FUSIONADORA',
             'EQUIPO DAÑADO', 'HERRAMIENTA DAÑADA',
+            'MAL USO', 'MAL MANEJO', 'MALA MANIPULACION', 'MALA MANIPULACIÓN',
+            'MAL USO DE MATERIA', 'MAL USO DE MATERIAL',
             # Daño a vehículo
             'DAÑO A VEHICULO', 'DAÑO AL VEHICULO', 'DAÑO AL VEHÍCULO',
             'DAÑO DE VEHICULO', 'DAÑO AL CARRO', 'DAÑO A UNIDAD',
             'ACCIDENTE VEHICULAR', 'CHOQUE', 'COLISION', 'COLISIÓN',
-            # Órdenes pendientes
+            # Órdenes pendientes / No inicio de órdenes
             'DEJAR ORDENES', 'DEJAR ÓRDENES',
             'ORDENES PENDIENTES', 'ÓRDENES PENDIENTES', 'ORDEN PENDIENTE',
             'INCUMPLIMIENTO DE ORDENES', 'INCUMPLIMIENTO DE ÓRDENES',
+            'NO INICIO ORDEN', 'NO INICIÓ ORDEN', 'NO INICI', 'SIN INICIAR',
+            'NO DIO INICIO', 'OMISIÓN DE INICIO', 'OMISION DE INICIO',
+            'NO APERTUR', 'SIN APERTURAR',
             # Abandono de ruta
             'ABANDONO DE RUTA', 'ABANDONO RUTA',
-            # Faltas de respeto
+            # Faltas de respeto e integridad
             'FALTA DE RESPETO', 'FALTA DE RESPET',
             'IRRESPETO', 'INSULTO', 'INSULTOS',
             'AGRESION', 'AGRESIÓN', 'AMENAZA', 'HOSTIGAMIENTO',
+            'ALCOHOL', 'EBRIEDAD', 'EBRIO', 'DROGA', 'ROBO', 'HURTO',
+            'PELEA', 'GOLPE', 'FRAUDE', 'NEGLIGENCIA', 'DORMIDO',
+            'GRAVE', 'IRRESPONSABILIDAD',
             # Ausencias sin justificación
             'AUSENCIA SIN AVISO', 'AUSENCIA SIN JUSTIF',
             'INASISTENCIA SIN JUSTIF', 'INASISTENCIA SIN AVISO',
@@ -458,7 +466,7 @@ def generar_pdf_consolidado(df):
             _dibujar_tabla_clasif(
                 pdf, df_graves,
                 etiqueta   = "FALTAS GRAVES",
-                desc_corta = "Daños a equipo/vehiculo, abandono de ruta, ausencias sin justificacion, irrespeto, tardes >3",
+                desc_corta = "Daños a equipo/vehiculo, mal uso de materiales/herramientas, no inicio de orden, ausencias sin justificacion",
                 hr=180, hg=30, hb=30,
                 rr=255, rg=235, rb=235,
                 thr=255, thg=255, thb=255,
