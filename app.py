@@ -884,6 +884,21 @@ def main():
                         
                         df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
+
+                        # ---> NUEVA CONFIGURACIÓN: LISTA DE ACTIVIDADES EXCLUSIVAMENTE PERMITIDAS
+                        actividades_permitidas = [
+                            'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
+                            'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 
+                            'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
+                            'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
+                            'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
+                            'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+                        ]
+                        
+                        df_para_gantt_diario = df_para_gantt_diario[
+                            df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
+                        ]
+                        # <--- FIN DE LA MODIFICACIÓN
                         
                         df_para_gantt_diario['INFO_HOVER'] = (
                             "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
@@ -1473,6 +1488,21 @@ def main():
                             
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
+
+                            # ---> NUEVA CONFIGURACIÓN: LISTA DE ACTIVIDADES EXCLUSIVAMENTE PERMITIDAS
+                            actividades_permitidas = [
+                                'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
+                                'INS-WA','PEXTERNO', 'PLEXISCA', 'SOP', 
+                                'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
+                                'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
+                                'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
+                                'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+                            ]
+                            
+                            df_para_gantt_final = df_para_gantt_final[
+                                df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
+                            ]
+                            # <--- FIN DE LA MODIFICACIÓN
                             
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
