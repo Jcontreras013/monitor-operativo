@@ -122,6 +122,10 @@ def sincronizar_datos_nube(conn):
                     mask_basura_sync = df_nube['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                     df_nube = df_nube[~mask_basura_sync].copy()
 
+                if 'EMPRESA' in df_nube.columns:
+                    mask_isca_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
+                    df_nube = df_nube[mask_isca_sync].copy()
+
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
@@ -421,6 +425,9 @@ def main():
                                 if 'ACTIVIDAD' in df_cloud.columns:
                                     mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                                     df_cloud = df_cloud[~mask_basura_cloud].copy()
+                                if 'EMPRESA' in df_cloud.columns:
+                                    mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
+                                    df_cloud = df_cloud[mask_isca_cloud].copy()
                                 PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                                 mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
                                 df_historial_puro = df_cloud[~mask_vivas_nube].copy()
