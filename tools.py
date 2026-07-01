@@ -1464,7 +1464,16 @@ def procesar_dataframe_base(df):
                 mapeocolumnas[realname] = nombreinterno
                 break
     df = df.rename(columns=mapeocolumnas)
-    
+
+    # =========================================================================
+    # 🏢 FILTRO POR EMPRESA: Solo procesar registros de ISCA
+    # Descarta cualquier registro de otra empresa (ej. Cable Color) que venga
+    # mezclado en el archivo crudo o en el histórico de GCS.
+    # =========================================================================
+    if 'EMPRESA' in df.columns:
+        mask_isca = df['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
+        df = df[mask_isca].copy()
+
     for colv in COLUMNAS_VITALES_SISTEMA:
         if colv not in df.columns: df[colv] = "N/D"
         
