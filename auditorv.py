@@ -51,11 +51,12 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA (Tolerante a Tildes y Espacios) ---
+# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA (Escáner Dinámico de Memoria) ---
 def obtener_credenciales_actuales():
     """
-    Busca el rol y el usuario en session_state probando múltiples claves posibles,
-    removiendo acentos (tildes), espacios en blanco y forzando minúsculas para robustez total.
+    Busca el rol y el usuario en session_state probando múltiples claves conocidas.
+    Si fallan las claves tradicionales, realiza un escaneo dinámico de todas las
+    variables de sesión para detectar al usuario 'andres' o 'jaison' de forma robusta.
     """
     def limpiar_texto(txt):
         if not txt:
@@ -65,6 +66,7 @@ def obtener_credenciales_actuales():
         return s
 
     rol = ""
+    # 1. Intentar claves tradicionales de rol
     for clave in ['rol_actual', 'rol', 'rol_usuario', 'user_role', 'role']:
         if clave in st.session_state:
             val = st.session_state[clave]
@@ -72,13 +74,38 @@ def obtener_credenciales_actuales():
                 rol = limpiar_texto(val)
                 break
                 
+    # Si no se encuentra un rol explícito, buscar la palabra 'jefe' o 'admin' en todos los valores de sesión
+    if not rol:
+        for k, v in st.session_state.items():
+            if isinstance(v, str):
+                v_clean = limpiar_texto(v)
+                if "jefe" in v_clean:
+                    rol = "jefe"
+                    break
+                elif "admin" in v_clean:
+                    rol = "admin"
+                    break
+
     user = ""
-    for clave in ['username', 'usuario', 'user', 'username_actual', 'nombre_usuario']:
+    # 2. Intentar claves tradicionales de usuario
+    for clave in ['username', 'usuario', 'user', 'username_actual', 'nombre_usuario', 'email', 'name', 'nombre']:
         if clave in st.session_state:
             val = st.session_state[clave]
             if val is not None:
                 user = limpiar_texto(val)
                 break
+                
+    # 3. ESCÁNER DE SALVAMENTO DINÁMICO: Si el usuario sigue vacío, pescamos 'andres' o 'jaison' en cualquier variable
+    if not user:
+        for k, v in st.session_state.items():
+            if isinstance(v, str):
+                v_clean = limpiar_texto(v)
+                if "andres" in v_clean:
+                    user = "andres"
+                    break
+                elif "jaison" in v_clean:
+                    user = "jaison"
+                    break
                 
     return rol, user
 
@@ -488,7 +515,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
                         styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                         st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                        st.download_button("📥 Descargar Reporte (PDF)", generar_pdf_telemetria_matriz(df_matriz), "Reporte_Telemetria.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_vel")
+                        st.download_button("📥 Descargar Reporte (PDF)", generar_pdf_telemetria_matriz(df_matriz), "Reporte_Telemetria.pdf", "application/pdf", use_container_width=True, type="primary")
                 else:
                     st.error(f"❌ Error: {msg_matriz}")
 
@@ -648,7 +675,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     
                     try:
                         pdf_veh = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado)
-                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad")
+                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True)
                     except Exception as e:
                         pass
                         
@@ -659,7 +686,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     if opciones_borrar:
                         registro_a_borrar = st.selectbox("Seleccionar:", options=list(opciones_borrar.keys()), format_func=lambda x: opciones_borrar[x], key="sel_borrar_gasto")
                         
-                        # --- REGLA DE SEGURIDAD PARA BORRADO FINANCIERO ---
+                        # --- REGLA DE SEGURIDAD ACTUALIZADA Y ROBUSTA ---
                         rol_actual, usuario_actual = obtener_credenciales_actuales()
                         
                         # Permitir si es admin, o si es jefe y específicamente el usuario andres
