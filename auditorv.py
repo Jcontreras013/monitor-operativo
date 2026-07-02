@@ -31,7 +31,15 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- AUXILIAR DE NORMALIZACIÓN INTELIGENTE (MX-01 == MX-1 == MX-1 [PLA-1234]) ---
+# --- AUXILIARES DE CONVERSIÓN SEGUROS ---
+def safestr(val):
+    """
+    Convierte cualquier valor a string de forma segura con codificación latin-1.
+    """
+    if val is None or pd.isna(val):
+        return ""
+    return str(val).encode('latin-1', 'replace').decode('latin-1')
+
 def normalizar_unidad(v_str):
     """
     Normaliza el nombre de un vehículo para poder realizar búsquedas cruzadas
@@ -120,7 +128,7 @@ DATOS_CALENDARIO = [
     {"Año": 2026, "Mes": "Julio", "Quincena": "2da", "Unidad": "MX-7", "Placa": "HED3852", "Descripción": "Suzuki APV panel busito"},
     {"Año": 2026, "Mes": "Agosto", "Quincena": "1ra", "Unidad": "MX-01", "Placa": "HDL 9821", "Descripción": "KIA Camión cabina sencilla Blanco"},
     {"Año": 2026, "Mes": "Agosto", "Quincena": "2da", "Unidad": "MX-02", "Placa": "HDP 9223", "Descripción": "KIA Camión cabina sencilla Blanco"},
-    {"Año": 2026, "Mes": "Septiembre", "Quincena": "1ra", "Unidad": "MX-03", "Placa": "HBD 9507", "Descripción": "KIA Camión cabina sencilla Blanco"},
+    {"Año": 2026, "Mes": "Septiembre", "Quincena": "1ra", "Unidad": "MX-03", "Placa": "HBD 9507", "Descripción": "KIA Camión cabion sencilla Blanco"},
     {"Año": 2026, "Mes": "Septiembre", "Quincena": "2da", "Unidad": "MX-04", "Placa": "HAU 8203", "Descripción": "Camioncito KIA Doble cabina Blanco"},
     {"Año": 2026, "Mes": "Octubre", "Quincena": "1ra", "Unidad": "MX-06", "Placa": "HAE 1234", "Descripción": "KIA K2700 cabina sencilla Blanco"},
     {"Año": 2026, "Mes": "Octubre", "Quincena": "2da", "Unidad": "MX-08", "Placa": "HAB 9494", "Descripción": "Isuzu cabina sencilla Blanco"},
@@ -269,7 +277,7 @@ def generar_pdf_calendario():
     os.remove(path)
     return data
 
-def mostrar_auditoria (es_movil=False, conn=None):
+def mostrar_auditoria(es_movil=False, conn=None):
     col1, col2 = st.columns([1, 4])
     with col1:
         st.write("")
@@ -291,13 +299,14 @@ def mostrar_auditoria (es_movil=False, conn=None):
         col_t1, col_t2 = st.columns([4, 1])
         with col_t2: 
             if st.button("🔄 Refrescar", key="ref_t"): 
-                if 'df_gps_memoria' in st.session_state: del st.session_state['df_gps_memoria']
+                if 'df_gps_memoria' in st.session_state: 
+                    del st.session_state['df_gps_memoria']
                 st.rerun()
                 
         tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático"], horizontal=True)
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
-        if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, type="primary"):
+        if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, key="btn_tiempos_nube", type="primary"):
             if conn is not None:
                 with st.spinner("📥 Descargando historial de la nube..."):
                     try:
@@ -305,8 +314,10 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         if not df_descarga.empty:
                             st.session_state['df_gps_memoria'] = df_descarga
                             st.success("✅ Datos descargados de la nube correctamente.")
-                    except Exception as e: st.error(f"❌ Error: {e}")
-            else: st.error("❌ No se detectó conexión a Google Sheets.")
+                    except Exception as e: 
+                        st.error(f"❌ Error: {e}")
+            else: 
+                st.error("❌ No se detectó conexión a Google Sheets.")
                 
         st.divider()
         if not es_movil:
@@ -319,8 +330,10 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         if conn:
                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria", data=df_gps_crudo)
                             st.success("☁️ ¡Datos subidos exitosamente!")
-                    except Exception as e: st.error(f"❌ Error al subir: {e}")
-        else: st.info("📱 El ingreso manual está deshabilitado en móviles.")
+                    except Exception as e: 
+                        st.error(f"❌ Error al subir: {e}")
+        else: 
+            st.info("📱 El ingreso manual está deshabilitado en móviles.")
 
         if df_gps_crudo is None and 'df_gps_memoria' in st.session_state: 
             df_gps_crudo = st.session_state['df_gps_memoria']
@@ -333,30 +346,35 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     st.success("✅ Análisis Diario completado.")
                     st.dataframe(res_t, use_container_width=True, hide_index=True)
                     col_d1, col_d2 = st.columns(2)
-                    with col_d1: st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), "Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary")
-                else: st.error(f"❌ Error: {msg}")
+                    with col_d1: 
+                        st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), "Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary")
+                else: 
+                    st.error(f"❌ Error: {msg}")
                 
             elif tipo_reporte == "📅 Reporte Semanal Automático":
                 with st.spinner("⚙️ Escaneando fechas y procesando consolidado semanal..."):
                     res_diario, res_sem, msg_sem, f_in, f_out = procesar_auditoria_semanal(df_gps_crudo)
                 if res_sem is not None:
-                    st.success(f"✅ Análisis Semanal completado.")
+                    st.success("✅ Análisis Semanal completado.")
                     st.markdown("#### 📅 Desglose Diario por Vehículo")
                     st.dataframe(res_diario, use_container_width=True, hide_index=True)
                     st.markdown("#### 📈 Promedios y Consolidado")
                     st.dataframe(res_sem, use_container_width=True, hide_index=True)
                     col_s1, col_s2 = st.columns(2)
-                    with col_s1: st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), "Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
-                else: st.warning(f"⚠️ {msg_sem}")
+                    with col_s1: 
+                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), "Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
+                else: 
+                    st.warning(f"⚠️ {msg_sem}")
 
     # --- PESTAÑA 2: TELEMETRÍA ---
     with tab_velocidad:
         col_v1, col_v2 = st.columns([4, 1])
         with col_v2: 
-            if st.button("🔄 Refrescar", key="ref_v"): st.rerun()
+            if st.button("🔄 Refrescar", key="ref_v_telemetria"): 
+                st.rerun()
             
         st.markdown("### 🚀 Matriz de Excesos y Velocidad Promedio")
-        limite_vel = st.number_input("Promediar solo velocidades mayores a (km/h):", min_value=10, max_value=200, value=60, step=5)
+        limite_vel = st.number_input("Promediar solo velocidades mayores a (km/h):", min_value=10, max_value=200, value=60, step=5, key="num_limite_vel")
         
         if not es_movil:
             archivos_telemetria = st.file_uploader("Arrastra aquí TODOS los archivos Excel/CSV juntos", type=['csv', 'xlsx', 'xls'], accept_multiple_files=True, key="up_telemetria")
@@ -381,10 +399,12 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                         try:
                                             file_det.seek(0)
                                             raw_text = file_det.getvalue().decode('utf-8', errors='ignore').upper()
-                                            if len(raw_text) < 100: raw_text = file_det.getvalue().decode('latin1', errors='ignore').upper()
+                                            if len(raw_text) < 100: 
+                                                raw_text = file_det.getvalue().decode('latin1', errors='ignore').upper()
                                             
                                             placa_encontrada = next((str(p) for p in placas_validas if str(p) in raw_text or str(p) in file_det.name.upper()), None)
-                                            if not placa_encontrada: continue 
+                                            if not placa_encontrada: 
+                                                continue 
                                             
                                             df_d = read_file_robust(file_det)
                                             header_idx = next((i for i in range(min(20, len(df_d))) if 'VELOCIDAD' in " ".join([str(x) for x in df_d.iloc[i].values]).upper() or 'KM/H' in " ".join([str(x) for x in df_d.iloc[i].values]).upper()), None)
@@ -397,25 +417,32 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                                 if col_vel:
                                                     df_d['Vel_Num'] = df_d[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
                                                     df_excesos = df_d[df_d['Vel_Num'] > limite_vel]
-                                                    if not df_excesos.empty: dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
-                                        except Exception: pass
+                                                    if not df_excesos.empty: 
+                                                        dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
+                                        except Exception: 
+                                            pass
                                             
                                 df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
                                 df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios).fillna("-")
                                 df_matriz = df_matriz.drop(columns=['Placa_Match'])
 
-                                if archivos_detallados: df_matriz = df_matriz[df_matriz['Promedio Vel. (km/h)'] != "-"]
+                                if archivos_detallados: 
+                                    df_matriz = df_matriz[df_matriz['Promedio Vel. (km/h)'] != "-"]
 
-                                if df_matriz.empty: st.success("✅ La matriz quedó vacía tras la depuración.")
+                                if df_matriz.empty: 
+                                    st.success("✅ La matriz quedó vacía tras la depuración.")
                                 else:
                                     st.warning(f"⚠️ Se muestran {len(df_matriz)} vehículos en la matriz.")
                                     cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
                                     styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                                     st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                                    st.download_button("📥 Descargar Reporte Final (PDF)", generar_pdf_telemetria_matriz(df_matriz, limite_vel), f"Auditoria_Velocidades.pdf", "application/pdf", use_container_width=True, type="primary")
-                            else: st.error(f"❌ Error matriz principal: {msg_tel}")
-                        except Exception as e: st.error(f"❌ Error de procesamiento: {e}")
-        else: st.info("📱 La carga masiva está reservada para PC.")
+                                    st.download_button("📥 Descargar Reporte Final (PDF)", generar_pdf_telemetria_matriz(df_matriz, limite_vel), f"Auditoria_Velocidades.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_vel")
+                            else: 
+                                st.error(f"❌ Error matriz principal: {msg_tel}")
+                        except Exception as e: 
+                            st.error(f"❌ Error de procesamiento: {e}")
+        else: 
+            st.info("📱 La carga masiva está reservada para PC.")
 
     # --- PESTAÑA 3: GESTIÓN FINANCIERA ---
     with tab_eficiencia:
@@ -424,12 +451,17 @@ def mostrar_auditoria (es_movil=False, conn=None):
         
         if 'df_gastos_flota' not in st.session_state:
             if conn is not None:
-                try: df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
-                except Exception: df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
-            else: df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
-            if "COMPROBANTE" not in df_g.columns: df_g["COMPROBANTE"] = ""
+                try: 
+                    df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
+                except Exception: 
+                    df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
+            else: 
+                df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
+            if "COMPROBANTE" not in df_g.columns: 
+                df_g["COMPROBANTE"] = ""
             st.session_state['df_gastos_flota'] = df_g
-        else: df_g = st.session_state['df_gastos_flota']
+        else: 
+            df_g = st.session_state['df_gastos_flota']
 
         # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS (CON COINCIDENCIA DE TU IMAGEN 3) ---
         vehiculos_oficiales = [
@@ -450,7 +482,9 @@ def mostrar_auditoria (es_movil=False, conn=None):
         # Orden numérico natural para evitar el desorden alfabético
         def orden_numerico(v):
             num = re.search(r'\d+', str(v))
-            return int(num.group()) if num else 999
+            if num:
+                return int(num.group())
+            return 999
             
         lista_vehiculos = sorted(list(set_vehiculos), key=orden_numerico)
 
@@ -470,15 +504,17 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         df_g_pdf['VEHICULO'] = df_g_pdf['VEHICULO'].apply(lambda x: mapa_placas.get(str(x).strip(), x))
                     
                     pdf_gen = generar_pdf_reporte_general_gastos(df_g_pdf)
-                    st.download_button("📊 Descargar Reporte General Flota", pdf_gen, "Reporte_General_Flota.pdf", "application/pdf", use_container_width=True, type="primary")
+                    st.download_button("📊 Descargar Reporte General Flota", pdf_gen, "Reporte_General_Flota.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_gral")
                 except Exception as e: 
                     st.error(f"Error PDF General: {e}")
         st.markdown("---")
 
         col_sel1, col_sel2 = st.columns(2)
-        with col_sel1: vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad a revisar:", ["-- Seleccione --"] + lista_vehiculos)
+        with col_sel1: 
+            vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad a revisar:", ["-- Seleccione --"] + lista_vehiculos, key="sel_unidad_revisar")
         # --- FILTRO POR DEFECTO AJUSTADO A 365 DÍAS PARA EVITAR OCULTAR DATOS ---
-        with col_sel2: rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=365), get_hn_time().date()], key="filtro_rango_flota")
+        with col_sel2: 
+            rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=365), get_hn_time().date()], key="filtro_rango_flota")
         st.markdown("---")
 
         if vehiculo_seleccionado != "-- Seleccione --":
@@ -488,9 +524,9 @@ def mostrar_auditoria (es_movil=False, conn=None):
                 with st.form("form_gasto"):
                     fecha_gasto = st.date_input("📅 Fecha de Factura", value=get_hn_time().date(), key="fecha_registro_factura")
                     tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
-                    desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Compra de Batería)")
-                    monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0)
-                    archivo_comprobante = st.file_uploader("📎 Adjuntar Factura/Recibo (Opcional)", type=['pdf', 'png', 'jpg', 'jpeg'])
+                    desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Compra de Batería)", key="txt_desc_gasto")
+                    monto_gasto = st.number_input("💵 Monto Total (L.)", min_value=0.0, format="%.2f", step=100.0, key="num_monto_gasto")
+                    archivo_comprobante = st.file_uploader("📎 Adjuntar Factura/Recibo (Opcional)", type=['pdf', 'png', 'jpg', 'jpeg'], key="up_comprobante_gasto")
                     btn_guardar = st.form_submit_button("💾 Guardar Registro", use_container_width=True)
                     
                     if btn_guardar:
@@ -508,15 +544,18 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                     if palabra in desc_hist:
                                         alerta_msg = f"**ALERTA:** Hace menos de 3 meses (el {row_hist['FECHA']}) ya se registró algo similar: *'{desc_hist}'*. Verifique."
                                         break
-                                if alerta_msg: break
-                            if alerta_msg: st.session_state['alerta_repuesto'] = alerta_msg
+                                if alerta_msg: 
+                                    break
+                            if alerta_msg: 
+                                st.session_state['alerta_repuesto'] = alerta_msg
 
                             if archivo_comprobante:
                                 with st.spinner("☁️ Subiendo comprobante a la nube..."):
                                     mimetype = "application/pdf" if archivo_comprobante.name.lower().endswith('.pdf') else "image/jpeg"
                                     nombre_file = f"FAC_{vehiculo_seleccionado}_{fecha_gasto.strftime('%Y%m%d')}_{archivo_comprobante.name}"
                                     url_archivo, err = subir_documento_nube(archivo_comprobante, nombre_file, mimetype)
-                                    if err: st.error(err)
+                                    if err: 
+                                        st.error(err)
 
                             # --- DETECTAR Y REGISTRAR EN LAS COLUMNAS REPETIDAS ---
                             nuevo_dict = {
@@ -541,10 +580,12 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                 try:
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
                                     st.success("✅ Guardado exitoso.")
-                                except Exception as e: st.warning("⚠️ Guardado localmente.")
+                                except Exception as e: 
+                                    st.warning("⚠️ Guardado localmente.")
                             time.sleep(1.5)
                             st.rerun()
-                        else: st.error("⚠️ Ingrese descripción y monto > 0.")
+                        else: 
+                            st.error("⚠️ Ingrese descripción y monto > 0.")
 
             with c2:
                 st.markdown(f"#### 📊 Historial Financiero: {vehiculo_seleccionado}")
@@ -600,8 +641,9 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     
                     try:
                         pdf_bytes = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado, rango_fechas, total_gastado)
-                        st.download_button("📄 Bajar Reporte", pdf_bytes, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, type="secondary")
-                    except Exception as e: pass
+                        st.download_button("📄 Bajar Reporte", pdf_bytes, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, type="secondary", key="btn_down_rep_unidad")
+                    except Exception as e: 
+                        pass
                         
                     # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
                     rol_actual = str(st.session_state.get("rol_actual", st.session_state.get("rol", ""))).strip().lower()
@@ -619,8 +661,8 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         with st.expander("🗑️ Zona Admin: Eliminar registro"):
                             opciones_borrar = {idx: f"ID: {idx} | {row['FECHA']} | {row['TIPO_GASTO']} | L. {row['MONTO']}" for idx, row in df_filtro.iterrows()}
                             if opciones_borrar:
-                                registro_a_borrar = st.selectbox("Seleccionar:", options=list(opciones_borrar.keys()), format_func=lambda x: opciones_borrar[x])
-                                if st.button("🚨 Confirmar Eliminación", type="primary"):
+                                registro_a_borrar = st.selectbox("Seleccionar:", options=list(opciones_borrar.keys()), format_func=lambda x: opciones_borrar[x], key="sel_borrar_gasto")
+                                if st.button("🚨 Confirmar Eliminación", type="primary", key="btn_confirmar_borrado_gasto"):
                                     df_g = df_g.drop(registro_a_borrar).reset_index(drop=True)
                                     st.session_state['df_gastos_flota'] = df_g
                                     if conn is not None:
@@ -628,38 +670,46 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                             conn.clear(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos)
                                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
                                             st.success("✅ Eliminado.")
-                                        except Exception as e: st.error("Error nube.")
+                                        except Exception as e: 
+                                            st.error("Error nube.")
                                     time.sleep(1.5)
                                     st.rerun()
-                else: st.info("No hay facturas registradas en estas fechas.")
+                else: 
+                    st.info("No hay facturas registradas en estas fechas.")
 
     # --- PESTAÑA 4: GESTIÓN DOCUMENTAL ---
     with tab_checklist:
         st.markdown("### 📋 Gestión Documental de Flota")
         with st.expander("📅 Ver Calendario Anual de Inspecciones", expanded=False):
             st.info("💡 Programación de 2 revisiones por mes.")
-            try: st.download_button("📥 Bajar PDF de Calendario", generar_pdf_calendario(), "Calendario_Inspecciones.pdf", "application/pdf")
-            except: pass
+            try: 
+                st.download_button("📥 Bajar PDF de Calendario", generar_pdf_calendario(), "Calendario_Inspecciones.pdf", "application/pdf", key="btn_down_cal")
+            except: 
+                pass
             st.dataframe(pd.DataFrame(DATOS_CALENDARIO), use_container_width=True, hide_index=True)
 
         col_formato, col_upload = st.columns(2)
         with col_formato:
             st.markdown("#### 1️⃣ Obtener Formato Físico")
-            try: st.download_button("📄 DESCARGAR PLANTILLA (PDF)", generar_pdf_en_blanco(), "Formato_Inspeccion.pdf", "application/pdf", use_container_width=True)
-            except Exception as e: st.error(f"Error plantilla: {e}")
+            try: 
+                st.download_button("📄 DESCARGAR PLANTILLA (PDF)", generar_pdf_en_blanco(), "Formato_Inspeccion.pdf", "application/pdf", use_container_width=True, key="btn_down_plantilla")
+            except Exception as e: 
+                st.error(f"Error plantilla: {e}")
 
         with col_upload:
             st.markdown("#### 2️⃣ Subir Documento Escaneado")
             with st.form("form_subida_escaner"):
                 fecha_escaneo = st.date_input("Fecha de Inspección:", value=get_hn_time().date(), key="fecha_escaner_doc")
-                placa_vehiculo = st.text_input("🚗 Placa del Vehículo:*", placeholder="Ej: HAA-1234")
-                archivo_escaner = st.file_uploader("📥 Sube Documento (PDF/Img):", type=['pdf', 'png', 'jpg', 'jpeg'])
-                observaciones = st.text_input("Notas:", placeholder="Estado del vehículo...")
+                placa_vehiculo = st.text_input("🚗 Placa del Vehículo:*", placeholder="Ej: HAA-1234", key="txt_placa_escaner")
+                archivo_escaner = st.file_uploader("📥 Sube Documento (PDF/Img):", type=['pdf', 'png', 'jpg', 'jpeg'], key="up_archivo_escaner")
+                observaciones = st.text_input("Notas:", placeholder="Estado del vehículo...", key="txt_obs_escaner")
                 submit_escaner = st.form_submit_button("💾 REGISTRAR Y SUBIR", type="primary", use_container_width=True)
 
                 if submit_escaner:
-                    if not placa_vehiculo.strip(): st.error("⚠️ Placa obligatoria.")
-                    elif not archivo_escaner: st.error("⚠️ Sube el archivo.")
+                    if not placa_vehiculo.strip(): 
+                        st.error("⚠️ Placa obligatoria.")
+                    elif not archivo_escaner: 
+                        st.error("⚠️ Sube el archivo.")
                     else:
                         with st.spinner("Subiendo a la nube..."):
                             buffer_archivo = io.BytesIO(archivo_escaner.getvalue())
@@ -675,20 +725,25 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                 try:
                                     df_historial = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
                                     if df_historial is None or df_historial.empty:
-                                        try: df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
-                                        except: df_historial = pd.DataFrame()
+                                        try: 
+                                            df_historial = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                                        except: 
+                                            df_historial = pd.DataFrame()
                                             
                                     cols_registro = ['FECHA', 'PLACA', 'SUPERVISOR', 'OBSERVACIONES', 'ENLACE_ARCHIVO']
                                     nueva_fila = [fecha_escaneo.strftime("%d/%m/%Y"), placa_vehiculo.strip().upper(), st.session_state.get('username', 'Supervisor'), observaciones, url_almacenada]
                                     nuevo_df = pd.DataFrame([nueva_fila], columns=cols_registro)
                                     
                                     if df_historial is not None and not df_historial.empty:
-                                        if len(df_historial.columns) > len(cols_registro): df_historial = df_historial.iloc[:, :len(cols_registro)]
+                                        if len(df_historial.columns) > len(cols_registro): 
+                                            df_historial = df_historial.iloc[:, :len(cols_registro)]
                                         elif len(df_historial.columns) < len(cols_registro):
-                                            for i in range(len(cols_registro) - len(df_historial.columns)): df_historial[f"Col_Rec_{i}"] = ""
+                                            for i in range(len(cols_registro) - len(df_historial.columns)): 
+                                                df_historial[f"Col_Rec_{i}"] = ""
                                         df_historial.columns = cols_registro
                                         df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
-                                    else: df_final = nuevo_df
+                                    else: 
+                                        df_final = nuevo_df
                                         
                                     try:
                                         sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
@@ -696,17 +751,21 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                         pass # Continuamos si no hay GCS configurado
                                         
                                     if conn is not None:
-                                        try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
-                                        except: pass
+                                        try: 
+                                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
+                                        except: 
+                                            pass
                                     st.success("✅ Guardado y enlazado!")
-                                except Exception as e: st.error(f"❌ Error base: {e}")
+                                except Exception as e: 
+                                    st.error(f"❌ Error base: {e}")
 
         st.markdown("---")
         st.markdown("#### 📜 Registro Maestro de Inspecciones Físicas")
         try:
             df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
             if df_view_insp is None or df_view_insp.empty:
-                if conn is not None: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                if conn is not None: 
+                    df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
             
             if df_view_insp is not None and not df_view_insp.empty:
                 # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
@@ -750,9 +809,11 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     enlace_doc = str(row.get('ENLACE_ARCHIVO', ''))
                     
                     with cols[4]:
-                        if enlace_doc.startswith("http"): st.link_button("🔍", enlace_doc, use_container_width=True)
+                        if enlace_doc.startswith("http"): 
+                            st.link_button("🔍", enlace_doc, use_container_width=True, key=f"btn_ver_insp_{idx}")
                     with cols[5]:
-                        if enlace_doc.startswith("http"): st.link_button("⬇️", enlace_doc, use_container_width=True)
+                        if enlace_doc.startswith("http"): 
+                            st.link_button("⬇️", enlace_doc, use_container_width=True, key=f"btn_bajar_insp_{idx}")
                         
                     # El botón de borrado solo se renderiza si el usuario tiene autorización
                     if es_admin:
@@ -770,10 +831,15 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                             except:
                                                 pass
                                             if conn is not None:
-                                                try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
-                                                except: pass
+                                                try: 
+                                                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
+                                                except: 
+                                                    pass
                                         st.rerun()
-                                    except Exception as e: st.error(f"Error: {e}")
+                                    except Exception as e: 
+                                        st.error(f"Error: {e}")
                     st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
-            else: st.info("Aún no hay escáneres vehiculares.")
-        except Exception: st.warning("No se pudo cargar el registro.")s
+            else: 
+                st.info("Aún no hay escáneres vehiculares.")
+        except Exception: 
+            st.warning("No se pudo cargar el registro.")
