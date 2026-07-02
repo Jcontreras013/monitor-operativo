@@ -412,10 +412,24 @@ def mostrar_auditoria(es_movil=False, conn=None):
         col_gen1, col_gen2 = st.columns([1, 2])
         with col_gen1:
             if not df_g.empty:
-                try:
-                    pdf_gen = generar_pdf_reporte_general_gastos(df_g)
+               try:
+                    # =================================================================
+                    # 1. INTERCEPTAMOS Y AGREGAMOS LA PLACA AL VEHÍCULO
+                    # =================================================================
+                    df_g_pdf = df_g.copy()
+                    if 'VEHICULO' in df_g_pdf.columns:
+                        # Buscamos en tu diccionario de DATOS_CALENDARIO y armamos el nombre
+                        mapa_placas = {v['Unidad']: f"{v['Unidad']} [{v['Placa']}]" for v in DATOS_CALENDARIO}
+                        # Reemplazamos "MX-01" por "MX-01 [HAE1234]"
+                        df_g_pdf['VEHICULO'] = df_g_pdf['VEHICULO'].apply(lambda x: mapa_placas.get(x, x))
+                    
+                    # =================================================================
+                    # 2. AHORA SÍ, ENVIAMOS EL DATAFRAME MODIFICADO AL PDF
+                    # =================================================================
+                    pdf_gen = generar_pdf_reporte_general_gastos(df_g_pdf)
                     st.download_button("📊 Descargar Reporte General Flota", pdf_gen, "Reporte_General_Flota.pdf", "application/pdf", use_container_width=True, type="primary")
-                except Exception as e: st.error(f"Error PDF General: {e}")
+                except Exception as e: 
+                    st.error(f"Error PDF General: {e}")
         st.markdown("---")
 
         col_sel1, col_sel2 = st.columns(2)
