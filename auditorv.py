@@ -10,26 +10,6 @@ import time
 from datetime import datetime, timedelta, timezone
 
 # ==============================================================================
-# 🛡️ LLAVE MAESTRA DE ADMINISTRADOR (SINCRONIZADA CON TU CONFIGURACIÓN DE ROLES)
-# ==============================================================================
-st.session_state['rol_actual'] = 'admin'
-st.session_state['username'] = 'jaison'
-
-from tools import (
-    get_hn_time,
-    read_file_robust,
-    time_to_sec_robust,
-    procesar_auditoria_vehiculos,
-    procesar_auditoria_semanal,
-    procesar_matriz_telemetria,
-    generar_pdf_auditoria_tiempos,
-    generar_pdf_semanal_tiempos,
-    generar_pdf_telemetria_matriz,
-    generar_pdf_gastos_vehiculo,
-    generar_pdf_reporte_general_gastos
-)
-
-# ==============================================================================
 # MOTOR DE ALMACENAMIENTO: HOSTINGS INMUNES A BLOQUEOS (CATBOX + LITTERBOX)
 # ==============================================================================
 try:
@@ -70,6 +50,7 @@ def normalizar_unidad(v_str):
 def subir_pdf_gratis_catbox(file_buffer, file_name):
     """
     Sube un archivo de forma anónima y gratuita a Catbox.moe.
+    Proporciona almacenamiento permanente de alta velocidad inmune a bloqueos de IP.
     """
     try:
         file_buffer.seek(0)
@@ -626,7 +607,14 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     rol_actual = str(st.session_state.get("rol_actual", st.session_state.get("rol", ""))).strip().lower()
                     usuario_actual = str(st.session_state.get("username", "")).strip().lower()
                     
-                    if rol_actual == "admin" or usuario_actual == "jaison": 
+                    # --- REGLA DE SEGURIDAD ACTUALIZADA: ADMIN, JAISON, O JEFE SI ES ANDRES ---
+                    es_autorizado_eliminar = (
+                        rol_actual == "admin" or 
+                        usuario_actual == "jaison" or 
+                        (rol_actual == "jefe" and usuario_actual == "andres")
+                    )
+                    
+                    if es_autorizado_eliminar: 
                         st.markdown("---")
                         with st.expander("🗑️ Zona Admin: Eliminar registro"):
                             opciones_borrar = {idx: f"ID: {idx} | {row['FECHA']} | {row['TIPO_GASTO']} | L. {row['MONTO']}" for idx, row in df_filtro.iterrows()}
@@ -724,7 +712,13 @@ def mostrar_auditoria (es_movil=False, conn=None):
                 # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
                 rol_actual = str(st.session_state.get("rol_actual", st.session_state.get("rol", ""))).strip().lower()
                 usuario_actual = str(st.session_state.get("username", "")).strip().lower()
-                es_admin = (rol_actual == "admin" or usuario_actual == "jaison")
+                
+                # --- REGLA DE SEGURIDAD ACTUALIZADA: ADMIN, JAISON, O JEFE SI ES ANDRES ---
+                es_admin = (
+                    rol_actual == "admin" or 
+                    usuario_actual == "jaison" or 
+                    (rol_actual == "jefe" and usuario_actual == "andres")
+                )
 
                 # Ajustamos el ancho y número de columnas según los permisos del usuario
                 if es_admin:
@@ -760,7 +754,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     with cols[5]:
                         if enlace_doc.startswith("http"): st.link_button("⬇️", enlace_doc, use_container_width=True)
                         
-                    # El botón de borrado solo se renderiza si el usuario es administrador
+                    # El botón de borrado solo se renderiza si el usuario tiene autorización
                     if es_admin:
                         with cols[6]:
                             if st.button("❌", key=f"del_insp_{idx}", type="primary", use_container_width=True):
@@ -782,4 +776,4 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                     except Exception as e: st.error(f"Error: {e}")
                     st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
             else: st.info("Aún no hay escáneres vehiculares.")
-        except Exception: st.warning("No se pudo cargar el registro.")
+        except Exception: st.warning("No se pudo cargar el registro.")s
