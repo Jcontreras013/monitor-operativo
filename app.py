@@ -124,8 +124,8 @@ def sincronizar_datos_nube(conn):
 
                 # --- FILTRO RESTAURADO: CONSERVAR ÚNICAMENTE LA OPERACIÓN DE ISCA ---
                 if 'EMPRESA' in df_nube.columns:
-                    mask_isca_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
-                    df_nube = df_nube[mask_isca_sync].copy()
+                mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA|CEQUI', na=False)
+                df_nube = df_nube[mask_empresas_sync].copy()
 
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
@@ -183,7 +183,7 @@ def sincronizar_datos_nube(conn):
                     mask_vivas = df_nube['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                     df_nube = df_nube[(df_nube['HORA_LIQ'] >= fecha_limite_7d) | (df_nube['FECHA_APE'] >= fecha_limite_7d) | (df_nube['HORA_LIQ'].isna()) | mask_vivas].copy()
 
-                cols_orden_ideal = ['DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'MINUTOS_CALC', 'SEGMENTO', 'ALERTA_TIEMPO']
+                cols_orden_ideal = ['DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'SOP', 'RAZON_CIERRE_SOP', 'SEGMENTO', 'ALERTA_TIEMPO']
                 cols_presentes = [c for c in cols_orden_ideal if c in df_nube.columns]
                 cols_restantes = [c for c in df_nube.columns if c not in cols_presentes]
                 df_nube = df_nube[cols_presentes + cols_restantes]
