@@ -354,7 +354,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     del st.session_state['df_gps_memoria']
                 st.rerun()
                 
-        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático"], horizontal=True)
+        tipo_reporte = st.radio("📌 Selecciona el Tipo de Análisis:", ["📊 Reporte Diario", "📅 Reporte Semanal Automático"], horizontal=True, key="opt_tipo_rep")
         df_gps_crudo = None
         st.markdown("### ☁️ Sincronización de Tiempos")
         if st.button("☁️ Cargar desde la Nube (Tiempos)", use_container_width=True, key="btn_tiempos_nube", type="primary"):
@@ -398,7 +398,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     st.dataframe(res_t, use_container_width=True, hide_index=True)
                     col_d1, col_d2 = st.columns(2)
                     with col_d1: 
-                        st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), "Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary")
+                        st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), "Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_down_tiem_diar")
                 else: 
                     st.error(f"❌ Error: {msg}")
                 
@@ -413,7 +413,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     st.dataframe(res_sem, use_container_width=True, hide_index=True)
                     col_s1, col_s2 = st.columns(2)
                     with col_s1: 
-                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), "Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary")
+                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), "Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_down_tiem_sem")
                 else: 
                     st.warning(f"⚠️ {msg_sem}")
 
@@ -427,7 +427,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.markdown("### 🚀 Matriz de Excesos y Telemetría")
         st.info("Sube el archivo Excel o CSV que contiene el reporte general de Flota, y opcionalmente los archivos de detalle por vehículo para extraer el promedio de velocidad (> 80 km/h).")
         
-        limite_vel = st.number_input("🚨 Límite de Velocidad Permitido (km/h):", min_value=50.0, max_value=120.0, value=80.0, step=5.0)
+        limite_vel = st.number_input("🚨 Límite de Velocidad Permitido (km/h):", min_value=50.0, max_value=120.0, value=80.0, step=5.0, key="limite_vel_num")
         
         archivo_telemetria = st.file_uploader("📥 1. Arrastra el archivo Matriz General (Flota):", type=['csv', 'xlsx', 'xls'], key="up_tele_matriz")
         archivos_detallados = st.file_uploader("📂 2. Arrastra los archivos de detalle por vehículo (Opcional):", type=['csv', 'xlsx', 'xls'], accept_multiple_files=True, key="up_tele_detalles")
@@ -488,11 +488,11 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
                         styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                         st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                        st.download_button("📥 Descargar Reporte (PDF)", generar_pdf_telemetria_matriz(df_matriz), "Reporte_Telemetria.pdf", "application/pdf", use_container_width=True, type="primary")
+                        st.download_button("📥 Descargar Reporte (PDF)", generar_pdf_telemetria_matriz(df_matriz), "Reporte_Telemetria.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_vel")
                 else:
                     st.error(f"❌ Error: {msg_matriz}")
 
-    # --- PESTAÑA 3: GESTIÓN FINANCIERA ---
+    # --- PESTAÑA 3: GASTOS Y FLOTA ---
     with tab_eficiencia:
         st.markdown("### ⚖️ Control Financiero y Mantenimiento de Flota")
         worksheet_gastos = "Gastos_Flota"
@@ -568,7 +568,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     tipo_gasto = st.selectbox("🏷️ Categoría", ["Combustible", "Mantenimiento / Taller", "Repuestos", "Lavado", "Multas", "Seguro", "Otro"])
                     desc_gasto = st.text_input("📝 Descripción (Ej: Fac #1234, Compra de Batería)", key="txt_desc_gasto")
                     monto_gasto = st.number_input("💰 Monto Total (L.)", min_value=0.0, step=100.0, format="%.2f")
-                    archivo_comprobante = st.file_uploader("📎 Subir Comprobante/Factura (Opcional)", type=['jpg', 'jpeg', 'png', 'pdf'])
+                    archivo_comprobante = st.file_uploader("📎 Subir Comprobante/Factura (Opcional)", type=['jpg', 'jpeg', 'png', 'pdf'], key="up_compro_gastos_flota")
                     submit_gasto = st.form_submit_button("💾 Guardar Gasto", type="primary")
 
                 if submit_gasto:
@@ -648,7 +648,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     
                     try:
                         pdf_veh = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado)
-                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True)
+                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad")
                     except Exception as e:
                         pass
                         
@@ -663,7 +663,11 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         rol_actual, usuario_actual = obtener_credenciales_actuales()
                         
                         # Permitir si es admin, o si es jefe y específicamente el usuario andres
-                        puede_eliminar_gasto = (rol_actual == "admin" or usuario_actual == "jaison" or (rol_actual == "jefe" and usuario_actual == "andres"))
+                        puede_eliminar_gasto = (
+                            "admin" in rol_actual or 
+                            "jaison" in usuario_actual or 
+                            ("jefe" in rol_actual and "andres" in usuario_actual)
+                        )
                         
                         if puede_eliminar_gasto:
                             if st.button("🚨 Confirmar Eliminación", type="primary", key="btn_confirmar_borrado_gasto"):
@@ -681,7 +685,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     time.sleep(1.5)
                                     st.rerun()
                         else:
-                            st.info("🔒 Tu usuario no tiene privilegios para eliminar gastos de flota.")
+                            st.info(f"🔒 Tu usuario ({usuario_actual}) con rol ({rol_actual}) no tiene privilegios para eliminar gastos de flota.")
                 else:
                     st.info("No hay facturas registradas en estas fechas.")
 
@@ -710,7 +714,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 fecha_escaneo = st.date_input("Fecha de Inspección:", value=get_hn_time().date(), key="fecha_escaner_doc")
                 placa_vehiculo = st.text_input("🚗 Placa del Vehículo:*", placeholder="Ej: HAA-1234", key="placa_escaner_doc")
                 supervisor_nombre = st.text_input("👤 Supervisor:", placeholder="Ej: Juan Perez", key="sup_escaner_doc")
-                archivo_pdf_escaner = st.file_uploader("📥 Sube Documento (PDF/Img):", type=['pdf', 'jpg', 'jpeg', 'png'], key="up_escaner_doc")
+                archivo_pdf_escaner = st.file_uploader("📎 Subir PDF o Foto Escaneada:*", type=['pdf', 'jpg', 'jpeg', 'png'], key="up_escaner_doc")
                 btn_subir_escaner = st.form_submit_button("☁️ Subir y Guardar Registro", type="primary")
 
             if btn_subir_escaner:
@@ -772,7 +776,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         st.markdown("### 🗂️ Historial de Inspecciones Escaneadas")
         col_filtro_doc, _ = st.columns([1, 2])
         with col_filtro_doc:
-            buscar_placa = st.text_input("🔍 Filtrar por Placa:")
+            buscar_placa = st.text_input("🔍 Filtrar por Placa:", key="buscar_placa_filt")
             
         with st.spinner("Cargando registro de la nube..."):
             try:
@@ -796,9 +800,9 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         
                         # --- REGLA DE SEGURIDAD ACTUALIZADA: ADMIN, JAISON, O JEFE SI ES ANDRES ---
                         es_admin = (
-                            rol_actual == "admin" or
-                            usuario_actual == "jaison" or
-                            (rol_actual == "jefe" and usuario_actual == "andres")
+                            "admin" in rol_actual or
+                            "jaison" in usuario_actual or
+                            ("jefe" in rol_actual and "andres" in usuario_actual)
                         )
 
                         # Ajustamos el ancho y número de columnas según los permisos del usuario
@@ -842,7 +846,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             st.rerun()
                                         except Exception as e: st.error(f"Error: {e}")
                                 else:
-                                    st.info("🔒 Sin permisos para borrar.")
+                                    st.info(f"🔒 Tu usuario ({usuario_actual}) con rol ({rol_actual}) no tiene privilegios para eliminar documentos de flota.")
                                 
                                 st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
                             col_idx += 1
