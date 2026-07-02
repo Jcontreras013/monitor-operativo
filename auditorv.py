@@ -242,7 +242,7 @@ def generar_pdf_calendario():
     os.remove(path)
     return data
 
-def mostrar_auditoria(es_movil=False, conn=None):
+def mostrar_auditoria (es_movil=False, conn=None):
     col1, col2 = st.columns([1, 4])
     with col1:
         st.write("")
