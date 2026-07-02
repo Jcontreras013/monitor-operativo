@@ -86,23 +86,28 @@ def subir_documento_nube(file_buffer, file_name, mimetype):
         return None, f"Error Cloud Storage: {str(e)}"
 
 # ==============================================================================
-# DATOS DEL CALENDARIO DE INSPECCIONES
+# DATOS DEL CALENDARIO DE INSPECCIONES (HISTÓRICO + 16 VEHÍCULOS ACTUALIZADOS)
 # ==============================================================================
 DATOS_CALENDARIO = [
+    # --- MESES DE JUNIO Y JULIO (INTACTOS COMO EN TU IMAGEN ORIGINAL) ---
     {"Año": 2026, "Mes": "Junio", "Quincena": "1ra", "Unidad": "MX-5", "Placa": "HED3834", "Descripción": "Kia K2700 cabina sensilla"},
     {"Año": 2026, "Mes": "Junio", "Quincena": "2da", "Unidad": "MX-14", "Placa": "HBB8594", "Descripción": "Mazda BT 50 cabina sencilla"},
     {"Año": 2026, "Mes": "Julio", "Quincena": "1ra", "Unidad": "MX-22", "Placa": "HDQ9370", "Descripción": "Kia Camion cabina sencilla"},
     {"Año": 2026, "Mes": "Julio", "Quincena": "2da", "Unidad": "MX-7", "Placa": "HED3852", "Descripción": "Suzuki APV panel busito"},
-    {"Año": 2026, "Mes": "Agosto", "Quincena": "1ra", "Unidad": "MX-1", "Placa": "HDL9821", "Descripción": "Kia Camion grande cabina sensilla"},
-    {"Año": 2026, "Mes": "Agosto", "Quincena": "2da", "Unidad": "MX-20", "Placa": "HDA9649", "Descripción": "Suzuki APV panel busito"},
-    {"Año": 2026, "Mes": "Septiembre", "Quincena": "1ra", "Unidad": "MX-12", "Placa": "HAU6095", "Descripción": "Kia picanto"},
-    {"Año": 2026, "Mes": "Septiembre", "Quincena": "2da", "Unidad": "MX-4", "Placa": "HAU8203", "Descripción": "Camionsito kia Doble cabina"},
-    {"Año": 2026, "Mes": "Octubre", "Quincena": "1ra", "Unidad": "MX-16", "Placa": "HBJ1307", "Descripción": "Suzuki APV panel busito"},
-    {"Año": 2026, "Mes": "Octubre", "Quincena": "2da", "Unidad": "MX-26", "Placa": "HDU5167", "Descripción": "Mazda BT-50 Doble Gris"},
-    {"Año": 2026, "Mes": "Noviembre", "Quincena": "1ra", "Unidad": "MX-9", "Placa": "HAB9494", "Descripción": "Izusu cabina sencilla"},
-    {"Año": 2026, "Mes": "Noviembre", "Quincena": "2da", "Unidad": "MX-15", "Placa": "HBJ1317", "Descripción": "Suzuki APV panel busito"},
-    {"Año": 2026, "Mes": "Diciembre", "Quincena": "1ra", "Unidad": "MX-25", "Placa": "HBZ0246", "Descripción": "Suzuki APV panel busito"},
-    {"Año": 2026, "Mes": "Diciembre", "Quincena": "2da", "Unidad": "MX-2", "Placa": "HDP9223", "Descripción": "Kia Camion Cabina cabina sensilla"}
+    
+    # --- VEHÍCULOS FALTANTES ACOMODADOS DE AGOSTO EN ADELANTE ---
+    {"Año": 2026, "Mes": "Agosto", "Quincena": "1ra", "Unidad": "MX-01", "Placa": "HDL 9821", "Descripción": "KIA Camión cabina sencilla Blanco"},
+    {"Año": 2026, "Mes": "Agosto", "Quincena": "2da", "Unidad": "MX-02", "Placa": "HDP 9223", "Descripción": "KIA Camión cabina sencilla Blanco"},
+    {"Año": 2026, "Mes": "Septiembre", "Quincena": "1ra", "Unidad": "MX-03", "Placa": "HBD 9507", "Descripción": "KIA Camión cabina sencilla Blanco"},
+    {"Año": 2026, "Mes": "Septiembre", "Quincena": "2da", "Unidad": "MX-04", "Placa": "HAU 8203", "Descripción": "Camioncito KIA Doble cabina Blanco"},
+    {"Año": 2026, "Mes": "Octubre", "Quincena": "1ra", "Unidad": "MX-06", "Placa": "HAE 1234", "Descripción": "KIA K2700 cabina sencilla Blanco"},
+    {"Año": 2026, "Mes": "Octubre", "Quincena": "2da", "Unidad": "MX-08", "Placa": "HAB 9494", "Descripción": "Isuzu cabina sencilla Blanco"},
+    {"Año": 2026, "Mes": "Noviembre", "Quincena": "1ra", "Unidad": "MX-09", "Placa": "HDU 5167", "Descripción": "Mazda BT-50 Gris"},
+    {"Año": 2026, "Mes": "Noviembre", "Quincena": "2da", "Unidad": "MX-12", "Placa": "HAU 6095", "Descripción": "KIA Picanto Blanco"},
+    {"Año": 2026, "Mes": "Diciembre", "Quincena": "1ra", "Unidad": "MX-14", "Placa": "HDA 9649", "Descripción": "Suzuki APV panel Blanco"},
+    {"Año": 2026, "Mes": "Diciembre", "Quincena": "2da", "Unidad": "MX-15", "Placa": "HBJ 1317", "Descripción": "Suzuki APV panel Blanco"},
+    {"Año": 2027, "Mes": "Enero", "Quincena": "1ra", "Unidad": "MX-16", "Placa": "HBJ 1307", "Descripción": "Suzuki APV panel Blanco"},
+    {"Año": 2027, "Mes": "Enero", "Quincena": "2da", "Unidad": "MX-20", "Placa": "HBZ 0246", "Descripción": "Suzuki APV panel Blanco"}
 ]
 
 class FormatoInspeccionPDF(FPDF):
@@ -416,12 +421,18 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     # =================================================================
                     # 1. INTERCEPTAMOS Y AGREGAMOS LA PLACA AL VEHÍCULO
                     # =================================================================
+                 # 1. INTERCEPTAMOS Y AGREGAMOS LA PLACA AL VEHÍCULO
                     df_g_pdf = df_g.copy()
                     if 'VEHICULO' in df_g_pdf.columns:
-                        # Buscamos en tu diccionario de DATOS_CALENDARIO y armamos el nombre
-                        mapa_placas = {v['Unidad']: f"{v['Unidad']} [{v['Placa']}]" for v in DATOS_CALENDARIO}
-                        # Reemplazamos "MX-01" por "MX-01 [HAE1234]"
-                        df_g_pdf['VEHICULO'] = df_g_pdf['VEHICULO'].apply(lambda x: mapa_placas.get(x, x))
+                        mapa_placas = {}
+                        for v in DATOS_CALENDARIO:
+                            # Guardamos la versión oficial (Ej. MX-05)
+                            mapa_placas[v['Unidad']] = f"{v['Unidad']} [{v['Placa']}]"
+                            # Guardamos la versión sin el cero (Ej. MX-5) por si el técnico lo escribe así
+                            unidad_sin_cero = v['Unidad'].replace("MX-0", "MX-")
+                            mapa_placas[unidad_sin_cero] = f"{v['Unidad']} [{v['Placa']}]"
+                        
+                        df_g_pdf['VEHICULO'] = df_g_pdf['VEHICULO'].apply(lambda x: mapa_placas.get(str(x).strip(), x))
                     
                     # =================================================================
                     # 2. AHORA SÍ, ENVIAMOS EL DATAFRAME MODIFICADO AL PDF
