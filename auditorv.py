@@ -10,9 +10,10 @@ import time
 from datetime import datetime, timedelta, timezone
 
 # ==============================================================================
-# 🛡️ LLAVE MAESTRA DE ADMINISTRADOR (FORZADA PARA PRUEBAS)
+# 🛡️ LLAVE MAESTRA DE ADMINISTRADOR (SINCRONIZADA CON TU CONFIGURACIÓN DE ROLES)
 # ==============================================================================
-st.session_state['rol'] = 'admin'
+# Se fuerza 'rol_actual' en lugar de 'rol' para coincidir exactamente con tu main()
+st.session_state['rol_actual'] = 'admin'
 st.session_state['username'] = 'jaison'
 
 from tools import (
@@ -30,7 +31,7 @@ from tools import (
 )
 
 # ==============================================================================
-# MOTOR DE ALMACENAMIENTO: GOOGLE CLOUD STORAGE / FALLBACK GRATUITO
+# MOTOR DE ALMACENAMIENTO: CLOUD HOSTINGS GRATUITOS (GOFILE + TRANSFER.SH)
 # ==============================================================================
 try:
     from google.cloud import storage as gcs_storage
@@ -51,75 +52,72 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- SUBIDA GRATUITA ALTERNATIVA (PDF DIRECTO) ---
+# --- SUBIDA GRATUITA CON PRIORIDAD 1: GOFILE ---
 def subir_pdf_gratis_gofile(file_buffer, file_name):
     """
     Sube un archivo de forma anónima y gratuita a GoFile.
-    Retorna el enlace de descarga generado o un error.
     """
     try:
-        # 1. Consultar el servidor óptimo disponible
-        res_server = requests.get("https://api.gofile.io/getServer", timeout=10)
+        res_server = requests.get("https://api.gofile.io/getServer", timeout=8)
         if res_server.status_code != 200:
-            return None, "No se pudo conectar con el servidor de GoFile."
+            return None, "Servidor de GoFile no disponible."
         
         server_data = res_server.json()
         if server_data.get("status") != "success":
-            return None, "Servidor GoFile no disponible temporalmente."
+            return None, "Fallo al obtener servidor asignado."
             
         server_name = server_data["data"]["server"]
-        
-        # 2. Subir el archivo
         upload_url = f"https://{server_name}.gofile.io/uploadFile"
-        file_buffer.seek(0)
-        files = {"file": (file_name, file_buffer.read())}
         
-        res_upload = requests.post(upload_url, files=files, timeout=30)
+        file_buffer.seek(0)
+        files = {"file": (file_name, file_buffer.getvalue())}
+        
+        res_upload = requests.post(upload_url, files=files, timeout=25)
         if res_upload.status_code == 200:
             upload_data = res_upload.json()
             if upload_data.get("status") == "success":
                 return upload_data["data"]["downloadPage"], None
-            return None, f"Error GoFile: {upload_data.get('data')}"
-        return None, f"Error HTTP {res_upload.status_code}"
+            return None, f"GoFile reportó error: {upload_data.get('data')}"
+        return None, f"Error HTTP {res_upload.status_code} en GoFile."
     except Exception as e:
-        return None, f"Fallo al conectar con GoFile: {str(e)}"
+        return None, f"Error de conexión en GoFile: {str(e)}"
+
+# --- SUBIDA GRATUITA CON PRIORIDAD 2: TRANSFER.SH (RESPALDO AUTOMÁTICO) ---
+def subir_pdf_gratis_transfersh(file_buffer, file_name):
+    """
+    Sube un archivo de forma anónima a Transfer.sh si GoFile presenta fallas.
+    """
+    try:
+        safe_name = file_name.replace(" ", "_").replace("/", "-")
+        url = f"https://transfer.sh/{safe_name}"
+        file_buffer.seek(0)
+        
+        res_upload = requests.put(url, data=file_buffer.getvalue(), timeout=20)
+        if res_upload.status_code == 200:
+            return res_upload.text.strip(), None
+        return None, f"Error HTTP {res_upload.status_code} en Transfer.sh."
+    except Exception as e:
+        return None, f"Error de conexión en Transfer.sh: {str(e)}"
 
 def subir_documento_nube(file_buffer, file_name, mimetype):
     """
-    Sube un documento a la nube. Intenta usar Google Cloud Storage, 
-    si no está configurado o falla, recurre de forma transparente a GoFile.
+    Función unificada que prioriza el almacenamiento gratuito e instantáneo.
+    Prueba GoFile en primera instancia y recurre a Transfer.sh si el primero falla.
     """
-    # Intentar subir a Google Cloud Storage si está habilitado en secrets
-    if GCS_DISPONIBLE and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-        try:
-            cred_dict = dict(st.secrets["connections"]["gsheets"])
-            if '\\n' in cred_dict.get('private_key', ''):
-                cred_dict['private_key'] = cred_dict['private_key'].replace('\\n', '\n')
-                
-            credentials = service_account.Credentials.from_service_account_info(cred_dict)
-            client = gcs_storage.Client(credentials=credentials, project=cred_dict.get('project_id', 'jovial-trilogy-306216'))
-            bucket = client.bucket(NOMBRE_BUCKET_SISTEMA)
-            
-            safe_name = file_name.replace(" ", "_").replace("/", "-")
-            blob = bucket.blob(f"Flota_Documentos/{safe_name}")
-            
-            blob.upload_from_string(file_buffer.getvalue(), content_type=mimetype)
-            
-            try:
-                blob.make_public()
-                return blob.public_url, None
-            except Exception:
-                url_final = blob.generate_signed_url(version="v4", expiration=timedelta(days=3650), method="GET")
-                return url_final, None
-        except Exception:
-            # Si falla GCS por credenciales, la ejecución continúa hacia el plan de respaldo
-            pass
-
-    # PLAN DE RESPALDO GRATUITO: Subida anónima sin límites de almacenamiento
-    return subir_pdf_gratis_gofile(file_buffer, file_name)
+    # 1. Intentamos subir a GoFile
+    enlace, err_gofile = subir_pdf_gratis_gofile(file_buffer, file_name)
+    if enlace:
+        return enlace, None
+        
+    # 2. Si falla GoFile, recurrimos a Transfer.sh automáticamente
+    enlace_alt, err_transfer = subir_pdf_gratis_transfersh(file_buffer, file_name)
+    if enlace_alt:
+        return enlace_alt, None
+        
+    return None, f"No se pudo completar la subida (GoFile: {err_gofile} | Transfer.sh: {err_transfer})"
 
 # ==============================================================================
-# DATOS DEL CALENDARIO DE INSPECCIONES (HISTÓRICO + 16 VEHÍCULOS ACTUALIZADOS)
+# DATOS DEL CALENDARIO DE INSPECCIONES
 # ==============================================================================
 DATOS_CALENDARIO = [
     {"Año": 2026, "Mes": "Junio", "Quincena": "1ra", "Unidad": "MX-5", "Placa": "HED3834", "Descripción": "Kia K2700 cabina sencilla"},
@@ -499,7 +497,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                             if alerta_msg: st.session_state['alerta_repuesto'] = alerta_msg
 
                             if archivo_comprobante:
-                                with st.spinner("☁️ Subiendo comprobante a almacenamiento en la nube..."):
+                                with st.spinner("☁️ Subiendo comprobante a la nube..."):
                                     mimetype = "application/pdf" if archivo_comprobante.name.lower().endswith('.pdf') else "image/jpeg"
                                     nombre_file = f"FAC_{vehiculo_seleccionado}_{fecha_gasto.strftime('%Y%m%d')}_{archivo_comprobante.name}"
                                     url_archivo, err = subir_documento_nube(archivo_comprobante, nombre_file, mimetype)
@@ -561,7 +559,8 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         st.download_button("📄 Bajar Reporte", pdf_bytes, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, type="secondary")
                     except Exception as e: pass
                         
-                    rol_actual = str(st.session_state.get("rol", "")).strip().lower()
+                    # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
+                    rol_actual = str(st.session_state.get("rol_actual", st.session_state.get("rol", ""))).strip().lower()
                     usuario_actual = str(st.session_state.get("username", "")).strip().lower()
                     
                     if rol_actual == "admin" or usuario_actual == "jaison": 
@@ -611,7 +610,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     if not placa_vehiculo.strip(): st.error("⚠️ Placa obligatoria.")
                     elif not archivo_escaner: st.error("⚠️ Sube el archivo.")
                     else:
-                        with st.spinner("Subiendo a almacenamiento en la nube..."):
+                        with st.spinner("Subiendo a la nube..."):
                             buffer_archivo = io.BytesIO(archivo_escaner.getvalue())
                             nombre_archivo_drive = f"{placa_vehiculo.strip().upper()}_{fecha_escaneo.strftime('%Y%m%d')}_{archivo_escaner.name}"
                             mimetype = "application/pdf" if archivo_escaner.name.lower().endswith('.pdf') else "image/jpeg"
@@ -640,7 +639,11 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                         df_final = pd.concat([df_historial, nuevo_df], ignore_index=True)
                                     else: df_final = nuevo_df
                                         
-                                    sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    try:
+                                        sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                    except:
+                                        pass # Continuamos si no hay GCS configurado
+                                        
                                     if conn:
                                         try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
                                         except: pass
@@ -655,19 +658,17 @@ def mostrar_auditoria (es_movil=False, conn=None):
                 if conn: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
             
             if df_view_insp is not None and not df_view_insp.empty:
-                # -----------------------------------------------------------------
-                # COMPROBACIÓN ROBUSTA DE ROLES PARA LA INSPECCIÓN FÍSICA
-                # -----------------------------------------------------------------
-                rol_actual = str(st.session_state.get("rol", "")).strip().lower()
+                # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
+                rol_actual = str(st.session_state.get("rol_actual", st.session_state.get("rol", ""))).strip().lower()
                 usuario_actual = str(st.session_state.get("username", "")).strip().lower()
                 es_admin = (rol_actual == "admin" or usuario_actual == "jaison")
 
-                # Se ajusta la cantidad de columnas para ocultar o mostrar el botón "Borrar"
+                # Ajustamos el ancho y número de columnas según los permisos del usuario
                 if es_admin:
                     cols_head = st.columns([1.5, 1.5, 1.5, 3, 0.7, 0.7, 0.7])
                 else:
                     cols_head = st.columns([1.5, 1.5, 1.5, 3, 1.0, 1.0])
-
+                
                 cols_head[0].markdown("**FECHA**")
                 cols_head[1].markdown("**PLACA**")
                 cols_head[2].markdown("**SUPERVISOR**")
@@ -684,7 +685,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         cols = st.columns([1.5, 1.5, 1.5, 3, 0.7, 0.7, 0.7])
                     else:
                         cols = st.columns([1.5, 1.5, 1.5, 3, 1.0, 1.0])
-
+                        
                     cols[0].write(row.get('FECHA', ''))
                     cols[1].write(row.get('PLACA', ''))
                     cols[2].write(row.get('SUPERVISOR', ''))
@@ -695,8 +696,8 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         if enlace_doc.startswith("http"): st.link_button("🔍", enlace_doc, use_container_width=True)
                     with cols[5]:
                         if enlace_doc.startswith("http"): st.link_button("⬇️", enlace_doc, use_container_width=True)
-                    
-                    # El botón de eliminación solo se construye si el rol es 'admin'
+                        
+                    # El botón de borrado solo se renderiza si el usuario es administrador
                     if es_admin:
                         with cols[6]:
                             if st.button("❌", key=f"del_insp_{idx}", type="primary", use_container_width=True):
@@ -707,7 +708,10 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                             df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
                                         if idx in df_borrado.index:
                                             df_borrado = df_borrado.drop(idx).reset_index(drop=True)
-                                            sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                            try:
+                                                sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
+                                            except:
+                                                pass
                                             if conn:
                                                 try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
                                                 except: pass
