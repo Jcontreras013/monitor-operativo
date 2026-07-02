@@ -3265,7 +3265,7 @@ def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
 def generar_pdf_reporte_general_gastos(df_gastos):
     """
     Genera un PDF gerencial de gastos y flota, agrupado por vehículo,
-    mostrando fecha cronológica y descripciones detalladas.
+    mostrando fecha cronológica y descripciones detalladas de forma robusta.
     """
     from fpdf import FPDF
     import pandas as pd
@@ -3293,19 +3293,60 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         try: return pdf.output(dest='S').encode('latin1')
         except: return bytes(pdf.output())
 
-    gran_total = 0.0
+    # =========================================================
+    # DETECCIÓN ROBUSTA DE COLUMNAS (Independiente de mayúsculas/minúsculas o espacios)
+    # =========================================================
+    # Creamos un mapa de columnas normalizadas (sin espacios y en minúsculas)
+    df_cols = {col.strip().lower(): col for col in df_gastos.columns}
     
-    # Aseguramos que exista la columna de vehículo para agrupar
-    if 'VEHICULO' not in df_gastos.columns:
-        df_gastos['VEHICULO'] = "FLOTA GENERAL"
+    # 1. Buscar columna del vehículo
+    col_vehiculo = None
+    for opt in ['vehiculo', 'vehículo', 'placa', 'vehicle', 'unidad']:
+        if opt in df_cols:
+            col_vehiculo = df_cols[opt]
+            break
+            
+    # 2. Buscar columna de la fecha
+    col_fecha = None
+    for opt in ['fecha', 'date', 'fec', 'fecha_gasto']:
+        if opt in df_cols:
+            col_fecha = df_cols[opt]
+            break
+
+    # 3. Buscar columna de categoría / tipo de gasto
+    col_tipo = None
+    for opt in ['tipo_gasto', 'tipo de gasto', 'tipo_de_gasto', 'categoria', 'categoría', 'tipo', 'category']:
+        if opt in df_cols:
+            col_tipo = df_cols[opt]
+            break
+
+    # 4. Buscar columna de descripción
+    col_desc = None
+    for opt in ['descripcion', 'descripción', 'detalle', 'description', 'desc']:
+        if opt in df_cols:
+            col_desc = df_cols[opt]
+            break
+
+    # 5. Buscar columna del monto total
+    col_total = None
+    for opt in ['total', 'costo', 'monto', 'total (l.)', 'total(l.)', 'monto_gasto', 'costo_total', 'precio', 'importe', 'valor']:
+        if opt in df_cols:
+            col_total = df_cols[opt]
+            break
+
+    # Aseguramos la existencia de la columna vehículo para agrupar
+    vehiculo_col_real = col_vehiculo if col_vehiculo else 'VEHICULO'
+    if vehiculo_col_real not in df_gastos.columns:
+        df_gastos[vehiculo_col_real] = "FLOTA GENERAL"
         
-    vehiculos_unicos = sorted(df_gastos['VEHICULO'].dropna().unique().tolist())
+    vehiculos_unicos = sorted(df_gastos[vehiculo_col_real].dropna().unique().tolist())
+    gran_total = 0.0
     
     # =========================================================
     # RECORRIDO Y AGRUPACIÓN POR CADA VEHÍCULO
     # =========================================================
     for vehiculo in vehiculos_unicos:
-        df_vehiculo = df_gastos[df_gastos['VEHICULO'] == vehiculo]
+        df_vehiculo = df_gastos[df_gastos[vehiculo_col_real] == vehiculo]
         if df_vehiculo.empty:
             continue
             
@@ -3313,7 +3354,6 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_fill_color(30, 58, 138)  # Azul oscuro institucional
         pdf.set_text_color(255, 255, 255) # Letras blancas
-        # Imprimimos el nombre del vehículo (que ya incluye la placa gracias a auditorv.py)
         pdf.cell(190, 8, safestr(f" VEHÍCULO: {vehiculo}"), border=1, ln=True, fill=True, align="L")
         
         # --- ENCABEZADOS DE LA TABLA (190mm ancho total) ---
@@ -3333,26 +3373,37 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         # --- IMPRESIÓN DEL DETALLE DE GASTOS ---
         for _, row in df_vehiculo.iterrows():
             # 1. Fecha limpia
-            fecha_str = safestr(row.get('FECHA', row.get('Fecha', row.get('fecha', 'N/D'))))[:10]
+            fecha_val = row.get(col_fecha) if col_fecha else None
+            fecha_str = safestr(fecha_val)[:10] if pd.notna(fecha_val) else 'N/D'
             
             # 2. Categoría
-            cat = safestr(row.get('TIPO_GASTO', row.get('Tipo_Gasto', row.get('CATEGORIA', 'N/D'))))[:25]
+            cat_val = row.get(col_tipo) if col_tipo else None
+            cat = safestr(cat_val)[:25] if pd.notna(cat_val) else 'N/D'
             
             # 3. Descripción detallada
-            desc = safestr(row.get('DESCRIPCION', row.get('Descripción', row.get('Descripcion', 'Sin detalle'))))[:70]
+            desc_val = row.get(col_desc) if col_desc else None
+            desc = safestr(desc_val)[:70] if pd.notna(desc_val) else 'Sin detalle'
             
-            # 4. SUMATORIA MATEMÁTICA BLINDADA
-            raw_val = row.get('TOTAL', row.get('Total', row.get('Costo', row.get('Monto', 0))))
-            try:
-                # Convertimos a texto, quitamos la "L.", las comas de miles y los espacios
-                val_clean = str(raw_val).upper().replace('L.', '').replace('L', '').replace(',', '').replace(' ', '')
-                tot = float(val_clean)
-            except:
+            # 4. Obtención y parsing del valor numérico
+            raw_val = row.get(col_total) if col_total else 0.0
+            
+            if pd.isna(raw_val) or raw_val == '':
                 tot = 0.0
+            else:
+                try:
+                    # Si el valor ya es numérico, lo convertimos directamente
+                    if isinstance(raw_val, (int, float)):
+                        tot = float(raw_val)
+                    else:
+                        # Si es de tipo string, removemos símbolos de moneda y separadores
+                        val_clean = str(raw_val).upper().replace('L.', '').replace('L', '').replace('$', '').replace(',', '').strip()
+                        tot = float(val_clean)
+                except Exception:
+                    tot = 0.0
                 
             subtotal_vehiculo += tot
             
-            # Escribir la fila
+            # Escribir la fila en el PDF
             pdf.cell(25, 6, fecha_str, border=1, align="C")
             pdf.cell(40, 6, cat, border=1, align="L")
             pdf.cell(95, 6, desc, border=1, align="L")
@@ -3385,5 +3436,4 @@ def generar_pdf_reporte_general_gastos(df_gastos):
     try:
         return pdf.output(dest='S').encode('latin1')
     except Exception:
-        # FPDF2 moderno
         return bytes(pdf.output())
