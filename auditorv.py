@@ -51,6 +51,24 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
+# --- AUXILIAR DE NORMALIZACIÓN INTELIGENTE (MX-01 == MX-1 == MX-1 [PLA-1234]) ---
+def normalizar_unidad(v_str):
+    """
+    Normaliza el nombre de un vehículo para poder realizar búsquedas cruzadas
+    sin importar ceros a la izquierda, placas, espacios o guiones.
+    """
+    if not v_str or pd.isna(v_str):
+        return ""
+    # Quitar lo que esté adentro de corchetes (ej: [HDL9821])
+    clean = re.sub(r'\[.*?\]', '', str(v_str)).strip()
+    # Remover guiones, espacios y pasar a mayúsculas
+    clean = clean.upper().replace(" ", "").replace("-", "")
+    # Convertir MX01 -> MX1, MX013 -> MX13, etc.
+    match = re.search(r'MX0*(\d+)', clean)
+    if match:
+        return f"MX-{match.group(1)}"
+    return clean
+
 # --- SUBIDA GRATUITA CON PRIORIDAD 1: CATBOX (Almacenamiento Permanente) ---
 def subir_pdf_gratis_catbox(file_buffer, file_name):
     """
@@ -59,13 +77,12 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
     """
     try:
         file_buffer.seek(0)
-        # Catbox requiere la extensión del archivo para procesar el tipo de dato
         files = {
             "fileToUpload": (file_name, file_buffer.getvalue())
         }
         data = {
             "reqtype": "fileupload",
-            "userhash": "" # Vacío para subida anónima
+            "userhash": ""
         }
         response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
@@ -81,7 +98,6 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
 def subir_pdf_gratis_litterbox(file_buffer, file_name):
     """
     Sube un archivo de forma temporal (duración de 72 horas) a Litterbox.
-    Funciona como un excelente canal de respaldo alternativo.
     """
     try:
         file_buffer.seek(0)
@@ -90,7 +106,7 @@ def subir_pdf_gratis_litterbox(file_buffer, file_name):
         }
         data = {
             "reqtype": "fileupload",
-            "time": "72h" # 72 horas de persistencia antes de expirar
+            "time": "72h"
         }
         response = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
@@ -105,14 +121,12 @@ def subir_pdf_gratis_litterbox(file_buffer, file_name):
 def subir_documento_nube(file_buffer, file_name, mimetype):
     """
     Pasarela de subida gratuita. Intenta Catbox (almacenamiento permanente)
-    y desvía automáticamente a Litterbox (respaldo de 72h) si ocurre algún problema.
+    y desvía automáticamente a Litterbox (72h) si ocurre algún problema.
     """
-    # 1. Intentamos subir a Catbox (Permanente)
     enlace, err_catbox = subir_pdf_gratis_catbox(file_buffer, file_name)
     if enlace:
         return enlace, None
         
-    # 2. Si falla Catbox, intentamos Litterbox (72h)
     enlace_alt, err_litter = subir_pdf_gratis_litterbox(file_buffer, file_name)
     if enlace_alt:
         return enlace_alt, None
@@ -432,7 +446,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
         worksheet_gastos = "Gastos_Flota"
         
         if 'df_gastos_flota' not in st.session_state:
-            if 'conn' in locals() and conn is not None:
+            if conn is not None:
                 try: df_g = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, ttl=0)
                 except Exception: df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
             else: df_g = pd.DataFrame(columns=["FECHA", "VEHICULO", "TIPO_GASTO", "DESCRIPCION", "MONTO", "COMPROBANTE"])
@@ -440,9 +454,20 @@ def mostrar_auditoria (es_movil=False, conn=None):
             st.session_state['df_gastos_flota'] = df_g
         else: df_g = st.session_state['df_gastos_flota']
 
+        # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS ---
         vehiculos_base = [f"MX-{i}" for i in range(1, 41)]
+        vehiculos_calendario = [v['Unidad'] for v in DATOS_CALENDARIO]
         vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
-        lista_vehiculos = sorted(list(set(vehiculos_base + vehiculos_historicos)))
+        
+        # Unimos todas las fuentes eliminando duplicados mediante normalización básica
+        set_vehiculos = set(vehiculos_base + vehiculos_calendario + vehiculos_historicos)
+        
+        # Ordenamiento numérico natural para evitar "MX-1, MX-10, MX-11... MX-2"
+        def orden_numerico(v):
+            num = re.search(r'\d+', str(v))
+            return int(num.group()) if num else 999
+            
+        lista_vehiculos = sorted(list(set_vehiculos), key=orden_numerico)
 
         st.markdown("---")
         col_gen1, col_gen2 = st.columns([1, 2])
@@ -488,7 +513,8 @@ def mostrar_auditoria (es_movil=False, conn=None):
                             palabras_ignorar = {'para', 'como', 'factura', 'fac', 'cambio', 'pago', 'compra', 'reparacion', 'mantenimiento', 'gasolina', 'combustible', 'diesel', 'galones'}
                             palabras_clave = [p.lower() for p in re.findall(r'\b\w+\b', desc_gasto) if len(p) > 3 and p.lower() not in palabras_ignorar]
                             fecha_limite = pd.to_datetime(fecha_gasto) - pd.Timedelta(days=90)
-                            df_reciente = df_g[(df_g['VEHICULO'] == vehiculo_seleccionado) & (pd.to_datetime(df_g['FECHA'], errors='coerce') >= fecha_limite)]
+                            df_reciente = df_g[(df_g['VEHICULO'].apply(normalizar_unidad) == normalizar_unidad(vehiculo_seleccionado)) & (pd.to_datetime(df_g['FECHA'], errors='coerce') >= fecha_limite)]
+                            
                             alerta_msg = None
                             for _, row_hist in df_reciente.iterrows():
                                 desc_hist = str(row_hist['DESCRIPCION']).lower()
@@ -517,7 +543,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                             df_g = pd.concat([df_g, nuevo_registro], ignore_index=True)
                             st.session_state['df_gastos_flota'] = df_g
                             
-                            if 'conn' in locals() and conn is not None:
+                            if conn is not None:
                                 try:
                                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
                                     st.success("✅ Guardado exitoso.")
@@ -532,14 +558,22 @@ def mostrar_auditoria (es_movil=False, conn=None):
                     st.error(st.session_state['alerta_repuesto'], icon="🚨")
                     del st.session_state['alerta_repuesto'] 
                 
-                df_filtro = df_g[df_g['VEHICULO'] == vehiculo_seleccionado].copy()
-                if not df_filtro.empty:
-                    df_filtro['FECHA_DT'] = pd.to_datetime(df_filtro['FECHA'], errors='coerce').dt.date
-                    if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
-                        df_filtro = df_filtro[(df_filtro['FECHA_DT'] >= rango_fechas[0]) & (df_filtro['FECHA_DT'] <= rango_fechas[1])]
-                    elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
-                        df_filtro = df_filtro[df_filtro['FECHA_DT'] == rango_fechas[0]]
-                    df_filtro = df_filtro.drop(columns=['FECHA_DT'])
+                # --- FILTRO INTELIGENTE / NORMALIZADO DE UNIDAD ---
+                df_filtro = pd.DataFrame()
+                if not df_g.empty:
+                    df_g_temp = df_g.copy()
+                    df_g_temp['VEHICULO_NORM'] = df_g_temp['VEHICULO'].apply(normalizar_unidad)
+                    vehiculo_norm = normalizar_unidad(vehiculo_seleccionado)
+                    
+                    df_filtro = df_g_temp[df_g_temp['VEHICULO_NORM'] == vehiculo_norm].copy()
+                    if not df_filtro.empty:
+                        df_filtro['FECHA_DT'] = pd.to_datetime(df_filtro['FECHA'], errors='coerce').dt.date
+                        if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
+                            df_filtro = df_filtro[(df_filtro['FECHA_DT'] >= rango_fechas[0]) & (df_filtro['FECHA_DT'] <= rango_fechas[1])]
+                        elif isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 1:
+                            df_filtro = df_filtro[df_filtro['FECHA_DT'] == rango_fechas[0]]
+                        
+                        df_filtro = df_filtro.drop(columns=['FECHA_DT', 'VEHICULO_NORM'])
 
                 if not df_filtro.empty:
                     df_filtro['MONTO'] = pd.to_numeric(df_filtro['MONTO'], errors='coerce').fillna(0.0)
@@ -575,7 +609,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                 if st.button("🚨 Confirmar Eliminación", type="primary"):
                                     df_g = df_g.drop(registro_a_borrar).reset_index(drop=True)
                                     st.session_state['df_gastos_flota'] = df_g
-                                    if 'conn' in locals() and conn is not None:
+                                    if conn is not None:
                                         try:
                                             conn.clear(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos)
                                             conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_gastos, data=df_g)
@@ -647,7 +681,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                     except:
                                         pass # Continuamos si no hay GCS configurado
                                         
-                                    if conn:
+                                    if conn is not None:
                                         try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_final)
                                         except: pass
                                     st.success("✅ Guardado y enlazado!")
@@ -658,7 +692,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
         try:
             df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
             if df_view_insp is None or df_view_insp.empty:
-                if conn: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
+                if conn is not None: df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
             
             if df_view_insp is not None and not df_view_insp.empty:
                 # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
@@ -715,7 +749,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                                 sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
                                             except:
                                                 pass
-                                            if conn:
+                                            if conn is not None:
                                                 try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
                                                 except: pass
                                         st.rerun()
