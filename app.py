@@ -123,7 +123,7 @@ def sincronizar_datos_nube(conn):
                     df_nube = df_nube[~mask_basura_sync].copy()
 
                 # --- FILTRO RESTAURADO: CONSERVAR ÚNICAMENTE LA OPERACIÓN DE ISCA ---
-                if 'EMPRESA' in df_nube.columns:
+            if 'EMPRESA' in df_nube.columns:
                 mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA|CEQUI', na=False)
                 df_nube = df_nube[mask_empresas_sync].copy()
 
