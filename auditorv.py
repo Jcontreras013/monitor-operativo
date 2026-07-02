@@ -10,6 +10,26 @@ import time
 from datetime import datetime, timedelta, timezone
 
 # ==============================================================================
+# IMPORTACIÓN DE FUNCIONES OPERATIVAS Y DE CONFIGURACIÓN DE TOOLS
+# ==============================================================================
+try:
+    from tools import (
+        get_hn_time,
+        read_file_robust,
+        time_to_sec_robust,
+        procesar_auditoria_vehiculos,
+        procesar_auditoria_semanal,
+        procesar_matriz_telemetria,
+        generar_pdf_auditoria_tiempos,
+        generar_pdf_semanal_tiempos,
+        generar_pdf_telemetria_matriz,
+        generar_pdf_gastos_vehiculo,
+        generar_pdf_reporte_general_gastos
+    )
+except ImportError as e:
+    st.error(f"⚠️ Error al importar herramientas de tools.py en auditorv.py: {e}")
+
+# ==============================================================================
 # MOTOR DE ALMACENAMIENTO: HOSTINGS INMUNES A BLOQUEOS (CATBOX + LITTERBOX)
 # ==============================================================================
 try:
@@ -809,11 +829,9 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     enlace_doc = str(row.get('ENLACE_ARCHIVO', ''))
                     
                     with cols[4]:
-                        if enlace_doc.startswith("http"): 
-                            st.link_button("🔍", enlace_doc, use_container_width=True, key=f"btn_ver_insp_{idx}")
+                        if enlace_doc.startswith("http"): st.link_button("🔍", enlace_doc, use_container_width=True)
                     with cols[5]:
-                        if enlace_doc.startswith("http"): 
-                            st.link_button("⬇️", enlace_doc, use_container_width=True, key=f"btn_bajar_insp_{idx}")
+                        if enlace_doc.startswith("http"): st.link_button("⬇️", enlace_doc, use_container_width=True)
                         
                     # El botón de borrado solo se renderiza si el usuario tiene autorización
                     if es_admin:
@@ -831,15 +849,10 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             except:
                                                 pass
                                             if conn is not None:
-                                                try: 
-                                                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
-                                                except: 
-                                                    pass
+                                                try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
+                                                except: pass
                                         st.rerun()
-                                    except Exception as e: 
-                                        st.error(f"Error: {e}")
+                                    except Exception as e: st.error(f"Error: {e}")
                     st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
-            else: 
-                st.info("Aún no hay escáneres vehiculares.")
-        except Exception: 
-            st.warning("No se pudo cargar el registro.")
+            else: st.info("Aún no hay escáneres vehiculares.")
+        except Exception: st.warning("No se pudo cargar el registro.")
