@@ -51,6 +51,30 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
+# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA ---
+def obtener_credenciales_actuales():
+    """
+    Busca de manera robusta el rol y el usuario en session_state probando múltiples 
+    claves posibles para evitar fallos por discrepancias en los nombres del login.
+    """
+    rol = ""
+    for clave in ['rol_actual', 'rol', 'rol_usuario', 'user_role', 'role']:
+        if clave in st.session_state:
+            val = st.session_state[clave]
+            if val is not None:
+                rol = str(val).strip().lower()
+                break
+                
+    user = ""
+    for clave in ['username', 'usuario', 'user', 'username_actual', 'nombre_usuario']:
+        if clave in st.session_state:
+            val = st.session_state[clave]
+            if val is not None:
+                user = str(val).strip().lower()
+                break
+                
+    return rol, user
+
 # --- AUXILIARES DE CONVERSIÓN SEGUROS ---
 def safestr(val):
     """
@@ -477,12 +501,21 @@ def mostrar_auditoria(es_movil=False, conn=None):
             else:
                 df_g = st.session_state['df_gastos_flota']
                 
+        # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS (CON COINCIDENCIA DE TU IMAGEN 3) ---
+        vehiculos_oficiales = [
+            'MX-1', 'MX-2', 'MX-3', 'MX-4', 'MX-5', 'MX-6', 'MX-7', 'MX-8', 'MX-9', 'MX-10', 
+            'MX-12', 'MX-13', 'MX-14', 'MX-15', 'MX-16', 'MX-17', 'MX-18', 'MX-19', 'MX-20', 
+            'MX-21', 'MX-22', 'MX-23', 'MX-24', 'MX-25', 'MX-26', 'MX-28', 'MX-30'
+        ]
+        vehiculos_calendario = [v['Unidad'] for v in DATOS_CALENDARIO]
+        vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
+        
+        # Consolidamos de forma estricta para evitar duplicados como MX-01 y MX-1
         set_vehiculos = set()
-        for v in DATOS_CALENDARIO: 
-            set_vehiculos.add(v['Unidad'])
-        if not df_g.empty and 'VEHICULO' in df_g.columns:
-            for v_gasto in df_g['VEHICULO'].dropna().unique():
-                set_vehiculos.add(str(v_gasto).strip())
+        for v in (vehiculos_oficiales + vehiculos_calendario + vehiculos_historicos):
+            v_norm = normalizar_unidad(v)
+            if v_norm:
+                set_vehiculos.add(v_norm)
 
         def orden_numerico(v):
             num = re.search(r'\d+', str(v))
@@ -620,8 +653,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         registro_a_borrar = st.selectbox("Seleccionar:", options=list(opciones_borrar.keys()), format_func=lambda x: opciones_borrar[x], key="sel_borrar_gasto")
                         
                         # --- REGLA DE SEGURIDAD PARA BORRADO FINANCIERO ---
-                        rol_actual = str(st.session_state.get("rol_actual", "")).strip().lower()
-                        usuario_actual = str(st.session_state.get("username", "")).strip().lower()
+                        rol_actual, usuario_actual = obtener_credenciales_actuales()
                         
                         # Permitir si es admin, o si es jefe y específicamente el usuario andres
                         puede_eliminar_gasto = (rol_actual == "admin" or usuario_actual == "jaison" or (rol_actual == "jefe" and usuario_actual == "andres"))
@@ -753,8 +785,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     
                     if not df_view_insp.empty:
                         # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
-                        rol_actual = str(st.session_state.get("rol_actual", st.session_state.get("rol", ""))).strip().lower()
-                        usuario_actual = str(st.session_state.get("username", "")).strip().lower()
+                        rol_actual, usuario_actual = obtener_credenciales_actuales()
                         
                         # --- REGLA DE SEGURIDAD ACTUALIZADA: ADMIN, JAISON, O JEFE SI ES ANDRES ---
                         es_admin = (
