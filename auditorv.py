@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 # ==============================================================================
 # 🛡️ LLAVE MAESTRA DE ADMINISTRADOR (SINCRONIZADA CON TU CONFIGURACIÓN DE ROLES)
 # ==============================================================================
-# Se fuerza 'rol_actual' para que coincida con la validación de tu función main()
 st.session_state['rol_actual'] = 'admin'
 st.session_state['username'] = 'jaison'
 
@@ -31,7 +30,7 @@ from tools import (
 )
 
 # ==============================================================================
-# MOTOR DE ALMACENAMIENTO: HOSTINGS GRATUITOS (PIXELDRAIN + 0X0.ST)
+# MOTOR DE ALMACENAMIENTO: HOSTINGS INMUNES A BLOQUEOS (CATBOX + LITTERBOX)
 # ==============================================================================
 try:
     from google.cloud import storage as gcs_storage
@@ -52,60 +51,73 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- SUBIDA GRATUITA CON PRIORIDAD 1: PIXELDRAIN (Altamente fiable con visor PDF) ---
-def subir_pdf_gratis_pixeldrain(file_buffer, file_name):
+# --- SUBIDA GRATUITA CON PRIORIDAD 1: CATBOX (Almacenamiento Permanente) ---
+def subir_pdf_gratis_catbox(file_buffer, file_name):
     """
-    Sube un archivo de forma anónima y gratuita a Pixeldrain.
-    No expira rápido y proporciona un visor interactivo integrado.
-    """
-    try:
-        file_buffer.seek(0)
-        files = {"file": (file_name, file_buffer.getvalue())}
-        # Petición POST oficial a Pixeldrain
-        response = requests.post("https://pixeldrain.com/api/file", files=files, timeout=25)
-        if response.status_code in [200, 201]:
-            data = response.json()
-            if data.get("success") is True:
-                file_id = data.get("id")
-                # Retorna el link del visor web oficial
-                return f"https://pixeldrain.com/u/{file_id}", None
-            return None, f"Pixeldrain: {data.get('message', 'Error desconocido')}"
-        return None, f"Pixeldrain HTTP {response.status_code}"
-    except Exception as e:
-        return None, f"Fallo al conectar con Pixeldrain: {str(e)}"
-
-# --- SUBIDA GRATUITA CON PRIORIDAD 2: 0X0.ST (Respaldo minimalista ininterrumpido) ---
-def subir_pdf_gratis_0x0(file_buffer, file_name):
-    """
-    Sube un archivo de forma anónima y gratuita a 0x0.st.
-    Es un host minimalista que no suele experimentar caídas ni bloqueos.
+    Sube un archivo de forma anónima y gratuita a Catbox.moe.
+    Proporciona almacenamiento permanente de alta velocidad inmune a bloqueos de IP.
     """
     try:
         file_buffer.seek(0)
-        files = {"file": (file_name, file_buffer.getvalue())}
-        response = requests.post("https://0x0.st", files=files, timeout=20)
+        # Catbox requiere la extensión del archivo para procesar el tipo de dato
+        files = {
+            "fileToUpload": (file_name, file_buffer.getvalue())
+        }
+        data = {
+            "reqtype": "fileupload",
+            "userhash": "" # Vacío para subida anónima
+        }
+        response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
-            return response.text.strip(), None
-        return None, f"0x0.st HTTP {response.status_code}"
+            url = response.text.strip()
+            if url.startswith("http"):
+                return url, None
+            return None, f"Catbox error: {url}"
+        return None, f"Catbox HTTP {response.status_code}"
     except Exception as e:
-        return None, f"Fallo al conectar con 0x0.st: {str(e)}"
+        return None, f"Fallo al conectar con Catbox: {str(e)}"
+
+# --- SUBIDA GRATUITA CON PRIORIDAD 2: LITTERBOX (Respaldo temporal por 72 horas) ---
+def subir_pdf_gratis_litterbox(file_buffer, file_name):
+    """
+    Sube un archivo de forma temporal (duración de 72 horas) a Litterbox.
+    Funciona como un excelente canal de respaldo alternativo.
+    """
+    try:
+        file_buffer.seek(0)
+        files = {
+            "fileToUpload": (file_name, file_buffer.getvalue())
+        }
+        data = {
+            "reqtype": "fileupload",
+            "time": "72h" # 72 horas de persistencia antes de expirar
+        }
+        response = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, timeout=30)
+        if response.status_code == 200:
+            url = response.text.strip()
+            if url.startswith("http"):
+                return url, None
+            return None, f"Litterbox error: {url}"
+        return None, f"Litterbox HTTP {response.status_code}"
+    except Exception as e:
+        return None, f"Fallo al conectar con Litterbox: {str(e)}"
 
 def subir_documento_nube(file_buffer, file_name, mimetype):
     """
-    Pasarela de subida gratuita. Intenta Pixeldrain (mejor experiencia visual) 
-    y desvía automáticamente a 0x0.st si ocurre un bloqueo de red.
+    Pasarela de subida gratuita. Intenta Catbox (almacenamiento permanente)
+    y desvía automáticamente a Litterbox (respaldo de 72h) si ocurre algún problema.
     """
-    # 1. Intentamos subir a Pixeldrain
-    enlace, err_pixeldrain = subir_pdf_gratis_pixeldrain(file_buffer, file_name)
+    # 1. Intentamos subir a Catbox (Permanente)
+    enlace, err_catbox = subir_pdf_gratis_catbox(file_buffer, file_name)
     if enlace:
         return enlace, None
         
-    # 2. Si Pixeldrain falla, intentamos con 0x0.st
-    enlace_alt, err_0x0 = subir_pdf_gratis_0x0(file_buffer, file_name)
+    # 2. Si falla Catbox, intentamos Litterbox (72h)
+    enlace_alt, err_litter = subir_pdf_gratis_litterbox(file_buffer, file_name)
     if enlace_alt:
         return enlace_alt, None
         
-    return None, f"No se pudo completar la subida (Pixeldrain: {err_pixeldrain} | 0x0.st: {err_0x0})"
+    return None, f"No se pudo completar la subida (Catbox: {err_catbox} | Litterbox: {err_litter})"
 
 # ==============================================================================
 # DATOS DEL CALENDARIO DE INSPECCIONES
