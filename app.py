@@ -122,6 +122,7 @@ def sincronizar_datos_nube(conn):
                     mask_basura_sync = df_nube['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                     df_nube = df_nube[~mask_basura_sync].copy()
 
+                # --- FILTRO RESTAURADO: CONSERVAR ÚNICAMENTE LA OPERACIÓN DE ISCA ---
                 if 'EMPRESA' in df_nube.columns:
                     mask_isca_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                     df_nube = df_nube[mask_isca_sync].copy()
@@ -425,9 +426,12 @@ def main():
                                 if 'ACTIVIDAD' in df_cloud.columns:
                                     mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                                     df_cloud = df_cloud[~mask_basura_cloud].copy()
+                                
+                                # --- FILTRO RESTAURADO: CONSERVAR ÚNICAMENTE LA OPERACIÓN DE ISCA ---
                                 if 'EMPRESA' in df_cloud.columns:
                                     mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                     df_cloud = df_cloud[mask_isca_cloud].copy()
+
                                 PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                                 mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
                                 df_historial_puro = df_cloud[~mask_vivas_nube].copy()
@@ -644,12 +648,12 @@ def main():
             lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
             lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
             
-            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas")
-            filtro_estado = st.multiselect("📌 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
+            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
+            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
             filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
             
             st.divider() 
-            st.markdown("### 🚨 Filtros en Vivo")
+            st.markdown("### 🔍 Filtros en Vivo")
             
             m_viva_count = df_base_activa['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
             
@@ -880,12 +884,15 @@ def main():
             st.markdown("---")
 
             # ==============================================================================
-            # ⏳ GANTT EN PESTAÑA CIERRE DIARIO (DIBUJADO CON FILTRO MEJORADO)
+            # ⏳ GANTT EN PESTAÑA CIERRE DIARIO
             # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                    mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
+                    df_para_gantt_diario = df_base[mask_ini_dia].copy()
+                    
                     if not df_para_gantt_diario.empty:
                         ahora_hx_d = get_honduras_time()
                         
@@ -903,7 +910,7 @@ def main():
                         )
                         
                         df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
-                        df_para_gantt_diario = df_para_gantt_diario.sort_values(by=['TECNICO', 'GANTT_START'])
+                        df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
                         # ---> NUEVA CONFIGURACIÓN: LISTA DE ACTIVIDADES EXCLUSIVAMENTE PERMITIDAS
                         actividades_permitidas = [
@@ -999,13 +1006,13 @@ def main():
                     mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
                     df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
                     if not df_ins_cierre.empty:
-                        def clasificar_ins_cierre(row):
+                        def clasificiar_ins_cierre(row):
                             txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
                             if re.search('ADIC', txt): return 'Adición'
                             if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
                             if re.search('RECUP', txt): return 'Recuperado'
                             return 'Nueva'
-                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificiar_ins_cierre, axis=1)
                         df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
                         df_ins_grouped.columns = ['Instalaciones', 'Cant']
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
@@ -1470,37 +1477,31 @@ def main():
         if st.session_state.get('config_mostrar_panel', True):
             
             # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR OPERATIVO EN VIVO)
+            # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
             # ==============================================================================
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
-                        # Definimos máscaras seguras para el filtro del día de hoy
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
                         mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
-                        # Salvavidas 3: Rescatamos órdenes hoy abiertas sin HORA_INI pero con FECHA_APE correspondiente a hoy
-                        mask_sin_inicio_hoy = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].isna()) & (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor)
                         
-                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt | mask_sin_inicio_hoy].copy()
+                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
                         
-                        # 🔥 SALVAVIDAS 1: Inyectar 30 min. a las CERRADAS que no tienen inicio antes de filtrar
-                        mask_sin_inicio_c = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
-                        df_para_gantt_final.loc[mask_sin_inicio_c, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio_c, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
+                        # 🔥 SALVAVIDAS 1: Inyectar 30 min. a las que no tienen inicio ANTES del filtro destructivo
+                        mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
+                        df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
                         
-                        # 🔥 SALVAVIDAS 2: Inyectar inicio a las ABIERTAS que no tienen HORA_INI usando FECHA_APE
-                        ahora_hx = get_honduras_time()
-                        mask_sin_inicio_a = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].isna()
-                        df_para_gantt_final.loc[mask_sin_inicio_a, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio_a, 'FECHA_APE'].fillna(ahora_hx - pd.Timedelta(minutes=30))
-                        
-                        # Ahora sí, filtramos de forma completamente segura (los CEQUI pasaron a salvo)
+                        # Ahora sí, filtramos (ya los CEQUI pasaron a salvo)
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
+                            ahora_hx = get_honduras_time()
+                            
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
                             
-                            # 🔥 SALVAVIDAS 4: Si duró 0 minutos (CEQUIs rápidos de inicio/cierre idéntico), inyectamos 30 min.
+                            # 🔥 SALVAVIDAS 2: Si el CEQUI duró 0 minutos (Inicio y Cierre a la misma hora), Plotly no lo dibuja
                             mask_cero_min = df_para_gantt_final['GANTT_START'] == df_para_gantt_final['GANTT_END']
                             df_para_gantt_final.loc[mask_cero_min, 'GANTT_START'] = df_para_gantt_final.loc[mask_cero_min, 'GANTT_END'] - pd.Timedelta(minutes=30)
                             
@@ -1692,14 +1693,9 @@ def main():
                         conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
                         
                         fig_barras_v = px.bar(
-                            conteo_horario_v, x='Hora_Format', y='Ord',
-                            color_discrete_sequence=['#3B82F6'],
-                            height=380
-                        )
-                        fig_barras_v.update_layout(
-                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                            margin=dict(l=10, r=10, t=20, b=10), showlegend=False,
-                            xaxis=dict(title=""), yaxis=dict(title="")
+                            conteo_horario_v, x='Hora_Format', y='Ord', 
+                            labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
+                            template="plotly_dark", height=300
                         )
                         st.plotly_chart(fig_barras_v, use_container_width=True)
                     else:
