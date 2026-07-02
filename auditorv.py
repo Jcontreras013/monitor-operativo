@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 # ==============================================================================
 # 🛡️ LLAVE MAESTRA DE ADMINISTRADOR (SINCRONIZADA CON TU CONFIGURACIÓN DE ROLES)
 # ==============================================================================
-# Se fuerza 'rol_actual' en lugar de 'rol' para coincidir exactamente con tu main()
+# Se fuerza 'rol_actual' para que coincida con la validación de tu función main()
 st.session_state['rol_actual'] = 'admin'
 st.session_state['username'] = 'jaison'
 
@@ -31,7 +31,7 @@ from tools import (
 )
 
 # ==============================================================================
-# MOTOR DE ALMACENAMIENTO: CLOUD HOSTINGS GRATUITOS (GOFILE + TRANSFER.SH)
+# MOTOR DE ALMACENAMIENTO: HOSTINGS GRATUITOS (PIXELDRAIN + 0X0.ST)
 # ==============================================================================
 try:
     from google.cloud import storage as gcs_storage
@@ -52,69 +52,60 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- SUBIDA GRATUITA CON PRIORIDAD 1: GOFILE ---
-def subir_pdf_gratis_gofile(file_buffer, file_name):
+# --- SUBIDA GRATUITA CON PRIORIDAD 1: PIXELDRAIN (Altamente fiable con visor PDF) ---
+def subir_pdf_gratis_pixeldrain(file_buffer, file_name):
     """
-    Sube un archivo de forma anónima y gratuita a GoFile.
+    Sube un archivo de forma anónima y gratuita a Pixeldrain.
+    No expira rápido y proporciona un visor interactivo integrado.
     """
     try:
-        res_server = requests.get("https://api.gofile.io/getServer", timeout=8)
-        if res_server.status_code != 200:
-            return None, "Servidor de GoFile no disponible."
-        
-        server_data = res_server.json()
-        if server_data.get("status") != "success":
-            return None, "Fallo al obtener servidor asignado."
-            
-        server_name = server_data["data"]["server"]
-        upload_url = f"https://{server_name}.gofile.io/uploadFile"
-        
         file_buffer.seek(0)
         files = {"file": (file_name, file_buffer.getvalue())}
-        
-        res_upload = requests.post(upload_url, files=files, timeout=25)
-        if res_upload.status_code == 200:
-            upload_data = res_upload.json()
-            if upload_data.get("status") == "success":
-                return upload_data["data"]["downloadPage"], None
-            return None, f"GoFile reportó error: {upload_data.get('data')}"
-        return None, f"Error HTTP {res_upload.status_code} en GoFile."
+        # Petición POST oficial a Pixeldrain
+        response = requests.post("https://pixeldrain.com/api/file", files=files, timeout=25)
+        if response.status_code in [200, 201]:
+            data = response.json()
+            if data.get("success") is True:
+                file_id = data.get("id")
+                # Retorna el link del visor web oficial
+                return f"https://pixeldrain.com/u/{file_id}", None
+            return None, f"Pixeldrain: {data.get('message', 'Error desconocido')}"
+        return None, f"Pixeldrain HTTP {response.status_code}"
     except Exception as e:
-        return None, f"Error de conexión en GoFile: {str(e)}"
+        return None, f"Fallo al conectar con Pixeldrain: {str(e)}"
 
-# --- SUBIDA GRATUITA CON PRIORIDAD 2: TRANSFER.SH (RESPALDO AUTOMÁTICO) ---
-def subir_pdf_gratis_transfersh(file_buffer, file_name):
+# --- SUBIDA GRATUITA CON PRIORIDAD 2: 0X0.ST (Respaldo minimalista ininterrumpido) ---
+def subir_pdf_gratis_0x0(file_buffer, file_name):
     """
-    Sube un archivo de forma anónima a Transfer.sh si GoFile presenta fallas.
+    Sube un archivo de forma anónima y gratuita a 0x0.st.
+    Es un host minimalista que no suele experimentar caídas ni bloqueos.
     """
     try:
-        safe_name = file_name.replace(" ", "_").replace("/", "-")
-        url = f"https://transfer.sh/{safe_name}"
         file_buffer.seek(0)
-        
-        res_upload = requests.put(url, data=file_buffer.getvalue(), timeout=20)
-        if res_upload.status_code == 200:
-            return res_upload.text.strip(), None
-        return None, f"Error HTTP {res_upload.status_code} en Transfer.sh."
+        files = {"file": (file_name, file_buffer.getvalue())}
+        response = requests.post("https://0x0.st", files=files, timeout=20)
+        if response.status_code == 200:
+            return response.text.strip(), None
+        return None, f"0x0.st HTTP {response.status_code}"
     except Exception as e:
-        return None, f"Error de conexión en Transfer.sh: {str(e)}"
+        return None, f"Fallo al conectar con 0x0.st: {str(e)}"
 
 def subir_documento_nube(file_buffer, file_name, mimetype):
     """
-    Función unificada que prioriza el almacenamiento gratuito e instantáneo.
-    Prueba GoFile en primera instancia y recurre a Transfer.sh si el primero falla.
+    Pasarela de subida gratuita. Intenta Pixeldrain (mejor experiencia visual) 
+    y desvía automáticamente a 0x0.st si ocurre un bloqueo de red.
     """
-    # 1. Intentamos subir a GoFile
-    enlace, err_gofile = subir_pdf_gratis_gofile(file_buffer, file_name)
+    # 1. Intentamos subir a Pixeldrain
+    enlace, err_pixeldrain = subir_pdf_gratis_pixeldrain(file_buffer, file_name)
     if enlace:
         return enlace, None
         
-    # 2. Si falla GoFile, recurrimos a Transfer.sh automáticamente
-    enlace_alt, err_transfer = subir_pdf_gratis_transfersh(file_buffer, file_name)
+    # 2. Si Pixeldrain falla, intentamos con 0x0.st
+    enlace_alt, err_0x0 = subir_pdf_gratis_0x0(file_buffer, file_name)
     if enlace_alt:
         return enlace_alt, None
         
-    return None, f"No se pudo completar la subida (GoFile: {err_gofile} | Transfer.sh: {err_transfer})"
+    return None, f"No se pudo completar la subida (Pixeldrain: {err_pixeldrain} | 0x0.st: {err_0x0})"
 
 # ==============================================================================
 # DATOS DEL CALENDARIO DE INSPECCIONES
