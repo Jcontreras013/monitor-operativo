@@ -412,7 +412,7 @@ def mostrar_auditoria (es_movil=False, conn=None):
         col_gen1, col_gen2 = st.columns([1, 2])
         with col_gen1:
             if not df_g.empty:
-               try:
+                try:
                     # =================================================================
                     # 1. INTERCEPTAMOS Y AGREGAMOS LA PLACA AL VEHÍCULO
                     # =================================================================
