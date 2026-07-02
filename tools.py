@@ -3263,83 +3263,124 @@ def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
     return data
 
 def generar_pdf_reporte_general_gastos(df_gastos):
-    pdf = ReporteGastosPDF(orientation='P', unit='mm', format='A4')
+    """
+    Genera un PDF gerencial de gastos y flota, agrupado por vehículo,
+    mostrando fecha cronológica y descripciones detalladas.
+    """
+    from fpdf import FPDF
+    import pandas as pd
+    
+    # Configuramos el documento (Letter / Carta)
+    pdf = FPDF(orientation='P', unit='mm', format='Letter')
     pdf.add_page()
     
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_text_color(16, 185, 129)
-    pdf.cell(0, 8, safestr("REPORTE GENERAL: GASTOS POR VEHÍCULO Y CATEGORÍA"), ln=True, align="C")
-    pdf.ln(5)
-
-    if df_gastos.empty:
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 6, "No hay gastos registrados en el sistema.", ln=True)
-        import tempfile, os
-        fd, path = tempfile.mkstemp(suffix=".pdf")
-        os.close(fd)
-        pdf.output(path)
-        with open(path, "rb") as f: data = f.read()
-        os.remove(path)
-        return data
-
-    # Asegurar que los montos sean números para poder sumarlos
-    df_gastos['MONTO'] = pd.to_numeric(df_gastos['MONTO'], errors='coerce').fillna(0)
+    # =========================================================
+    # ENCABEZADO PRINCIPAL DEL DOCUMENTO
+    # =========================================================
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(0, 10, safestr("REPORTE GERENCIAL DE GASTOS Y FLOTA"), ln=True, align="C")
     
-    # Agrupar matemáticamente por Vehículo y luego por Categoría
-    resumen = df_gastos.groupby(['VEHICULO', 'TIPO_GASTO']).agg(
-        Cantidad=('TIPO_GASTO', 'count'),
-        Total=('MONTO', 'sum')
-    ).reset_index()
+    pdf.set_font("Helvetica", "", 10)
+    fecha_gen = get_honduras_time().strftime("%Y-%m-%d %H:%M")
+    pdf.cell(0, 6, safestr(f"Fecha de Generación: {fecha_gen}"), ln=True, align="C")
+    pdf.ln(5)
+    
+    # Si la base viene vacía, retornamos un PDF con el aviso
+    if df_gastos is None or df_gastos.empty:
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.cell(0, 10, "No hay gastos registrados en el periodo seleccionado.", ln=True, align="C")
+        try: return pdf.output(dest='S').encode('latin1')
+        except: return bytes(pdf.output())
 
-    # Ordenar por Vehículo y luego por los gastos más caros
-    resumen = resumen.sort_values(by=['VEHICULO', 'Total'], ascending=[True, False])
-
-    for vehiculo, df_vehiculo in resumen.groupby('VEHICULO'):
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_fill_color(59, 130, 246) # Azul
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 7, safestr(f" UNIDAD: {vehiculo}"), border=1, ln=True, fill=True)
+    gran_total = 0.0
+    
+    # Aseguramos que exista la columna de vehículo para agrupar
+    if 'VEHICULO' not in df_gastos.columns:
+        df_gastos['VEHICULO'] = "FLOTA GENERAL"
         
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_fill_color(240, 245, 250)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(80, 6, "CATEGORÍA", border=1, fill=True, align="C")
-        pdf.cell(40, 6, "FRECUENCIA", border=1, fill=True, align="C")
-        pdf.cell(70, 6, "TOTAL INVERTIDO (L.)", border=1, fill=True, align="C")
+    vehiculos_unicos = sorted(df_gastos['VEHICULO'].dropna().unique().tolist())
+    
+    # =========================================================
+    # RECORRIDO Y AGRUPACIÓN POR CADA VEHÍCULO
+    # =========================================================
+    for vehiculo in vehiculos_unicos:
+        df_vehiculo = df_gastos[df_gastos['VEHICULO'] == vehiculo]
+        if df_vehiculo.empty:
+            continue
+            
+        # --- TÍTULO DE LA SECCIÓN DEL VEHÍCULO ---
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(30, 58, 138)  # Azul oscuro institucional
+        pdf.set_text_color(255, 255, 255) # Letras blancas
+        # Imprimimos el nombre del vehículo (que ya incluye la placa gracias a auditorv.py)
+        pdf.cell(190, 8, safestr(f" VEHÍCULO: {vehiculo}"), border=1, ln=True, fill=True, align="L")
+        
+        # --- ENCABEZADOS DE LA TABLA (190mm ancho total) ---
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(200, 200, 200) # Fondo gris claro para los títulos de columnas
+        pdf.set_text_color(15, 23, 42)    # Letra oscura
+        
+        pdf.cell(25, 6, "FECHA", border=1, fill=True, align="C")
+        pdf.cell(40, 6, "TIPO DE GASTO", border=1, fill=True, align="C")
+        pdf.cell(95, 6, "DESCRIPCION / DETALLE", border=1, fill=True, align="C")
+        pdf.cell(30, 6, "TOTAL (L.)", border=1, fill=True, align="C")
         pdf.ln()
 
-        subtotal_vehiculo = 0
-        pdf.set_font("Helvetica", "", 9)
+        subtotal_vehiculo = 0.0
+        pdf.set_font("Helvetica", "", 8) # Letra estándar para el contenido
+        
+        # --- IMPRESIÓN DEL DETALLE DE GASTOS ---
         for _, row in df_vehiculo.iterrows():
-            cat = safestr(row['TIPO_GASTO'])[:35]
-            cant = str(row['Cantidad'])
-            tot = float(row['Total'])
+            # 1. Fecha limpia
+            fecha_str = safestr(row.get('FECHA', row.get('Fecha', row.get('fecha', 'N/D'))))[:10]
+            
+            # 2. Categoría
+            cat = safestr(row.get('TIPO_GASTO', row.get('Tipo_Gasto', row.get('CATEGORIA', 'N/D'))))[:25]
+            
+            # 3. Descripción detallada
+            desc = safestr(row.get('DESCRIPCION', row.get('Descripción', row.get('Descripcion', 'Sin detalle'))))[:70]
+            
+            # 4. Sumatoria matemática segura
+            try:
+                tot = float(row.get('TOTAL', row.get('Total', row.get('Costo', 0))))
+            except:
+                tot = 0.0
+                
             subtotal_vehiculo += tot
             
-            pdf.cell(80, 6, cat, border=1)
-            pdf.cell(40, 6, cant, border=1, align="C")
-            pdf.cell(70, 6, safestr(f"{tot:,.2f}"), border=1, align="R")
+            # Escribir la fila
+            pdf.cell(25, 6, fecha_str, border=1, align="C")
+            pdf.cell(40, 6, cat, border=1, align="L")
+            pdf.cell(95, 6, desc, border=1, align="L")
+            pdf.cell(30, 6, safestr(f"{tot:,.2f}"), border=1, align="R")
             pdf.ln()
         
-        # Fila de Subtotal por Vehículo
+        # --- FILA DE SUBTOTAL DEL VEHÍCULO ---
         pdf.set_font("Helvetica", "B", 9)
-        pdf.set_fill_color(220, 230, 240)
-        pdf.cell(120, 6, "SUBTOTAL VEHÍCULO:", border=1, align="R", fill=True)
-        pdf.cell(70, 6, safestr(f"L. {subtotal_vehiculo:,.2f}"), border=1, align="R", fill=True)
-        pdf.ln(5)
+        pdf.set_fill_color(230, 240, 250) # Azul muy clarito
+        pdf.cell(160, 6, "SUBTOTAL VEHICULO:", border=1, align="R", fill=True)
+        pdf.cell(30, 6, safestr(f"L. {subtotal_vehiculo:,.2f}"), border=1, align="R", fill=True)
+        pdf.ln(8) # Espacio de separación antes de imprimir el siguiente vehículo
         
-    # Gran Total al final del documento
-    gran_total = resumen['Total'].sum()
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_fill_color(16, 185, 129)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(120, 8, "GRAN TOTAL INVERTIDO EN FLOTA:", border=1, align="R", fill=True)
-    pdf.cell(70, 8, safestr(f"L. {gran_total:,.2f}"), border=1, align="R", fill=True)
+        # Acumulamos para el total general
+        gran_total += subtotal_vehiculo
 
-    import tempfile, os
-    fd, path = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    pdf.output(path)
-    with open(path, "rb") as f: data = f.read()
-    os.remove(path)
-    return data
+    # =========================================================
+    # GRAN TOTAL INVERTIDO AL FINAL DEL DOCUMENTO
+    # =========================================================
+    pdf.ln(5)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_fill_color(30, 58, 138)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(140, 10, "GRAN TOTAL INVERTIDO EN FLOTA:", border=1, align="R", fill=True)
+    pdf.cell(50, 10, safestr(f"L. {gran_total:,.2f}"), border=1, align="C", fill=True)
+    
+    # =========================================================
+    # RETORNO SEGURO DE BYTES
+    # =========================================================
+    try:
+        return pdf.output(dest='S').encode('latin1')
+    except Exception:
+        # FPDF2 moderno
+        return bytes(pdf.output())
