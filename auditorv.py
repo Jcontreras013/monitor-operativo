@@ -51,18 +51,25 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA ---
+# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA (Tolerante a Tildes y Espacios) ---
 def obtener_credenciales_actuales():
     """
-    Busca de manera robusta el rol y el usuario en session_state probando múltiples 
-    claves posibles para evitar fallos por discrepancias en los nombres del login.
+    Busca el rol y el usuario en session_state probando múltiples claves posibles,
+    removiendo acentos (tildes), espacios en blanco y forzando minúsculas para robustez total.
     """
+    def limpiar_texto(txt):
+        if not txt:
+            return ""
+        s = str(txt).strip().lower()
+        s = s.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        return s
+
     rol = ""
     for clave in ['rol_actual', 'rol', 'rol_usuario', 'user_role', 'role']:
         if clave in st.session_state:
             val = st.session_state[clave]
             if val is not None:
-                rol = str(val).strip().lower()
+                rol = limpiar_texto(val)
                 break
                 
     user = ""
@@ -70,7 +77,7 @@ def obtener_credenciales_actuales():
         if clave in st.session_state:
             val = st.session_state[clave]
             if val is not None:
-                user = str(val).strip().lower()
+                user = limpiar_texto(val)
                 break
                 
     return rol, user
@@ -485,7 +492,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 else:
                     st.error(f"❌ Error: {msg_matriz}")
 
-    # --- PESTAÑA 3: GASTOS Y FLOTA ---
+    # --- PESTAÑA 3: GESTIÓN FINANCIERA ---
     with tab_eficiencia:
         st.markdown("### ⚖️ Control Financiero y Mantenimiento de Flota")
         worksheet_gastos = "Gastos_Flota"
@@ -703,7 +710,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 fecha_escaneo = st.date_input("Fecha de Inspección:", value=get_hn_time().date(), key="fecha_escaner_doc")
                 placa_vehiculo = st.text_input("🚗 Placa del Vehículo:*", placeholder="Ej: HAA-1234", key="placa_escaner_doc")
                 supervisor_nombre = st.text_input("👤 Supervisor:", placeholder="Ej: Juan Perez", key="sup_escaner_doc")
-                archivo_pdf_escaner = st.file_uploader("📎 Subir PDF o Foto Escaneada:*", type=['pdf', 'jpg', 'jpeg', 'png'], key="up_escaner_doc")
+                archivo_pdf_escaner = st.file_uploader("📥 Sube Documento (PDF/Img):", type=['pdf', 'jpg', 'jpeg', 'png'], key="up_escaner_doc")
                 btn_subir_escaner = st.form_submit_button("☁️ Subir y Guardar Registro", type="primary")
 
             if btn_subir_escaner:
