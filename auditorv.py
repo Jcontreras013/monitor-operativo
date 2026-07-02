@@ -59,11 +59,8 @@ def normalizar_unidad(v_str):
     """
     if not v_str or pd.isna(v_str):
         return ""
-    # Quitar lo que esté adentro de corchetes (ej: [HDL9821])
     clean = re.sub(r'\[.*?\]', '', str(v_str)).strip()
-    # Remover guiones, espacios y pasar a mayúsculas
     clean = clean.upper().replace(" ", "").replace("-", "")
-    # Convertir MX01 -> MX1, MX013 -> MX13, etc.
     match = re.search(r'MX0*(\d+)', clean)
     if match:
         return f"MX-{match.group(1)}"
@@ -73,7 +70,6 @@ def normalizar_unidad(v_str):
 def subir_pdf_gratis_catbox(file_buffer, file_name):
     """
     Sube un archivo de forma anónima y gratuita a Catbox.moe.
-    Proporciona almacenamiento permanente de alta velocidad inmune a bloqueos de IP.
     """
     try:
         file_buffer.seek(0)
@@ -454,15 +450,23 @@ def mostrar_auditoria (es_movil=False, conn=None):
             st.session_state['df_gastos_flota'] = df_g
         else: df_g = st.session_state['df_gastos_flota']
 
-        # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS ---
-        vehiculos_base = [f"MX-{i}" for i in range(1, 41)]
+        # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS (CON COINCIDENCIA DE TU IMAGEN 3) ---
+        vehiculos_oficiales = [
+            'MX-1', 'MX-2', 'MX-3', 'MX-4', 'MX-5', 'MX-6', 'MX-7', 'MX-8', 'MX-9', 'MX-10', 
+            'MX-12', 'MX-13', 'MX-14', 'MX-15', 'MX-16', 'MX-17', 'MX-18', 'MX-19', 'MX-20', 
+            'MX-21', 'MX-22', 'MX-23', 'MX-24', 'MX-25', 'MX-26', 'MX-28', 'MX-30'
+        ]
         vehiculos_calendario = [v['Unidad'] for v in DATOS_CALENDARIO]
         vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
         
-        # Unimos todas las fuentes eliminando duplicados mediante normalización básica
-        set_vehiculos = set(vehiculos_base + vehiculos_calendario + vehiculos_historicos)
-        
-        # Ordenamiento numérico natural para evitar "MX-1, MX-10, MX-11... MX-2"
+        # Consolidamos todo de forma única usando normalización
+        set_vehiculos = set()
+        for v in (vehiculos_oficiales + vehiculos_calendario + vehiculos_historicos):
+            v_norm = normalizar_unidad(v)
+            if v_norm:
+                set_vehiculos.add(v_norm)
+                
+        # Orden numérico natural para evitar el desorden alfabético
         def orden_numerico(v):
             num = re.search(r'\d+', str(v))
             return int(num.group()) if num else 999
@@ -492,7 +496,8 @@ def mostrar_auditoria (es_movil=False, conn=None):
 
         col_sel1, col_sel2 = st.columns(2)
         with col_sel1: vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad a revisar:", ["-- Seleccione --"] + lista_vehiculos)
-        with col_sel2: rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=30), get_hn_time().date()], key="filtro_rango_flota")
+        # --- FILTRO POR DEFECTO AJUSTADO A 365 DÍAS PARA EVITAR OCULTAR DATOS ---
+        with col_sel2: rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=365), get_hn_time().date()], key="filtro_rango_flota")
         st.markdown("---")
 
         if vehiculo_seleccionado != "-- Seleccione --":
@@ -517,10 +522,10 @@ def mostrar_auditoria (es_movil=False, conn=None):
                             
                             alerta_msg = None
                             for _, row_hist in df_reciente.iterrows():
-                                desc_hist = str(row_hist['DESCRIPCION']).lower()
+                                desc_hist = str(row_hist.get('DESCRIPCION.1', row_hist.get('DESCRIPCION', ''))).lower()
                                 for palabra in palabras_clave:
                                     if palabra in desc_hist:
-                                        alerta_msg = f"**ALERTA:** Hace menos de 3 meses (el {row_hist['FECHA']}) ya se registró algo similar: *'{row_hist['DESCRIPCION']}'*. Verifique."
+                                        alerta_msg = f"**ALERTA:** Hace menos de 3 meses (el {row_hist['FECHA']}) ya se registró algo similar: *'{desc_hist}'*. Verifique."
                                         break
                                 if alerta_msg: break
                             if alerta_msg: st.session_state['alerta_repuesto'] = alerta_msg
@@ -532,14 +537,22 @@ def mostrar_auditoria (es_movil=False, conn=None):
                                     url_archivo, err = subir_documento_nube(archivo_comprobante, nombre_file, mimetype)
                                     if err: st.error(err)
 
-                            nuevo_registro = pd.DataFrame([{
+                            # --- DETECTAR Y REGISTRAR EN LAS COLUMNAS REPETIDAS ---
+                            nuevo_dict = {
                                 "FECHA": pd.to_datetime(fecha_gasto).strftime('%Y-%m-%d'),
                                 "VEHICULO": vehiculo_seleccionado,
                                 "TIPO_GASTO": tipo_gasto,
-                                "DESCRIPCION": desc_gasto,
                                 "MONTO": float(monto_gasto),
                                 "COMPROBANTE": url_archivo if url_archivo else ""
-                            }])
+                            }
+                            # Escribimos el valor tanto en 'DESCRIPCION' como en 'DESCRIPCION.1'
+                            for col in df_g.columns:
+                                if 'DESCRIPCION' in col.upper():
+                                    nuevo_dict[col] = desc_gasto
+                            if "DESCRIPCION" not in nuevo_dict:
+                                nuevo_dict["DESCRIPCION"] = desc_gasto
+
+                            nuevo_registro = pd.DataFrame([nuevo_dict])
                             df_g = pd.concat([df_g, nuevo_registro], ignore_index=True)
                             st.session_state['df_gastos_flota'] = df_g
                             
@@ -576,6 +589,19 @@ def mostrar_auditoria (es_movil=False, conn=None):
                         df_filtro = df_filtro.drop(columns=['FECHA_DT', 'VEHICULO_NORM'])
 
                 if not df_filtro.empty:
+                    # --- RESOLVER COLUMNAS DUPLICADAS DE DESCRIPCION PARA VISUALIZACIÓN ---
+                    col_desc_real = 'DESCRIPCION'
+                    for col in df_filtro.columns:
+                        if 'DESCRIPCION.1' in col or 'DESCRIPCION_1' in col:
+                            col_desc_real = col
+                            break
+                    
+                    # Normalizamos el nombre de la columna para desplegarla de forma amigable
+                    if col_desc_real != 'DESCRIPCION':
+                        df_filtro['DESCRIPCION'] = df_filtro[col_desc_real].fillna(df_filtro['DESCRIPCION'])
+                        # Removemos la columna duplicada del renderizado para evitar ruido visual
+                        df_filtro = df_filtro.drop(columns=[col_desc_real])
+
                     df_filtro['MONTO'] = pd.to_numeric(df_filtro['MONTO'], errors='coerce').fillna(0.0)
                     total_gastado = df_filtro['MONTO'].sum()
                     k1, k2 = st.columns(2)
