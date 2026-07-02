@@ -3341,9 +3341,12 @@ def generar_pdf_reporte_general_gastos(df_gastos):
             # 3. Descripción detallada
             desc = safestr(row.get('DESCRIPCION', row.get('Descripción', row.get('Descripcion', 'Sin detalle'))))[:70]
             
-            # 4. Sumatoria matemática segura
+            # 4. SUMATORIA MATEMÁTICA BLINDADA
+            raw_val = row.get('TOTAL', row.get('Total', row.get('Costo', row.get('Monto', 0))))
             try:
-                tot = float(row.get('TOTAL', row.get('Total', row.get('Costo', 0))))
+                # Convertimos a texto, quitamos la "L.", las comas de miles y los espacios
+                val_clean = str(raw_val).upper().replace('L.', '').replace('L', '').replace(',', '').replace(' ', '')
+                tot = float(val_clean)
             except:
                 tot = 0.0
                 
