@@ -667,15 +667,19 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             col_desc_real = col
                     df_filtro = df_filtro.rename(columns={col_desc_real: 'Descripción'})
                     
-                    if 'COMPROBANTE' in df_filtro.columns:
-                        df_filtro['COMPROBANTE'] = df_filtro['COMPROBANTE'].apply(lambda x: f"🔗 Ver" if str(x).startswith("http") else "")
-                        
-                    st.dataframe(df_filtro, hide_index=True, use_container_width=True)
+                    st.dataframe(
+                        df_filtro.sort_values('FECHA', ascending=False),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "MONTO": st.column_config.NumberColumn("Monto", format="L. %.2f"), 
+                            "COMPROBANTE": st.column_config.LinkColumn("📄 Comprobante", display_text="🔗 Ver")
+                        }
+                    )
                     st.metric("Total Gastos L.", f"{df_filtro['MONTO'].sum():,.2f}")
                     
                     try:
                         pdf_veh = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado)
-                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad")
+                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad_desc")
                     except Exception as e:
                         pass
                         
@@ -741,7 +745,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 fecha_escaneo = st.date_input("Fecha de Inspección:", value=get_hn_time().date(), key="fecha_escaner_doc")
                 placa_vehiculo = st.text_input("🚗 Placa del Vehículo:*", placeholder="Ej: HAA-1234", key="placa_escaner_doc")
                 supervisor_nombre = st.text_input("👤 Supervisor:", placeholder="Ej: Juan Perez", key="sup_escaner_doc")
-                archivo_pdf_escaner = st.file_uploader("📎 Subir PDF o Foto Escaneada:*", type=['pdf', 'jpg', 'jpeg', 'png'], key="up_escaner_doc")
+                archivo_pdf_escaner = st.file_uploader("📥 Sube Documento (PDF/Img):", type=['pdf', 'jpg', 'jpeg', 'png'], key="up_escaner_doc")
                 btn_subir_escaner = st.form_submit_button("☁️ Subir y Guardar Registro", type="primary")
 
             if btn_subir_escaner:
