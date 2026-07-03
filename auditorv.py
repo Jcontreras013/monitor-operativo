@@ -132,7 +132,7 @@ def normalizar_unidad(v_str):
         return f"MX-{match.group(1)}"
     return clean
 
-# --- SUBIDA GRATUITA CON PRIORIDAD 1: CATBOX (Almacenamiento Permanente) ---
+# --- SUBIDA CON PRIORIDAD 1: CATBOX (Vinculada a tu cuenta por Userhash) ---
 def subir_pdf_gratis_catbox(file_buffer, file_name):
     """
     Sube un archivo de forma anónima y gratuita a Catbox.moe.
@@ -145,7 +145,7 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
         }
         data = {
             "reqtype": "fileupload",
-            "userhash": ""
+            "userhash": "327c87ffe7f915a6d1ec367ee"  # Tu Userhash configurado de forma permanente
         }
         response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
@@ -515,7 +515,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
                         styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                         st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                        st.download_button("📥 Descargar Reporte (PDF)", generar_pdf_telemetria_matriz(df_matriz), "Reporte_Telemetria.pdf", "application/pdf", use_container_width=True, type="primary")
+                        st.download_button("📥 Descargar Reporte (PDF)", generar_pdf_telemetria_matriz(df_matriz), "Reporte_Telemetria.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_vel")
                 else:
                     st.error(f"❌ Error: {msg_matriz}")
 
@@ -675,7 +675,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     
                     try:
                         pdf_veh = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado)
-                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True)
+                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad")
                     except Exception as e:
                         pass
                         
@@ -686,7 +686,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     if opciones_borrar:
                         registro_a_borrar = st.selectbox("Seleccionar:", options=list(opciones_borrar.keys()), format_func=lambda x: opciones_borrar[x], key="sel_borrar_gasto")
                         
-                        # --- REGLA DE SEGURIDAD ACTUALIZADA Y ROBUSTA ---
+                        # --- REGLA DE SEGURIDAD PARA BORRADO FINANCIERO ---
                         rol_actual, usuario_actual = obtener_credenciales_actuales()
                         
                         # Permitir si es admin, o si es jefe y específicamente el usuario andres
