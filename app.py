@@ -1452,9 +1452,9 @@ def main():
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
-        with tab_materiales:
+with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
-            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) mediante escaneo asociativo de comentarios.")
+            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) enfocado exclusivamente en órdenes de Soporte y CEQUI.")
             
             # Selector de Fecha (Mes y Año)
             col_sel1, col_sel2 = st.columns(2)
@@ -1478,6 +1478,17 @@ def main():
                 (df_m['FECHA_REPORTE'].dt.month == numero_mes) & 
                 (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)
             ].copy()
+            
+            # === FILTRO SIMPLIFICADO: ÚNICAMENTE ÓRDENES DE SOPORTE O CAMBIOS DE EQUIPO (CEQUI) ===
+            if not df_m_filtrado.empty:
+                act_upper = df_m_filtrado['ACTIVIDAD'].astype(str).str.upper().str.strip()
+                mask_actividades_sop = act_upper.str.contains("SOP", na=False) | (act_upper == "CEQUI")
+                df_m_filtrado = df_m_filtrado[mask_actividades_sop].copy()
+            
+            # Filtro adicional para remover a Lilian y Wilfredo del reporte final
+            if not df_m_filtrado.empty:
+                mask_validos = ~df_m_filtrado['TECNICO'].astype(str).str.upper().str.contains("LILIAN|WILFREDO", na=False)
+                df_m_filtrado = df_m_filtrado[mask_validos].copy()
             
             if not df_m_filtrado.empty:
                 # Aplicamos el motor de escaneo inteligente
@@ -1524,6 +1535,8 @@ def main():
                 tech_summary['Acometidas Cambiadas'] = tech_summary['Acometidas Cambiadas'].astype(int)
                 tech_summary['Total Intervenciones'] = tech_summary['Equipos Cambiados'] + tech_summary['Acometidas Cambiadas']
                 
+                # Omitir de la lista consolidada a técnicos que queden en 0 tras depurar
+                tech_summary = tech_summary[tech_summary['Total Intervenciones'] > 0]
                 tech_summary = tech_summary.sort_values(by='Total Intervenciones', ascending=False)
                 
                 st.dataframe(
