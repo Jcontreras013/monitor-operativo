@@ -13,6 +13,7 @@ from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente
+from tools import generar_pdf_materiales_tecnicos
 
 
 # ==============================================================================
@@ -72,8 +73,7 @@ try:
         extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
-        leer_espejo_gcs,
-        generar_pdf_materiales_tecnicos
+        leer_espejo_gcs
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
