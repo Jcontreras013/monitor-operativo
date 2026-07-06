@@ -111,9 +111,10 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     if any(x in texto for x in palabras_vehiculo_neglect):
         return 'GRAVE'
 
-    # 2. ACCIONES GRAVES (Aperturas, cierres, órdenes pendientes, faltas de respeto)
+    # 2. ACCIONES GRAVES (Aperturas, cierres, desfases de órdenes, órdenes pendientes, faltas de respeto)
     palabras_graves = [
-        # Aperturas y cierres fallidas o tardías
+        # Aperturas y cierres fallidas o tardías (Añadido "APERTURADA" y "ORDEN APERTURADA")
+        "APERTURADA TARDE", "APERTURADAS TARDES", "ORDEN APERTURADA TARDE", "ORDEN APERTURADA",
         "APERTURO TARDE", "APERTURÓ TARDE", 
         "NO APERTURO", "NO APERTURÓ", 
         "NO CERRO", "NO CERRÓ", 
@@ -121,6 +122,13 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
         "CERRO TARDE", "CERRÓ TARDE",
         "APERTURA TARDE", "APERTURA TARDIA", "APERTURA TARDÍA",
         "CIERRE TARDE", "CIERRE TARDIO", "CIERRE TARDÍO",
+        
+        # Desfases de órdenes (Añadidos términos técnicos y variaciones de escritura "desface")
+        "DESFASE", "DESFACES", "DESFACE", "DESFACES",
+        "DESFASE EN ORDEN", "DESFASE EN ÓRDENES", "DESFASE EN ORDENES",
+        "DESFACE EN ORDEN", "DESFACE EN ÓRDENES", "DESFACE EN ORDENES",
+        "DESFASE EN APERTURA", "DESFACE EN APERTURA", "DESFACE EN LA APERTURA",
+        
         # Órdenes pendientes
         "DEJAR ORDENES", "DEJAR ÓRDENES",
         "ORDENES PENDIENTES", "ÓRDENES PENDIENTES", "ORDEN PENDIENTE", "ÓRDEN PENDIENTE",
@@ -128,11 +136,13 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
         "NO INICIO ORDEN", "NO INICIÓ ORDEN", "NO INICI", "SIN INICIAR",
         "NO DIO INICIO", "OMISIÓN DE INICIO", "OMISION DE INICIO",
         "SIN APERTURAR", "NO APERTUR", "SIN APERTURAR",
-        # Faltas de respeto
+        
+        # Faltas de respeto e integridad
         "FALTA DE RESPETO", "FALTA DE RESPET", "FALTAS DE RESPETO",
         "IRRESPETO", "INSULTO", "INSULTOS", "GOLPE", "PELEA",
         "AGRESION", "AGRESIÓN", "AMENAZA", "HOSTIGAMIENTO",
         "FALTA AL RESPETO", "OFENSA", "OFENSAS", "FALTA RESPETO",
+        
         # Otras graves tradicionales
         "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
         "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
@@ -208,7 +218,7 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
     etiqueta = f"[{clasificacion}]"
     motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").replace("[OTRO]", "").strip()
     return f"{etiqueta} {motivo_limpio}"
-
+    
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
