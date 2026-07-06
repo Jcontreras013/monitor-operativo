@@ -102,49 +102,59 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (ESCÁNER INTENSIVO)
+# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (ESCÁNER INTENSIVO DE COMENTARIOS)
 # ==============================================================================
 def clasificar_materiales(row):
-    act = str(row.get('ACTIVIDAD', '')).upper().strip()
-    com = str(row.get('COMENTARIO', '')).upper().strip()
-    razon = str(row.get('RAZON_CIERRE_SOP', '')).upper().strip()
-    sop = str(row.get('SOP', '')).upper().strip()
+    # Convertimos la fila en un diccionario para poder iterar sobre todas las columnas
+    row_dict = row.to_dict() if hasattr(row, 'to_dict') else dict(row)
     
-    # Consolidación de texto de todas las columnas relacionadas para un escaneo profundo
-    texto_completo = " | ".join([act, com, razon, sop])
+    # 1. ESCÁNER DINÁMICO DE COLUMNAS DE COMENTARIOS Y RESOLUCIONES
+    text_parts = []
+    for col_name, val in row_dict.items():
+        col_upper = str(col_name).upper().strip()
+        # Captura de forma automática cualquier columna de notas, comentarios, razones o soportes
+        if any(term in col_upper for term in ['COMENT', 'RAZON', 'CIERRE', 'RESOL', 'OBSERV', 'SOP', 'ACTIVID']):
+            val_str = str(val).upper().strip()
+            if val_str and val_str not in ['NAN', 'NONE', 'N/D', 'NULL', '0']:
+                text_parts.append(val_str)
+                
+    texto_completo = " | ".join(text_parts)
+    act = str(row_dict.get('ACTIVIDAD', '')).upper().strip()
     
-    # --- 1. DETECCIÓN INTENSIVA DE CAMBIO DE EQUIPO (ONT/ONU/ROUTER/MODEM) ---
-    # Actividades directas que implican cambio de equipo de terminal
+    # --- 2. CLASIFICACIÓN INTENSIVA DE CAMBIO DE EQUIPO (ONT/ONU/ROUTER/CPE) ---
     if act in ["CEQUI", "INSEQUIPO", "CAMBIO"]:
         return "CAMBIO_EQUIPO"
         
-    # Patrón asociativo de verbos de reemplazo + sustantivos de hardware terminal
-    # (Captura: "se cambio ont", "deje nuevo router", "retire onu dañada", "remplace modem", etc.)
-    patron_cambio_equipo = re.compile(
-        r'(CAMBI|REMPLAZ|REEMPLAZ|RETIR|INSTAL|COLOC|DEJE|DEJÓ|PUSE|PUSO|ENTREG|QUEMAD|DAÑAD|DEFECTUOS|REPAR|SOPORT)\b.*?\b(EQUIPO|ONT|ONU|CPE|ROUTER|MODEM|MODÉM|CAJITA|APARATO|DISPOSITIVO|WIFI|WI-FI|REPETIDOR)', 
-        re.IGNORECASE
+    # Análisis por asociación (Verbo + Sustantivo de Hardware) sin importar el orden o conectores
+    verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "INSTAL", "COLOC", "DEJE", "DEJÓ", "PUSE", "PUSO", "ENTREG", "QUEMAD", "DAÑAD", "DEFECTUOS"]
+    sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA", "APARATO", "DISPOSITIVO", "REPETIDOR", "WIFI", "WI-FI"]
+    
+    es_equipo = (
+        any(v in texto_completo for v in verbos_equipo) and 
+        any(s in texto_completo for s in sustantivos_equipo)
     )
     
+    # Frases directas tradicionales para mayor redundancia
     frases_directas_equipo = [
         "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
         "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
         "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
         "REEMPLAZO CPE", "EQUIPO DEFECTUOSO", "ONT DEFECTUOSA", "ONU DEFECTUOSA",
         "CAMBIO DE ROUTER", "CAMBIO ROUTER", "REEMPLAZO DE ROUTER", "NUEVO ROUTER", 
-        "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU", "SE LE CAMBIO"
+        "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU"
     ]
     
-    es_equipo = (
-        any(f in texto_completo for f in frases_directas_equipo) or 
-        bool(patron_cambio_equipo.search(texto_completo))
-    )
+    if es_equipo or any(f in texto_completo for f in frases_directas_equipo):
+        return "CAMBIO_EQUIPO"
+        
+    # --- 3. CLASIFICACIÓN INTENSIVA DE REEMPLAZO DE ACOMETIDA (CABLE DROP) ---
+    # Análisis por asociación (Verbo de tendido/cambio + Sustantivo de cable de bajada)
+    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "INSTAL", "CABLE", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "ROBAD", "CORTAD", "REVENTAD", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "METROS", "MTS", "MT"]
+    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "ACO"]
     
-    # --- 2. DETECCIÓN INTENSIVA DE REEMPLAZO DE ACOMETIDA (CABLE DROP / FIBRA) ---
-    # Patrón asociativo de verbos de cableado/tendido + sustantivos de cable drop
-    # (Captura: "tire drop", "se tendieron metros de cable", "reemplace acometida", "drop dañado", etc.)
-    patron_cambio_acometida = re.compile(
-        r'(CAMBI|REMPLAZ|REEMPLAZ|TIRE|TIRÉ|TIRÓ|TIRO|INSTAL|CABLE|RETIRE|RETIRÓ|RETIRAR|RECONEC|TENSE|TENSÓ|TENSAR|REPAR|EMPALM|ROBAD|CORTAD|REVENTAD|TIRAD|MEDID|METROS|MTS|MT)\b.*?\b(ACOMETIDA|DROP|CABLE|FIBRA|BAJADA|ALAMBRE|HILO|ACOMTIDA|ACO)', 
-        re.IGNORECASE
+    es_acometida = (
+        any(v in texto_completo for v in verbos_acometida) and 
+        any(s in texto_completo for s in sustantivos_acometida)
     )
     
     frases_directas_acometida = [
@@ -154,18 +164,10 @@ def clasificar_materiales(row):
         "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
         "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", "REEMPLAZAR DROP",
         "REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA", "CAMBIO DE BAJADA",
-        "REEMPLAZO DE DROP", "REEMPLAZO DROP"
+        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "LANZADO DE ACOMETIDA", "LANZO ACOMETIDA"
     ]
     
-    es_acometida = (
-        any(f in texto_completo for f in frases_directas_acometida) or 
-        bool(patron_cambio_acometida.search(texto_completo))
-    )
-    
-    # Prioridad lógica: los cambios de hardware terminal (ONT/Router) se evalúan primero
-    if es_equipo:
-        return "CAMBIO_EQUIPO"
-    elif es_acometida:
+    if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
         return "CAMBIO_ACOMETIDA"
         
     return "NINGUNO"
