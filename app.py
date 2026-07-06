@@ -14,6 +14,7 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente
 
+
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
@@ -71,7 +72,8 @@ try:
         extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
-        leer_espejo_gcs
+        leer_espejo_gcs,
+        generar_pdf_materiales_tecnicos
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -1211,63 +1213,94 @@ def main():
 
         with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
-            st.caption("Reporte de cambios detectados mediante el Motor Inteligente de Comentarios.")
+            st.caption("Reporte mensual de cambios detectados mediante el Motor Inteligente de Comentarios.")
             
-            # Sub-pestañas para dividir la vista mensual de la histórica global
-            tab_un_mes, tab_historico = st.tabs(["📅 Detalle Numérico por Mes", "📊 Consolidado Histórico (Excel/PDF)"])
-            
-            # --- PESTAÑA 1: VISTA DE UN MES (Priorizando KPIs Numéricos) ---
-            with tab_un_mes:
-                col_sel1, col_sel2 = st.columns(2)
-                with col_sel1:
-                    meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-                    mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1)
-                    numero_mes = meses_nombres.index(mes_seleccionado) + 1
-                with col_sel2:
-                    anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
+            # Selector de Fecha (Mes y Año)
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1)
+                numero_mes = meses_nombres.index(mes_seleccionado) + 1
+            with col_sel2:
+                anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
 
-                df_m = df_base.copy()
-                df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce').fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
-                df_m = df_m[df_m['FECHA_REPORTE'].notna()]
+            # Preparación de datos
+            df_m = df_base.copy()
+            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce').fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
+            df_m = df_m[df_m['FECHA_REPORTE'].notna()]
+            
+            df_m_filtrado = df_m[(df_m['FECHA_REPORTE'].dt.month == numero_mes) & (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)].copy()
+            
+            if not df_m_filtrado.empty:
+                # Aplicamos el motor de escaneo inteligente
+                df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
                 
-                df_m_filtrado = df_m[(df_m['FECHA_REPORTE'].dt.month == numero_mes) & (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)].copy()
+                df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
+                df_acometidas = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_ACOMETIDA']
                 
-                if not df_m_filtrado.empty:
-                    df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
+                total_equipos = len(df_equipos)
+                total_acometidas = len(df_acometidas)
+                
+                # Despliegue de Indicadores Clave (KPIs)
+                col_k1, col_k2 = st.columns(2)
+                with col_k1:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
+                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🔌 CAMBIOS DE EQUIPO</div>
+                        <div style="color: #3B82F6; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_equipos}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_k2:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
+                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🎗️ REEMPLAZOS DE DROP</div>
+                        <div style="color: #F59E0B; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_acometidas}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("<br>### 📊 Resumen Numérico por Técnico", unsafe_allow_html=True)
+                
+                # Agrupación y conteo por técnico
+                eq_tech = df_equipos.groupby('TECNICO').size().reset_index(name='Equipos') if total_equipos > 0 else pd.DataFrame(columns=['TECNICO', 'Equipos'])
+                ac_tech = df_acometidas.groupby('TECNICO').size().reset_index(name='Acometidas') if total_acometidas > 0 else pd.DataFrame(columns=['TECNICO', 'Acometidas'])
                     
-                    df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
-                    df_acometidas = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_ACOMETIDA']
+                tech_summary = pd.merge(eq_tech, ac_tech, on='TECNICO', how='outer').fillna(0)
+                tech_summary['Equipos'] = tech_summary['Equipos'].astype(int)
+                tech_summary['Acometidas'] = tech_summary['Acometidas'].astype(int)
+                tech_summary['Total'] = tech_summary['Equipos'] + tech_summary['Acometidas']
+                tech_summary = tech_summary.sort_values(by='Total', ascending=False)
+                
+                # Despliegue en Interfaz
+                st.dataframe(
+                    tech_summary, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
+                        "Equipos": st.column_config.NumberColumn("🔌 Equipos Cambiados", format="%d"),
+                        "Acometidas": st.column_config.NumberColumn("🎗️ Acometidas Cambiadas", format="%d"),
+                        "Total": st.column_config.NumberColumn("📦 Total General", format="%d")
+                    }
+                    # ==============================================================================
+                # LLAMADA DIRECTA A TOOLS.PY PARA GENERAR EL PDF
+                # ==============================================================================
+                pdf_bytes = generar_pdf_materiales_tecnicos(tech_summary, mes_seleccionado, anio_seleccionado)
                     
-                    total_equipos = len(df_equipos)
-                    total_acometidas = len(df_acometidas)
-                    
-                    col_k1, col_k2 = st.columns(2)
-                    with col_k1:
-                        st.markdown(f"""
-                        <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
-                            <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🔌 CAMBIOS DE EQUIPO</div>
-                            <div style="color: #3B82F6; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_equipos}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col_k2:
-                        st.markdown(f"""
-                        <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
-                            <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🎗️ REEMPLAZOS DE DROP</div>
-                            <div style="color: #F59E0B; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_acometidas}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    st.markdown("<br>### 📊 Resumen Numérico por Técnico", unsafe_allow_html=True)
-                    eq_tech = df_equipos.groupby('TECNICO').size().reset_index(name='Equipos') if total_equipos > 0 else pd.DataFrame(columns=['TECNICO', 'Equipos'])
-                    ac_tech = df_acometidas.groupby('TECNICO').size().reset_index(name='Acometidas') if total_acometidas > 0 else pd.DataFrame(columns=['TECNICO', 'Acometidas'])
-                        
-                    tech_summary = pd.merge(eq_tech, ac_tech, on='TECNICO', how='outer').fillna(0)
-                    tech_summary['Equipos'] = tech_summary['Equipos'].astype(int)
-                    tech_summary['Acometidas'] = tech_summary['Acometidas'].astype(int)
-                    tech_summary['Total'] = tech_summary['Equipos'] + tech_summary['Acometidas']
-                    st.dataframe(tech_summary.sort_values(by='Total', ascending=False), use_container_width=True, hide_index=True)
-                else:
-                    st.warning(f"No hay datos operativos consolidados para {mes_seleccionado} {anio_seleccionado}.")
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # Único botón de descarga
+                st.download_button(
+                    label="📄 Descargar Detalle por Técnico (PDF)", 
+                    data=pdf_bytes, 
+                    file_name=f"Materiales_Tecnicos_{mes_seleccionado}_{anio_seleccionado}.pdf", 
+                    mime="application/pdf", 
+                    use_container_width=True,
+                    type="primary"
+                )
+
+            else:
+                st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
+                
 
             # --- PESTAÑA 2: CONSOLIDADO HISTÓRICO Y EXPORTACIÓN ---
             with tab_historico:
