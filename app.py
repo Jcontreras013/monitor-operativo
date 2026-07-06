@@ -111,56 +111,53 @@ def clasificar_materiales(row):
     sop = str(row.get('SOP', '')).upper().strip()
     tecnico = str(row.get('TECNICO', '')).upper().strip()
     
-    # Exclusión de colaboradores externos / no de campo
+    # Exclusión de personal administrativo
     if any(ex in tecnico for ex in ["LILIAN", "WILFREDO"]):
         return "NINGUNO"
         
     texto_completo = " | ".join([act, com, razon, sop])
     
-    # --- A. DETECCIÓN DE CAMBIO DE EQUIPO (Mantenimiento) ---
-    verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "REINSTAL"]
+    # --- REGLA DIRECTA SEGÚN TU FILTRO REAL DEL EXCEL (PRIORIDAD ABSOLUTA) ---
+    if "CORTE DE ACOMETIDA" in razon or "CORTE DE ACOMETIDA" in com or "CORTE DE ACOMETIDA" in act:
+        return "CAMBIO_ACOMETIDA"
+        
+    # --- EXCLUSIÓN DE TRONCALES / SUPERVISIÓN ---
+    es_troncal_o_supervision = any(term in texto_completo for term in [
+        "144 HILOS", "48 HILOS", "72 HILOS", "96 HILOS", "24 HILOS", 
+        "TRONCAL", "MUFA", "MUFAS", "SUPERVISION", "SUPERVISIÓN", 
+        "SUPERVISOR", "CUADRILLAS", "MANTENIMIENTO PREVENTIVO", "PREVENTIVO", 
+        "LINEA TRONCAL", "LINEAS TRONCALES"
+    ])
+    if es_troncal_o_supervision:
+        return "NINGUNO"
+        
+    # --- B. DETECCIÓN DE REEMPLAZO DE ACOMETIDA (DROP) ---
+    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "CABLEO", "CABLEÓ", "RECONEXION", "CORTAD", "REVENTAD", "ROBAD"]
+    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA"]
+    
+    es_acometida = (
+        any(v in texto_completo for v in verbos_acometida) and 
+        any(s in texto_completo for s in sustantivos_acometida)
+    )
+    
+    frases_directas_acometida = [
+        "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
+        "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", "REEMPLAZO DE DROP", "REEMPLAZO DROP",
+        "TIRAR DROP", "TIRAR ACOMETIDA", "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", 
+        "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", "CABLE DE ACOMETIDA", "SE CORRE DROP",
+        "SE REEMPLAZA DROP", "SE REEMPLAZA ACOMETIDA", "NUEVO DROP", "NUEVA ACOMETIDA"
+    ]
+    
+    if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
+        return "CAMBIO_ACOMETIDA"
+        
+    # --- C. DETECCIÓN DE CAMBIO DE EQUIPO (Mantenimiento) ---
+    verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "DEJE", "DEJÓ", "PUSE", "PUSO", "ENTREG", "REINSTAL"]
     sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA"]
     
     es_cambio_equipo_accion = (
         any(v in texto_completo for v in verbos_equipo) and 
         any(s in texto_completo for s in sustantivos_equipo)
-    )
-    
-    frases_directas_equipo = [
-        "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
-        "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
-        "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
-        "REEMPLAZO CPE", "REEMPLAZO DE ROUTER", "REPLACE ONT", "REPLACE ONU",
-        "SE LE CAMBIO EQUIPO", "SE LE CAMBIO LA ONU", "SE LE CAMBIO LA ONT"
-    ]
-    
-    es_equipo = (
-        act == "CEQUI" or 
-        any(f in texto_completo for f in frases_directas_equipo) or 
-        es_cambio_equipo_accion
-    )
-    
-    if es_equipo:
-        return "CAMBIO_EQUIPO"
-        
-    # --- B. DETECCIÓN DE REEMPLAZO DE ACOMETIDA ---
-    # Exclusión estricta de mufas, postes troncales o supervisión preventiva
-    es_troncal_o_supervision = any(term in texto_completo for term in [
-        "144 HILOS", "48 HILOS", "72 HILOS", "96 HILOS", "24 HILOS", 
-        "POSTES", "POSTE", "TRONCAL", "MUFA", "MUFAS", 
-        "SUPERVISION", "SUPERVISIÓN", "SUPERVISOR", "CUADRILLAS", 
-        "MANTENIMIENTO PREVENTIVO", "PREVENTIVO", "LINEA TRONCAL", "LINEAS TRONCALES"
-    ])
-    
-    if es_troncal_o_supervision:
-        return "NINGUNO"
-        
-    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "CABLEO", "CABLEÓ", "RECONEXION"]
-    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "CORTE"]
-    
-    es_cambio_acometida_accion = (
-        any(v in texto_completo for v in verbos_acometida) and 
-        any(s in texto_completo for s in sustantivos_acometida)
     )
     
     frases_directas_acometida = [
@@ -175,16 +172,16 @@ def clasificar_materiales(row):
         
     ]
     
-    es_acometida = (
-        any(f in texto_completo for f in frases_directas_acometida) or 
-        es_cambio_acometida_accion
+    es_equipo = (
+        act == "CEQUI" or 
+        any(f in texto_completo for f in frases_directas_equipo) or 
+        es_cambio_equipo_accion
     )
     
-    if es_acometida:
-        return "CAMBIO_ACOMETIDA"
+    if es_equipo:
+        return "CAMBIO_EQUIPO"
         
     return "NINGUNO"
-
 # ==============================================================================
 # GENERADOR DEL REPORTE PDF DE MATERIALES (TIPO MEMO MAXCOM)
 # ==============================================================================
@@ -1452,7 +1449,7 @@ def main():
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
-        with tab_materiales:
+with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
             st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) enfocado exclusivamente en órdenes de Soporte y CEQUI.")
             
@@ -1468,10 +1465,10 @@ def main():
             with col_sel2:
                 anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
 
-            # Preparación de datos
+            # Preparación de datos forzando el formato latino de fecha (Día Primero)
             df_m = df_base.copy()
-            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce')
-            df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
+            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], dayfirst=True, errors='coerce')
+            df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], dayfirst=True, errors='coerce'))
             df_m = df_m[df_m['FECHA_REPORTE'].notna()]
             
             df_m_filtrado = df_m[
@@ -1479,7 +1476,7 @@ def main():
                 (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)
             ].copy()
             
-            # === FILTRO SIMPLIFICADO: ÚNICAMENTE ÓRDENES DE SOPORTE O CAMBIOS DE EQUIPO (CEQUI) ===
+            # === FILTRO: SOPFIBRA, SOPFIBRACORP O CAMBIOS DE EQUIPO (CEQUI) ===
             if not df_m_filtrado.empty:
                 act_upper = df_m_filtrado['ACTIVIDAD'].astype(str).str.upper().str.strip()
                 mask_actividades_sop = act_upper.str.contains("SOP", na=False) | (act_upper == "CEQUI")
