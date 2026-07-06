@@ -1434,7 +1434,7 @@ def main():
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
-with tab_materiales:
+        with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
             st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) mediante escaneo asociativo de comentarios.")
             
@@ -1554,7 +1554,7 @@ with tab_materiales:
     # ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================        
-        if nav_menu_diamante == "⚡ Monitor en Vivo":
+    if nav_menu_diamante == "⚡ Monitor en Vivo":
         
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
