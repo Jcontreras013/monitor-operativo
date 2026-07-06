@@ -51,12 +51,10 @@ except ImportError:
 
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
-# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA (Escáner Dinámico de Memoria) ---
+# --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA ---
 def obtener_credenciales_actuales():
     """
     Busca el rol y el usuario en session_state probando múltiples claves conocidas.
-    Si fallan las claves tradicionales, realiza un escaneo dinámico de todas las
-    variables de sesión para detectar al usuario 'andres' o 'jaison' de forma robusta.
     """
     def limpiar_texto(txt):
         if not txt:
@@ -66,7 +64,6 @@ def obtener_credenciales_actuales():
         return s
 
     rol = ""
-    # 1. Intentar claves tradicionales de rol
     for clave in ['rol_actual', 'rol', 'rol_usuario', 'user_role', 'role']:
         if clave in st.session_state:
             val = st.session_state[clave]
@@ -74,7 +71,6 @@ def obtener_credenciales_actuales():
                 rol = limpiar_texto(val)
                 break
                 
-    # Si no se encuentra un rol explícito, buscar la palabra 'jefe' o 'admin' en todos los valores de sesión
     if not rol:
         for k, v in st.session_state.items():
             if isinstance(v, str):
@@ -87,7 +83,6 @@ def obtener_credenciales_actuales():
                     break
 
     user = ""
-    # 2. Intentar claves tradicionales de usuario
     for clave in ['username', 'usuario', 'user', 'username_actual', 'nombre_usuario', 'email', 'name', 'nombre']:
         if clave in st.session_state:
             val = st.session_state[clave]
@@ -95,7 +90,6 @@ def obtener_credenciales_actuales():
                 user = limpiar_texto(val)
                 break
                 
-    # 3. ESCÁNER DE SALVAMENTO DINÁMICO: Si el usuario sigue vacío, pescamos 'andres' o 'jaison' en cualquier variable
     if not user:
         for k, v in st.session_state.items():
             if isinstance(v, str):
@@ -111,18 +105,11 @@ def obtener_credenciales_actuales():
 
 # --- AUXILIARES DE CONVERSIÓN SEGUROS ---
 def safestr(val):
-    """
-    Convierte cualquier valor a string de forma segura con codificación latin-1.
-    """
     if val is None or pd.isna(val):
         return ""
     return str(val).encode('latin-1', 'replace').decode('latin-1')
 
 def normalizar_unidad(v_str):
-    """
-    Normaliza el nombre de un vehículo para poder realizar búsquedas cruzadas
-    sin importar ceros a la izquierda, placas, espacios o guiones.
-    """
     if not v_str or pd.isna(v_str):
         return ""
     clean = re.sub(r'\[.*?\]', '', str(v_str)).strip()
@@ -132,12 +119,8 @@ def normalizar_unidad(v_str):
         return f"MX-{match.group(1)}"
     return clean
 
-# --- SUBIDA CON PRIORIDAD 1: CATBOX (Vinculada a tu cuenta por Userhash) ---
+# --- SUBIDA CON PRIORIDAD 1: CATBOX ---
 def subir_pdf_gratis_catbox(file_buffer, file_name):
-    """
-    Sube un archivo de forma anónima y gratuita a Catbox.moe.
-    Proporciona almacenamiento permanente de alta velocidad inmune a bloqueos de IP.
-    """
     try:
         file_buffer.seek(0)
         files = {
@@ -145,7 +128,7 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
         }
         data = {
             "reqtype": "fileupload",
-            "userhash": "327c87ffe7f915a6d1ec367ee"  # Tu Userhash configurado de forma permanente
+            "userhash": "327c87ffe7f915a6d1ec367ee"
         }
         response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
@@ -157,11 +140,8 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
     except Exception as e:
         return None, f"Fallo al conectar con Catbox: {str(e)}"
 
-# --- SUBIDA GRATUITA CON PRIORIDAD 2: LITTERBOX (Respaldo temporal por 72 horas) ---
+# --- SUBIDA GRATUITA CON PRIORIDAD 2: LITTERBOX ---
 def subir_pdf_gratis_litterbox(file_buffer, file_name):
-    """
-    Sube un archivo de forma temporal (duración de 72 horas) a Litterbox.
-    """
     try:
         file_buffer.seek(0)
         files = {
@@ -182,10 +162,6 @@ def subir_pdf_gratis_litterbox(file_buffer, file_name):
         return None, f"Fallo al conectar con Litterbox: {str(e)}"
 
 def subir_documento_nube(file_buffer, file_name, mimetype):
-    """
-    Pasarela de subida gratuita. Intenta Catbox (almacenamiento permanente)
-    y desvía automáticamente a Litterbox (72h) si ocurre algún problema.
-    """
     enlace, err_catbox = subir_pdf_gratis_catbox(file_buffer, file_name)
     if enlace:
         return enlace, None
@@ -444,12 +420,13 @@ def mostrar_auditoria(es_movil=False, conn=None):
                 else: 
                     st.warning(f"⚠️ {msg_sem}")
 
-    # --- PESTAÑA 2: TELEMETRÍA ---
+    # --- PESTAÑA 2: TELEMETRÍA (RESTAURADA A PARTIR DEL ARCHIVO 1) ---
     with tab_velocidad:
         col_v1, col_v2 = st.columns([4, 1])
         with col_v2: 
-            if st.button("🔄 Refrescar", key="ref_v"): st.rerun()
-            
+            if st.button("🔄 Refrescar", key="ref_v"): 
+                st.rerun()
+                
         st.markdown("### 🚀 Matriz de Excesos y Velocidad Promedio")
         st.caption("El sistema creará la columna Promedio y depurará a quienes no tengan incidencias reales.")
         limite_vel = st.number_input("Promediar solo velocidades mayores a (km/h):", min_value=10, max_value=200, value=60, step=5)
@@ -553,7 +530,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
             else:
                 df_g = st.session_state['df_gastos_flota']
                 
-        # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS (CON COINCIDENCIA DE TU IMAGEN 3) ---
+        # --- CONSTRUCCIÓN DINÁMICA DE LA LISTA DE VEHÍCULOS ---
         vehiculos_oficiales = [
             'MX-1', 'MX-2', 'MX-3', 'MX-4', 'MX-5', 'MX-6', 'MX-7', 'MX-8', 'MX-9', 'MX-10', 
             'MX-12', 'MX-13', 'MX-14', 'MX-15', 'MX-16', 'MX-17', 'MX-18', 'MX-19', 'MX-20', 
@@ -562,7 +539,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
         vehiculos_calendario = [v['Unidad'] for v in DATOS_CALENDARIO]
         vehiculos_historicos = df_g['VEHICULO'].dropna().unique().tolist() if not df_g.empty else []
         
-        # Consolidamos de forma estricta para evitar duplicados como MX-01 y MX-1
         set_vehiculos = set()
         for v in (vehiculos_oficiales + vehiculos_calendario + vehiculos_historicos):
             v_norm = normalizar_unidad(v)
@@ -599,7 +575,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
         with col_sel1:
             vehiculo_seleccionado = st.selectbox("📌 Selecciona la Unidad a revisar:", ["-- Seleccione --"] + lista_vehiculos, key="sel_unidad_revisar")
         
-        # --- FILTRO POR DEFECTO AJUSTADO A 365 DÍAS PARA EVITAR OCULTAR DATOS ---
         with col_sel2:
             rango_fechas = st.date_input("📅 Filtrar Historial por Fechas:", value=[get_hn_time().date() - timedelta(days=365), get_hn_time().date()], key="filtro_rango_flota")
             
@@ -633,7 +608,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             "COMPROBANTE": url_archivo if url_archivo else ""
                         }
                         
-                        # Escribimos el valor tanto en 'DESCRIPCION' como en 'DESCRIPCION.1'
                         for col in df_g.columns:
                             if 'DESCRIPCION' in col.upper():
                                 nuevo_dict[col] = desc_gasto
@@ -661,7 +635,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     st.error(st.session_state['alerta_repuesto'], icon="🚨")
                     del st.session_state['alerta_repuesto']
 
-                # --- FILTRO INTELIGENTE / NORMALIZADO DE UNIDAD ---
                 df_filtro = pd.DataFrame()
                 if not df_g.empty:
                     df_g_temp = df_g.copy()
@@ -678,7 +651,6 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         df_filtro = df_filtro.drop(columns=['FECHA_DT', 'VEHICULO_NORM'])
 
                 if not df_filtro.empty:
-                    # --- RESOLVER COLUMNAS DUPLICADAS DE DESCRIPCION PARA VISUALIZACIÓN ---
                     col_desc_real = 'DESCRIPCION'
                     for col in df_filtro.columns:
                         if 'DESCRIPCION.1' in col or 'DESCRIPCION_1' in col:
@@ -708,10 +680,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     if opciones_borrar:
                         registro_a_borrar = st.selectbox("Seleccionar:", options=list(opciones_borrar.keys()), format_func=lambda x: opciones_borrar[x], key="sel_borrar_gasto")
                         
-                        # --- REGLA DE SEGURIDAD PARA BORRADO FINANCIERO ---
                         rol_actual, usuario_actual = obtener_credenciales_actuales()
-                        
-                        # Permitir si es admin, o si es jefe y específicamente el usuario andres
                         puede_eliminar_gasto = (
                             "admin" in rol_actual or 
                             "jaison" in usuario_actual or 
@@ -793,8 +762,8 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                             df_escaneres = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
                                         except:
                                             df_escaneres = pd.DataFrame()
-                                else:
-                                    df_escaneres = pd.DataFrame()
+                                    else:
+                                        df_escaneres = pd.DataFrame()
 
                                 df_escaneres = pd.concat([df_escaneres, nuevo_registro_escaner], ignore_index=True)
                                 
@@ -810,7 +779,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     except Exception as e:
                                         st.warning("⚠️ Guardado en la nube pero falló GSheets.")
                                 else:
-                                    st.success("✅ Guardado en la nube exitoso (sin GSheets).")
+                                    st.success("✅ Guardado en la nube exitoso.")
                                 
                                 time.sleep(2)
                                 st.rerun()
@@ -844,17 +813,13 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         df_view_insp = df_view_insp[df_view_insp['PLACA'].astype(str).str.contains(buscar_placa.upper(), na=False)]
                     
                     if not df_view_insp.empty:
-                        # --- SINCRONIZACIÓN CON TU CLAVE DE SESIÓN 'rol_actual' ---
                         rol_actual, usuario_actual = obtener_credenciales_actuales()
-                        
-                        # --- REGLA DE SEGURIDAD ACTUALIZADA: ADMIN, JAISON, O JEFE SI ES ANDRES ---
                         es_admin = (
                             "admin" in rol_actual or
                             "jaison" in usuario_actual or
                             ("jefe" in rol_actual and "andres" in usuario_actual)
                         )
 
-                        # Ajustamos el ancho y número de columnas según los permisos del usuario
                         if es_admin:
                             cols_por_fila = 3
                         else:
