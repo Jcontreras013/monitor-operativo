@@ -102,7 +102,7 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (SOPORTES Y CEQUI)
+# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (EXCLUSIVO SOPORTE Y CEQUI)
 # ==============================================================================
 def clasificar_materiales(row):
     act = str(row.get('ACTIVIDAD', '')).upper().strip()
@@ -111,7 +111,7 @@ def clasificar_materiales(row):
     sop = str(row.get('SOP', '')).upper().strip()
     tecnico = str(row.get('TECNICO', '')).upper().strip()
     
-    # Exclusión de personal administrativo
+    # Exclusión de personal no técnico / administrativo
     if any(ex in tecnico for ex in ["LILIAN", "WILFREDO"]):
         return "NINGUNO"
         
@@ -121,7 +121,7 @@ def clasificar_materiales(row):
     if "CORTE DE ACOMETIDA" in razon or "CORTE DE ACOMETIDA" in com or "CORTE DE ACOMETIDA" in act:
         return "CAMBIO_ACOMETIDA"
         
-    # --- EXCLUSIÓN DE TRONCALES / SUPERVISIÓN ---
+    # --- EXCLUSIÓN DE TRABAJOS TRONCALES / SUPERVISIÓN ---
     es_troncal_o_supervision = any(term in texto_completo for term in [
         "144 HILOS", "48 HILOS", "72 HILOS", "96 HILOS", "24 HILOS", 
         "TRONCAL", "MUFA", "MUFAS", "SUPERVISION", "SUPERVISIÓN", 
@@ -135,7 +135,7 @@ def clasificar_materiales(row):
     verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "CABLEO", "CABLEÓ", "RECONEXION", "CORTAD", "REVENTAD", "ROBAD"]
     sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA"]
     
-    es_acometida = (
+    es_acometida_accion = (
         any(v in texto_completo for v in verbos_acometida) and 
         any(s in texto_completo for s in sustantivos_acometida)
     )
@@ -148,7 +148,12 @@ def clasificar_materiales(row):
         "SE REEMPLAZA DROP", "SE REEMPLAZA ACOMETIDA", "NUEVO DROP", "NUEVA ACOMETIDA"
     ]
     
-    if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
+    es_acometida_final = (
+        any(f in texto_completo for f in frases_directas_acometida) or 
+        es_acometida_accion
+    )
+    
+    if es_acometida_final:
         return "CAMBIO_ACOMETIDA"
         
     # --- C. DETECCIÓN DE CAMBIO DE EQUIPO (Mantenimiento) ---
@@ -160,25 +165,21 @@ def clasificar_materiales(row):
         any(s in texto_completo for s in sustantivos_equipo)
     )
     
-    frases_directas_acometida = [
-        "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
-        "ACOMETIDA DAÑADA", "ACOMETIDA DANADA", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
-        "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "TIRADO DE ACOMETIDA", 
-        "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
-        "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", "REEMPLAZAR DROP",
-        "REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA", "CAMBIO DE BAJADA",
-        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "LANZADO DE ACOMETIDA", "LANZO ACOMETIDA", "CORTE DE ACOMETIDA",
-        "CAMBIO TOTAL DE FIBRA"
-        
+    frases_directas_equipo = [
+        "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
+        "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
+        "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
+        "REEMPLAZO CPE", "REEMPLAZO DE ROUTER", "REPLACE ONT", "REPLACE ONU",
+        "SE LE CAMBIO EQUIPO", "SE LE CAMBIO LA ONU", "SE LE CAMBIO LA ONT"
     ]
     
-    es_equipo = (
+    es_equipo_final = (
         act == "CEQUI" or 
         any(f in texto_completo for f in frases_directas_equipo) or 
         es_cambio_equipo_accion
     )
     
-    if es_equipo:
+    if es_equipo_final:
         return "CAMBIO_EQUIPO"
         
     return "NINGUNO"
