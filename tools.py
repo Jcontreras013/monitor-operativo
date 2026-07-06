@@ -3437,3 +3437,71 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         return pdf.output(dest='S').encode('latin1')
     except Exception:
         return bytes(pdf.output())
+
+#-------------------------------------------------------.
+# CONTROL DE MATERIALES
+#=======================================================        
+        
+        def generar_pdf_materiales_tecnicos(tech_summary, mes_seleccionado, anio_seleccionado):
+    """Genera el PDF del consolidado de materiales y devuelve los bytes para Streamlit"""
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Título del Reporte
+    pdf.set_font("Helvetica", 'B', 14)
+    pdf.cell(0, 10, f"Reporte de Materiales por Tecnico - {mes_seleccionado} {anio_seleccionado}", ln=True, align='C')
+    pdf.ln(5)
+    
+    # Encabezados de Tabla (Colores base)
+    pdf.set_font("Helvetica", 'B', 10)
+    pdf.set_fill_color(45, 47, 57)
+    pdf.set_text_color(255, 255, 255)
+    
+    # Dimensiones de columnas y centrado
+    w_tec, w_eq, w_ac, w_tot = 80, 35, 40, 25
+    margin_left = (210 - (w_tec + w_eq + w_ac + w_tot)) / 2
+    pdf.set_x(margin_left)
+    
+    pdf.cell(w_tec, 8, "Tecnico", border=1, align='C', fill=True)
+    pdf.cell(w_eq, 8, "Equipos", border=1, align='C', fill=True)
+    pdf.cell(w_ac, 8, "Acometidas", border=1, align='C', fill=True)
+    pdf.cell(w_tot, 8, "Total", border=1, align='C', fill=True)
+    pdf.ln()
+    
+    # Contenido de la Tabla
+    pdf.set_font("Helvetica", '', 9)
+    pdf.set_text_color(0, 0, 0)
+    
+    tot_eq, tot_ac, tot_gen = 0, 0, 0
+    
+    for _, fila in tech_summary.iterrows():
+        pdf.set_x(margin_left)
+        # Usamos safestr nativo de tools.py
+        tecnico_limpio = safestr(str(fila.get('TECNICO', '')))
+        
+        pdf.cell(w_tec, 8, tecnico_limpio, border=1, align='L')
+        pdf.cell(w_eq, 8, str(fila.get('Equipos', 0)), border=1, align='C')
+        pdf.cell(w_ac, 8, str(fila.get('Acometidas', 0)), border=1, align='C')
+        pdf.cell(w_tot, 8, str(fila.get('Total', 0)), border=1, align='C')
+        pdf.ln()
+        
+        tot_eq += int(fila.get('Equipos', 0))
+        tot_ac += int(fila.get('Acometidas', 0))
+        tot_gen += int(fila.get('Total', 0))
+        
+    # Fila de Totales
+    pdf.set_x(margin_left)
+    pdf.set_font("Helvetica", 'B', 10)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(w_tec, 8, "TOTAL GLOBAL", border=1, align='R', fill=True)
+    pdf.cell(w_eq, 8, str(tot_eq), border=1, align='C', fill=True)
+    pdf.cell(w_ac, 8, str(tot_ac), border=1, align='C', fill=True)
+    pdf.cell(w_tot, 8, str(tot_gen), border=1, align='C', fill=True)
+    
+    # Manejo de bytes seguro para Streamlit Cloud
+    try:
+        pdf_bytes = bytes(pdf.output())
+    except TypeError:
+        pdf_bytes = pdf.output(dest='S').encode('latin1')
+        
+    return pdf_bytes
