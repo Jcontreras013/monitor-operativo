@@ -158,7 +158,7 @@ def clasificar_materiales(row):
         any(s in texto_completo for s in sustantivos_equipo)
     )
     
-     frases_directas_acometida = [
+    frases_directas_acometida = [
         "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
         "ACOMETIDA DAÑADA", "ACOMETIDA DANADA", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
         "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "TIRADO DE ACOMETIDA", 
