@@ -102,40 +102,74 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES
+# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (ESCÁNER INTENSIVO)
 # ==============================================================================
 def clasificar_materiales(row):
     act = str(row.get('ACTIVIDAD', '')).upper().strip()
     com = str(row.get('COMENTARIO', '')).upper().strip()
-    texto = act + " " + com
+    razon = str(row.get('RAZON_CIERRE_SOP', '')).upper().strip()
+    sop = str(row.get('SOP', '')).upper().strip()
     
-    kws_equipo = [
+    # Consolidación de texto de todas las columnas relacionadas para un escaneo profundo
+    texto_completo = " | ".join([act, com, razon, sop])
+    
+    # --- 1. DETECCIÓN INTENSIVA DE CAMBIO DE EQUIPO (ONT/ONU/ROUTER/MODEM) ---
+    # Actividades directas que implican cambio de equipo de terminal
+    if act in ["CEQUI", "INSEQUIPO", "CAMBIO"]:
+        return "CAMBIO_EQUIPO"
+        
+    # Patrón asociativo de verbos de reemplazo + sustantivos de hardware terminal
+    # (Captura: "se cambio ont", "deje nuevo router", "retire onu dañada", "remplace modem", etc.)
+    patron_cambio_equipo = re.compile(
+        r'(CAMBI|REMPLAZ|REEMPLAZ|RETIR|INSTAL|COLOC|DEJE|DEJÓ|PUSE|PUSO|ENTREG|QUEMAD|DAÑAD|DEFECTUOS|REPAR|SOPORT)\b.*?\b(EQUIPO|ONT|ONU|CPE|ROUTER|MODEM|MODÉM|CAJITA|APARATO|DISPOSITIVO|WIFI|WI-FI|REPETIDOR)', 
+        re.IGNORECASE
+    )
+    
+    frases_directas_equipo = [
         "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
         "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
         "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
         "REEMPLAZO CPE", "EQUIPO DEFECTUOSO", "ONT DEFECTUOSA", "ONU DEFECTUOSA",
-        "DAÑO EQUIPO", "DAÑO DE EQUIPO", "CAMBIO DE ROUTER", "CAMBIO ROUTER", 
-        "REEMPLAZO DE ROUTER", "NUEVO ROUTER", "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU"
+        "CAMBIO DE ROUTER", "CAMBIO ROUTER", "REEMPLAZO DE ROUTER", "NUEVO ROUTER", 
+        "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU", "SE LE CAMBIO"
     ]
     
-    kws_acometida = [
+    es_equipo = (
+        any(f in texto_completo for f in frases_directas_equipo) or 
+        bool(patron_cambio_equipo.search(texto_completo))
+    )
+    
+    # --- 2. DETECCIÓN INTENSIVA DE REEMPLAZO DE ACOMETIDA (CABLE DROP / FIBRA) ---
+    # Patrón asociativo de verbos de cableado/tendido + sustantivos de cable drop
+    # (Captura: "tire drop", "se tendieron metros de cable", "reemplace acometida", "drop dañado", etc.)
+    patron_cambio_acometida = re.compile(
+        r'(CAMBI|REMPLAZ|REEMPLAZ|TIRE|TIRÉ|TIRÓ|TIRO|INSTAL|CABLE|RETIRE|RETIRÓ|RETIRAR|RECONEC|TENSE|TENSÓ|TENSAR|REPAR|EMPALM|ROBAD|CORTAD|REVENTAD|TIRAD|MEDID|METROS|MTS|MT)\b.*?\b(ACOMETIDA|DROP|CABLE|FIBRA|BAJADA|ALAMBRE|HILO|ACOMTIDA|ACO)', 
+        re.IGNORECASE
+    )
+    
+    frases_directas_acometida = [
         "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
         "ACOMETIDA DAÑADA", "ACOMETIDA DANADA", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
-        "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "LANZAMIENTO DE ACOMETIDA",
-        "TIRADO DE ACOMETIDA", "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP",
-        "CAMBIO DE CABLE DROP", "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", 
-        "REEMPLAZAR DROP","REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA",
-        "CAMBIO DE BAJADA"
+        "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "TIRADO DE ACOMETIDA", 
+        "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
+        "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", "REEMPLAZAR DROP",
+        "REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA", "CAMBIO DE BAJADA",
+        "REEMPLAZO DE DROP", "REEMPLAZO DROP"
     ]
     
-    es_equipo = (act in ["CEQUI", "CAMBIO"] or any(kw in texto for kw in kws_equipo))
-    es_acometida = any(kw in texto for kw in kws_acometida)
+    es_acometida = (
+        any(f in texto_completo for f in frases_directas_acometida) or 
+        bool(patron_cambio_acometida.search(texto_completo))
+    )
     
+    # Prioridad lógica: los cambios de hardware terminal (ONT/Router) se evalúan primero
     if es_equipo:
         return "CAMBIO_EQUIPO"
     elif es_acometida:
         return "CAMBIO_ACOMETIDA"
+        
     return "NINGUNO"
+    #----------------------------------------------------------------------------------------------------#
 
 
 def sincronizar_datos_nube(conn):
@@ -1197,19 +1231,21 @@ def main():
 
         with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
-            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop).")
+            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) mediante escaneo asociativo de comentarios.")
             
+            # Selector de Fecha (Mes y Año)
             col_sel1, col_sel2 = st.columns(2)
             with col_sel1:
                 meses_nombres = [
                     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
                     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
                 ]
-                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=5)
+                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1)
                 numero_mes = meses_nombres.index(mes_seleccionado) + 1
             with col_sel2:
                 anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
 
+            # Preparación de datos
             df_m = df_base.copy()
             df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce')
             df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
@@ -1221,6 +1257,7 @@ def main():
             ].copy()
             
             if not df_m_filtrado.empty:
+                # Aplicamos el motor de escaneo inteligente
                 df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
                 
                 df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
@@ -1229,6 +1266,7 @@ def main():
                 total_equipos = len(df_equipos)
                 total_acometidas = len(df_acometidas)
                 
+                # Despliegue de Indicadores Clave (KPIs)
                 col_k1, col_k2 = st.columns(2)
                 with col_k1:
                     st.markdown(f"""
@@ -1280,6 +1318,7 @@ def main():
                 st.markdown("### 📥 Descargar Reporte de Detalle")
                 buffer_m = io.BytesIO()
                 
+                # Consolidación de detalles para exportar
                 df_export_eq = df_equipos[['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'ACTIVIDAD', 'COMENTARIO', 'FECHA_REPORTE']].copy()
                 df_export_eq['TIPO_CAMBIO'] = 'CAMBIO DE EQUIPO'
                 
@@ -1308,8 +1347,6 @@ def main():
                     st.dataframe(df_export_final, use_container_width=True, hide_index=True)
             else:
                 st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
-
-        return
 
     # ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO 
