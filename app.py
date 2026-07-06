@@ -105,23 +105,27 @@ NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 # MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (EXCLUSIVO SOPORTE Y CEQUI)
 # ==============================================================================
 def clasificar_materiales(row):
+    # 1. Agregamos MOTIVO y COMENTARIO CIERRE para que no se escape nada
     act = str(row.get('ACTIVIDAD', '')).upper().strip()
     com = str(row.get('COMENTARIO', '')).upper().strip()
     razon = str(row.get('RAZON_CIERRE_SOP', '')).upper().strip()
     sop = str(row.get('SOP', '')).upper().strip()
+    motivo = str(row.get('MOTIVO', '')).upper().strip() 
+    com_cierre = str(row.get('COMENTARIO CIERRE', '')).upper().strip()
     tecnico = str(row.get('TECNICO', '')).upper().strip()
     
-    # Exclusión de personal no técnico / administrativo
     if any(ex in tecnico for ex in ["LILIAN", "WILFREDO"]):
         return "NINGUNO"
         
-    texto_completo = " | ".join([act, com, razon, sop])
+    # 2. Unificamos todo el texto del registro
+    texto_completo = " | ".join([act, com, razon, sop, motivo, com_cierre])
     
-    # --- REGLA DIRECTA SEGÚN TU FILTRO REAL DEL EXCEL (PRIORIDAD ABSOLUTA) ---
-    if "CORTE DE ACOMETIDA" in razon or "CORTE DE ACOMETIDA" in com or "CORTE DE ACOMETIDA" in act:
+    # 3. REGLA DIRECTA (MÁXIMA PRIORIDAD): Si dice corte o cambio de acometida en CUALQUIER columna, lo cuenta.
+    if "CORTE DE ACOMETIDA" in texto_completo or "CAMBIO DE ACOMETIDA" in texto_completo:
         return "CAMBIO_ACOMETIDA"
         
     # --- EXCLUSIÓN DE TRABAJOS TRONCALES / SUPERVISIÓN ---
+    # (Se ejecuta SOLO si no fue un corte de acometida confirmado arriba)
     es_troncal_o_supervision = any(term in texto_completo for term in [
         "144 HILOS", "48 HILOS", "72 HILOS", "96 HILOS", "24 HILOS", 
         "TRONCAL", "MUFA", "MUFAS", "SUPERVISION", "SUPERVISIÓN", 
@@ -131,7 +135,7 @@ def clasificar_materiales(row):
     if es_troncal_o_supervision:
         return "NINGUNO"
         
-    # --- B. DETECCIÓN DE REEMPLAZO DE ACOMETIDA (DROP) ---
+    # --- B. DETECCIÓN DE REEMPLAZO DE ACOMETIDA (Por sinónimos) ---
     verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "CABLEO", "CABLEÓ", "RECONEXION", "CORTAD", "REVENTAD", "ROBAD"]
     sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA"]
     
@@ -141,22 +145,17 @@ def clasificar_materiales(row):
     )
     
     frases_directas_acometida = [
-        "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
-        "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", "REEMPLAZO DE DROP", "REEMPLAZO DROP",
-        "TIRAR DROP", "TIRAR ACOMETIDA", "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", 
-        "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", "CABLE DE ACOMETIDA", "SE CORRE DROP",
-        "SE REEMPLAZA DROP", "SE REEMPLAZA ACOMETIDA", "NUEVO DROP", "NUEVA ACOMETIDA"
+        "CAMBIO DE DROP", "CAMBIO DROP", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
+        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "TIRAR DROP", "TIRAR ACOMETIDA", 
+        "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
+        "CABLE DE ACOMETIDA", "SE CORRE DROP", "SE REEMPLAZA DROP", "SE REEMPLAZA ACOMETIDA", 
+        "NUEVO DROP", "NUEVA ACOMETIDA"
     ]
     
-    es_acometida_final = (
-        any(f in texto_completo for f in frases_directas_acometida) or 
-        es_acometida_accion
-    )
-    
-    if es_acometida_final:
+    if any(f in texto_completo for f in frases_directas_acometida) or es_acometida_accion:
         return "CAMBIO_ACOMETIDA"
         
-    # --- C. DETECCIÓN DE CAMBIO DE EQUIPO (Mantenimiento) ---
+    # --- C. DETECCIÓN DE CAMBIO DE EQUIPO ---
     verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "DEJE", "DEJÓ", "PUSE", "PUSO", "ENTREG", "REINSTAL"]
     sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA"]
     
@@ -173,13 +172,7 @@ def clasificar_materiales(row):
         "SE LE CAMBIO EQUIPO", "SE LE CAMBIO LA ONU", "SE LE CAMBIO LA ONT"
     ]
     
-    es_equipo_final = (
-        act == "CEQUI" or 
-        any(f in texto_completo for f in frases_directas_equipo) or 
-        es_cambio_equipo_accion
-    )
-    
-    if es_equipo_final:
+    if act == "CEQUI" or any(f in texto_completo for f in frases_directas_equipo) or es_cambio_equipo_accion:
         return "CAMBIO_EQUIPO"
         
     return "NINGUNO"
