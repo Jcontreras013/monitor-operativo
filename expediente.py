@@ -42,30 +42,25 @@ def cargar_personal(filepath="personal_tecnico.txt"):
         return sorted(list(set(nombres)))
     except: return []
 
-# --- LÓGICA ACTUALIZADA: DEPARTAMENTO, NOMBRES CON ';' Y PUNTO FINAL ---
 @st.cache_data(show_spinner=False)
 def cargar_personal_admin(filepath="personal_sac.txt"):
     personal = {}
     try:
         if not os.path.exists(filepath): return personal
         with open(filepath, 'r', encoding='utf-8') as f:
-            # Quitamos los saltos de línea reales para procesar el ';' como Enter
             contenido = f.read().replace('\n', ' ')
         
-        # 1. Separamos por departamentos usando el punto
         bloques_departamentos = contenido.split('.')
         
         for bloque in bloques_departamentos:
             bloque = bloque.strip()
             if not bloque: continue
             
-            # 2. Separamos el nombre del departamento del resto usando la primera coma
             partes = bloque.split(',', 1)
             
             if len(partes) > 0:
                 departamento = partes[0].strip().upper()
                 
-                # 3. Separamos los nombres en cascada usando el punto y coma (;)
                 if len(partes) > 1:
                     empleados = [e.strip().upper() for e in partes[1].split(';') if e.strip()]
                 else:
@@ -80,56 +75,140 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
         return {}
 
 # ==============================================================================
-# LÓGICA DE ASIGNACIÓN DE RUBROS AUTOMÁTICOS (SELECCIONADOR INTELIGENTE)
+# MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS
 # ==============================================================================
-def asignar_rubro_automatico(motivo, comentario):
-    motivo_str = str(motivo).upper().strip()
-    comentario_str = str(comentario).upper().strip()
-    
-    # 1. FRASES EXACTAS DE PENALIZACIÓN GRAVE DIRECTA
-    frases_graves = [
-        "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
-        "NO INICI", "SIN INICIAR", "NO DIO INICIO", "OMISIÓN DE INICIO", "OMISION DE INICIO", 
-        "NO APERTUR", "SIN APERTURAR",
-        "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
-        "ROBO", "HURTO", "PELEA", "GOLPE", "AGRESIÓN", "AGRESION", "INSULTO", 
-        "FALTA DE RESPETO", "ABANDONO", "SIN AVISAR", "INJUSTIFICADA", 
-        "DAÑO", "PÉRDIDA", "PERDIDA", "FRAUDE", "NEGLIGENCIA", "OFENSA", 
-        "AMENAZA", "REINCIDENCIA", "DORMIDO", "GRAVE", "IRRESPONSABILIDAD"
+def es_llegada_tarde(motivo, comentario):
+    motivo_u = str(motivo).upper().strip()
+    com_u = str(comentario).upper().strip()
+    EXCL = ['ALMUERZO', 'BREAK', 'DESCANSO']
+    KWS  = ['LLEGADA TARDE', 'LLEGADA TARDIA', 'LLEGADA TARDÍA', 'TARDANZA', 'TARDE', 'RETRASO', 'LLEGADA TARDÍA / AUSENCIA']
+    for kw in KWS:
+        if kw in motivo_u and not any(ex in motivo_u for ex in EXCL):
+            return True
+    for kw in KWS:
+        if kw in com_u and not any(ex in com_u for ex in EXCL):
+            return True
+    return False
+
+def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
+    motivo_u = str(motivo).upper().strip()
+    com_u = str(comentario).upper().strip()
+    texto = motivo_u + " " + com_u
+
+    # 1. VEHÍCULO / MAL CUIDADO O DESCUIDO - SIEMPRE GRAVE
+    palabras_vehiculo_neglect = [
+        "MAL CUIDADO", "CUIDADO VEHICULO", "CUIDADO DEL VEHICULO", "CUIDADO DE VEHICULO",
+        "CUIDADO VEHÍCULO", "CUIDADO DEL VEHÍCULO", "CUIDADO DE VEHÍCULO",
+        "MALTRATO VEHICULO", "MALTRATO DE VEHICULO", "MALTRATO DEL VEHICULO",
+        "DESCUIDO VEHICULO", "DESCUIDO DE VEHICULO", "DESCUIDO DEL VEHICULO",
+        "DESCUIDO VEHÍCULO", "DESCUIDO DE VEHÍCULO", "DESCUIDO DEL VEHÍCULO",
+        "DAÑO VEHICULO", "DAÑO AL VEHICULO", "DAÑO DE VEHICULO",
+        "DAÑO VEHÍCULO", "DAÑO AL VEHÍCULO", "DAÑO DE VEHÍCULO",
+        "GOLPE VEHICULO", "GOLPE AL VEHICULO", "GOLPE DE VEHICULO",
+        "ABUSO VEHICULO", "ABUSO DEL VEHICULO", "ABUSO DE VEHICULO",
+        "DAÑO CARRO", "DAÑO AL CARRO", "DAÑO UNIDAD", "DAÑO A UNIDAD"
     ]
-    
+    if any(x in texto for x in palabras_vehiculo_neglect):
+        return 'GRAVE'
+
+    # 2. ACCIONES GRAVES (Aperturas, cierres, órdenes pendientes, faltas de respeto)
+    palabras_graves = [
+        # Aperturas y cierres fallidas o tardías
+        "APERTURO TARDE", "APERTURÓ TARDE", 
+        "NO APERTURO", "NO APERTURÓ", 
+        "NO CERRO", "NO CERRÓ", 
+        "NO CERRO A TIEMPO", "NO CERRÓ A TIEMPO", 
+        "CERRO TARDE", "CERRÓ TARDE",
+        "APERTURA TARDE", "APERTURA TARDIA", "APERTURA TARDÍA",
+        "CIERRE TARDE", "CIERRE TARDIO", "CIERRE TARDÍO",
+        # Órdenes pendientes
+        "DEJAR ORDENES", "DEJAR ÓRDENES",
+        "ORDENES PENDIENTES", "ÓRDENES PENDIENTES", "ORDEN PENDIENTE", "ÓRDEN PENDIENTE",
+        "INCUMPLIMIENTO DE ORDENES", "INCUMPLIMIENTO DE ÓRDENES",
+        "NO INICIO ORDEN", "NO INICIÓ ORDEN", "NO INICI", "SIN INICIAR",
+        "NO DIO INICIO", "OMISIÓN DE INICIO", "OMISION DE INICIO",
+        "SIN APERTURAR", "NO APERTUR", "SIN APERTURAR",
+        # Faltas de respeto
+        "FALTA DE RESPETO", "FALTA DE RESPET", "FALTAS DE RESPETO",
+        "IRRESPETO", "INSULTO", "INSULTOS", "GOLPE", "PELEA",
+        "AGRESION", "AGRESIÓN", "AMENAZA", "HOSTIGAMIENTO",
+        "FALTA AL RESPETO", "OFENSA", "OFENSAS", "FALTA RESPETO",
+        # Otras graves tradicionales
+        "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
+        "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
+        "ROBO", "HURTO", "ABANDONO DE RUTA", "ABANDONO RUTA", "ABANDONO", 
+        "INJUSTIFICADA", "DAÑO", "PÉRDIDA", "PERDIDA", "FRAUDE", "NEGLIGENCIA", 
+        "REINCIDENCIA", "DORMIDO", "GRAVE", "IRRESPONSABILIDAD"
+    ]
+    if any(kw in texto for kw in palabras_graves):
+        return 'GRAVE'
+
+    graves_combos = [
+        ('ABANDONO', 'RUTA'),
+        ('DAÑO', 'EQUIPO'), ('DAÑO', 'VEHICULO'),
+        ('DAÑO', 'VEHÍCULO'), ('DAÑO', 'CARRO'), ('DAÑO', 'UNIDAD'),
+        ('FALTA', 'RESPETO'),
+        ('RESPETO', 'COMPAÑERO'), ('RESPETO', 'SUPERVISOR'),
+        ('ORDENES', 'PENDIENTES'), ('ÓRDENES', 'PENDIENTES'),
+        ('AUSENCIA', 'AVISO'), ('AUSENCIA', 'JUSTIF'),
+        ('INASISTENCIA', 'AVISO'), ('INASISTENCIA', 'JUSTIF'),
+        ('IRRESPETO', 'COMPAÑERO'), ('IRRESPETO', 'SUPERVISOR'),
+    ]
+    for w1, w2 in graves_combos:
+        if w1 in texto and w2 in texto:
+            return 'GRAVE'
+
+    # 3. PROMOCIÓN AUTOMÁTICA POR REINCIDENCIA (3 o más llegadas tarde = GRAVE)
+    if es_llegada_tarde(motivo, comentario):
+        if n_tardes >= 3:
+            return 'GRAVE'
+        return 'LEVE'
+
+    # 4. ACCIONES LEVES
     palabras_leves = [
+        # Almuerzo excedido
+        'ALMUERZO EXCEDIDO', 'HORA ALMUERZO', 'HORA DE ALMUERZO',
+        'EXCEDIÓ ALMUERZO', 'EXCEDIO ALMUERZO',
+        'TIEMPO DE ALMUERZO', 'TIEMPO ALMUERZO', 'EXCESO ALMUERZO',
+        # Break excedido
+        'BREAK EXCEDIDO', 'HORA BREAK', 'HORA DE BREAK',
+        'EXCEDIÓ BREAK', 'EXCEDIO BREAK',
+        'TIEMPO DE BREAK', 'TIEMPO BREAK', 'EXCESO BREAK',
+        'DESCANSO EXCEDIDO',
+        # Marcajes faltantes
+        'NO MARCÓ', 'NO MARCO', 'SIN MARCAJE', 'MARCAJE FALTANTE',
+        'NO MARCÓ ENTRADA', 'NO MARCÓ SALIDA',
+        'NO MARCO ENTRADA', 'NO MARCO SALIDA',
+        'NO REGISTRO ENTRADA', 'NO REGISTRO SALIDA',
+        'OLVIDO MARCAJE', 'FALTA DE MARCAJE', 'OLVIDO DE MARCAJE',
+        # Mala documentación menor
+        'MALA DOCUMENTACION', 'MALA DOCUMENTACIÓN',
         "TARDE", "RETRASO", "TRÁFICO", "TRAFICO", "LLANTA", "UNIFORME",
         "GAFETE", "SUCIO", "DESORDEN", "OLVIDO", "MINUTOS", "LEVE"
     ]
-    
-    motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").strip()
-    
-    es_grave = False
-    
-    # 2. MOTOR DE DETECCIÓN AVANZADA
-    
-    # Regla A: Si contiene una frase o palabra grave explícita (Ej. "no inició", "mal uso")
-    if any(f in comentario_str for f in frases_graves):
-        es_grave = True
-        
-    # Regla B (Detección por Contexto): Si mencionan equipo/material/vehículo junto con algo negativo
-    elif any(x in comentario_str for x in ["EQUIPO", "MATERIAL", "VEHICULO", "VEHÍCULO", "UNIDAD", "CARRO", "MOTO"]) and \
-         any(y in comentario_str for y in ["MAL", "QUEBRÓ", "QUEBRO", "ARRIUNÓ", "ARRUINO", "EXTRAVIÓ", "EXTRAVIO", "DESTRUYÓ"]):
-        es_grave = True
-        
-    # Regla C: Si no es grave, verificamos si es leve (Ej. Llegadas tarde)
-    elif any(p in comentario_str for p in palabras_leves):
-        es_grave = False
-        
-    # Regla D: Si el comentario es muy ambiguo, nos guiamos por el motivo seleccionado
-    elif "GRAVE" in motivo_str or any(f in motivo_str for f in frases_graves):
-        es_grave = True
-        
-    # 3. EMPAQUETADO FINAL
-    etiqueta = "[GRAVE]" if es_grave else "[LEVE]"
-    
-    return f"{etiqueta} {motivo_limpio}"    
+    if any(p in texto for p in palabras_leves):
+        return 'LEVE'
+
+    leves_combos = [
+        ('HORA', 'ALMUERZO'), ('HORA', 'BREAK'),
+        ('EXCEDIÓ', 'ALMUERZO'), ('EXCEDIÓ', 'BREAK'),
+        ('NO', 'MARCÓ'), ('NO', 'MARCO'),
+        ('SIN', 'MARCAJE'), ('SIN', 'MARCA'),
+        ('MALA', 'DOCUMENTACION'), ('MALA', 'DOCUMENTACIÓN'),
+    ]
+    for w1, w2 in leves_combos:
+        if w1 in texto and w2 in texto:
+            return 'LEVE'
+
+    return 'OTRO'
+
+def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
+    motivo_str = str(motivo).upper().strip()
+    clasificacion = clasificar_grave_o_leve(motivo, comentario, n_tardes)
+    etiqueta = f"[{clasificacion}]"
+    motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").replace("[OTRO]", "").strip()
+    return f"{etiqueta} {motivo_limpio}"
+
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
@@ -158,138 +237,6 @@ def sanitizar(texto):
 # 2. GENERADORES DE DOCUMENTOS PDF
 # ==============================================================================
 def generar_pdf_consolidado(df):
-    # ==========================================================================
-    # MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS
-    # ==========================================================================
-    def _es_llegada_tarde(tipo_u, com_u):
-        """
-        Detecta si la incidencia es una llegada tarde.
-        Excluye casos de almuerzo/break excedido que también contienen 'TARDE'.
-        """
-        EXCL = ['ALMUERZO', 'BREAK', 'DESCANSO']
-        KWS  = ['LLEGADA TARDE', 'LLEGADA TARDIA', 'LLEGADA TARDÍA', 'TARDANZA']
-        for kw in KWS:
-            if kw in tipo_u and not any(ex in tipo_u for ex in EXCL):
-                return True
-        # El tipo puede ser simplemente la opción del selectbox: "LLEGADA TARDE"
-        if tipo_u.strip() in ('LLEGADA TARDE', 'TARDE'):
-            return True
-        # En comentario, solo si hay frase explícita (no palabra suelta)
-        for kw in KWS:
-            if kw in com_u and not any(ex in com_u for ex in EXCL):
-                return True
-        return False
-
-    def _clasificar_row(row, conteo_tardes):
-        """
-        Clasifica cada incidencia como LEVE, GRAVE u OTRO analizando
-        TIPO_FALTA y COMENTARIO. Las llegadas tardes superando 3 por técnico
-        se promueven automáticamente a GRAVE.
-        """
-        tipo       = str(row.get('TIPO_FALTA', '')).upper().strip()
-        comentario = str(row.get('COMENTARIO', '')).upper().strip()
-        texto      = tipo + ' ' + comentario
-        tecnico    = str(row.get('TECNICO', '')).upper().strip()
-
-        # ── PALABRAS CLAVE: FALTAS GRAVES ─────────────────────────────────────
-        GRAVES_SIMPLES = [
-            # Daño a equipos / Materiales / Mal uso
-            'DAÑO A EQUIPO', 'DAÑO AL EQUIPO', 'DAÑO DE EQUIPO',
-            'DAÑO HERRAMIENTA', 'DAÑO A HERRAMIENTA', 'FUSIONADORA',
-            'EQUIPO DAÑADO', 'HERRAMIENTA DAÑADA',
-            'MAL USO', 'MAL MANEJO', 'MALA MANIPULACION', 'MALA MANIPULACIÓN',
-            'MAL USO DE MATERIA', 'MAL USO DE MATERIAL',
-            # Daño a vehículo
-            'DAÑO A VEHICULO', 'DAÑO AL VEHICULO', 'DAÑO AL VEHÍCULO',
-            'DAÑO DE VEHICULO', 'DAÑO AL CARRO', 'DAÑO A UNIDAD',
-            'ACCIDENTE VEHICULAR', 'CHOQUE', 'COLISION', 'COLISIÓN',
-            # Órdenes pendientes / No inicio de órdenes
-            'DEJAR ORDENES', 'DEJAR ÓRDENES',
-            'ORDENES PENDIENTES', 'ÓRDENES PENDIENTES', 'ORDEN PENDIENTE',
-            'INCUMPLIMIENTO DE ORDENES', 'INCUMPLIMIENTO DE ÓRDENES',
-            'NO INICIO ORDEN', 'NO INICIÓ ORDEN', 'NO INICI', 'SIN INICIAR',
-            'NO DIO INICIO', 'OMISIÓN DE INICIO', 'OMISION DE INICIO',
-            'NO APERTUR', 'SIN APERTURAR',
-            # Abandono de ruta
-            'ABANDONO DE RUTA', 'ABANDONO RUTA',
-            # Faltas de respeto e integridad
-            'FALTA DE RESPETO', 'FALTA DE RESPET',
-            'IRRESPETO', 'INSULTO', 'INSULTOS',
-            'AGRESION', 'AGRESIÓN', 'AMENAZA', 'HOSTIGAMIENTO',
-            'ALCOHOL', 'EBRIEDAD', 'EBRIO', 'DROGA', 'ROBO', 'HURTO',
-            'PELEA', 'GOLPE', 'FRAUDE', 'NEGLIGENCIA', 'DORMIDO',
-            'GRAVE', 'IRRESPONSABILIDAD',
-            # Ausencias sin justificación
-            'AUSENCIA SIN AVISO', 'AUSENCIA SIN JUSTIF',
-            'INASISTENCIA SIN JUSTIF', 'INASISTENCIA SIN AVISO',
-            'NO SE PRESENTÓ SIN', 'NO SE PRESENTO SIN',
-            # Exceso de velocidad (peligro de tránsito)
-            'EXCESO DE VELOCIDAD',
-        ]
-        GRAVES_COMBOS = [
-            ('ABANDONO', 'RUTA'),
-            ('DAÑO', 'EQUIPO'), ('DAÑO', 'VEHICULO'),
-            ('DAÑO', 'VEHÍCULO'), ('DAÑO', 'CARRO'), ('DAÑO', 'UNIDAD'),
-            ('FALTA', 'RESPETO'),
-            ('RESPETO', 'COMPAÑERO'), ('RESPETO', 'SUPERVISOR'),
-            ('ORDENES', 'PENDIENTES'), ('ÓRDENES', 'PENDIENTES'),
-            ('AUSENCIA', 'AVISO'), ('AUSENCIA', 'JUSTIF'),
-            ('INASISTENCIA', 'AVISO'), ('INASISTENCIA', 'JUSTIF'),
-            ('IRRESPETO', 'COMPAÑERO'), ('IRRESPETO', 'SUPERVISOR'),
-        ]
-
-        for kw in GRAVES_SIMPLES:
-            if kw in texto:
-                return 'GRAVE'
-        for w1, w2 in GRAVES_COMBOS:
-            if w1 in texto and w2 in texto:
-                return 'GRAVE'
-
-        # ── LLEGADAS TARDE: regla de los 3 (> 3 → GRAVE) ─────────────────────
-        if _es_llegada_tarde(tipo, comentario):
-            n_tardes = conteo_tardes.get(tecnico, 0)
-            return 'GRAVE' if n_tardes >= 3 else 'LEVE'
-
-        # ── PALABRAS CLAVE: FALTAS LEVES ──────────────────────────────────────
-        LEVES_SIMPLES = [
-            # Almuerzo excedido
-            'ALMUERZO EXCEDIDO', 'HORA ALMUERZO', 'HORA DE ALMUERZO',
-            'EXCEDIÓ ALMUERZO', 'EXCEDIO ALMUERZO',
-            'TIEMPO DE ALMUERZO', 'TIEMPO ALMUERZO', 'EXCESO ALMUERZO',
-            # Break excedido
-            'BREAK EXCEDIDO', 'HORA BREAK', 'HORA DE BREAK',
-            'EXCEDIÓ BREAK', 'EXCEDIO BREAK',
-            'TIEMPO DE BREAK', 'TIEMPO BREAK', 'EXCESO BREAK',
-            'DESCANSO EXCEDIDO',
-            # Marcajes faltantes
-            'NO MARCÓ', 'NO MARCO', 'SIN MARCAJE', 'MARCAJE FALTANTE',
-            'NO MARCÓ ENTRADA', 'NO MARCÓ SALIDA',
-            'NO MARCO ENTRADA', 'NO MARCO SALIDA',
-            'NO REGISTRO ENTRADA', 'NO REGISTRO SALIDA',
-            'OLVIDO MARCAJE', 'FALTA DE MARCAJE', 'OLVIDO DE MARCAJE',
-            # Mala documentación (falta administrativa menor)
-            'MALA DOCUMENTACION', 'MALA DOCUMENTACIÓN',
-        ]
-        LEVES_COMBOS = [
-            ('HORA', 'ALMUERZO'), ('HORA', 'BREAK'),
-            ('EXCEDIÓ', 'ALMUERZO'), ('EXCEDIÓ', 'BREAK'),
-            ('NO', 'MARCÓ'), ('NO', 'MARCO'),
-            ('SIN', 'MARCAJE'), ('SIN', 'MARCA'),
-            ('MALA', 'DOCUMENTACION'), ('MALA', 'DOCUMENTACIÓN'),
-        ]
-
-        for kw in LEVES_SIMPLES:
-            if kw in texto:
-                return 'LEVE'
-        for w1, w2 in LEVES_COMBOS:
-            if w1 in texto and w2 in texto:
-                return 'LEVE'
-
-        return 'OTRO'
-
-    # ==========================================================================
-    # PREPARAR DATOS Y CLASIFICAR
-    # ==========================================================================
     df_work = pd.DataFrame()
     df_leves = df_graves = df_otros = pd.DataFrame()
     conteo_tardes = {}
@@ -299,7 +246,7 @@ def generar_pdf_consolidado(df):
 
         # Contar llegadas tarde por técnico en el conjunto visible
         mask_tarde = df_work.apply(
-            lambda r: _es_llegada_tarde(
+            lambda r: es_llegada_tarde(
                 str(r.get('TIPO_FALTA', '')).upper(),
                 str(r.get('COMENTARIO', '')).upper()
             ), axis=1
@@ -311,7 +258,11 @@ def generar_pdf_consolidado(df):
         )
 
         df_work['_CLASIF'] = df_work.apply(
-            lambda r: _clasificar_row(r, conteo_tardes), axis=1
+            lambda r: clasificar_grave_o_leve(
+                str(r.get('TIPO_FALTA', '')),
+                str(r.get('COMENTARIO', '')),
+                conteo_tardes.get(str(r.get('TECNICO', '')).upper().strip(), 0)
+            ), axis=1
         )
         df_leves  = df_work[df_work['_CLASIF'] == 'LEVE'].copy()
         df_graves = df_work[df_work['_CLASIF'] == 'GRAVE'].copy()
@@ -321,20 +272,15 @@ def generar_pdf_consolidado(df):
     n_graves = len(df_graves)
     n_otros  = len(df_otros)
 
-    # ==========================================================================
-    # FUNCIÓN AUXILIAR: DIBUJAR TABLA DE INCIDENCIAS CLASIFICADAS
-    # ==========================================================================
     def _dibujar_tabla_clasif(pdf_obj, df_t, etiqueta, desc_corta,
-                               hr, hg, hb,        # color header RGB
-                               rr, rg, rb,        # color fila par RGB
-                               thr=255, thg=255, thb=255):  # color texto header
-        """Dibuja el bloque de encabezado + tabla para LEVE, GRAVE u OTRO."""
+                               hr, hg, hb,
+                               rr, rg, rb,
+                               thr=255, thg=255, thb=255):
         if df_t.empty:
             return
 
         n = len(df_t)
 
-        # Encabezado de sección (banner de color)
         pdf_obj.set_font("Helvetica", "B", 11)
         pdf_obj.set_fill_color(hr, hg, hb)
         pdf_obj.set_text_color(thr, thg, thb)
@@ -346,11 +292,9 @@ def generar_pdf_consolidado(df):
         pdf_obj.cell(0, 5, f"  {desc_corta}", ln=True)
         pdf_obj.ln(2)
 
-        # Anchos de columna (suma = 190mm)
         W    = [25, 48, 42, 55, 20]
         HDRS = ["FECHA", "COLABORADOR", "TIPO DE FALTA", "DESCRIPCION", "SUPERVISOR"]
 
-        # Fila de encabezados de columna
         pdf_obj.set_fill_color(hr, hg, hb)
         pdf_obj.set_text_color(thr, thg, thb)
         pdf_obj.set_font("Helvetica", "B", 7)
@@ -358,7 +302,6 @@ def generar_pdf_consolidado(df):
             pdf_obj.cell(W[i], 6, h, border=1, fill=True, align="C")
         pdf_obj.ln()
 
-        # Filas de datos
         pdf_obj.set_text_color(40, 40, 40)
         for idx_fila, (_, row) in enumerate(df_t.iterrows()):
             f_inc = sanitizar(str(row.get('FECHA_INCIDENCIA', ''))[:16])
@@ -371,7 +314,6 @@ def generar_pdf_consolidado(df):
             if not lineas:
                 lineas = [""]
 
-            # Alternar color de fila
             if idx_fila % 2 == 0:
                 pdf_obj.set_fill_color(rr, rg, rb)
             else:
@@ -391,14 +333,10 @@ def generar_pdf_consolidado(df):
 
         pdf_obj.ln(6)
 
-    # ==========================================================================
-    # CONSTRUCCIÓN DEL PDF
-    # ==========================================================================
     pdf = MemoPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
 
-    # ── TÍTULO ────────────────────────────────────────────────────────────────
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, "REPORTE CONSOLIDADO DE EXPEDIENTES", ln=True, align="C")
@@ -411,7 +349,6 @@ def generar_pdf_consolidado(df):
         pdf.set_font("Helvetica", "I", 12)
         pdf.cell(0, 10, "No hay registros disponibles.", ln=True, align="C")
     else:
-        # ── PANEL KPI: RESUMEN POR GRAVEDAD ───────────────────────────────────
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(40, 50, 100)
         pdf.cell(0, 6, "RESUMEN DE INCIDENCIAS POR NIVEL DE GRAVEDAD", ln=True)
@@ -423,56 +360,50 @@ def generar_pdf_consolidado(df):
             ("  FALTAS GRAVES",       n_graves, 180,  30,  30, 255, 235, 235, 255, 255, 255),
             ("  OTRAS INCIDENCIAS",   n_otros,   80,  95, 115, 235, 238, 245, 255, 255, 255),
         ]
-        # Fila 1: etiquetas
         for (label, _, hr, hg, hb, rr, rg, rb, thr, thg, thb) in KPI_DATA:
             pdf.set_fill_color(hr, hg, hb)
             pdf.set_text_color(thr, thg, thb)
             pdf.set_font("Helvetica", "B", 9)
             pdf.cell(W_KPI, 7, label, border=1, fill=True)
         pdf.ln()
-        # Fila 2: conteos
         for (_, count, hr, hg, hb, rr, rg, rb, thr, thg, thb) in KPI_DATA:
             pdf.set_fill_color(rr, rg, rb)
-            pdf.set_text_color(hr, hg, hb)     # texto con el color del header
+            pdf.set_text_color(hr, hg, hb)
             pdf.set_font("Helvetica", "B", 18)
             pdf.cell(W_KPI, 12, f"  {count}", border=1, fill=True)
         pdf.ln()
         pdf.ln(10)
 
-        # Nota explicativa sobre la regla de llegadas tardes
         pdf.set_font("Helvetica", "I", 7)
         pdf.set_text_color(120, 120, 120)
         pdf.cell(0, 5,
-                 "Nota: Las llegadas tardes se clasifican como LEVE hasta 3 ocurrencias por colaborador. "
-                 "A partir de la 4a se promueven automaticamente a GRAVE.",
+                 "Nota: Las llegadas tardes se clasifican como LEVE hasta 2 ocurrencias por colaborador. "
+                 "A partir de la 3a se promueven automaticamente a GRAVE.",
                  ln=True)
         pdf.ln(5)
 
-        # ── TABLA: FALTAS LEVES ───────────────────────────────────────────────
         if n_leves > 0:
             _dibujar_tabla_clasif(
                 pdf, df_leves,
                 etiqueta   = "FALTAS LEVES",
-                desc_corta = "Llegadas tardes (<=3), almuerzo/break excedido, no marco entrada/salida, mala documentacion",
+                desc_corta = "Llegadas tardes (<3), almuerzo/break excedido, no marco entrada/salida, mala documentacion",
                 hr=200, hg=140, hb=20,
                 rr=255, rg=248, rb=220,
                 thr=255, thg=255, thb=255,
             )
 
-        # ── TABLA: FALTAS GRAVES ──────────────────────────────────────────────
         if n_graves > 0:
             if pdf.get_y() > 200:
                 pdf.add_page()
             _dibujar_tabla_clasif(
                 pdf, df_graves,
                 etiqueta   = "FALTAS GRAVES",
-                desc_corta = "Daños a equipo/vehiculo, mal uso de materiales/herramientas, no inicio de orden, ausencias sin justificacion",
+                desc_corta = "Mal cuidado de vehiculos, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde",
                 hr=180, hg=30, hb=30,
                 rr=255, rg=235, rb=235,
                 thr=255, thg=255, thb=255,
             )
 
-        # ── TABLA: OTRAS INCIDENCIAS ──────────────────────────────────────────
         if n_otros > 0:
             if pdf.get_y() > 200:
                 pdf.add_page()
@@ -485,7 +416,6 @@ def generar_pdf_consolidado(df):
                 thr=255, thg=255, thb=255,
             )
 
-    # ── ANEXOS: EVIDENCIA FOTOGRÁFICA ─────────────────────────────────────────
     tiene_anexos = False
     for _, row in df.iterrows():
         urls = str(row.get('URL_FOTO', '')).split(',')
@@ -539,7 +469,7 @@ def generar_pdf_consolidado(df):
     return data
 
 # ==============================================================================
-# MOTOR DE MEMORIA (EVITA PANTALLAZOS BLANCOS)
+# MOTOR DE MEMORIA
 # ==============================================================================
 def forzar_actualizacion_memoria(conn):
     df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
@@ -562,7 +492,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.title("📁 Gestión de Expedientes y Reportes")
     
-    # --- FUNCIÓN ANIDADA PARA DIBUJAR TABLAS Y KPIS SIN DUPLICAR CÓDIGO ---
     def generar_vista_historial(df_mostrar, titulo_seccion, tab_id):
         try:
             col_tit, col_ref = st.columns([4, 1])
@@ -611,7 +540,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                 with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
                     if not df_mostrar.empty:
                         df_kpi = df_mostrar.copy()
-                        df_kpi['RUBRO'] = df_kpi.apply(lambda r: asignar_rubro_automatico(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
+                        
+                        # Contar llegadas tarde para aplicar promoción por reincidencia
+                        mask_tarde_kpi = df_kpi.apply(lambda r: es_llegada_tarde(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
+                        conteo_tardes_kpi = (
+                            df_kpi[mask_tarde_kpi]['TECNICO']
+                            .astype(str).str.upper().str.strip()
+                            .value_counts().to_dict()
+                        )
+                        
+                        df_kpi['RUBRO'] = df_kpi.apply(
+                            lambda r: asignar_rubro_automatico(
+                                r['TIPO_FALTA'], 
+                                r['COMENTARIO'], 
+                                n_tardes=conteo_tardes_kpi.get(str(r['TECNICO']).upper().strip(), 0)
+                            ), axis=1
+                        )
+                        
                         df_kpi['FECHA_DT'] = pd.to_datetime(df_kpi['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
                         df_kpi['Día Semana'] = df_kpi['FECHA_DT'].dt.day_name()
                         dias_es = {'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles', 'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'}
@@ -686,9 +631,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                 st.markdown("---")
 
-                # ==============================================================
-                # LÓGICA DE BOTÓN INTELIGENTE (REPORTE PDF DINÁMICO)
-                # ==============================================================
                 c_v, c_b = st.columns([2, 1])
                 with c_b:
                     if not df_mostrar.empty:
@@ -788,8 +730,6 @@ def mostrar_modulo_expedientes(conn, df_base):
         except Exception as e:
             st.warning(f"⚠️ Error al cargar el historial: {e}")
 
-
-    # --- SEPARADOR DE ÁREAS (PESTAÑAS PRINCIPALES) ---
     tab_tecnicos, tab_admin = st.tabs(["⚙️ Operaciones (Técnicos y Auxiliares)", "🏢 Administrativo (SAC, Ventas, etc.)"])
     
     # ==========================================================================
@@ -900,12 +840,10 @@ def mostrar_modulo_expedientes(conn, df_base):
 
         st.markdown("---")
         
-        # --- TABLA Y VISTA EXCLUSIVA DE TÉCNICOS ---
         df_view = obtener_datos_memoria(conn)
         if df_view is not None and not df_view.empty and 'TECNICO' in df_view.columns:
             df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
             df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
-            # Filtramos todos los que NO tienen la etiqueta de departamento al final ej. "(SAC)"
             es_admin_mask = df_view['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
             df_tecnicos_tab = df_view[~es_admin_mask].copy()
             df_tecnicos_tab = df_tecnicos_tab[~df_tecnicos_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
@@ -1026,12 +964,10 @@ def mostrar_modulo_expedientes(conn, df_base):
 
         st.markdown("---")
         
-        # --- TABLA Y VISTA EXCLUSIVA DE ADMINISTRATIVO (SAC) ---
         df_view_admin = obtener_datos_memoria(conn)
         if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
             df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
             df_view_admin['TECNICO'] = df_view_admin['TECNICO'].replace(r'\s+', ' ', regex=True)
-            # Filtramos solo los que SÍ tienen la etiqueta de departamento al final
             es_admin_mask = df_view_admin['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
             df_admin_tab = df_view_admin[es_admin_mask].copy()
             df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
