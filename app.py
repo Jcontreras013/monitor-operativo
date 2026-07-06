@@ -1335,13 +1335,17 @@ def main():
                             pdf.cell(60, 8, "TOTAL GLOBAL", border=1, align='C', fill=True)
                             pdf.cell(60, 8, str(tot_eq), border=1, align='C', fill=True)
                             pdf.cell(60, 8, str(tot_ac), border=1, align='C', fill=True)
-                            
+                           # Compatibilidad segura para cualquier versión de FPDF
+                            try:
+                                pdf_bytes = bytes(pdf.output()) # FPDF2 (Versión moderna)
+                            except TypeError:
+                                pdf_bytes = pdf.output(dest='S').encode('latin1') # FPDF Clásico
+                                
                             col_b1, col_b2 = st.columns(2)
                             with col_b1:
                                 st.download_button("📥 Descargar Consolidado (Excel)", buffer_excel.getvalue(), "Consolidado_Materiales.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                             with col_b2:
-                                st.download_button("📄 Descargar Resumen (PDF)", pdf.output(dest='S').encode('latin1'), "Consolidado_Materiales.pdf", "application/pdf", use_container_width=True)
-
+                                st.download_button("📄 Descargar Resumen (PDF)", pdf_bytes, "Consolidado_Materiales.pdf", "application/pdf", use_container_width=True)
     # ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
