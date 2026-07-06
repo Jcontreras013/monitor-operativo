@@ -13,8 +13,6 @@ from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente
-from tools import generar_pdf_materiales_tecnicos
-
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -104,52 +102,76 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (ESCÁNER EXTRA POTENTE)
+# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (ESCÁNER INTENSIVO DE COMENTARIOS)
 # ==============================================================================
 def clasificar_materiales(row):
+    # Convertimos la fila en un diccionario para poder iterar sobre todas las columnas
     row_dict = row.to_dict() if hasattr(row, 'to_dict') else dict(row)
     
+    # 1. ESCÁNER DINÁMICO DE COLUMNAS DE COMENTARIOS Y RESOLUCIONES
     text_parts = []
     for col_name, val in row_dict.items():
         col_upper = str(col_name).upper().strip()
+        # Captura de forma automática cualquier columna de notas, comentarios, razones o soportes
         if any(term in col_upper for term in ['COMENT', 'RAZON', 'CIERRE', 'RESOL', 'OBSERV', 'SOP', 'ACTIVID']):
             val_str = str(val).upper().strip()
             if val_str and val_str not in ['NAN', 'NONE', 'N/D', 'NULL', '0']:
                 text_parts.append(val_str)
                 
-    texto = " | ".join(text_parts)
+    texto_completo = " | ".join(text_parts)
     act = str(row_dict.get('ACTIVIDAD', '')).upper().strip()
     
-    # 1. Por Actividad Directa (Órdenes creadas específicamente para cambios)
-    if act in ["CEQUI", "INSEQUIPO"]:
+    # --- 2. CLASIFICACIÓN INTENSIVA DE CAMBIO DE EQUIPO (ONT/ONU/ROUTER/CPE) ---
+    if act in ["CEQUI", "INSEQUIPO", "CAMBIO"]:
         return "CAMBIO_EQUIPO"
         
-    # --- 2. BÚSQUEDA REGEX POTENTE PARA EQUIPOS (ONT/ONU/ROUTER) ---
-    # Ignoramos si el técnico especificó expresamente que NO se cambió
-    if re.search(r'(NO SE CAMBI[OÓ]|SIN CAMBIO|NO REQUIERE CAMBIO|NO FUE NECESARIO).*?(EQUIPO|ONT|ONU|CPE|ROUTER)', texto):
-        pass
-    else:
-        # Busca verbos de acción + nombre de hardware (incluso si hay palabras entre ellos)
-        patron_equipo = r'(CAMBI[OAÓ]|REEMPLAZ[OAÓ]|INSTAL[OAÓ]|COLOC[OAÓ]|DEJ[OAÓ]|PUS[EO]|ENTREG[OAÓ]).*?(EQUIPO|ONT|ONU|CPE|ROUTER|MODEM|CAJITA|APARATO)'
-        # Busca si mencionan que el hardware está quemado, malo o dañado
-        patron_equipo_malo = r'(EQUIPO|ONT|ONU|CPE|ROUTER|MODEM).*?(QUEMAD[OA]|DAÑAD[OA]|DEFECTUOS[OA]|MALO|NO ENCIENDE|APAGAD[OA])'
+    # Análisis por asociación (Verbo + Sustantivo de Hardware) sin importar el orden o conectores
+    verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "INSTAL", "COLOC", "DEJE", "DEJÓ", "PUSE", "PUSO", "ENTREG", "QUEMAD", "DAÑAD", "DEFECTUOS"]
+    sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA", "APARATO", "DISPOSITIVO", "REPETIDOR", "WIFI", "WI-FI"]
+    
+    es_equipo = (
+        any(v in texto_completo for v in verbos_equipo) and 
+        any(s in texto_completo for s in sustantivos_equipo)
+    )
+    
+    # Frases directas tradicionales para mayor redundancia
+    frases_directas_equipo = [
+        "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
+        "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
+        "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
+        "REEMPLAZO CPE", "EQUIPO DEFECTUOSO", "ONT DEFECTUOSA", "ONU DEFECTUOSA",
+        "CAMBIO DE ROUTER", "CAMBIO ROUTER", "REEMPLAZO DE ROUTER", "NUEVO ROUTER", 
+        "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU"
+    ]
+    
+    if es_equipo or any(f in texto_completo for f in frases_directas_equipo):
+        return "CAMBIO_EQUIPO"
         
-        if re.search(patron_equipo, texto) or re.search(patron_equipo_malo, texto) or re.search(r'CAMBIO DE (EQUIPO|ONT|ONU|ROUTER|MODEM|CPE)', texto):
-            return "CAMBIO_EQUIPO"
-            
-    # --- 3. BÚSQUEDA REGEX POTENTE PARA ACOMETIDAS (DROP) ---
-    # Ignoramos si dicen que no se tocó el cable
-    if re.search(r'(NO SE CAMBI[OÓ]|SIN CAMBIO|NO REQUIERE CAMBIO).*?(ACOMETIDA|DROP|CABLE|FIBRA|BAJADA)', texto):
-        pass
-    else:
-        # Busca acciones de tendido de cable
-        patron_acometida = r'(CAMBI[OAÓ]|REEMPLAZ[OAÓ]|TIR[AEÓO]|INSTAL[OAÓ]|TENS[AEÓO]|LANZ[OAÓO]).*?(ACOMETIDA|DROP|FIBRA|CABLE DE BAJADA|BAJADA)'
-        # Busca incidentes con el cable (robado, reventado, etc.)
-        patron_acometida_mala = r'(ACOMETIDA|DROP|FIBRA|CABLE).*?(ROBAD[OA]|CORTAD[OA]|REVENTAD[OA]|DAÑAD[OA]|ARRUINAD[OA]|SUSTITUY[OÓ])'
+    # --- 3. CLASIFICACIÓN INTENSIVA DE REEMPLAZO DE ACOMETIDA (CABLE DROP) ---
+    # Análisis por asociación (Verbo de tendido/cambio + Sustantivo de cable de bajada)
+    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "INSTAL", "CABLE", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "ROBAD", "CORTAD", "REVENTAD", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "METROS", "MTS", "MT"]
+    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "ACO", "CORTE"]
+    
+    es_acometida = (
+        any(v in texto_completo for v in verbos_acometida) and 
+        any(s in texto_completo for s in sustantivos_acometida)
+    )
+    
+    frases_directas_acometida = [
+        "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
+        "ACOMETIDA DAÑADA", "ACOMETIDA DANADA", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
+        "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "TIRADO DE ACOMETIDA", 
+        "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
+        "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", "REEMPLAZAR DROP",
+        "REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA", "CAMBIO DE BAJADA",
+        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "LANZADO DE ACOMETIDA", "LANZO ACOMETIDA", "CORTE DE ACOMETIDA",
+        "CAMBIO TOTAL DE FIBRA"
         
-        if re.search(patron_acometida, texto) or re.search(patron_acometida_mala, texto) or re.search(r'(CAMBIO ACOMETIDA|NUEVA ACOMETIDA|NUEVO DROP|CAMBIO.*DROP|METROS DE FIBRA)', texto):
-            return "CAMBIO_ACOMETIDA"
-            
+    ]
+    
+    if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
+        return "CAMBIO_ACOMETIDA"
+        
     return "NINGUNO"
     #----------------------------------------------------------------------------------------------------#
 
@@ -1213,12 +1235,15 @@ def main():
 
         with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
-            st.caption("Reporte mensual de cambios detectados mediante el Motor Inteligente de Comentarios.")
+            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) mediante escaneo asociativo de comentarios.")
             
             # Selector de Fecha (Mes y Año)
             col_sel1, col_sel2 = st.columns(2)
             with col_sel1:
-                meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+                meses_nombres = [
+                    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
+                    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+                ]
                 mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1)
                 numero_mes = meses_nombres.index(mes_seleccionado) + 1
             with col_sel2:
@@ -1226,10 +1251,14 @@ def main():
 
             # Preparación de datos
             df_m = df_base.copy()
-            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce').fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
+            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce')
+            df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
             df_m = df_m[df_m['FECHA_REPORTE'].notna()]
             
-            df_m_filtrado = df_m[(df_m['FECHA_REPORTE'].dt.month == numero_mes) & (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)].copy()
+            df_m_filtrado = df_m[
+                (df_m['FECHA_REPORTE'].dt.month == numero_mes) & 
+                (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)
+            ].copy()
             
             if not df_m_filtrado.empty:
                 # Aplicamos el motor de escaneo inteligente
@@ -1246,140 +1275,83 @@ def main():
                 with col_k1:
                     st.markdown(f"""
                     <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
-                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🔌 CAMBIOS DE EQUIPO</div>
+                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🔌 CAMBIOS DE EQUIPO (ONT/ONU/CPE)</div>
                         <div style="color: #3B82F6; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_equipos}</div>
                     </div>
                     """, unsafe_allow_html=True)
                 with col_k2:
                     st.markdown(f"""
                     <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
-                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🎗️ REEMPLAZOS DE DROP</div>
+                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🎗️ REEMPLAZOS DE ACOMETIDA (DROP)</div>
                         <div style="color: #F59E0B; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_acometidas}</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
-                st.markdown("<br>### 📊 Resumen Numérico por Técnico", unsafe_allow_html=True)
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("### 📊 Desglose de Cambios por Técnico")
                 
-                # Agrupación y conteo por técnico
-                eq_tech = df_equipos.groupby('TECNICO').size().reset_index(name='Equipos') if total_equipos > 0 else pd.DataFrame(columns=['TECNICO', 'Equipos'])
-                ac_tech = df_acometidas.groupby('TECNICO').size().reset_index(name='Acometidas') if total_acometidas > 0 else pd.DataFrame(columns=['TECNICO', 'Acometidas'])
+                if total_equipos > 0:
+                    eq_tech = df_equipos.groupby('TECNICO').size().reset_index(name='Equipos Cambiados')
+                else:
+                    eq_tech = pd.DataFrame(columns=['TECNICO', 'Equipos Cambiados'])
+                    
+                if total_acometidas > 0:
+                    ac_tech = df_acometidas.groupby('TECNICO').size().reset_index(name='Acometidas Cambiadas')
+                else:
+                    ac_tech = pd.DataFrame(columns=['TECNICO', 'Acometidas Cambiadas'])
                     
                 tech_summary = pd.merge(eq_tech, ac_tech, on='TECNICO', how='outer').fillna(0)
-                tech_summary['Equipos'] = tech_summary['Equipos'].astype(int)
-                tech_summary['Acometidas'] = tech_summary['Acometidas'].astype(int)
-                tech_summary['Total'] = tech_summary['Equipos'] + tech_summary['Acometidas']
-                tech_summary = tech_summary.sort_values(by='Total', ascending=False)
+                tech_summary['Equipos Cambiados'] = tech_summary['Equipos Cambiados'].astype(int)
+                tech_summary['Acometidas Cambiadas'] = tech_summary['Acometidas Cambiadas'].astype(int)
+                tech_summary['Total Intervenciones'] = tech_summary['Equipos Cambiados'] + tech_summary['Acometidas Cambiadas']
                 
-                # Despliegue en Interfaz
+                tech_summary = tech_summary.sort_values(by='Total Intervenciones', ascending=False)
+                
                 st.dataframe(
                     tech_summary, 
                     use_container_width=True, 
                     hide_index=True,
                     column_config={
                         "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
-                        "Equipos": st.column_config.NumberColumn("🔌 Equipos Cambiados", format="%d"),
-                        "Acometidas": st.column_config.NumberColumn("🎗️ Acometidas Cambiadas", format="%d"),
-                        "Total": st.column_config.NumberColumn("📦 Total General", format="%d")
+                        "Equipos Cambiados": st.column_config.NumberColumn("🔌 Equipos Cambiados", format="%d"),
+                        "Acometidas Cambiadas": st.column_config.NumberColumn("🎗️ Acometidas Cambiadas", format="%d"),
+                        "Total Intervenciones": st.column_config.NumberColumn("📦 Total General", format="%d")
                     }
                 )
-                # ==============================================================================
-                # LLAMADA DIRECTA A TOOLS.PY PARA GENERAR EL PDF
-                # ==============================================================================
-                pdf_bytes = generar_pdf_materiales_tecnicos(tech_summary, mes_seleccionado, anio_seleccionado)
-                    
-                st.markdown("<br>", unsafe_allow_html=True)
                 
-                # Único botón de descarga
+                st.markdown("### 📥 Descargar Reporte de Detalle")
+                buffer_m = io.BytesIO()
+                
+                # Consolidación de detalles para exportar
+                df_export_eq = df_equipos[['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'ACTIVIDAD', 'COMENTARIO', 'FECHA_REPORTE']].copy()
+                df_export_eq['TIPO_CAMBIO'] = 'CAMBIO DE EQUIPO'
+                
+                df_export_ac = df_acometidas[['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'ACTIVIDAD', 'COMENTARIO', 'FECHA_REPORTE']].copy()
+                df_export_ac['TIPO_CAMBIO'] = 'CAMBIO DE ACOMETIDA'
+                
+                df_export_final = pd.concat([df_export_eq, df_export_ac]).sort_values(by='FECHA_REPORTE')
+                if not df_export_final.empty:
+                    df_export_final['FECHA_REPORTE'] = df_export_final['FECHA_REPORTE'].dt.strftime('%d/%m/%Y %H:%M')
+                    df_export_final.columns = ['Orden', 'Cliente', 'Nombre', 'Técnico', 'Actividad', 'Comentario', 'Fecha Liquidación', 'Tipo de Intervención']
+                
+                with pd.ExcelWriter(buffer_m, engine='openpyxl') as writer:
+                    df_export_final.to_excel(writer, index=False, sheet_name='Detalle_Materiales')
+                    tech_summary.to_excel(writer, index=False, sheet_name='Resumen_Tecnicos')
+                    
                 st.download_button(
-                    label="📄 Descargar Detalle por Técnico (PDF)", 
-                    data=pdf_bytes, 
-                    file_name=f"Materiales_Tecnicos_{mes_seleccionado}_{anio_seleccionado}.pdf", 
-                    mime="application/pdf", 
+                    label=f"📥 Descargar Reporte de {mes_seleccionado} {anio_seleccionado} (Excel)",
+                    data=buffer_m.getvalue(),
+                    file_name=f"Reporte_Materiales_{mes_seleccionado}_{anio_seleccionado}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                     type="primary"
                 )
-
+                
+                with st.expander("🔍 Ver Detalle de Transacciones del Mes"):
+                    st.dataframe(df_export_final, use_container_width=True, hide_index=True)
             else:
                 st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
-                
 
-            # --- PESTAÑA 2: CONSOLIDADO HISTÓRICO Y EXPORTACIÓN ---
-            with tab_historico:
-                st.markdown("### 📉 Consolidado Numérico Dividido por Meses")
-                
-                if st.button("Generar Reporte Histórico y Descargas", type="primary"):
-                    with st.spinner("Procesando matriz histórica..."):
-                        df_hist = df_base.copy()
-                        df_hist['FECHA_REPORTE'] = pd.to_datetime(df_hist['HORA_LIQ'], errors='coerce').fillna(pd.to_datetime(df_hist['FECHA_APE'], errors='coerce'))
-                        df_hist = df_hist[df_hist['FECHA_REPORTE'].notna()]
-                        
-                        df_hist['MES_ANIO_FORMAT'] = df_hist['FECHA_REPORTE'].dt.strftime('%m/%Y')
-                        df_hist['CLASIF_MATERIAL'] = df_hist.apply(clasificar_materiales, axis=1)
-                        
-                        df_cambios = df_hist[df_hist['CLASIF_MATERIAL'].isin(['CAMBIO_EQUIPO', 'CAMBIO_ACOMETIDA'])].copy()
-                        
-                        if not df_cambios.empty:
-                            resumen_historico = pd.crosstab(df_cambios['MES_ANIO_FORMAT'], df_cambios['CLASIF_MATERIAL']).reset_index()
-                            for col in ['CAMBIO_EQUIPO', 'CAMBIO_ACOMETIDA']:
-                                if col not in resumen_historico.columns:
-                                    resumen_historico[col] = 0
-                            
-                            resumen_historico = resumen_historico.rename(columns={'MES_ANIO_FORMAT': 'Mes/Año', 'CAMBIO_EQUIPO': 'Equipos', 'CAMBIO_ACOMETIDA': 'Acometidas'})
-                            resumen_historico['Sort_Key'] = pd.to_datetime(resumen_historico['Mes/Año'], format='%m/%Y')
-                            resumen_historico = resumen_historico.sort_values('Sort_Key').drop(columns=['Sort_Key'])
-                            
-                            st.dataframe(resumen_historico, hide_index=True, use_container_width=True)
-                            
-                            # GENERAR EXCEL
-                            buffer_excel = io.BytesIO()
-                            with pd.ExcelWriter(buffer_excel, engine='openpyxl') as writer:
-                                resumen_historico.to_excel(writer, index=False, sheet_name='Consolidado_Mensual')
-                                df_cambios[['NUM', 'CLIENTE', 'TECNICO', 'ACTIVIDAD', 'COMENTARIO', 'FECHA_REPORTE', 'CLASIF_MATERIAL']].to_excel(writer, index=False, sheet_name='Detalle_Crudo')
-                            
-                            # GENERAR PDF NUMÉRICO
-                            import fpdf
-                            pdf = fpdf.FPDF()
-                            pdf.add_page()
-                            pdf.set_font("Helvetica", 'B', 14)
-                            pdf.cell(0, 10, "Reporte Operativo de Materiales", ln=True, align='C')
-                            pdf.ln(5)
-                            
-                            pdf.set_font("Helvetica", 'B', 10)
-                            pdf.set_fill_color(45, 47, 57)
-                            pdf.set_text_color(255, 255, 255)
-                            pdf.cell(60, 8, "Mes / Año", border=1, align='C', fill=True)
-                            pdf.cell(60, 8, "Equipos Cambiados", border=1, align='C', fill=True)
-                            pdf.cell(60, 8, "Acometidas Cambiadas", border=1, align='C', fill=True)
-                            pdf.ln()
-                            
-                            pdf.set_font("Helvetica", '', 10)
-                            pdf.set_text_color(0, 0, 0)
-                            tot_eq, tot_ac = 0, 0
-                            
-                            for _, fila in resumen_historico.iterrows():
-                                pdf.cell(60, 8, str(fila['Mes/Año']), border=1, align='C')
-                                pdf.cell(60, 8, str(fila['Equipos']), border=1, align='C')
-                                pdf.cell(60, 8, str(fila['Acometidas']), border=1, align='C')
-                                pdf.ln()
-                                tot_eq += int(fila['Equipos'])
-                                tot_ac += int(fila['Acometidas'])
-                                
-                            pdf.set_font("Helvetica", 'B', 10)
-                            pdf.set_fill_color(240, 240, 240)
-                            pdf.cell(60, 8, "TOTAL GLOBAL", border=1, align='C', fill=True)
-                            pdf.cell(60, 8, str(tot_eq), border=1, align='C', fill=True)
-                            pdf.cell(60, 8, str(tot_ac), border=1, align='C', fill=True)
-                           # Compatibilidad segura para cualquier versión de FPDF
-                            try:
-                                pdf_bytes = bytes(pdf.output()) # FPDF2 (Versión moderna)
-                            except TypeError:
-                                pdf_bytes = pdf.output(dest='S').encode('latin1') # FPDF Clásico
-                                
-                            col_b1, col_b2 = st.columns(2)
-                            with col_b1:
-                                st.download_button("📥 Descargar Consolidado (Excel)", buffer_excel.getvalue(), "Consolidado_Materiales.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                            with col_b2:
-                                st.download_button("📄 Descargar Resumen (PDF)", pdf_bytes, "Consolidado_Materiales.pdf", "application/pdf", use_container_width=True)
     # ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================
