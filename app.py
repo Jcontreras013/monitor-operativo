@@ -101,12 +101,48 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
+# ==============================================================================
+# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES
+# ==============================================================================
+def clasificar_materiales(row):
+    act = str(row.get('ACTIVIDAD', '')).upper().strip()
+    com = str(row.get('COMENTARIO', '')).upper().strip()
+    texto = act + " " + com
+    
+    kws_equipo = [
+        "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
+        "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
+        "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
+        "REEMPLAZO CPE", "EQUIPO DEFECTUOSO", "ONT DEFECTUOSA", "ONU DEFECTUOSA",
+        "DAÑO EQUIPO", "DAÑO DE EQUIPO", "CAMBIO DE ROUTER", "CAMBIO ROUTER", 
+        "REEMPLAZO DE ROUTER", "NUEVO ROUTER", "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU"
+    ]
+    
+    kws_acometida = [
+        "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
+        "ACOMETIDA DAÑADA", "ACOMETIDA DANADA", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
+        "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "LANZAMIENTO DE ACOMETIDA",
+        "TIRADO DE ACOMETIDA", "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP",
+        "CAMBIO DE CABLE DROP", "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", 
+        "REEMPLAZAR DROP","REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA",
+        "CAMBIO DE BAJADA"
+    ]
+    
+    es_equipo = (act in ["CEQUI", "CAMBIO"] or any(kw in texto for kw in kws_equipo))
+    es_acometida = any(kw in texto for kw in kws_acometida)
+    
+    if es_equipo:
+        return "CAMBIO_EQUIPO"
+    elif es_acometida:
+        return "CAMBIO_ACOMETIDA"
+    return "NINGUNO"
+
+
 def sincronizar_datos_nube(conn):
     try:
         with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
             df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
             
-            # Respaldo si GCS no responde o está vacío (Usamos ttl=0 para forzar datos frescos)
             if df_nube is None or df_nube.empty:
                 df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
                 
@@ -122,7 +158,6 @@ def sincronizar_datos_nube(conn):
                     mask_basura_sync = df_nube['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                     df_nube = df_nube[~mask_basura_sync].copy()
 
-                # --- FILTRO RESTAURADO: CONSERVAR ÚNICAMENTE LA OPERACIÓN DE ISCA ---
             if 'EMPRESA' in df_nube.columns:
                 mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA|CEQUI', na=False)
                 df_nube = df_nube[mask_empresas_sync].copy()
@@ -190,12 +225,10 @@ def sincronizar_datos_nube(conn):
 
                 st.session_state.df_base = df_nube
                 
-                # --- NUEVA LÓGICA DE AVISO ---
                 st.success(f"✅ Sincronización Exitosa. Se cargaron {len(df_nube)} órdenes de la nube.")
                 import time
-                time.sleep(1.5) # Pausa intencional para que puedas ver que sí lo hizo
+                time.sleep(1.5)
                 st.rerun()
-                # -----------------------------
             else: 
                 st.warning("⚠️ La base de datos en la nube está completamente vacía. Sube archivos como Admin primero.")
                 import time
@@ -204,6 +237,7 @@ def sincronizar_datos_nube(conn):
         st.error(f"❌ Error crítico al conectar con la nube: {e}")
         import time
         time.sleep(3)
+
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
@@ -228,14 +262,10 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets.")
         conn = None
 
-    # ==============================================================================
-    # 🚀 ACCESO EXCLUSIVO PARA EL ROL "LLAMADOS"
-    # ==============================================================================
     if str(rol_usuario).strip().lower() == 'llamados':
         expediente.mostrar_modulo_expedientes(conn, pd.DataFrame())
         mostrar_boton_logout() 
         st.stop() 
-    # ==============================================================================
 
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
@@ -243,7 +273,6 @@ def main():
     if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
         pass 
 
-    # === LÓGICA DE NAVEGACIÓN ===
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
@@ -381,8 +410,6 @@ def main():
 
         if file_act_ptr is None or file_disp_ptr is None:
             if st.session_state.get('df_base') is None:
-                
-                # 1. Mostrar el Logo centrado (o el título si no lo encuentra)
                 if os.path.exists("Logotipo monitor.png"):
                     col1_img, col2_img, col3_img = st.columns([1, 2, 1])
                     with col2_img:
@@ -390,7 +417,6 @@ def main():
                 else:
                     st.title("⚡ Monitor Operativo Maxcom PRO")
                 
-                # 2. El mensaje y el botón SIEMPRE deben aparecer (alineados con el if de arriba)
                 st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 
@@ -427,7 +453,6 @@ def main():
                                     mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                                     df_cloud = df_cloud[~mask_basura_cloud].copy()
                                 
-                                # --- FILTRO RESTAURADO: CONSERVAR ÚNICAMENTE LA OPERACIÓN DE ISCA ---
                                 if 'EMPRESA' in df_cloud.columns:
                                     mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                     df_cloud = df_cloud[mask_isca_cloud].copy()
@@ -483,31 +508,20 @@ def main():
 
     df_base = st.session_state.df_base.copy()
     
-# ==============================================================================
-    # 🛡️ FILTRADO SIMPLIFICADO: TÉCNICO Y ACTIVIDAD 🛡️
-    # Garantiza mostrar solo órdenes con Técnico asignado y Actividad válida.
-    # ==============================================================================
     if not df_base.empty:
-        # 1. Limpieza y filtro del Técnico que abrió/tiene la orden
         if 'TECNICO' in df_base.columns:
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
-            # Descartamos filas donde no hay un técnico real asignado
             valores_invalidos_tec = ['NONE', 'NAN', 'N/D', 'NULL', '', '0']
             df_base = df_base[~df_base['TECNICO'].isin(valores_invalidos_tec) & df_base['TECNICO'].notna()]
             
-        # 2. Limpieza y filtro de la columna Actividades
         if 'ACTIVIDAD' in df_base.columns:
             df_base['ACTIVIDAD'] = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper()
-            # Descartamos filas sin actividad registrada
             df_base = df_base[(df_base['ACTIVIDAD'] != '') & (df_base['ACTIVIDAD'] != 'NAN') & df_base['ACTIVIDAD'].notna()]
 
-        # 3. Aniquilación de duplicados puros para mantener limpios los KPIs
         df_base = df_base.drop_duplicates()
         
-        # 4. Parseo seguro de fechas (Evita errores de lectura día/mes)
         if 'HORA_LIQ' in df_base.columns:
             df_base['HORA_LIQ'] = pd.to_datetime(df_base['HORA_LIQ'], dayfirst=True, errors='coerce')
-    # ==============================================================================
     
     if 'ACTIVIDAD' in df_base.columns:
         mask_basura_global = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
@@ -581,7 +595,6 @@ def main():
         settings.mostrar_configuracion()
         return
 
-    # LÓGICA DE LA NUEVA OPCIÓN DEL MENÚ DE EXPEDIENTES
     if nav_menu_diamante == "📁 Expedientes":
         expediente.mostrar_modulo_expedientes(conn, df_base)
         return
@@ -669,19 +682,16 @@ def main():
             check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
             check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
          
-            # --- NUEVO BOTÓN: ÓRDENES TOTALES PENDIENTES ---
-            total_vivas = int(m_viva_count.sum()) # Esta variable ya trae la suma total (Asig + No Asig)
+            total_vivas = int(m_viva_count.sum()) 
             check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})")
             
             if check_ordenes_totales:
                 if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True):
                     with st.spinner("Generando documento PDF..."):
-                        # Mandamos exclusivamente las órdenes vivas/pendientes
                         df_vivas_export = df_base_activa[m_viva_count].copy()
                         st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_vivas_export, hoy_date_valor)
                 if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
                     st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
-            # ------------------------------------------------
             
             lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
@@ -709,7 +719,13 @@ def main():
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
-        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico = st.tabs(["📦 Cierre Diario", "📋 Pendientes Generales", "💼 Gerencial (Trimestral)", "⏱️ Biométrico"])
+        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico, tab_materiales = st.tabs([
+            "📦 Cierre Diario", 
+            "📋 Pendientes Generales", 
+            "💼 Gerencial (Trimestral)", 
+            "⏱️ Biométrico",
+            "🔌 Control de Materiales"
+        ])
 
         with tab_pendientes:
             st.subheader("📋 Resumen de Pendientes Generales")
@@ -718,19 +734,19 @@ def main():
                 mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
-                def clasificar_dispatch(row):
+                def clasificiar_dispatch(row):
                     act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
                     if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
                     elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
                     elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt): return "PLEX"
                     else: return "OTRAS"
                 if not df_asig.empty:
-                    df_asig['CATEGORIA'] = df_asig.apply(clasificar_dispatch, axis=1)
+                    df_asig['CATEGORIA'] = df_asig.apply(clasificiar_dispatch, axis=1)
                     res_a = df_asig['CATEGORIA'].value_counts().reset_index()
                     res_a.columns = ['Categoría', 'Asignadas (En Ruta)']
                 else: res_a = pd.DataFrame(columns=['Categoría', 'Asignadas (En Ruta)'])
                 if not df_no_asig.empty:
-                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificar_dispatch, axis=1)
+                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificiar_dispatch, axis=1)
                     res_n = df_no_asig['CATEGORIA'].value_counts().reset_index()
                     res_n.columns = ['Categoría', 'Nuevas (Sin Asignar)']
                 else: res_n = pd.DataFrame(columns=['Categoría', 'Nuevas (Sin Asignar)'])
@@ -817,25 +833,20 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
             
-            # --- MEJORA DE COORDENADAS: RESCATE ADICIONAL PARA EL GANTT DE CIERRE DIARIO ---
             mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
             mask_liq_dia = pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cal_sel
             mask_ape_dia = (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.date == fecha_cal_sel)
             
             df_para_gantt_diario = df_base[mask_ini_dia | mask_liq_dia | mask_ape_dia].copy()
             
-            # 🔥 SALVAVIDAS 1: Inyectar 30 min a las CERRADAS que no tienen inicio
             mask_sin_ini_c = df_para_gantt_diario['HORA_INI'].isna() & df_para_gantt_diario['HORA_LIQ'].notnull()
             df_para_gantt_diario.loc[mask_sin_ini_c, 'HORA_INI'] = df_para_gantt_diario.loc[mask_sin_ini_c, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
             
-            # 🔥 SALVAVIDAS 2: Inyectar hora a las ABIERTAS que no tienen inicio usando FECHA_APE
             mask_sin_ini_a = df_para_gantt_diario['HORA_INI'].isna() & df_para_gantt_diario['HORA_LIQ'].isna()
             df_para_gantt_diario.loc[mask_sin_ini_a, 'HORA_INI'] = df_para_gantt_diario.loc[mask_sin_ini_a, 'FECHA_APE']
             
-            # Filtramos de forma segura
             df_para_gantt_diario = df_para_gantt_diario[df_para_gantt_diario['HORA_INI'].notnull()].copy()
             
-            # Filtro del resto de variables de Cierre Diario
             df_cerradas_espejo = df_para_gantt_diario[(df_para_gantt_diario['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_para_gantt_diario['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
             df_asignadas_espejo = df_para_gantt_diario[df_para_gantt_diario['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
 
@@ -883,9 +894,6 @@ def main():
             
             st.markdown("---")
 
-            # ==============================================================================
-            # ⏳ GANTT EN PESTAÑA CIERRE DIARIO
-            # ==============================================================================
             if not es_movil:
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
@@ -912,7 +920,6 @@ def main():
                         df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
-                        # ---> NUEVA CONFIGURACIÓN: LISTA DE ACTIVIDADES EXCLUSIVAMENTE PERMITIDAS
                         actividades_permitidas = [
                             'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
                             'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 
@@ -925,7 +932,6 @@ def main():
                         df_para_gantt_diario = df_para_gantt_diario[
                             df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                         ]
-                        # <--- FIN DE LA MODIFICACIÓN
                         
                         df_para_gantt_diario['INFO_HOVER'] = (
                             "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
@@ -1036,7 +1042,7 @@ def main():
 
             st.markdown("---")
             
-            st.markdown("### 📈 Resumen Consolidado: Efectividad de Mora")
+            st.markdown("### ⚖️ Resumen Consolidado: Efectividad de Mora")
             m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
             p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
             c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
@@ -1090,9 +1096,6 @@ def main():
                 else: st.info("No hay registros de inicio de órdenes para esta fecha.")
             else: st.info("No hay registros de inicio de órdenes para esta fecha.")
 
-            # ==============================================================================
-            # --- NUEVA SECCIÓN: PROMEDIO SEMANAL DE PRIMERA ORDEN POR RANGO ---
-            # ==============================================================================
             st.markdown("---")
             st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
             st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
@@ -1188,6 +1191,121 @@ def main():
             if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
+
+        with tab_materiales:
+            st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
+            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop).")
+            
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                meses_nombres = [
+                    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
+                    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+                ]
+                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=5)
+                numero_mes = meses_nombres.index(mes_seleccionado) + 1
+            with col_sel2:
+                anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
+
+            df_m = df_base.copy()
+            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], errors='coerce')
+            df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], errors='coerce'))
+            df_m = df_m[df_m['FECHA_REPORTE'].notna()]
+            
+            df_m_filtrado = df_m[
+                (df_m['FECHA_REPORTE'].dt.month == numero_mes) & 
+                (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)
+            ].copy()
+            
+            if not df_m_filtrado.empty:
+                df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
+                
+                df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
+                df_acometidas = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_ACOMETIDA']
+                
+                total_equipos = len(df_equipos)
+                total_acometidas = len(df_acometidas)
+                
+                col_k1, col_k2 = st.columns(2)
+                with col_k1:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
+                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🔌 CAMBIOS DE EQUIPO (ONT/ONU/CPE)</div>
+                        <div style="color: #3B82F6; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_equipos}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_k2:
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
+                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🎗️ REEMPLAZOS DE ACOMETIDA (DROP)</div>
+                        <div style="color: #F59E0B; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_acometidas}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("### 📊 Desglose de Cambios por Técnico")
+                
+                if total_equipos > 0:
+                    eq_tech = df_equipos.groupby('TECNICO').size().reset_index(name='Equipos Cambiados')
+                else:
+                    eq_tech = pd.DataFrame(columns=['TECNICO', 'Equipos Cambiados'])
+                    
+                if total_acometidas > 0:
+                    ac_tech = df_acometidas.groupby('TECNICO').size().reset_index(name='Acometidas Cambiadas')
+                else:
+                    ac_tech = pd.DataFrame(columns=['TECNICO', 'Acometidas Cambiadas'])
+                    
+                tech_summary = pd.merge(eq_tech, ac_tech, on='TECNICO', how='outer').fillna(0)
+                tech_summary['Equipos Cambiados'] = tech_summary['Equipos Cambiados'].astype(int)
+                tech_summary['Acometidas Cambiadas'] = tech_summary['Acometidas Cambiadas'].astype(int)
+                tech_summary['Total Intervenciones'] = tech_summary['Equipos Cambiados'] + tech_summary['Acometidas Cambiadas']
+                
+                tech_summary = tech_summary.sort_values(by='Total Intervenciones', ascending=False)
+                
+                st.dataframe(
+                    tech_summary, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
+                        "Equipos Cambiados": st.column_config.NumberColumn("🔌 Equipos Cambiados", format="%d"),
+                        "Acometidas Cambiadas": st.column_config.NumberColumn("🎗️ Acometidas Cambiadas", format="%d"),
+                        "Total Intervenciones": st.column_config.NumberColumn("📦 Total General", format="%d")
+                    }
+                )
+                
+                st.markdown("### 📥 Descargar Reporte de Detalle")
+                buffer_m = io.BytesIO()
+                
+                df_export_eq = df_equipos[['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'ACTIVIDAD', 'COMENTARIO', 'FECHA_REPORTE']].copy()
+                df_export_eq['TIPO_CAMBIO'] = 'CAMBIO DE EQUIPO'
+                
+                df_export_ac = df_acometidas[['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'ACTIVIDAD', 'COMENTARIO', 'FECHA_REPORTE']].copy()
+                df_export_ac['TIPO_CAMBIO'] = 'CAMBIO DE ACOMETIDA'
+                
+                df_export_final = pd.concat([df_export_eq, df_export_ac]).sort_values(by='FECHA_REPORTE')
+                if not df_export_final.empty:
+                    df_export_final['FECHA_REPORTE'] = df_export_final['FECHA_REPORTE'].dt.strftime('%d/%m/%Y %H:%M')
+                    df_export_final.columns = ['Orden', 'Cliente', 'Nombre', 'Técnico', 'Actividad', 'Comentario', 'Fecha Liquidación', 'Tipo de Intervención']
+                
+                with pd.ExcelWriter(buffer_m, engine='openpyxl') as writer:
+                    df_export_final.to_excel(writer, index=False, sheet_name='Detalle_Materiales')
+                    tech_summary.to_excel(writer, index=False, sheet_name='Resumen_Tecnicos')
+                    
+                st.download_button(
+                    label=f"📥 Descargar Reporte de {mes_seleccionado} {anio_seleccionado} (Excel)",
+                    data=buffer_m.getvalue(),
+                    file_name=f"Reporte_Materiales_{mes_seleccionado}_{anio_seleccionado}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    type="primary"
+                )
+                
+                with st.expander("🔍 Ver Detalle de Transacciones del Mes"):
+                    st.dataframe(df_export_final, use_container_width=True, hide_index=True)
+            else:
+                st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
+
         return
 
     # ==============================================================================
@@ -1213,7 +1331,7 @@ def main():
         )
 
         if os.path.exists("Logotipo monitor.png"):
-            st.image("Logotipo monitor.png", width=400) # Puedes cambiar el número 400 para hacer el logo más grande o pequeño
+            st.image("Logotipo monitor.png", width=400) 
         else:
             st.title("⚡ Monitor Operativo Maxcom")
 
@@ -1290,7 +1408,6 @@ def main():
                         elif v == "= 0 Dia": bg_color = '#388e3c'
                         return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                    # Sumatoria homologada para móvil
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
@@ -1310,7 +1427,6 @@ def main():
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                         st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                        # 🔥 Sumatoria idéntica a las de al lado (alineada a la izquierda y en negrita)
                         st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
 
                 g_tab_list = []
@@ -1392,7 +1508,6 @@ def main():
                 df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
                 
                 def calcular_metricas(segmento):
-                    """Calcula Mora, Día y Global para un segmento específico."""
                     if segmento == 'GLOBAL':
                         p = df_solo_asignadas_monitor
                         c = df_cerradas_hoy_monitor
@@ -1475,10 +1590,6 @@ def main():
                 st.markdown("---")
         
         if st.session_state.get('config_mostrar_panel', True):
-            
-            # ==============================================================================
-            # ⏳ LÓGICA DE GRÁFICA GANTT EN VIVO (MONITOR)
-            # ==============================================================================
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
@@ -1488,11 +1599,9 @@ def main():
                         
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
                         
-                        # 🔥 SALVAVIDAS 1: Inyectar 30 min. a las que no tienen inicio ANTES del filtro destructivo
                         mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
                         
-                        # Ahora sí, filtramos (ya los CEQUI pasaron a salvo)
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
@@ -1501,7 +1610,6 @@ def main():
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
                             
-                            # 🔥 SALVAVIDAS 2: Si el CEQUI duró 0 minutos (Inicio y Cierre a la misma hora), Plotly no lo dibuja
                             mask_cero_min = df_para_gantt_final['GANTT_START'] == df_para_gantt_final['GANTT_END']
                             df_para_gantt_final.loc[mask_cero_min, 'GANTT_START'] = df_para_gantt_final.loc[mask_cero_min, 'GANTT_END'] - pd.Timedelta(minutes=30)
                             
@@ -1516,7 +1624,6 @@ def main():
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
-                            # ---> NUEVA CONFIGURACIÓN: LISTA DE ACTIVIDADES EXCLUSIVAMENTE PERMITIDAS
                             actividades_permitidas = [
                                 'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
                                 'INS-WA','PEXTERNO', 'PLEXISCA', 'SOP', 
@@ -1529,7 +1636,6 @@ def main():
                             df_para_gantt_final = df_para_gantt_final[
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                             ]
-                            # <--- FIN DE LA MODIFICACIÓN
                             
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
@@ -1553,7 +1659,7 @@ def main():
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONHFC": "#c2185b",       
                                 "TVADICIONAL": "#00897b",
-                                "CEQUI": "#fbc02d",          # Color amarillo vibrante para los Cambios de Equipo
+                                "CEQUI": "#fbc02d",          
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
                                 "REVISION": "#0288d1"
@@ -1607,7 +1713,6 @@ def main():
 
                 status_final_btn = st.session_state.st_btn_v_active
 
-                # --- NUEVA REGLA: SI ESTÁ ACTIVO "ÓRDENES TOTALES", MUESTRA EL UNIVERSO PENDIENTE COMPLETO ---
                 if check_ordenes_totales:
                     df_v_tabla_monitor = df_todas_pendientes_monitor 
                 else:
