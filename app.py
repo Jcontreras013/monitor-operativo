@@ -102,29 +102,26 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (ESCÁNER INTENSIVO DE COMENTARIOS)
+# MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (SOPORTES Y CEQUI)
 # ==============================================================================
 def clasificar_materiales(row):
-    row_dict = row.to_dict() if hasattr(row, 'to_dict') else dict(row)
+    act = str(row.get('ACTIVIDAD', '')).upper().strip()
+    com = str(row.get('COMENTARIO', '')).upper().strip()
+    razon = str(row.get('RAZON_CIERRE_SOP', '')).upper().strip()
+    sop = str(row.get('SOP', '')).upper().strip()
+    tecnico = str(row.get('TECNICO', '')).upper().strip()
     
-    text_parts = []
-    for col_name, val in row_dict.items():
-        col_upper = str(col_name).upper().strip()
-        if any(term in col_upper for term in ['COMENT', 'RAZON', 'CIERRE', 'RESOL', 'OBSERV', 'SOP', 'ACTIVID']):
-            val_str = str(val).upper().strip()
-            if val_str and val_str not in ['NAN', 'NONE', 'N/D', 'NULL', '0']:
-                text_parts.append(val_str)
-                
-    texto_completo = " | ".join(text_parts)
-    act = str(row_dict.get('ACTIVIDAD', '')).upper().strip()
-    
-    if act in ["CEQUI", "INSEQUIPO", "CAMBIO"]:
-        return "CAMBIO_EQUIPO"
+    # Exclusión de colaboradores externos / no de campo
+    if any(ex in tecnico for ex in ["LILIAN", "WILFREDO"]):
+        return "NINGUNO"
         
-    verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "INSTAL", "COLOC", "DEJE", "DEJÓ", "PUSE", "PUSO", "ENTREG", "QUEMAD", "DAÑAD", "DEFECTUOS"]
-    sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA", "APARATO", "DISPOSITIVO", "REPETIDOR", "WIFI", "WI-FI"]
+    texto_completo = " | ".join([act, com, razon, sop])
     
-    es_equipo = (
+    # --- A. DETECCIÓN DE CAMBIO DE EQUIPO (Mantenimiento) ---
+    verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "REINSTAL"]
+    sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA"]
+    
+    es_cambio_equipo_accion = (
         any(v in texto_completo for v in verbos_equipo) and 
         any(s in texto_completo for s in sustantivos_equipo)
     )
@@ -133,19 +130,35 @@ def clasificar_materiales(row):
         "CAMBIO DE EQUIPO", "CAMBIO EQUIPO", "CAMBIO DE ONT", "CAMBIO ONT", 
         "CAMBIO DE ONU", "CAMBIO ONU", "REEMPLAZO EQUIPO", "REEMPLAZO ONT", 
         "REEMPLAZO ONU", "CAMBIO MODEM", "REEMPLAZO MODEM", "CAMBIO CPE", 
-        "REEMPLAZO CPE", "EQUIPO DEFECTUOSO", "ONT DEFECTUOSA", "ONU DEFECTUOSA",
-        "CAMBIO DE ROUTER", "CAMBIO ROUTER", "REEMPLAZO DE ROUTER", "NUEVO ROUTER", 
-        "NUEVO EQUIPO", "NUEVA ONT", "NUEVA ONU"
+        "REEMPLAZO CPE", "REEMPLAZO DE ROUTER", "REPLACE ONT", "REPLACE ONU",
+        "SE LE CAMBIO EQUIPO", "SE LE CAMBIO LA ONU", "SE LE CAMBIO LA ONT"
     ]
     
-    if es_equipo or any(f in texto_completo for f in frases_directas_equipo):
+    es_equipo = (
+        act == "CEQUI" or 
+        any(f in texto_completo for f in frases_directas_equipo) or 
+        es_cambio_equipo_accion
+    )
+    
+    if es_equipo:
         return "CAMBIO_EQUIPO"
         
-    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "INSTAL", "CABLE", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "ROBAD", "CORTAD", "REVENTAD", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "METROS", "MTS", "MT"]
+    # --- B. DETECCIÓN DE REEMPLAZO DE ACOMETIDA ---
+    # Exclusión estricta de mufas, postes troncales o supervisión preventiva
+    es_troncal_o_supervision = any(term in texto_completo for term in [
+        "144 HILOS", "48 HILOS", "72 HILOS", "96 HILOS", "24 HILOS", 
+        "POSTES", "POSTE", "TRONCAL", "MUFA", "MUFAS", 
+        "SUPERVISION", "SUPERVISIÓN", "SUPERVISOR", "CUADRILLAS", 
+        "MANTENIMIENTO PREVENTIVO", "PREVENTIVO", "LINEA TRONCAL", "LINEAS TRONCALES"
+    ])
     
-    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "ACO", "CORTE"]
+    if es_troncal_o_supervision:
+        return "NINGUNO"
+        
+    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "CABLEO", "CABLEÓ", "RECONEXION"]
+    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "CORTE"]
     
-    es_acometida = (
+    es_cambio_acometida_accion = (
         any(v in texto_completo for v in verbos_acometida) and 
         any(s in texto_completo for s in sustantivos_acometida)
     )
@@ -162,11 +175,15 @@ def clasificar_materiales(row):
         
     ]
     
-    if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
+    es_acometida = (
+        any(f in texto_completo for f in frases_directas_acometida) or 
+        es_cambio_acometida_accion
+    )
+    
+    if es_acometida:
         return "CAMBIO_ACOMETIDA"
         
     return "NINGUNO"
-
 
 # ==============================================================================
 # GENERADOR DEL REPORTE PDF DE MATERIALES (TIPO MEMO MAXCOM)
