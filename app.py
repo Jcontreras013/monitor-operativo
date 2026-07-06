@@ -173,6 +173,7 @@ def clasificar_materiales(row):
 # ==============================================================================
 def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio):
     import textwrap
+    import tempfile  # Se añade la importación faltante de tempfile
     from fpdf import FPDF
     
     class MaterialesPDF(FPDF):
