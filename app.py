@@ -734,19 +734,22 @@ def main():
                 mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
-                def clasificiar_dispatch(row):
+                
+                # Corrección del nombre de la función de clasificiar -> clasificar
+                def clasificar_dispatch(row):
                     act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
                     if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
                     elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
                     elif re.search("PLEX|PEXTERNO|SPLITTEROPT", txt): return "PLEX"
                     else: return "OTRAS"
+                    
                 if not df_asig.empty:
-                    df_asig['CATEGORIA'] = df_asig.apply(clasificiar_dispatch, axis=1)
+                    df_asig['CATEGORIA'] = df_asig.apply(clasificar_dispatch, axis=1)
                     res_a = df_asig['CATEGORIA'].value_counts().reset_index()
                     res_a.columns = ['Categoría', 'Asignadas (En Ruta)']
                 else: res_a = pd.DataFrame(columns=['Categoría', 'Asignadas (En Ruta)'])
                 if not df_no_asig.empty:
-                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificiar_dispatch, axis=1)
+                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificar_dispatch, axis=1)
                     res_n = df_no_asig['CATEGORIA'].value_counts().reset_index()
                     res_n.columns = ['Categoría', 'Nuevas (Sin Asignar)']
                 else: res_n = pd.DataFrame(columns=['Categoría', 'Nuevas (Sin Asignar)'])
