@@ -1452,7 +1452,7 @@ def main():
 
         with tab_materiales:
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
-            st.caption("Reporte de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop) enfocado exclusivamente en órdenes de Soporte y CEQUI.")
+            st.caption("Reporte histórico completo de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop).")
             
             # Selector de Fecha (Mes y Año)
             col_sel1, col_sel2 = st.columns(2)
@@ -1466,8 +1466,26 @@ def main():
             with col_sel2:
                 anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
 
-            # Preparación de datos forzando el formato latino de fecha (Día Primero)
-            df_m = df_base.copy()
+            # === DESCARGA DIRECTA DEL HISTORIAL COMPLETO DE LA NUBE PARA EVITAR EL FILTRO DE 7 DÍAS ===
+            if 'df_materiales_master' not in st.session_state:
+                with st.spinner("📥 Cargando base histórica completa para inventario..."):
+                    try:
+                        df_m_master = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                        if df_m_master is None or df_m_master.empty:
+                            if conn is not None:
+                                df_m_master = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                        
+                        if df_m_master is not None and not df_m_master.empty:
+                            df_m_master.columns = df_m_master.columns.str.upper().str.strip()
+                            st.session_state['df_materiales_master'] = df_m_master
+                        else:
+                            st.session_state['df_materiales_master'] = df_base.copy()
+                    except Exception as e:
+                        st.session_state['df_materiales_master'] = df_base.copy()
+
+            df_m = st.session_state.get('df_materiales_master', df_base).copy()
+
+            # Forzar conversión de fechas asegurando que el día vaya primero (dayfirst=True)
             df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], dayfirst=True, errors='coerce')
             df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], dayfirst=True, errors='coerce'))
             df_m = df_m[df_m['FECHA_REPORTE'].notna()]
