@@ -150,7 +150,7 @@ def clasificar_materiales(row):
     # --- 3. CLASIFICACIÓN INTENSIVA DE REEMPLAZO DE ACOMETIDA (CABLE DROP) ---
     # Análisis por asociación (Verbo de tendido/cambio + Sustantivo de cable de bajada)
     verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "INSTAL", "CABLE", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "ROBAD", "CORTAD", "REVENTAD", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "METROS", "MTS", "MT"]
-    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "ACO"]
+    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "ACO", "CORTE"]
     
     es_acometida = (
         any(v in texto_completo for v in verbos_acometida) and 
@@ -164,7 +164,7 @@ def clasificar_materiales(row):
         "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
         "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", "REEMPLAZAR DROP",
         "REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA", "CAMBIO DE BAJADA",
-        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "LANZADO DE ACOMETIDA", "LANZO ACOMETIDA"
+        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "LANZADO DE ACOMETIDA", "LANZO ACOMETIDA", "CORTE DE ACOMETIDA"
     ]
     
     if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
