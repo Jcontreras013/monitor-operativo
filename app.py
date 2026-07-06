@@ -1281,7 +1281,8 @@ def main():
                         "Acometidas": st.column_config.NumberColumn("🎗️ Acometidas Cambiadas", format="%d"),
                         "Total": st.column_config.NumberColumn("📦 Total General", format="%d")
                     }
-                    # ==============================================================================
+                )
+                # ==============================================================================
                 # LLAMADA DIRECTA A TOOLS.PY PARA GENERAR EL PDF
                 # ==============================================================================
                 pdf_bytes = generar_pdf_materiales_tecnicos(tech_summary, mes_seleccionado, anio_seleccionado)
