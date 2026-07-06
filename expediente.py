@@ -111,46 +111,37 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     if any(x in texto for x in palabras_vehiculo_neglect):
         return 'GRAVE'
 
-    # 2. ACCIONES GRAVES (Aperturas, cierres, desfases de órdenes, órdenes pendientes, faltas de respeto)
-    palabras_graves = [
-        # Aperturas y cierres fallidas o tardías (Añadido "APERTURADA" y "ORDEN APERTURADA")
-        "APERTURADA TARDE", "APERTURADAS TARDES", "ORDEN APERTURADA TARDE", "ORDEN APERTURADA",
-        "APERTURO TARDE", "APERTURÓ TARDE", 
-        "NO APERTURO", "NO APERTURÓ", 
-        "NO CERRO", "NO CERRÓ", 
-        "NO CERRO A TIEMPO", "NO CERRÓ A TIEMPO", 
-        "CERRO TARDE", "CERRÓ TARDE",
-        "APERTURA TARDE", "APERTURA TARDIA", "APERTURA TARDÍA",
-        "CIERRE TARDE", "CIERRE TARDIO", "CIERRE TARDÍO",
-        
-        # Desfases de órdenes (Añadidos términos técnicos y variaciones de escritura "desface")
-        "DESFASE", "DESFACES", "DESFACE", "DESFACES",
-        "DESFASE EN ORDEN", "DESFASE EN ÓRDENES", "DESFASE EN ORDENES",
-        "DESFACE EN ORDEN", "DESFACE EN ÓRDENES", "DESFACE EN ORDENES",
-        "DESFASE EN APERTURA", "DESFACE EN APERTURA", "DESFACE EN LA APERTURA",
-        
-        # Órdenes pendientes
-        "DEJAR ORDENES", "DEJAR ÓRDENES",
-        "ORDENES PENDIENTES", "ÓRDENES PENDIENTES", "ORDEN PENDIENTE", "ÓRDEN PENDIENTE",
-        "INCUMPLIMIENTO DE ORDENES", "INCUMPLIMIENTO DE ÓRDENES",
-        "NO INICIO ORDEN", "NO INICIÓ ORDEN", "NO INICI", "SIN INICIAR",
-        "NO DIO INICIO", "OMISIÓN DE INICIO", "OMISION DE INICIO",
-        "SIN APERTURAR", "NO APERTUR", "SIN APERTURAR",
-        
-        # Faltas de respeto e integridad
+    # 2. EVALUACIÓN DE SLA & MANEJO DE ÓRDENES (REGLA ASOCIATIVA INTELIGENTE)
+    # Evita falsos negativos si el supervisor escribe variaciones como "ORDEN CERRADA TARDE", "APERTURADA CON RETRASO", etc.
+    roots_objeto = ["ORDEN", "ÓRDEN", "RUTA"]
+    roots_accion = ["APERTUR", "CERR", "CIERR", "INIC", "LIQUID", "FINALIZ"]
+    roots_anomalia = ["TARDE", "TARDÍ", "TARDI", "DESFAS", "DESFAC", "RETRAS", "INCUMPLI"]
+
+    has_objeto = any(obj in texto for obj in roots_objeto)
+    has_accion = any(acc in texto for acc in roots_accion)
+    has_anomalia = any(anom in texto for anom in roots_anomalia)
+
+    # Si se detecta la combinación Objeto + Acción + Anomalía, es automáticamente GRAVE
+    if (has_objeto and has_accion and has_anomalia):
+        return 'GRAVE'
+
+    # 3. ACCIONES GRAVES DIRECTAS (Seguridad y Faltas de Respeto)
+    palabras_graves_directas = [
+        # Seguridad y Faltas de respeto
         "FALTA DE RESPETO", "FALTA DE RESPET", "FALTAS DE RESPETO",
         "IRRESPETO", "INSULTO", "INSULTOS", "GOLPE", "PELEA",
         "AGRESION", "AGRESIÓN", "AMENAZA", "HOSTIGAMIENTO",
         "FALTA AL RESPETO", "OFENSA", "OFENSAS", "FALTA RESPETO",
         
-        # Otras graves tradicionales
+        # Otras anomalías operacionales graves directas
+        "APERTURADA TARDE", "CERRADA TARDE", "APERTURADAS TARDES", "CERRADAS TARDES",
         "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
         "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
         "ROBO", "HURTO", "ABANDONO DE RUTA", "ABANDONO RUTA", "ABANDONO", 
         "INJUSTIFICADA", "DAÑO", "PÉRDIDA", "PERDIDA", "FRAUDE", "NEGLIGENCIA", 
         "REINCIDENCIA", "DORMIDO", "GRAVE", "IRRESPONSABILIDAD"
     ]
-    if any(kw in texto for kw in palabras_graves):
+    if any(kw in texto for kw in palabras_graves_directas):
         return 'GRAVE'
 
     graves_combos = [
@@ -168,13 +159,13 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
         if w1 in texto and w2 in texto:
             return 'GRAVE'
 
-    # 3. PROMOCIÓN AUTOMÁTICA POR REINCIDENCIA (3 o más llegadas tarde = GRAVE)
+    # 4. PROMOCIÓN AUTOMÁTICA POR REINCIDENCIA (3 o más llegadas tarde = GRAVE)
     if es_llegada_tarde(motivo, comentario):
         if n_tardes >= 3:
             return 'GRAVE'
         return 'LEVE'
 
-    # 4. ACCIONES LEVES
+    # 5. ACCIONES LEVES
     palabras_leves = [
         # Almuerzo excedido
         'ALMUERZO EXCEDIDO', 'HORA ALMUERZO', 'HORA DE ALMUERZO',
