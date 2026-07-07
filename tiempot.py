@@ -187,9 +187,9 @@ def encontrar_tecnico_maestro(nombre_buscar, lista_maestros_limpios, lista_origi
     return None
 
 # ==============================================================================
-# HELPERS
+# HELPER DE CONVERSIÓN DE SEGUNDOS A TIME STR
 # ==============================================================================
-def formatear_hora(secs):
+def format_secs_local(secs):
     if pd.isna(secs) or secs is None or secs <= 0:
         return "--"
     h = int(secs // 3600) % 24
@@ -197,24 +197,8 @@ def formatear_hora(secs):
     s = int(secs % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
-def extraer_numero_mx(texto):
-    if pd.isna(texto) or not str(texto).strip():
-        return None
-    val = str(texto).upper().strip()
-    match = re.search(r'MX[-_ ]*(\d+)', val)
-    if match:
-        return int(match.group(1))
-    match_num = re.search(r'^\s*(\d+)\s*$', val)
-    if match_num:
-        return int(match_num.group(1))
-    return None
-
-def calcular_promedio_real(x):
-    tiempos_validos = x[x > 4]
-    return tiempos_validos.mean() if len(tiempos_validos) > 0 else 0
-
 # ==============================================================================
-# CÁLCULO DE RENDIMIENTO INDIVIDUAL POR ORDEN
+# EVALUACIÓN DE RENDIMIENTO INDIVIDUAL POR ORDEN (CON FORMULA SLA)
 # ==============================================================================
 def calcular_rendimiento_fila(row):
     tipo = str(row.get('ACTIVIDAD', '')).upper().strip()
@@ -225,7 +209,7 @@ def calcular_rendimiento_fila(row):
         'INSFIBRA': 120,
         'SOP': 80,
         'SOPFIBRA': 80,
-        'INSFIBRACOPR': 120,      # Tolerancia a typos comunes
+        'INSFIBRACOPR': 120,
         'INSFIBRACORP': 120,
         'SOPFIBRACORP': 80,
         'TRASLADOEXTFIBRA': 120,
@@ -238,11 +222,11 @@ def calcular_rendimiento_fila(row):
         
     sla = slas[tipo]
     if t_min <= sla:
-        # Si cumple o es más rápido, el rendimiento sube por encima de 100% (tope de 120%)
+        # Se cumple el SLA, recompensa de velocidad (Tope 120%)
         rend = (2.0 - (t_min / sla)) * 100.0
         return round(min(120.0, rend), 1)
     else:
-        # Si se pasa, el rendimiento decae proporcionalmente
+        # Fuera de SLA, decae proporcionalmente
         rend = (sla / t_min) * 100.0
         return round(max(0.0, rend), 1)
 
@@ -304,17 +288,15 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         # ==============================================================================
         # 🚨 FILTRO DE SEGURIDAD OPERATIVA: ELIMINAR CLICS ACCIDENTALES (<= 4 MINUTOS)
         # ==============================================================================
-        # Si una orden se abre y cierra en 4 minutos o menos, se considera un error y se
-        # descarta por completo del análisis para no alterar volumenes, promedios ni eficiencia.
         df_act = df_act[df_act['Minutos_Orden'] > 4]
         
         if df_act.empty:
-            return None, None, None, None, "No quedaron órdenes válidas para analizar tras filtrar los tiempos mínimos de ejecución."
+            return None, None, None, None, "No quedaron órdenes válidas para analizar tras filtrar los clics accidentales."
 
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
 
-        # Cálculo de rendimiento fila por fila (evalúa solo las órdenes que pasaron el filtro)
+        # Cálculo de rendimiento fila por fila
         df_act['Rendimiento_Pct'] = df_act.apply(calcular_rendimiento_fila, axis=1)
 
         tecnicos_originales = df_act['TECNICO'].unique()
@@ -399,8 +381,8 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                     for _, row_m in df_mensual_final.iterrows():
                         tec = row_m['TECNICO']
                         gps_promedios[tec] = {
-                            'Salida': formatear_hora(row_m['Mensual_Salida']),
-                            'Entrada': formatear_hora(row_m['Mensual_Entrada'])
+                            'Salida': format_secs_local(row_m['Mensual_Salida']),
+                            'Entrada': format_secs_local(row_m['Mensual_Entrada'])
                         }
 
         # --- 3. PROCESAR EXPEDIENTES ---
@@ -462,7 +444,7 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
     )
     df_last_avg = df_last_daily.groupby('TECNICO')['Last_Secs'].mean().reset_index()
     for _, r in df_last_avg.iterrows():
-        last_order_dict[r['TECNICO']] = formatear_hora(r['Last_Secs'])
+        last_order_dict[r['TECNICO']] = format_secs_local(r['Last_Secs'])
 
     resumen_act = df_act_filtrado.groupby('TECNICO').agg(
         Ordenes_Totales=('NUM', 'count'),
@@ -471,8 +453,10 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
         Hora_Primera_Orden=('FECHA_ENTRADA', 'min')
     ).reset_index()
 
+    # Se calcula la cantidad y el tiempo promedio ponderado por cada segmento
     resumen_segmento = df_act_filtrado.groupby(['TECNICO', 'Segmento']).agg(
-        Ordenes=('NUM', 'count')
+        Ordenes=('NUM', 'count'),
+        Minutos_Promedio=('Minutos_Orden', calcular_promedio_real)
     ).reset_index()
 
     resumen_tipo = df_act_filtrado.groupby(['TECNICO', 'TipoOrden']).agg(
@@ -487,9 +471,17 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
         h_primera = row['Hora_Primera_Orden'].strftime('%H:%M:%S') if pd.notnull(row['Hora_Primera_Orden']) else '--'
         h_ultima = last_order_dict.get(tec, '--')
         gps = gps_promedios.get(tec, {'Salida': '--', 'Entrada': '--'})
+        
         plex_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Plex')]['Ordenes'].sum())
         res_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Residencial')]['Ordenes'].sum())
         
+        # Extracción segura de tiempos promedio por segmento
+        plex_mins_df = resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Plex')]
+        plex_mins = round(plex_mins_df['Minutos_Promedio'].values[0], 1) if not plex_mins_df.empty else 0.0
+        
+        resi_mins_df = resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Residencial')]
+        resi_mins = round(resi_mins_df['Minutos_Promedio'].values[0], 1) if not resi_mins_df.empty else 0.0
+
         rend_global = round(row['Rendimiento_Promedio'], 1) if pd.notna(row['Rendimiento_Promedio']) else 0.0
 
         datos_finales.append({
@@ -497,6 +489,8 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
             'ÓRDENES CANTIDAD': int(row['Ordenes_Totales']),
             'ÓRDENES PLEX': plex_ord,
             'ÓRDENES RESIDENCIAL': res_ord,
+            'TIEMPO PROM. PLEX (Min)': plex_mins,
+            'TIEMPO PROM. RESIDENCIAL (Min)': resi_mins,
             'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
             'RENDIMIENTO GLOBAL (%)': rend_global,
             'HORA 1ra ORDEN': h_primera,
@@ -509,7 +503,6 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
         })
 
     return pd.DataFrame(datos_finales), resumen_segmento, resumen_tipo
-
 
 # ==============================================================================
 # INTERFAZ STREAMLIT (DASHBOARD)
@@ -663,6 +656,58 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
         st.markdown("---")
 
+        # ---- NUEVO GRÁFICO TIPO TORRE: RANKING DE RENDIMIENTO DE COLABORADORES ----
+        st.markdown("#### 🏆 Podio de Eficiencia: Torres de Rendimiento Global")
+        st.caption("Este ranking ordena a los técnicos según su porcentaje promedio de eficiencia. El objetivo es mantenerse por encima de la línea del 100% de cumplimiento del SLA.")
+        
+        if 'RENDIMIENTO GLOBAL (%)' in df_m.columns:
+            df_ranking = df_m.sort_values(by='RENDIMIENTO GLOBAL (%)', ascending=False).copy()
+            
+            def definir_nivel_rendimiento(r):
+                if r >= 100: return '🟢 Excelente (>=100% SLA Cumplido)'
+                elif r >= 80: return '🟡 Regular (80%-99%)'
+                return '⚠️ Requiere Mejora (<80% de Eficiencia)'
+                
+            df_ranking['Nivel de Eficiencia'] = df_ranking['RENDIMIENTO GLOBAL (%)'].apply(definir_nivel_rendimiento)
+            
+            fig_ranking = px.bar(
+                df_ranking,
+                x='TÉCNICO',
+                y='RENDIMIENTO GLOBAL (%)',
+                color='Nivel de Eficiencia',
+                text_auto='.1f',
+                template="plotly_dark",
+                color_discrete_map={
+                    '🟢 Excelente (>=100% SLA Cumplido)': '#10B981', # Esmeralda
+                    '🟡 Regular (80%-99%)': '#F59E0B',              # Ambar
+                    '⚠️ Requiere Mejora (<80% de Eficiencia)': '#EF4444' # Rojo
+                },
+                category_orders={'TÉCNICO': df_ranking['TÉCNICO'].tolist()}
+            )
+            
+            # Agregamos la línea de meta del 100% para motivar a los técnicos
+            fig_ranking.add_hline(
+                y=100.0, 
+                line_dash="dash", 
+                line_color="#F8FAFC", 
+                annotation_text="Meta SLA (100%)", 
+                annotation_position="top left",
+                annotation_font=dict(color="#F8FAFC", size=10)
+            )
+            
+            fig_ranking.update_layout(
+                height=450,
+                xaxis_title="",
+                yaxis_title="Eficiencia Ponderada (%)",
+                legend_title="Semáforo de Rendimiento",
+                margin=dict(t=20, b=10, l=10, r=10)
+            )
+            st.plotly_chart(fig_ranking, use_container_width=True)
+        else:
+            st.info("Sin datos de rendimiento global para generar el podio de torres.")
+            
+        st.markdown("---")
+
         st.markdown("#### 📦 Productividad por Técnico — Residencial vs Plex")
         if not df_seg.empty:
             orden_tecs = df_seg.groupby('TECNICO')['Ordenes'].sum().sort_values(ascending=True).index.tolist()
@@ -736,21 +781,21 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     df_tipo_pivot.columns.name = None
                     st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
             else:
-                st.warning("⚠️ No hay datos para la actividad seleccionada.")
+                st.warning("⚠️ No se encontraron órdenes en el rango de fechas seleccionado.")
         else:
             fig_time = px.bar(
-                df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=False),
+                df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=True),
                 x='TIEMPO PROM. EN ORDEN (Min)', y='TÉCNICO', orientation='h',
-                title="⏳ Tiempo Promedio por Orden (Minutos)", text_auto='.1f',
-                color_discrete_sequence=['#3B82F6']
+                title="⏳ Tiempo Promedio (Min)", text_auto=True,
+                color_discrete_sequence=['#10B981']
             )
-            fig_time.update_layout(height=max(400, len(df_m) * 32), yaxis_title="")
+            fig_time.update_layout(height=max(350, len(df_m) * 32), yaxis_title="")
             st.plotly_chart(fig_time, use_container_width=True)
             st.info("ℹ️ No se detectó columna TIPO en el archivo.")
 
         st.markdown("---")
-        st.markdown("#### 📊 Matriz Detallada: Volumen, Tiempo y Eficiencia por Actividad")
-        st.caption("Esta tabla combina la cantidad de trabajos realizados, el tiempo de ejecución y el porcentaje de eficiencia (Rendimiento).")
+        st.markdown("#### 📊 Matriz Detallada: Volumen vs. Tiempo por Actividad")
+        st.caption("Esta tabla combina la cantidad de trabajos realizados con el tiempo promedio real invertido en cada uno.")
 
         if not df_tipo_ord.empty:
             df_matriz_input = df_tipo_ord[df_tipo_ord['TipoOrden'].isin(act_filtro)] if act_filtro else df_tipo_ord
@@ -784,7 +829,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 def color_rendimiento(val):
                     if val == 0:
                         return 'color: #475569'
-                    # Verde (>=100% óptimo), Amarillo (80%-99% regular), Rojo (<80% retrasado)
                     color = '#10B981' if val >= 100 else ('#F59E0B' if val >= 80 else '#EF4444')
                     return f'color: {color}; font-weight: bold'
 
@@ -841,6 +885,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     )
             except Exception as e:
                 st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")
+                
     # ================================================================
     # TAB 3: REGISTRO DISCIPLINARIO
     # ================================================================
