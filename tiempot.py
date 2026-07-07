@@ -214,7 +214,7 @@ def calcular_promedio_real(x):
     return tiempos_validos.mean() if len(tiempos_validos) > 0 else 0
 
 # ==============================================================================
-# EVALUACIÓN DE RENDIMIENTO INDIVIDUAL POR ORDEN
+# EVALUACIÓN DE RENDIMIENTO INDIVIDUAL POR ORDEN (CON FORMULA SLA RESTRINGIDA)
 # ==============================================================================
 def calcular_rendimiento_fila(row):
     tipo = str(row.get('ACTIVIDAD', '')).upper().strip()
@@ -238,9 +238,9 @@ def calcular_rendimiento_fila(row):
         
     sla = slas[tipo]
     if t_min <= sla:
-        # Se cumple el SLA: la eficiencia sube proporcionalmente (hasta un tope de 120%)
+        # Se cumple el SLA: Topado estrictamente a 100% para evitar enmascarar tiempos muertos
         rend = (2.0 - (t_min / sla)) * 100.0
-        return round(min(120.0, rend), 1)
+        return round(min(100.0, rend), 1)
     else:
         # Excede el SLA: disminuye gradualmente
         rend = (sla / t_min) * 100.0
@@ -312,7 +312,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
 
-        # Cálculo de rendimiento fila por fila
+        # Cálculo de rendimiento individual
         df_act['Rendimiento_Pct'] = df_act.apply(calcular_rendimiento_fila, axis=1)
 
         tecnicos_originales = df_act['TECNICO'].unique()
@@ -462,7 +462,7 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
     for _, r in df_last_avg.iterrows():
         last_order_dict[r['TECNICO']] = format_secs_local(r['Last_Secs'])
 
-    # --- NUEVA LÓGICA DE ALTA INTELIGENCIA: TRASLADOS, INTERVALOS Y ALMUERZO ---
+    # --- LÓGICA DE ALTA INTELIGENCIA: TRASLADOS, INTERVALOS Y ALMUERZO ---
     tech_time_scores = {}
     tech_vol_scores = {}
     
@@ -491,8 +491,12 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
             # Si el técnico trabajó más de 5 horas (300 mins), se descuenta 1 hora (60 mins) de almuerzo
             t_muerto = max(0.0, t_gap - 60.0) if t_elapsed > 300 else t_gap
             
-            # Calificación de eficiencia de tiempos (con un turno base máximo de 480 mins)
-            r_tiempo = max(0.0, 100.0 - (t_muerto / 480.0) * 100.0)
+            # ==============================================================================
+            # 🚨 REGLA DE CONTROL ESTRICTO: 60 MINUTOS DE TRASLADO MÁXIMO PERMITIDO
+            # ==============================================================================
+            # Cualquier minuto que exceda la hora de traslado diario descuenta un 0.5% directo
+            t_exceso = max(0.0, t_muerto - 60.0)
+            r_tiempo = max(0.0, 100.0 - (t_exceso * 0.5))
             daily_time_pcts.append(r_tiempo)
             
             # 4. Volumen de órdenes en el día (Meta: 120min = 4/día; 80min o menos = 8/día)
@@ -504,7 +508,8 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
                 else:
                     puntos_dia += 0.5  # Meta: 8 órdenes diarias (de 6 a 8 es regular/excelente)
             
-            r_vol = min(120.0, (puntos_dia / 4.0) * 100.0)
+            # Topado estrictamente a 100% en volumen para no enmascarar tiempos muertos
+            r_vol = min(100.0, (puntos_dia / 4.0) * 100.0)
             daily_vol_points.append(r_vol)
             
         tech_time_scores[tec] = sum(daily_time_pcts) / len(daily_time_pcts) if daily_time_pcts else 100.0
@@ -547,13 +552,13 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
         resi_mins_df = resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Residencial')]
         resi_mins = round(resi_mins_df['Minutos_Promedio'].values[0], 1) if not resi_mins_df.empty else 0.0
 
-        # --- FÓRMULA DE RENDIMIENTO GLOBAL INTEGRAL ---
-        # 40% Cumplimiento SLA + 40% Volumen de Trabajo + 20% Eficiencia en Ruta/Intervalos
+        # --- FÓRMULA DE RENDIMIENTO GLOBAL RIGUROSO ---
+        # 35% Ejecución SLA (Topada a 100) + 35% Volumen (Topado a 100) + 30% Tiempos de Traslado/Almuerzo
         r_exec = row['Rendimiento_Promedio'] if pd.notna(row['Rendimiento_Promedio']) else 100.0
         r_vol = tech_vol_scores.get(tec, 0.0)
         r_time = tech_time_scores.get(tec, 100.0)
         
-        rend_global = round(0.40 * r_exec + 0.40 * r_vol + 0.20 * r_time, 1)
+        rend_global = round(0.35 * r_exec + 0.35 * r_vol + 0.30 * r_time, 1)
 
         datos_finales.append({
             'TÉCNICO': tec,
@@ -769,8 +774,8 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             fig_ranking.update_layout(
                 height=450,
                 xaxis_title="",
-                yaxis_title="Rendimiento Promedio (%)",
-                legend_title="Estado de Eficiencia",
+                yaxis_title="Eficiencia Ponderada (%)",
+                legend_title="Semáforo de Rendimiento",
                 margin=dict(t=20, b=10, l=10, r=10)
             )
             st.plotly_chart(fig_ranking, use_container_width=True)
@@ -855,7 +860,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.warning("⚠️ No se encontraron órdenes en el rango de fechas seleccionado.")
         else:
             fig_time = px.bar(
-                df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=True),
+                df_m.sort_values('TIPO PROM. EN ORDEN (Min)', ascending=True),
                 x='TIEMPO PROM. EN ORDEN (Min)', y='TÉCNICO', orientation='h',
                 title="⏳ Tiempo Promedio (Min)", text_auto=True,
                 color_discrete_sequence=['#10B981']
@@ -963,7 +968,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     with tab_exp:
         st.markdown("### 🚨 Registro Disciplinario")
 
-        if df_exp_det is not None and not df_exp_det.empty:
+        if df_exp_det_copy := df_exp_det is not None and not df_exp_det.empty:
             df_e_fil = df_exp_det.copy()
 
             if not df_e_fil.empty:
