@@ -693,42 +693,75 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.plotly_chart(fig_time, use_container_width=True)
 
                 with st.expander("📊 Ver detalle numérico por tipo de orden"):
-                    df_tipo_pivot = df_tipo_ord.pivot_table(
-                        index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
-                    ).round(1).reset_index()
-                    df_tipo_pivot.columns.name = None
-                    st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
-            else:
-                st.warning("⚠️ No hay datos para la actividad seleccionada.")
-        else:
-            fig_time = px.bar(
-                df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=False),
-                x='TIEMPO PROM. EN ORDEN (Min)', y='TÉCNICO', orientation='h',
-                title="⏳ Tiempo Promedio por Orden (Minutos)", text_auto='.1f',
-                color_discrete_sequence=['#3B82F6']
-            )
-            fig_time.update_layout(height=max(400, len(df_m) * 32), yaxis_title="")
-            st.plotly_chart(fig_time, use_container_width=True)
-            st.info("ℹ️ No se detectó columna TIPO en el archivo.")
+                    # Separamos en dos pestañas para no saturar la vista
+                    tab_tiempos, tab_rendimiento = st.tabs(["⏱️ Tiempos Promedio (Min)", "🏆 Rendimiento de Eficiencia (%)"])
+                    
+                    with tab_tiempos:
+                        df_tipo_pivot = df_tipo_ord.pivot_table(
+                            index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
+                        ).round(1).reset_index()
+                        df_tipo_pivot.columns.name = None
+                        st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
+                        
+                    with tab_rendimiento:
+                        st.caption("Fórmula: (Tiempo Meta / Tiempo Real) * 100. | >100% = Superó Meta | 100% = En Tiempo | <100% = Atraso")
+                        
+                        # 1. Definimos las metas (SLA) en minutos según tu regla
+                        metas_sla = {
+                            'INSEQUIPO': 60,
+                            'INSFIBRA': 120,
+                            'SOP': 80,
+                            'SOPFIBRA': 80,
+                            'INSFIBRACORP': 120,
+                            'SOPFIBRACORP': 80,
+                            'TRASLADOEXTFIBRA': 120,
+                            'TRASLADOINTERNOFIBRA': 80,
+                            'TVADICIONAL': 80
+                        }
+                        
+                        # 2. Función para calcular el porcentaje
+                        def calcular_rendimiento_eficiencia(row):
+                            tipo = str(row['TipoOrden']).strip().upper()
+                            tiempo_real = row['MinProm']
+                            meta = metas_sla.get(tipo, None)
+                            
+                            # Si no hay meta definida para esa orden o el tiempo es 0, ignoramos
+                            if not meta or tiempo_real <= 0:
+                                return None
+                                
+                            return (meta / tiempo_real) * 100.0
 
-        st.markdown("---")
-        st.markdown("#### 📊 Matriz Detallada: Volumen vs. Tiempo por Actividad")
-        st.caption("Esta tabla combina la cantidad de trabajos realizados con el tiempo promedio real invertido en cada uno.")
+                        # Aplicamos el cálculo
+                        df_rend = df_tipo_ord.copy()
+                        df_rend['Eficiencia_Pct'] = df_rend.apply(calcular_rendimiento_eficiencia, axis=1)
+                        
+                        # 3. Pivoteamos la tabla para porcentaje
+                        df_rend_pivot = df_rend.pivot_table(
+                            index='TECNICO', columns='TipoOrden', values='Eficiencia_Pct', aggfunc='mean'
+                        ).round(1).reset_index()
+                        df_rend_pivot.columns.name = None
+                        
+                        # Limpiamos columnas sin métricas
+                        df_rend_pivot = df_rend_pivot.dropna(axis=1, how='all')
+                        
+                        # 4. Semáforo de colores para los porcentajes
+                        def color_rendimiento(val):
+                            if pd.isna(val):
+                                return ''
+                            if val >= 100:
+                                return 'color: #10B981; font-weight: bold;' # Verde (En tiempo o superó)
+                            elif val >= 75:
+                                return 'color: #F59E0B; font-weight: bold;' # Amarillo (Atraso leve)
+                            else:
+                                return 'color: #EF4444; font-weight: bold;' # Rojo (Excedió demasiado)
 
-        if not df_tipo_ord.empty:
-            df_matriz_input = df_tipo_ord[df_tipo_ord['TipoOrden'].isin(act_filtro)] if act_filtro else df_tipo_ord
-            df_matriz_final = df_matriz_input.copy()
-
-            df_pivot_cant = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='Ordenes').fillna(0).astype(int)
-            df_pivot_time = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='MinProm').fillna(0).round(1)
-
-            tab_vista_cant, tab_vista_time = st.tabs(["📦 Solo Cantidad", "⏳ Solo Tiempo Promedio"])
-
-            with tab_vista_cant:
-                st.dataframe(
-                    df_pivot_cant.style.background_gradient(cmap='Greens', axis=0),
-                    use_container_width=True
-                )
+                        cols_num = [c for c in df_rend_pivot.columns if c != 'TECNICO']
+                        
+                        st.dataframe(
+                            df_rend_pivot.style.map(color_rendimiento, subset=cols_num).format("{:.1f}%", na_rep="-", subset=cols_num),
+                            use_container_width=True, 
+                            hide_index=True
+                        )
 
             with tab_vista_time:
                 def color_tiempos(val):
