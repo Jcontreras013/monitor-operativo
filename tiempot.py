@@ -312,7 +312,7 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
 
-        # Cálculo de rendimiento individual
+        # Cálculo de rendimiento fila por fila
         df_act['Rendimiento_Pct'] = df_act.apply(calcular_rendimiento_fila, axis=1)
 
         tecnicos_originales = df_act['TECNICO'].unique()
@@ -462,10 +462,58 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
     for _, r in df_last_avg.iterrows():
         last_order_dict[r['TECNICO']] = format_secs_local(r['Last_Secs'])
 
+    # --- NUEVA LÓGICA DE ALTA INTELIGENCIA: TRASLADOS, INTERVALOS Y ALMUERZO ---
+    tech_time_scores = {}
+    tech_vol_scores = {}
+    
+    for tec, g_tec in df_act_filtrado.groupby('TECNICO'):
+        daily_time_pcts = []
+        daily_vol_points = []
+        
+        for fecha, g_day in g_tec.groupby('Fecha_Dia'):
+            g_day = g_day.sort_values(by='FECHA_ENTRADA')
+            
+            # 1. Ventana total del día (Desde la primera entrada hasta la última liquidación)
+            t_first = g_day['FECHA_ENTRADA'].min()
+            t_last = g_day['FECHA_LIQUIDADO'].max()
+            
+            if pd.notnull(t_first) and pd.notnull(t_last) and t_last > t_first:
+                t_elapsed = (t_last - t_first).total_seconds() / 60
+            else:
+                t_elapsed = 0
+                
+            # 2. Tiempo real logueado trabajando en las órdenes
+            t_logged = g_day['Minutos_Orden'].sum()
+            
+            # 3. Intervalo muerto total en el día (Tiempos de traslado + pausas)
+            t_gap = max(0.0, t_elapsed - t_logged)
+            
+            # Si el técnico trabajó más de 5 horas (300 mins), se descuenta 1 hora (60 mins) de almuerzo
+            t_muerto = max(0.0, t_gap - 60.0) if t_elapsed > 300 else t_gap
+            
+            # Calificación de eficiencia de tiempos (con un turno base máximo de 480 mins)
+            r_tiempo = max(0.0, 100.0 - (t_muerto / 480.0) * 100.0)
+            daily_time_pcts.append(r_tiempo)
+            
+            # 4. Volumen de órdenes en el día (Meta: 120min = 4/día; 80min o menos = 8/día)
+            puntos_dia = 0.0
+            for _, r_ord in g_day.iterrows():
+                tipo_act = str(r_ord.get('ACTIVIDAD', '')).upper().strip()
+                if tipo_act in ['INSFIBRA', 'TRASLADOEXTFIBRA', 'INSFIBRACORP', 'INSFIBRACOPR']:
+                    puntos_dia += 1.0  # Meta: 4 órdenes diarias
+                else:
+                    puntos_dia += 0.5  # Meta: 8 órdenes diarias (de 6 a 8 es regular/excelente)
+            
+            r_vol = min(120.0, (puntos_dia / 4.0) * 100.0)
+            daily_vol_points.append(r_vol)
+            
+        tech_time_scores[tec] = sum(daily_time_pcts) / len(daily_time_pcts) if daily_time_pcts else 100.0
+        tech_vol_scores[tec] = sum(daily_vol_points) / len(daily_vol_points) if daily_vol_points else 0.0
+
     resumen_act = df_act_filtrado.groupby('TECNICO').agg(
         Ordenes_Totales=('NUM', 'count'),
         Minutos_Promedio=('Minutos_Orden', calcular_promedio_real),
-        Rendimiento_Promedio=('Rendimiento_Pct', 'mean'),  # Promedio de eficiencias
+        Rendimiento_Promedio=('Rendimiento_Pct', 'mean'),  # Promedio de eficiencias individuales
         Hora_Primera_Orden=('FECHA_ENTRADA', 'min')
     ).reset_index()
 
@@ -499,7 +547,13 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
         resi_mins_df = resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Residencial')]
         resi_mins = round(resi_mins_df['Minutos_Promedio'].values[0], 1) if not resi_mins_df.empty else 0.0
 
-        rend_global = round(row['Rendimiento_Promedio'], 1) if pd.notna(row['Rendimiento_Promedio']) else 0.0
+        # --- FÓRMULA DE RENDIMIENTO GLOBAL INTEGRAL ---
+        # 40% Cumplimiento SLA + 40% Volumen de Trabajo + 20% Eficiencia en Ruta/Intervalos
+        r_exec = row['Rendimiento_Promedio'] if pd.notna(row['Rendimiento_Promedio']) else 100.0
+        r_vol = tech_vol_scores.get(tec, 0.0)
+        r_time = tech_time_scores.get(tec, 100.0)
+        
+        rend_global = round(0.40 * r_exec + 0.40 * r_vol + 0.20 * r_time, 1)
 
         datos_finales.append({
             'TÉCNICO': tec,
@@ -715,8 +769,8 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             fig_ranking.update_layout(
                 height=450,
                 xaxis_title="",
-                yaxis_title="Eficiencia Ponderada (%)",
-                legend_title="Semáforo de Rendimiento",
+                yaxis_title="Rendimiento Promedio (%)",
+                legend_title="Estado de Eficiencia",
                 margin=dict(t=20, b=10, l=10, r=10)
             )
             st.plotly_chart(fig_ranking, use_container_width=True)
