@@ -2983,7 +2983,7 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     pdf.cell(0, 6, safestr(kpi_text), ln=True)
     pdf.ln(5)
     
-    # --- MÓDULO 2: PRODUCTIVIDAD EN CAMPO ---
+    # --- MÓDULO 2: PRODUCTIVIDAD EN CAMPO (TABLA DESGLOSADA EN PLEX Y RESIDENCIAL) ---
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(59, 130, 246) # Azul
     pdf.cell(0, 8, safestr("2. EJECUCIÓN OPERATIVA (Productividad y Tiempos de Cierre)"), ln=True)
@@ -2992,8 +2992,9 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 8)
     
-    w1 = [60, 20, 20, 20, 25, 30, 30] 
-    h1 = ["TÉCNICO", "TOTAL", "PLEX", "RESID.", "PROM(Min)", "1ra ORDEN", "ÚLT. ORDEN"]
+    # Se ajustaron los anchos y las columnas para dar espacio al promedio segmentado
+    w1 = [55, 18, 18, 18, 28, 28, 28, 28] 
+    h1 = ["TÉCNICO", "TOTAL", "PLEX", "RESID.", "PROM PLEX(Min)", "PROM RESID(Min)", "1ra ORDEN", "ÚLT. ORDEN"]
     
     for i, h in enumerate(h1):
         pdf.cell(w1[i], 7, safestr(h), border=1, fill=True, align="C")
@@ -3001,18 +3002,27 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     
     pdf.set_font("Helvetica", "", 8)
     for _, row in df_m.iterrows():
-        pdf.cell(w1[0], 6, safestr(row.get('TÉCNICO', ''))[:35], border=1)
+        pdf.cell(w1[0], 6, safestr(row.get('TÉCNICO', ''))[:32], border=1)
         pdf.cell(w1[1], 6, safestr(row.get('ÓRDENES CANTIDAD', 0)), border=1, align="C")
         pdf.cell(w1[2], 6, safestr(row.get('ÓRDENES PLEX', 0)), border=1, align="C")
         pdf.cell(w1[3], 6, safestr(row.get('ÓRDENES RESIDENCIAL', 0)), border=1, align="C")
         
-        t_prom = row.get('TIEMPO PROM. EN ORDEN (Min)', 0)
-        pdf.set_text_color(220, 38, 38) if t_prom > 90 else pdf.set_text_color(0, 0, 0)
-        pdf.cell(w1[4], 6, safestr(t_prom), border=1, align="C")
+        # Tiempo Promedio PLEX
+        t_plex = row.get('TIEMPO PROM. PLEX (Min)', 0.0)
+        t_plex_str = f"{t_plex:.1f}" if t_plex > 0 else "---"
+        pdf.set_text_color(220, 38, 38) if t_plex > 120 else pdf.set_text_color(0, 0, 0)
+        pdf.cell(w1[4], 6, safestr(t_plex_str), border=1, align="C")
         pdf.set_text_color(0, 0, 0)
         
-        pdf.cell(w1[5], 6, safestr(row.get('HORA 1ra ORDEN', '--')), border=1, align="C")
-        pdf.cell(w1[6], 6, safestr(row.get('HORA ÚLT. ORDEN', '--')), border=1, align="C")
+        # Tiempo Promedio RESIDENCIAL
+        t_resi = row.get('TIEMPO PROM. RESIDENCIAL (Min)', 0.0)
+        t_resi_str = f"{t_resi:.1f}" if t_resi > 0 else "---"
+        pdf.set_text_color(220, 38, 38) if t_resi > 90 else pdf.set_text_color(0, 0, 0)
+        pdf.cell(w1[5], 6, safestr(t_resi_str), border=1, align="C")
+        pdf.set_text_color(0, 0, 0)
+        
+        pdf.cell(w1[6], 6, safestr(row.get('HORA 1ra ORDEN', '--')), border=1, align="C")
+        pdf.cell(w1[7], 6, safestr(row.get('HORA ÚLT. ORDEN', '--')), border=1, align="C")
         pdf.ln()
 
     # --- MÓDULO 3: LOGÍSTICA Y RRHH (GPS y Disciplina) ---
@@ -3051,9 +3061,9 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
 
-    # --- MÓDULO 4: DESGLOSE POR ACTIVIDAD (TABLA AMPLIADA CON RENDIMIENTO EN ENTEROS) ---
+    # --- MÓDULO 4: DESGLOSE POR ACTIVIDAD ---
     if df_tipo_ord is not None and not df_tipo_ord.empty:
-        pdf.add_page() # Nueva página para evitar cortes
+        pdf.add_page() # Nueva página
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(139, 92, 246) # Morado
         pdf.cell(0, 8, safestr("4. MATRIZ DE RENDIMIENTO POR TIPO DE ACTIVIDAD"), ln=True)
@@ -3066,7 +3076,6 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         pdf.set_text_color(0, 0, 0)
         pdf.set_font("Helvetica", "B", 8)
         
-        # REND(%) colocado al lado de PROM(Min) de forma estructurada
         w3 = [80, 75, 25, 25, 30]
         h3 = ["TÉCNICO", "TIPO DE ACTIVIDAD", "CANTIDAD", "PROM(Min)", "REND(%)"]
         
@@ -3077,7 +3086,6 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         pdf.set_font("Helvetica", "", 8)
         df_listado = df_tipo_ord.sort_values(['TECNICO', 'Ordenes'], ascending=[True, False])
         
-        # Lista autorizada completa (residenciales + insfibra + insfibracorp)
         activ_evaluables = [
             'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSFIBRACOPR', 
             'SOP', 'SOPFIBRA', 'SOPFIBRACORP', 
@@ -3086,7 +3094,6 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         
         tec_actual = ""
         for _, row_t in df_listado.iterrows():
-            # Limpiar nombre del técnico para no repetirlo visualmente
             tec_print = safestr(row_t['TECNICO'])[:45] if row_t['TECNICO'] != tec_actual else ""
             tec_actual = row_t['TECNICO']
             
@@ -3097,28 +3104,25 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
             t_min = round(row_t['MinProm'], 1)
             pdf.set_text_color(220, 38, 38) if t_min > 90 else (pdf.set_text_color(16, 185, 129) if t_min < 45 else pdf.set_text_color(0, 0, 0))
             pdf.cell(w3[3], 6, safestr(t_min), border=1, align="C")
-            pdf.set_text_color(0, 0, 0) # Reset color
+            pdf.set_text_color(0, 0, 0)
             
-            # --- EVALUACIÓN DE RENDIMIENTO CON FORMATO ENTERO (2-3 DÍGITOS) ---
+            # Evaluación de Rendimiento %
             tipo_act = str(row_t.get('TipoOrden', '')).upper().strip()
             rend_val = row_t.get('Rendimiento_Prom') if 'Rendimiento_Prom' in df_tipo_ord.columns else None
             
             if tipo_act in activ_evaluables and pd.notna(rend_val):
-                # Formateamos redondeado a entero (solo dígitos significativos)
                 rend_str = f"{int(round(rend_val))}%"
-                
-                # Semáforo de colores
                 if rend_val >= 100:
-                    pdf.set_text_color(16, 185, 129) # Verde (Óptimo)
+                    pdf.set_text_color(16, 185, 129) # Verde
                 elif rend_val >= 80:
-                    pdf.set_text_color(217, 119, 6)   # Naranja/Ambar (Regular)
+                    pdf.set_text_color(217, 119, 6)   # Naranja
                 else:
-                    pdf.set_text_color(220, 38, 38)  # Rojo (Retraso)
+                    pdf.set_text_color(220, 38, 38)  # Rojo
             else:
-                rend_str = "---" # No aplica para PLEX u otros no catalogados
+                rend_str = "---"
                 
             pdf.cell(w3[4], 6, safestr(rend_str), border=1, align="C")
-            pdf.set_text_color(0, 0, 0) # Reset final
+            pdf.set_text_color(0, 0, 0)
             pdf.ln()
 
     return finalizar_pdf(pdf) # Asegúrate de que esta función exista en tools.py
