@@ -7,6 +7,8 @@ import re
 import unicodedata
 import plotly.express as px
 import plotly.graph_objects as go
+import tempfile
+import os
 
 # Importaciones seguras de dependencias desde tools.py
 try:
@@ -212,8 +214,40 @@ def calcular_promedio_real(x):
     return tiempos_validos.mean() if len(tiempos_validos) > 0 else 0
 
 # ==============================================================================
+# CÁLCULO DE RENDIMIENTO INDIVIDUAL POR ORDEN
+# ==============================================================================
+def calcular_rendimiento_fila(row):
+    tipo = str(row.get('ACTIVIDAD', '')).upper().strip()
+    t_min = row.get('Minutos_Orden', 0)
+    
+    slas = {
+        'INSEQUIPO': 60,
+        'INSFIBRA': 120,
+        'SOP': 80,
+        'SOPFIBRA': 80,
+        'INSFIBRACOPR': 120,      # Tolerancia a typos comunes
+        'INSFIBRACORP': 120,
+        'SOPFIBRACORP': 80,
+        'TRASLADOEXTFIBRA': 120,
+        'TRASLADOINTERNOFIBRA': 80,
+        'TVADICIONAL': 80
+    }
+    
+    if tipo not in slas or pd.isna(t_min) or t_min <= 0:
+        return None
+        
+    sla = slas[tipo]
+    if t_min <= sla:
+        # Si cumple o es más rápido, el rendimiento sube por encima de 100% (tope de 120%)
+        rend = (2.0 - (t_min / sla)) * 100.0
+        return round(min(120.0, rend), 1)
+    else:
+        # Si se pasa, el rendimiento decae proporcionalmente
+        rend = (sla / t_min) * 100.0
+        return round(max(0.0, rend), 1)
+
+# ==============================================================================
 # PROCESAMIENTO ANALÍTICO CENTRAL
-# Ahora devuelve df_act_procesado para que el filtro de fechas pueda re-calcular
 # ==============================================================================
 def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
     try:
@@ -246,9 +280,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
             estado_upper = df_act['ESTADO'].astype(str).str.upper().str.strip()
             df_act = df_act[estado_upper.str.contains('CERRADA|LIQUIDADA|FINALIZADA|COMPLETADA', na=False)]
 
-        # IMPORTANTE: dayfirst=True porque el sistema fuente exporta fechas en formato DD/MM/YYYY.
-        # Sin esto, pandas asume MM/DD/YYYY (estilo US) y cualquier fecha con día > 12 se vuelve
-        # NaT silenciosamente, descartando esas órdenes del conteo y del filtro de fechas.
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act['HORA_INI'], errors='coerce', dayfirst=True)
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act['HORA_LIQ'], errors='coerce', dayfirst=True)
         df_act['Fecha_Dia'] = df_act['FECHA_LIQUIDADO'].dt.date
@@ -269,8 +300,22 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 
         df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
+        
+        # ==============================================================================
+        # 🚨 FILTRO DE SEGURIDAD OPERATIVA: ELIMINAR CLICS ACCIDENTALES (<= 4 MINUTOS)
+        # ==============================================================================
+        # Si una orden se abre y cierra en 4 minutos o menos, se considera un error y se
+        # descarta por completo del análisis para no alterar volumenes, promedios ni eficiencia.
+        df_act = df_act[df_act['Minutos_Orden'] > 4]
+        
+        if df_act.empty:
+            return None, None, None, None, "No quedaron órdenes válidas para analizar tras filtrar los tiempos mínimos de ejecución."
+
         df_act['Segmento'] = df_act['ACTIVIDAD'].apply(clasificar_segmento)
         df_act['TipoOrden'] = df_act['ACTIVIDAD'].astype(str).str.strip().str.upper()
+
+        # Cálculo de rendimiento fila por fila (evalúa solo las órdenes que pasaron el filtro)
+        df_act['Rendimiento_Pct'] = df_act.apply(calcular_rendimiento_fila, axis=1)
 
         tecnicos_originales = df_act['TECNICO'].unique()
         tecnicos_limpios = [limpiar_texto_nombres(t) for t in tecnicos_originales]
@@ -392,7 +437,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
                 else:
                     dias_no_presentados_dict = faltas_dict.copy()
 
-        # Devolvemos df_act completo (con Fecha_Dia) para poder re-filtrar en el frontend
         return df_act, df_diario_gps, df_exp_detallado, gps_promedios, "Exitoso"
 
     except Exception as e:
@@ -405,8 +449,6 @@ def procesar_rendimiento_avanzado(df_act, df_gps, df_exp):
 # ==============================================================================
 def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_dict,
                         dias_no_presentados_dict, df_exp_detallado):
-    """Re-calcula df_maestra, resumen_segmento y resumen_tipo sobre el rango de fechas activo."""
-
     if df_act_filtrado.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
@@ -425,6 +467,7 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
     resumen_act = df_act_filtrado.groupby('TECNICO').agg(
         Ordenes_Totales=('NUM', 'count'),
         Minutos_Promedio=('Minutos_Orden', calcular_promedio_real),
+        Rendimiento_Promedio=('Rendimiento_Pct', 'mean'),  # Promedio de eficiencias
         Hora_Primera_Orden=('FECHA_ENTRADA', 'min')
     ).reset_index()
 
@@ -434,7 +477,8 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
 
     resumen_tipo = df_act_filtrado.groupby(['TECNICO', 'TipoOrden']).agg(
         Ordenes=('NUM', 'count'),
-        MinProm=('Minutos_Orden', calcular_promedio_real)
+        MinProm=('Minutos_Orden', calcular_promedio_real),
+        Rendimiento_Prom=('Rendimiento_Pct', 'mean')  # Rendimiento promedio por tipo
     ).reset_index()
 
     datos_finales = []
@@ -445,6 +489,8 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
         gps = gps_promedios.get(tec, {'Salida': '--', 'Entrada': '--'})
         plex_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Plex')]['Ordenes'].sum())
         res_ord = int(resumen_segmento[(resumen_segmento['TECNICO'] == tec) & (resumen_segmento['Segmento'] == 'Residencial')]['Ordenes'].sum())
+        
+        rend_global = round(row['Rendimiento_Promedio'], 1) if pd.notna(row['Rendimiento_Promedio']) else 0.0
 
         datos_finales.append({
             'TÉCNICO': tec,
@@ -452,6 +498,7 @@ def construir_resumenes(df_act_filtrado, gps_promedios, faltas_dict, llamados_di
             'ÓRDENES PLEX': plex_ord,
             'ÓRDENES RESIDENCIAL': res_ord,
             'TIEMPO PROM. EN ORDEN (Min)': round(row['Minutos_Promedio'], 1),
+            'RENDIMIENTO GLOBAL (%)': rend_global,
             'HORA 1ra ORDEN': h_primera,
             'HORA ÚLT. ORDEN': h_ultima,
             'SALIDA PLANTEL (GPS)': gps['Salida'],
@@ -516,7 +563,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 )
 
                 if df_act_proc is not None:
-                    # Reconstruir dicts de expedientes para pasarlos a construir_resumenes
+                    # Reconstruir dicts de expedientes
                     faltas_dict = {}
                     llamados_dict = {}
                     dias_no_presentados_dict = {}
@@ -531,8 +578,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         else:
                             dias_no_presentados_dict = faltas_dict.copy()
 
-                    # Guardar TODO en session_state — el filtro de fechas lo usará
-                    st.session_state['rs_act_proc'] = df_act_proc          # df con Fecha_Dia → filtrable
+                    st.session_state['rs_act_proc'] = df_act_proc
                     st.session_state['rs_diario'] = df_diario_gps
                     st.session_state['rs_disciplina'] = df_exp_det
                     st.session_state['rs_gps_promedios'] = gps_promedios
@@ -556,9 +602,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     llamados_dict      = st.session_state.get('rs_llamados', {})
     dias_no_pres_dict  = st.session_state.get('rs_no_presentados', {})
 
-    # =========================================================
-    # 📅 FILTRO GLOBAL POR FECHAS — opera sobre df_act_proc (tiene Fecha_Dia)
-    # =========================================================
     fechas_disponibles = pd.to_datetime(df_act_proc['Fecha_Dia'].dropna().astype(str), errors='coerce').dropna()
 
     if not fechas_disponibles.empty:
@@ -580,7 +623,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             fecha_inicio = min_date
             fecha_fin = max_date
 
-        # Aplicar filtro al df_act granular — TODO lo demás se recalcula desde aquí
         mascara = (
             pd.to_datetime(df_act_proc['Fecha_Dia'].astype(str), errors='coerce').dt.date >= fecha_inicio
         ) & (
@@ -592,7 +634,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
         fecha_fin = None
         df_act_filtrado = df_act_proc.copy()
 
-    # Re-calcular resúmenes con el rango activo
     df_m, df_seg, df_tipo_ord = construir_resumenes(
         df_act_filtrado, gps_promedios, faltas_dict, llamados_dict, dias_no_pres_dict, df_exp_det
     )
@@ -600,9 +641,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
     if df_m.empty:
         st.warning("⚠️ No hay órdenes en el rango de fechas seleccionado.")
         return
-    # =========================================================
 
-    # --- PESTAÑAS DEL DASHBOARD ---
     tab_graficos, tab_maestra, tab_exp = st.tabs([
         "📈 Gráficos y KPIs",
         "📋 Tabla Maestra Integral",
@@ -624,7 +663,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
         st.markdown("---")
 
-        # ---- GRÁFICO 1: PRODUCTIVIDAD (Residencial vs Plex) ----
         st.markdown("#### 📦 Productividad por Técnico — Residencial vs Plex")
         if not df_seg.empty:
             orden_tecs = df_seg.groupby('TECNICO')['Ordenes'].sum().sort_values(ascending=True).index.tolist()
@@ -655,7 +693,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
 
         st.markdown("---")
 
-        # ---- GRÁFICO 2: TIEMPO PROMEDIO por técnico y tipo de orden ----
         st.markdown("#### ⏳ Tiempo Promedio por Orden — Todos los Técnicos por Tipo")
         act_filtro = []
         if not df_tipo_ord.empty:
@@ -693,75 +730,43 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 st.plotly_chart(fig_time, use_container_width=True)
 
                 with st.expander("📊 Ver detalle numérico por tipo de orden"):
-                    # Separamos en dos pestañas para no saturar la vista
-                    tab_tiempos, tab_rendimiento = st.tabs(["⏱️ Tiempos Promedio (Min)", "🏆 Rendimiento de Eficiencia (%)"])
-                    
-                    with tab_tiempos:
-                        df_tipo_pivot = df_tipo_ord.pivot_table(
-                            index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
-                        ).round(1).reset_index()
-                        df_tipo_pivot.columns.name = None
-                        st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
-                        
-                    with tab_rendimiento:
-                        st.caption("Fórmula: (Tiempo Meta / Tiempo Real) * 100. | >100% = Superó Meta | 100% = En Tiempo | <100% = Atraso")
-                        
-                        # 1. Definimos las metas (SLA) en minutos según tu regla
-                        metas_sla = {
-                            'INSEQUIPO': 60,
-                            'INSFIBRA': 120,
-                            'SOP': 80,
-                            'SOPFIBRA': 80,
-                            'INSFIBRACORP': 120,
-                            'SOPFIBRACORP': 80,
-                            'TRASLADOEXTFIBRA': 120,
-                            'TRASLADOINTERNOFIBRA': 80,
-                            'TVADICIONAL': 80
-                        }
-                        
-                        # 2. Función para calcular el porcentaje
-                        def calcular_rendimiento_eficiencia(row):
-                            tipo = str(row['TipoOrden']).strip().upper()
-                            tiempo_real = row['MinProm']
-                            meta = metas_sla.get(tipo, None)
-                            
-                            # Si no hay meta definida para esa orden o el tiempo es 0, ignoramos
-                            if not meta or tiempo_real <= 0:
-                                return None
-                                
-                            return (meta / tiempo_real) * 100.0
+                    df_tipo_pivot = df_tipo_ord.pivot_table(
+                        index='TECNICO', columns='TipoOrden', values='MinProm', aggfunc='mean'
+                    ).round(1).reset_index()
+                    df_tipo_pivot.columns.name = None
+                    st.dataframe(df_tipo_pivot, use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ No hay datos para la actividad seleccionada.")
+        else:
+            fig_time = px.bar(
+                df_m.sort_values('TIEMPO PROM. EN ORDEN (Min)', ascending=False),
+                x='TIEMPO PROM. EN ORDEN (Min)', y='TÉCNICO', orientation='h',
+                title="⏳ Tiempo Promedio por Orden (Minutos)", text_auto='.1f',
+                color_discrete_sequence=['#3B82F6']
+            )
+            fig_time.update_layout(height=max(400, len(df_m) * 32), yaxis_title="")
+            st.plotly_chart(fig_time, use_container_width=True)
+            st.info("ℹ️ No se detectó columna TIPO en el archivo.")
 
-                        # Aplicamos el cálculo
-                        df_rend = df_tipo_ord.copy()
-                        df_rend['Eficiencia_Pct'] = df_rend.apply(calcular_rendimiento_eficiencia, axis=1)
-                        
-                        # 3. Pivoteamos la tabla para porcentaje
-                        df_rend_pivot = df_rend.pivot_table(
-                            index='TECNICO', columns='TipoOrden', values='Eficiencia_Pct', aggfunc='mean'
-                        ).round(1).reset_index()
-                        df_rend_pivot.columns.name = None
-                        
-                        # Limpiamos columnas sin métricas
-                        df_rend_pivot = df_rend_pivot.dropna(axis=1, how='all')
-                        
-                        # 4. Semáforo de colores para los porcentajes
-                        def color_rendimiento(val):
-                            if pd.isna(val):
-                                return ''
-                            if val >= 100:
-                                return 'color: #10B981; font-weight: bold;' # Verde (En tiempo o superó)
-                            elif val >= 75:
-                                return 'color: #F59E0B; font-weight: bold;' # Amarillo (Atraso leve)
-                            else:
-                                return 'color: #EF4444; font-weight: bold;' # Rojo (Excedió demasiado)
+        st.markdown("---")
+        st.markdown("#### 📊 Matriz Detallada: Volumen, Tiempo y Eficiencia por Actividad")
+        st.caption("Esta tabla combina la cantidad de trabajos realizados, el tiempo de ejecución y el porcentaje de eficiencia (Rendimiento).")
 
-                        cols_num = [c for c in df_rend_pivot.columns if c != 'TECNICO']
-                        
-                        st.dataframe(
-                            df_rend_pivot.style.map(color_rendimiento, subset=cols_num).format("{:.1f}%", na_rep="-", subset=cols_num),
-                            use_container_width=True, 
-                            hide_index=True
-                        )
+        if not df_tipo_ord.empty:
+            df_matriz_input = df_tipo_ord[df_tipo_ord['TipoOrden'].isin(act_filtro)] if act_filtro else df_tipo_ord
+            df_matriz_final = df_matriz_input.copy()
+
+            df_pivot_cant = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='Ordenes').fillna(0).astype(int)
+            df_pivot_time = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='MinProm').fillna(0).round(1)
+            df_pivot_rend = df_matriz_final.pivot(index='TECNICO', columns='TipoOrden', values='Rendimiento_Prom').fillna(0).round(1)
+
+            tab_vista_cant, tab_vista_time, tab_vista_rend = st.tabs(["📦 Solo Cantidad", "⏳ Solo Tiempo Promedio", "📈 Rendimiento (%)"])
+
+            with tab_vista_cant:
+                st.dataframe(
+                    df_pivot_cant.style.background_gradient(cmap='Greens', axis=0),
+                    use_container_width=True
+                )
 
             with tab_vista_time:
                 def color_tiempos(val):
@@ -775,7 +780,20 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                     use_container_width=True
                 )
 
-            with st.expander("📝 Ver Resumen Listado (Técnico | Tipo | Cantidad | Promedio)", expanded=True):
+            with tab_vista_rend:
+                def color_rendimiento(val):
+                    if val == 0:
+                        return 'color: #475569'
+                    # Verde (>=100% óptimo), Amarillo (80%-99% regular), Rojo (<80% retrasado)
+                    color = '#10B981' if val >= 100 else ('#F59E0B' if val >= 80 else '#EF4444')
+                    return f'color: {color}; font-weight: bold'
+
+                st.dataframe(
+                    df_pivot_rend.style.map(color_rendimiento),
+                    use_container_width=True
+                )
+
+            with st.expander("📝 Ver Resumen Listado (Técnico | Tipo | Cantidad | Promedio | Rendimiento)", expanded=True):
                 df_listado_unido = df_matriz_input.sort_values(['TECNICO', 'Ordenes'], ascending=[True, False])
                 st.dataframe(
                     df_listado_unido,
@@ -786,7 +804,8 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         "MinProm": st.column_config.ProgressColumn(
                             "⏳ Tiempo Promedio", help="Minutos promedio por orden",
                             min_value=0, max_value=180, format="%.1f min"
-                        )
+                        ),
+                        "Rendimiento_Prom": st.column_config.NumberColumn("📈 Rendimiento", format="%.1f %%")
                     },
                     use_container_width=True,
                     hide_index=True
@@ -811,7 +830,6 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             )
 
             try:
-                # 🛠️ Generación del nuevo PDF con la tabla de actividades
                 pdf_bytes = generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det)
                 if pdf_bytes:
                     st.download_button(
