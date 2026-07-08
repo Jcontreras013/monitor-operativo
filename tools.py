@@ -135,7 +135,11 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitor
     auth = HTTPBasicAuth("monitorISCA", "54321")
     
     try:
-        response = requests.get(url, params=params, auth=auth, verify=False, timeout=35)
+        # Forzar a ignorar proxies para que la conexión vaya directo por la red local de la oficina
+        session = requests.Session()
+        session.trust_env = False  
+        
+        response = session.get(url, params=params, auth=auth, verify=False, timeout=35)
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
