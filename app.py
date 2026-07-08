@@ -17,7 +17,6 @@ import expediente
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
-
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
     aplicar_estilos_nativos, 
@@ -54,6 +53,8 @@ try:
         es_offline_preciso, 
         procesar_dataframe_base, 
         depurar_archivos_en_crudo,
+        depurar_api_con_dispositivos,
+        consultar_api_ordenes,
         logica_generar_pdf,
         generar_pdf_cierre_diario,
         generar_pdf_semanal,
@@ -86,7 +87,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed" 
 )
 
-# === INYECCIÓN CSS PARA PERMITIR COPIAR TEXTO EN GRÁFICOS PLOTLY ===
 st.markdown("""
     <style>
     .js-plotly-plot .plotly text {
@@ -105,7 +105,6 @@ NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 # MOTOR AUXILIAR DE CLASIFICACIÓN DE MATERIALES (EXCLUSIVO SOPORTE Y CEQUI)
 # ==============================================================================
 def clasificar_materiales(row):
-    # 1. Agregamos MOTIVO y COMENTARIO CIERRE para que no se escape nada
     act = str(row.get('ACTIVIDAD', '')).upper().strip()
     com = str(row.get('COMENTARIO', '')).upper().strip()
     razon = str(row.get('RAZON_CIERRE_SOP', '')).upper().strip()
@@ -117,15 +116,11 @@ def clasificar_materiales(row):
     if any(ex in tecnico for ex in ["LILIAN", "WILFREDO"]):
         return "NINGUNO"
         
-    # 2. Unificamos todo el texto del registro
     texto_completo = " | ".join([act, com, razon, sop, motivo, com_cierre])
     
-    # 3. REGLA DIRECTA (MÁXIMA PRIORIDAD): Si dice corte o cambio de acometida en CUALQUIER columna, lo cuenta.
     if "CORTE DE ACOMETIDA" in texto_completo or "CAMBIO DE ACOMETIDA" in texto_completo:
         return "CAMBIO_ACOMETIDA"
         
-    # --- EXCLUSIÓN DE TRABAJOS TRONCALES / SUPERVISIÓN ---
-    # (Se ejecuta SOLO si no fue un corte de acometida confirmado arriba)
     es_troncal_o_supervision = any(term in texto_completo for term in [
         "144 HILOS", "48 HILOS", "72 HILOS", "96 HILOS", "24 HILOS", 
         "TRONCAL", "MUFA", "MUFAS", "SUPERVISION", "SUPERVISIÓN", 
@@ -135,7 +130,6 @@ def clasificar_materiales(row):
     if es_troncal_o_supervision:
         return "NINGUNO"
         
-    # --- B. DETECCIÓN DE REEMPLAZO DE ACOMETIDA (Por sinónimos) ---
     verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "CABLEO", "CABLEÓ", "RECONEXION", "CORTAD", "REVENTAD", "ROBAD"]
     sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA"]
     
@@ -155,7 +149,6 @@ def clasificar_materiales(row):
     if any(f in texto_completo for f in frases_directas_acometida) or es_acometida_accion:
         return "CAMBIO_ACOMETIDA"
         
-    # --- C. DETECCIÓN DE CAMBIO DE EQUIPO ---
     verbos_equipo = ["CAMBI", "REMPLAZ", "REEMPLAZ", "RETIR", "DEJE", "DEJÓ", "PUSE", "PUSO", "ENTREG", "REINSTAL"]
     sustantivos_equipo = ["EQUIPO", "ONT", "ONU", "CPE", "ROUTER", "MODEM", "MODÉM", "CAJITA"]
     
@@ -176,12 +169,13 @@ def clasificar_materiales(row):
         return "CAMBIO_EQUIPO"
         
     return "NINGUNO"
+
 # ==============================================================================
-# GENERADOR DEL REPORTE PDF DE MATERIALES (TIPO MEMO MAXCOM)
+# GENERADOR DEL REPORTE PDF DE MATERIALES
 # ==============================================================================
 def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio):
     import textwrap
-    import tempfile  # Se añade la importación faltante de tempfile
+    import tempfile
     from fpdf import FPDF
     
     class MaterialesPDF(FPDF):
@@ -219,7 +213,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # TÍTULO DEL DOCUMENTO
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(30, 58, 138)
     pdf.cell(0, 8, f"REPORTE MENSUAL DE CONTROL DE MATERIALES", ln=True, align="C")
@@ -228,7 +221,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
     pdf.cell(0, 5, f"Periodo: {mes_nombre.upper()} {anio}", ln=True, align="C")
     pdf.ln(5)
     
-    # RESUMEN EJECUTIVO (KPIs)
     pdf.set_fill_color(241, 245, 249)
     pdf.rect(10, pdf.get_y(), 190, 14, style='F')
     pdf.set_y(pdf.get_y() + 2)
@@ -240,7 +232,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
     pdf.cell(90, 10, f"Total Reemplazos de Acometida: {len(df_ac)}", ln=True)
     pdf.ln(8)
     
-    # TABLA 1: RESUMEN POR COLABORADOR
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(30, 58, 138)
     pdf.cell(0, 6, "1. CONSUMO CONSOLIDADO POR TECNICO", ln=True)
@@ -275,7 +266,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
         pdf.cell(W_tech[2], 6, str(int(row.get('Acometidas Cambiadas', 0))), border=1, align="C")
         pdf.cell(W_tech[3], 6, str(int(row.get('Total Intervenciones', 0))), border=1, align="C", ln=True)
         
-    # TABLA 2: DETALLE HISTÓRICO CRONOLÓGICO
     pdf.ln(10)
     if pdf.get_y() > 200:
         pdf.add_page()
@@ -297,7 +287,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
     
     pdf.set_text_color(15, 23, 42)
     
-    # Preparación de transacciones consolidadas
     df_eq_copy = df_eq.copy()
     df_eq_copy['TIPO_MATERIAL'] = "EQUIPO"
     df_ac_copy = df_ac.copy()
@@ -321,7 +310,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
         tipo_str = str(row.get('TIPO_MATERIAL', ''))
         com_str = str(row.get('COMENTARIO', ''))
         
-        # Envoltura inteligente para comentarios largos del técnico
         lineas = textwrap.wrap(com_str, width=54)
         if not lineas:
             lineas = [""]
@@ -356,35 +344,6 @@ def generar_pdf_materiales_mensual(df_eq, df_ac, tech_summary, mes_nombre, anio)
         data = f.read()
     os.remove(path)
     return data
-        
-    # --- 3. CLASIFICACIÓN INTENSIVA DE REEMPLAZO DE ACOMETIDA (CABLE DROP) ---
-    # Análisis por asociación (Verbo de tendido/cambio + Sustantivo de cable de bajada)
-    verbos_acometida = ["CAMBI", "REMPLAZ", "REEMPLAZ", "TIRE", "TIRÉ", "TIRÓ", "TIRO", "INSTAL", "CABLE", "RETIRE", "RETIRÓ", "RETIRAR", "RECONEC", "TENSE", "TENSÓ", "TENSAR", "REPAR", "EMPALM", "ROBAD", "CORTAD", "REVENTAD", "TIRAD", "TENDID", "TENDIÓ", "TENDIO", "TENDER", "METROS", "MTS", "MT"]
-    sustantivos_acometida = ["ACOMETIDA", "DROP", "CABLE", "FIBRA", "BAJADA", "ALAMBRE", "HILO", "ACOMTIDA", "ACO", "CORTE"]
-    
-    es_acometida = (
-        any(v in texto_completo for v in verbos_acometida) and 
-        any(s in texto_completo for s in sustantivos_acometida)
-    )
-    
-    frases_directas_acometida = [
-        "CAMBIO DE ACOMETIDA", "CAMBIO ACOMETIDA", "CAMBIO DE DROP", "CAMBIO DROP", 
-        "ACOMETIDA DAÑADA", "ACOMETIDA DANADA", "REEMPLAZO DE ACOMETIDA", "REEMPLAZO ACOMETIDA", 
-        "ACOMETIDA ROBADA", "ACOMETIDA CORTADA", "NUEVA ACOMETIDA", "TIRADO DE ACOMETIDA", 
-        "TENSADO DE ACOMETIDA", "SE CAMBIO ACOMETIDA", "SE CAMBIO DROP", "CAMBIO DE CABLE DROP", 
-        "CABLE DE ACOMETIDA", "TIRAR DROP", "TIRAR ACOMETIDA", "CABLE DROP", "REEMPLAZAR DROP",
-        "REEMPLAZAR ACOMETIDA", "ACOMETIDA NUEVA", "DROP NUEVO", "DROP NUEVA", "CAMBIO DE BAJADA",
-        "REEMPLAZO DE DROP", "REEMPLAZO DROP", "LANZADO DE ACOMETIDA", "LANZO ACOMETIDA", "CORTE DE ACOMETIDA",
-        "CAMBIO TOTAL DE FIBRA"
-        
-    ]
-    
-    if es_acometida or any(f in texto_completo for f in frases_directas_acometida):
-        return "CAMBIO_ACOMETIDA"
-        
-    return "NINGUNO"
-    #----------------------------------------------------------------------------------------------------#
-
 
 def sincronizar_datos_nube(conn):
     try:
@@ -518,9 +477,6 @@ def main():
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
 
-    if 'df_base' not in st.session_state or st.session_state.get('btn_reprocesar', False):
-        pass 
-
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
@@ -598,27 +554,43 @@ def main():
         file_act_ptr = None
         file_disp_ptr = None
         btn_reprocesar = False
+        btn_api_procesar = False
         
         if mostrar_cargador:
             st.divider()
             st.markdown("### 📥 Carga de Archivos")
+            
+            # CONTROL ESPECIAL PARA ADMINISTRADORES (Cruce Inteligente API y Carga FTTX manual)
             if es_admin:
-                st.caption("Eres Admin: Sube los dos archivos (Actividades y FTTX).")
-                archivos_uploader_diamante = st.file_uploader("Sube rep_actividades y FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=True)
+                st.markdown("#### ⚡ Sincronización por API (Cepheus)")
+                fecha_inicio_api = st.date_input("Fecha de Extracción API:", value=get_honduras_time().date() - timedelta(days=7), key="api_date_input_sidebar")
+                
+                # Botón de Procesamiento de API Cepheus
+                btn_api_procesar = st.button("🔌 DESCARGAR DE CEPHEUS API", use_container_width=True, type="primary")
+                
+                st.divider()
+                st.markdown("#### 🚙 Carga FTTX e Históricos")
+                st.caption("Subida tradicional manual de Dispositivos FTTX o rep_actividades en caso de contingencia.")
+                archivos_uploader_diamante = st.file_uploader("Sube rep_actividades y/o FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=True)
+                
                 if archivos_uploader_diamante:
                     for file_item in archivos_uploader_diamante:
                         f_name_lwr = file_item.name.lower()
-                        if "actividades" in f_name_lwr: file_act_ptr = file_item
+                        if "actividades" in f_name_lwr: 
+                            file_act_ptr = file_item
                         elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
                             file_disp_ptr = file_item
                             try:
                                 with open("cache_fttx.tmp", "wb") as f: f.write(file_item.getvalue())
                             except: pass
+                btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS SUBIDOS", use_container_width=True)
             else:
                 st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
                 archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
                 if archivo_unico: file_act_ptr = archivo_unico
+                btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
 
+            # Estrategia de Caché Automática para cierres tardíos
             ahora_hx = get_honduras_time()
             es_horario_tarde = ahora_hx.hour >= 17
             es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
@@ -631,128 +603,268 @@ def main():
                         st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
                     except: pass
 
-            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
-
     # ==============================================================================
-    # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS)
+    # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS CON API INTEGRADA)
     # ==============================================================================
-    if 'df_base' not in st.session_state or btn_reprocesar:
-        if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
-            with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde GCS..."):
+    if 'df_base' not in st.session_state or btn_reprocesar or btn_api_procesar:
+        
+        # --- FLUJO A: PROCESAMIENTO MEDIANTE API CEPHEUS ---
+        if btn_api_procesar:
+            with st.spinner("🔌 Conectando y descargando actividades de Cepheus API en Vivo..."):
                 try:
-                    df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
-                    if df_fttx_cloud is None or df_fttx_cloud.empty:
-                        df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
+                    fecha_dt_api = datetime.combine(fecha_inicio_api, dt_time(0, 0))
+                    df_api_raw = consultar_api_ordenes(fecha_dt_api)
                     
-                    if df_fttx_cloud is not None and not df_fttx_cloud.empty:
+                    if df_api_raw is None or df_api_raw.empty:
+                        st.error("❌ No se obtuvieron órdenes de la API de Cepheus para el rango de fecha configurado.")
+                    else:
+                        # Obtener referencia FTTX (de uploader de jaison o desde GCS)
+                        if file_disp_ptr is not None:
+                            fttx_data = file_disp_ptr
+                            # Guardar la nueva versión subida por jaison
+                            try:
+                                if isinstance(file_disp_ptr, bytes):
+                                    bytes_fttx = file_disp_ptr
+                                elif hasattr(file_disp_ptr, 'read'):
+                                    file_disp_ptr.seek(0)
+                                    bytes_fttx = file_disp_ptr.read()
+                                    file_disp_ptr.seek(0)
+                                else: bytes_fttx = None
+                                
+                                if bytes_fttx:
+                                    sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                            except Exception as e_save:
+                                print(f"Fallo al respaldar FTTX en GCS: {e_save}")
+                        else:
+                            # Cargar la versión maestra de GCS
+                            df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                            if df_fttx_cloud is None or df_fttx_cloud.empty:
+                                df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=0)
+                            fttx_data = df_fttx_cloud
+                        
+                        # Realizar cruce de la API con los Dispositivos
+                        df_depurado = depurar_api_con_dispositivos(df_api_raw, fttx_data)
+                        df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
+                        
+                        # Filtrado de ventana de tiempo (7 días de retención histórica local)
+                        ahora_momento_ts = pd.Timestamp(get_honduras_time())
+                        fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
+                        mask_vivas_loc = df_depurado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                        df_depurado = df_depurado[(df_depurado['HORA_LIQ'] >= fecha_limite_7d_ventana) | (df_depurado['FECHA_APE'] >= fecha_limite_7d_ventana) | (df_depurado['HORA_LIQ'].isna()) | mask_vivas_loc].copy()
+                        
+                        df_depurado['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_depurado['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
+                        if 'TECNICO' in df_depurado.columns:
+                            df_depurado.loc[df_depurado['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
+
+                        act_upper = df_depurado['ACTIVIDAD'].fillna('').astype(str).str.upper()
+                        est_upper = df_depurado['ESTADO'].fillna('').astype(str).str.upper().str.strip()
+                        tec_upper = df_depurado['TECNICO'].fillna('').astype(str).str.upper().str.strip()
+                        com_upper = df_depurado['COMENTARIO'].fillna('').astype(str).str.upper()
+                        cli_upper = df_depurado['CLIENTE'].fillna('').astype(str).str.upper()
+                        
+                        mins_diff = (ahora_momento_ts - df_depurado['HORA_INI']).dt.total_seconds() / 60
+                        mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
+                        mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
+
+                        df_depurado['ALERTA_TIEMPO'] = (
+                            (df_depurado['HORA_INI'].notnull()) & (df_depurado['HORA_LIQ'].isnull()) & 
+                            (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
+                        )
+                        
+                        mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
+                        mask_est_abierto = est_upper != 'CERRADA'
+                        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
+                        mask_precisa = com_upper.apply(es_offline_preciso) 
+                        
+                        df_depurado['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
+                        df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
+                        
+                        texto_seg = act_upper + " " + cli_upper + " " + com_upper
+                        df_depurado['SEGMENTO'] = np.where(texto_seg.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
+                        
+                        diff_temp = df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']
+                        df_depurado['TIEMPO_REAL'] = np.where(
+                            df_depurado['HORA_INI'].isnull() | df_depurado['HORA_LIQ'].isnull(),
+                            "---",
+                            (diff_temp.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+                            ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+                        )
+
+                        # Cruzar y unificar con el histórico maestro acumulado en la nube
+                        df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                        if df_cloud is None or df_cloud.empty:
+                            df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                            
+                        if df_cloud is not None and not df_cloud.empty:
+                            df_cloud.columns = df_cloud.columns.str.upper().str.strip()
+                            if 'NUM' in df_cloud.columns:
+                                df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
+                            if 'ACTIVIDAD' in df_cloud.columns:
+                                mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
+                                df_cloud = df_cloud[~mask_basura_cloud].copy()
+                            if 'EMPRESA' in df_cloud.columns:
+                                mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
+                                df_cloud = df_cloud[mask_isca_cloud].copy()
+
+                            PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                            mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
+                            df_historial_puro = df_cloud[~mask_vivas_nube].copy()
+                            df_combined = pd.concat([df_historial_puro, df_depurado])
+                        else:
+                            df_combined = df_depurado
+                            
+                        if 'NUM' in df_combined.columns:
+                            df_combined['TIENE_LIQ'] = df_combined.get('HORA_LIQ').notna()
+                            df_combined = df_combined.sort_values(by=['TIENE_LIQ'], ascending=True)
+                            df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
+                            df_nd = df_combined[df_combined['NUM'] == 'N/D']
+                            df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')
+
+                        # Guardar consolidación a GCS y Google Sheets
+                        df_to_upload = df_combined.copy()
+                        for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+                            if c_date in df_to_upload.columns:
+                                df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
+                                
+                        sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
+                        
+                        st.session_state.df_base = df_combined
+                        st.success("✅ ¡Datos descargados e historial consolidado con la nube exitosamente!")
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e_api_proc:
+                    st.error(f"❌ Fallo al reprocesar los datos de la API: {e_api_proc}")
+
+        # --- FLUJO B: PROCESAMIENTO TRADICIONAL POR ARCHIVOS MANUALES ---
+        elif btn_reprocesar:
+            if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
+                with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde GCS..."):
+                    try:
+                        df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                        if df_fttx_cloud is None or df_fttx_cloud.empty:
+                            df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
+                        
+                        if df_fttx_cloud is not None and not df_fttx_cloud.empty:
+                            b_io = io.BytesIO()
+                            with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
+                                df_fttx_cloud.to_excel(writer, index=False)
+                            file_disp_ptr = b_io.getvalue()
+                        else: raise ValueError("La pestaña FTTX está vacía.")
+                    except Exception as e:
                         b_io = io.BytesIO()
                         with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
-                            df_fttx_cloud.to_excel(writer, index=False)
+                            pd.DataFrame(columns=['ID']).to_excel(writer, index=False)
                         file_disp_ptr = b_io.getvalue()
-                    else: raise ValueError("La pestaña FTTX está vacía.")
-                except Exception as e:
-                    b_io = io.BytesIO()
-                    with pd.ExcelWriter(b_io, engine='openpyxl') as writer:
-                        pd.DataFrame(columns=['ID']).to_excel(writer, index=False)
-                    file_disp_ptr = b_io.getvalue()
 
-        if file_act_ptr is None or file_disp_ptr is None:
-            if st.session_state.get('df_base') is None:
-                if os.path.exists("Logotipo monitor.png"):
-                    col1_img, col2_img, col3_img = st.columns([1, 2, 1])
-                    with col2_img:
-                        st.image("Logotipo monitor.png", use_container_width=True)
-                else:
-                    st.title("⚡ Monitor Operativo Maxcom PRO")
-                
-                st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                
-                col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
-                with col_c2:
-                    if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_central"):
-                        if conn is not None: 
-                            sincronizar_datos_nube(conn)
-                        else: 
-                            st.error("Conexión no disponible.")
-                return
-        else:
-            res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
-            if res_p_diamante is not None:
-                st.session_state.df_hist = res_h_diamante
-                if conn is not None:
-                    with st.spinner("☁️ Sincronizando y uniendo con histórico en GCS..."):
-                        try:
-                            df_new = res_p_diamante.copy()
-                            if 'NUM' in df_new.columns:
-                                df_new['NUM'] = df_new['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                                df_new.loc[df_new['NUM'] == 'nan', 'NUM'] = 'N/D'
-                                
-                            df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-                            if df_cloud is None or df_cloud.empty:
-                                df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                                
-                            if df_cloud is not None and not df_cloud.empty:
-                                df_cloud.columns = df_cloud.columns.str.upper().str.strip()
-                                if 'NUM' in df_cloud.columns:
-                                    df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                                    df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
-                                if 'ACTIVIDAD' in df_cloud.columns:
-                                    mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
-                                    df_cloud = df_cloud[~mask_basura_cloud].copy()
-                                
-                                if 'EMPRESA' in df_cloud.columns:
-                                    mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
-                                    df_cloud = df_cloud[mask_isca_cloud].copy()
-
-                                PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-                                mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
-                                df_historial_puro = df_cloud[~mask_vivas_nube].copy()
-                                df_combined = pd.concat([df_historial_puro, df_new])
-                            else: df_combined = df_new
-                                
-                            if 'NUM' in df_combined.columns:
-                                df_combined['TIENE_LIQ'] = df_combined.get('HORA_LIQ').notna()
-                                df_combined = df_combined.sort_values(by=['TIENE_LIQ'], ascending=True)
-                                df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
-                                df_nd = df_combined[df_combined['NUM'] == 'N/D']
-                                df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')
-
-                            df_to_upload = df_combined.copy()
-                            for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-                                if c_date in df_to_upload.columns:
-                                    df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
+            if file_act_ptr is None or file_disp_ptr is None:
+                if st.session_state.get('df_base') is None:
+                    if os.path.exists("Logotipo monitor.png"):
+                        col1_img, col2_img, col3_img = st.columns([1, 2, 1])
+                        with col2_img:
+                            st.image("Logotipo monitor.png", use_container_width=True)
+                    else:
+                        st.title("⚡ Monitor Operativo Maxcom PRO")
+                    
+                    st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
+                    st.markdown("<br><br>", unsafe_allow_html=True)
+                    
+                    col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
+                    with col_c2:
+                        if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_central"):
+                            if conn is not None: 
+                                sincronizar_datos_nube(conn)
+                            else: 
+                                st.error("Conexión no disponible.")
+                    return
+            else:
+                res_p_diamante, res_h_diamante = cargar_y_limpiar_crudos_diamante_monitor(file_act_ptr, file_disp_ptr)
+                if res_p_diamante is not None:
+                    st.session_state.df_hist = res_h_diamante
+                    if conn is not None:
+                        with st.spinner("☁️ Sincronizando y uniendo con histórico en GCS..."):
+                            try:
+                                df_new = res_p_diamante.copy()
+                                if 'NUM' in df_new.columns:
+                                    df_new['NUM'] = df_new['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                    df_new.loc[df_new['NUM'] == 'nan', 'NUM'] = 'N/D'
                                     
-                            sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
-                            st.session_state.df_base = df_combined
-                            
-                            if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
-                                try:
-                                    if hasattr(file_disp_ptr, 'read'): 
-                                        file_disp_ptr.seek(0)
-                                        bytes_fttx = file_disp_ptr.read()
-                                        sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
-                                        file_disp_ptr.seek(0)
+                                df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                                if df_cloud is None or df_cloud.empty:
+                                    df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                                    
+                                if df_cloud is not None and not df_cloud.empty:
+                                    df_cloud.columns = df_cloud.columns.str.upper().str.strip()
+                                    if 'NUM' in df_cloud.columns:
+                                        df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                        df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
+                                    if 'ACTIVIDAD' in df_cloud.columns:
+                                        mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
+                                        df_cloud = df_cloud[~mask_basura_cloud].copy()
+                                    
+                                    if 'EMPRESA' in df_cloud.columns:
+                                        mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
+                                        df_cloud = df_cloud[mask_isca_cloud].copy()
 
-                                    if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
-                                        df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
-                                    else: 
-                                        df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
-                                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
-                                except Exception as e_fttx: pass
-                            
-                            st.success("✅ Datos sincronizados en GCS (Espejo Inverso) y unidos al historial correctamente.")
-                            import time
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e: 
-                            st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
-                            st.session_state.df_base = res_p_diamante
-                else: 
-                    st.session_state.df_base = res_p_diamante
-                    st.success("✅ Datos procesados localmente.")
-            else: return
+                                    PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                                    mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
+                                    df_historial_puro = df_cloud[~mask_vivas_nube].copy()
+                                    df_combined = pd.concat([df_historial_puro, df_new])
+                                else: df_combined = df_new
+                                    
+                                if 'NUM' in df_combined.columns:
+                                    df_combined['TIENE_LIQ'] = df_combined.get('HORA_LIQ').notna()
+                                    df_combined = df_combined.sort_values(by=['TIENE_LIQ'], ascending=True)
+                                    df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
+                                    df_nd = df_combined[df_combined['NUM'] == 'N/D']
+                                    df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')
+
+                                df_to_upload = df_combined.copy()
+                                for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
+                                    if c_date in df_to_upload.columns:
+                                        df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
+                                        
+                                sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
+                                st.session_state.df_base = df_combined
+                                
+                                if es_admin and file_disp_ptr is not None and not isinstance(file_disp_ptr, bytes):
+                                    try:
+                                        if hasattr(file_disp_ptr, 'read'): 
+                                            file_disp_ptr.seek(0)
+                                            bytes_fttx = file_disp_ptr.read()
+                                            sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                                            file_disp_ptr.seek(0)
+
+                                        if getattr(file_disp_ptr, 'name', '').lower().endswith('.csv'): 
+                                            df_fttx_up = pd.read_csv(file_disp_ptr, sep=None, engine='python')
+                                        else: 
+                                            df_fttx_up = pd.read_excel(file_disp_ptr, engine='openpyxl')
+                                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
+                                    except Exception as e_fttx: pass
+                                
+                                st.success("✅ Datos sincronizados en GCS y unidos al historial correctamente.")
+                                import time
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e: 
+                                st.warning(f"Se procesó localmente, pero falló la sincronización con la nube: {e}")
+                                st.session_state.df_base = res_p_diamante
+                    else: 
+                        st.session_state.df_base = res_p_diamante
+                        st.success("✅ Datos procesados localmente.")
+                else: return
+
+        # --- FLUJO C: LECTURA EN CACHÉ POR RECARGA ---
+        if 'df_base' not in st.session_state:
+            # Forzar una lectura inicial desde GCS para agilizar la sesión
+            df_gcs_init = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+            if df_gcs_init is not None and not df_gcs_init.empty:
+                st.session_state.df_base = df_gcs_init
+            else:
+                return
 
     df_base = st.session_state.df_base.copy()
     
@@ -983,7 +1095,6 @@ def main():
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
-                # Corrección del nombre de la función de clasificiar -> clasificar
                 def clasificar_dispatch(row):
                     act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
                     if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
@@ -1091,10 +1202,7 @@ def main():
             df_para_gantt_diario = df_base[mask_ini_dia | mask_liq_dia | mask_ape_dia].copy()
             
             mask_sin_ini_c = df_para_gantt_diario['HORA_INI'].isna() & df_para_gantt_diario['HORA_LIQ'].notnull()
-            df_para_gantt_diario.loc[mask_sin_ini_c, 'HORA_INI'] = df_para_gantt_diario.loc[mask_sin_ini_c, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
-            
-            mask_sin_ini_a = df_para_gantt_diario['HORA_INI'].isna() & df_para_gantt_diario['HORA_LIQ'].isna()
-            df_para_gantt_diario.loc[mask_sin_ini_a, 'HORA_INI'] = df_para_gantt_diario.loc[mask_sin_ini_a, 'FECHA_APE']
+            df_para_gantt_diario.loc[mask_sin_ini_c, 'HORA_INI'] = df_para_gantt_diario.loc[mask_sin_ini_c, 'HORA_LIQ']
             
             df_para_gantt_diario = df_para_gantt_diario[df_para_gantt_diario['HORA_INI'].notnull()].copy()
             
@@ -1314,7 +1422,7 @@ def main():
                 st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
             else: st.info("No hay datos de mora consolidada para esta fecha.")
 
-            st.markdown("### ⏱️ Tiempos de Atención Promedio")
+            st.markdown("### ⏱️ Tiempos de Atencion Promedio")
             if not df_cerradas_espejo.empty:
                 df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
                 st.dataframe(df_pivot_diario, use_container_width=True)
@@ -1447,7 +1555,6 @@ def main():
             st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
             st.caption("Reporte histórico completo de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop).")
             
-            # Selector de Fecha (Mes y Año)
             col_sel1, col_sel2 = st.columns(2)
             with col_sel1:
                 meses_nombres = [
@@ -1459,7 +1566,6 @@ def main():
             with col_sel2:
                 anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
 
-            # === DESCARGA DIRECTA DEL HISTORIAL COMPLETO DE LA NUBE PARA EVITAR EL FILTRO DE 7 DÍAS ===
             if 'df_materiales_master' not in st.session_state:
                 with st.spinner("📥 Cargando base histórica completa para inventario..."):
                     try:
@@ -1478,7 +1584,6 @@ def main():
 
             df_m = st.session_state.get('df_materiales_master', df_base).copy()
 
-            # Forzar conversión de fechas asegurando que el día vaya primero (dayfirst=True)
             df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], dayfirst=True, errors='coerce')
             df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], dayfirst=True, errors='coerce'))
             df_m = df_m[df_m['FECHA_REPORTE'].notna()]
@@ -1488,19 +1593,16 @@ def main():
                 (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)
             ].copy()
             
-            # === FILTRO: SOPFIBRA, SOPFIBRACORP O CAMBIOS DE EQUIPO (CEQUI) ===
             if not df_m_filtrado.empty:
                 act_upper = df_m_filtrado['ACTIVIDAD'].astype(str).str.upper().str.strip()
                 mask_actividades_sop = act_upper.str.contains("SOP", na=False) | (act_upper == "CEQUI")
                 df_m_filtrado = df_m_filtrado[mask_actividades_sop].copy()
             
-            # Filtro adicional para remover a Lilian y Wilfredo del reporte final
             if not df_m_filtrado.empty:
                 mask_validos = ~df_m_filtrado['TECNICO'].astype(str).str.upper().str.contains("LILIAN|WILFREDO", na=False)
                 df_m_filtrado = df_m_filtrado[mask_validos].copy()
             
             if not df_m_filtrado.empty:
-                # Aplicamos el motor de escaneo inteligente
                 df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
                 
                 df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
@@ -1509,7 +1611,6 @@ def main():
                 total_equipos = len(df_equipos)
                 total_acometidas = len(df_acometidas)
                 
-                # Despliegue de Indicadores Clave (KPIs)
                 col_k1, col_k2 = st.columns(2)
                 with col_k1:
                     st.markdown(f"""
@@ -1544,7 +1645,6 @@ def main():
                 tech_summary['Acometidas Cambiadas'] = tech_summary['Acometidas Cambiadas'].astype(int)
                 tech_summary['Total Intervenciones'] = tech_summary['Equipos Cambiados'] + tech_summary['Acometidas Cambiadas']
                 
-                # Omitir de la lista consolidada a técnicos que queden en 0 tras depurar
                 tech_summary = tech_summary[tech_summary['Total Intervenciones'] > 0]
                 tech_summary = tech_summary.sort_values(by='Total Intervenciones', ascending=False)
                 
@@ -1687,15 +1787,15 @@ def main():
                         bg_color, font_color = '', 'white'
                         if v == ">= 7 Dia": bg_color = '#d32f2f'
                         elif v == "= 4 a 6 Dias": bg_color = '#f57c00'
-                        elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
-                        elif v == "= 0 Dia": bg_color = '#388e3c'
+                        elif v == "= 1 a 3 Dias": bg_color = '#fbc02d'
+                        else: bg_color = '#388e3c'
                         return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
-                    col_tab_1, col_tab_2, col_tab_3, col_tab_4 = st.columns([1, 1.2, 1.2, 1])
-                    with col_tab_1:
+                    col_t1, col_t2 = st.columns([1, 2])
+                    with col_t1:
                         st.caption("📅 Resumen de Retraso")
                         res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
                         res_retraso_v.columns = ['Dias', 'Cant']
@@ -1750,13 +1850,10 @@ def main():
                     st.caption("📦 Instalaciones")
                     df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
                     res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
-                    res_ins.columns = ['Instalaciones', 'Cant']
-                    cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
-                    for c in cats_ins:
-                        if c not in res_ins['Instalaciones'].values: res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
+                    res_ins.columns = ['Campañas / Tipo', 'Cant']
                     st.dataframe(res_ins, hide_index=True, use_container_width=True)
                 else:
-                    with col_tab_2:
+                    with col_t2:
                         st.caption("🛠️ SOP / Mantenimiento")
                         df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
                         res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
@@ -1765,18 +1862,20 @@ def main():
                         st.write(f"**Total General SOP: {df_sop.shape[0]}**")
                         st.metric("Exceden 2 Horas ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
 
-                    with col_tab_3:
+                    with col_t1:
+                        st.markdown("<br><br>", unsafe_allow_html=True)
                         st.caption("📦 Instalaciones")
                         df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
                         res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
                         res_ins.columns = ['Instalaciones', 'Cant']
                         cats_ins = ['Nueva', 'Adición', 'Cambio / Migración', 'Recuperado']
                         for c in cats_ins:
-                            if c not in res_ins['Instalaciones'].values: res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
+                            if c not in res_ins['Instalaciones'].values: 
+                                res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
                         st.dataframe(res_ins, hide_index=True, use_container_width=True)
                         st.write(f"**Total General INS: {df_ins.shape[0]}**")
 
-                    with col_tab_4:
+                    with col_t2:
                         st.caption("⚙️ Otros")
                         df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
                         res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
@@ -1909,7 +2008,7 @@ def main():
 
                             actividades_permitidas = [
                                 'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
-                                'INS-WA','PEXTERNO', 'PLEXISCA', 'SOP', 
+                                'INS-WA', 'PEXTERNO', 'PLEXISCA', 'SOP', 
                                 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
                                 'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
@@ -2094,62 +2193,26 @@ def main():
                     plt.style.use('dark_background')
                     
                     if es_movil:
-                        fig1, ax1 = plt.subplots(figsize=(6, 4))
-                        conteo_seg = df_v_tabla_monitor['SEGMENTO'].value_counts()
-                        if not conteo_seg.empty:
-                            conteo_seg.plot(kind='bar', color=['#1f6feb', '#2ea043'], ax=ax1)
-                            ax1.set_title("Volumen por Segmento", fontsize=12, fontweight='bold')
-                            ax1.set_ylabel("Cant.")
-                            ax1.tick_params(axis='x', rotation=0)
-                            st.pyplot(fig1)
+                        fig, ax = plt.subplots(figsize=(6, 4))
+                        df_v_tabla_monitor['SEGMENTO'].value_counts().plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
+                        ax.set_title("Órdenes por Segmento")
+                        st.pyplot(fig)
                     else:
-                        col_m1, col_m2 = st.columns(2)
-                        with col_m1:
-                            fig1, ax1 = plt.subplots(figsize=(6, 4))
-                            conteo_seg = df_v_tabla_monitor['SEGMENTO'].value_counts()
-                            if not conteo_seg.empty:
-                                conteo_seg.plot(kind='bar', color=['#1f6feb', '#2ea043'], ax=ax1)
-                                ax1.set_title("Volumen de Órdenes por Segmento", fontsize=12, fontweight='bold')
-                                ax1.set_ylabel("Cantidad de Órdenes")
-                                ax1.tick_params(axis='x', rotation=0)
-                                ax1.spines['top'].set_visible(False)
-                                ax1.spines['right'].set_visible(False)
-                                st.pyplot(fig1)
+                        col_an1, col_an2 = st.columns(2)
+                        with col_an1:
+                            fig, ax = plt.subplots(figsize=(6, 4))
+                            df_v_tabla_monitor['SEGMENTO'].value_counts().plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
+                            ax.set_title("Órdenes por Segmento")
+                            st.pyplot(fig)
+                        with col_an2:
+                            fig, ax = plt.subplots(figsize=(6, 4))
+                            df_v_tabla_monitor['MOTIVO'].value_counts().plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
+                            ax.set_ylabel('')
+                            ax.set_title("Motivo / Diagnóstico")
+                            st.pyplot(fig)
 
-                        with col_m2:
-                            fig2, ax2 = plt.subplots(figsize=(6, 4))
-                            tiempos_validos = df_v_tabla_monitor[df_v_tabla_monitor['MINUTOS_CALC'] > 0]['MINUTOS_CALC']
-                            if not tiempos_validos.empty:
-                                ax2.hist(tiempos_validos, bins=15, color='#a371f7', edgecolor='white', alpha=0.8)
-                                ax2.set_title("Distribución de Tiempos de Resolución", fontsize=12, fontweight='bold')
-                                ax2.set_xlabel("Minutos de Trabajo")
-                                ax2.set_ylabel("Frecuencia")
-                                ax2.spines['top'].set_visible(False)
-                                ax2.spines['right'].set_visible(False)
-                                st.pyplot(fig2)
-
-                    st.markdown("---")
-
-                    fig3, ax3 = plt.subplots(figsize=(10, 3))
-                    df_offline = df_v_tabla_monitor[df_v_tabla_monitor['ES_OFFLINE'] == True]
-                    if not df_offline.empty and 'HORA_INI' in df_offline.columns:
-                        tendencia = df_offline.dropna(subset=['HORA_INI']).groupby(df_offline['HORA_INI'].dt.date).size()
-                        if not tendencia.empty:
-                            tendencia.plot(kind='line', marker='o', color='#f85149', linewidth=2, markersize=8, ax=ax3)
-                            ax3.set_title("Tendencia de Fallas Críticas (Offline) por Día", fontsize=12, fontweight='bold')
-                            ax3.set_ylabel("Cantidad de Fallas")
-                            ax3.grid(True, linestyle='--', alpha=0.3)
-                            ax3.spines['top'].set_visible(False)
-                            ax3.spines['right'].set_visible(False)
-                            st.pyplot(fig3)
-                        else:
-                            st.info("Datos insuficientes de fechas para la tendencia Offline.")
-                    else:
-                        st.success("¡Excelente! No hay fallas Offline registradas en esta vista.")
-
-if __name__ == "__main__": 
-    verificar_autenticacion()
-    if st.session_state.get('autenticado'):
+if __name__ == '__main__':
+    if verificar_autenticacion():
         main()
     else:
         mostrar_pantalla_login()
