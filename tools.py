@@ -9,14 +9,9 @@ import numpy as np
 import streamlit as st
 import io
 from typing import Any, List, Optional, Tuple, Union, Dict
+import io
 from google.cloud import storage
 from google.oauth2 import service_account
-import requests
-import urllib3
-from requests.auth import HTTPBasicAuth
-
-# Desactivar advertencias de certificados autofirmados (común en IPs de servidores locales)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
 # MOTOR SEGURO DE FECHAS, ZONA HORARIA Y UTILIDADES BASE
@@ -86,20 +81,20 @@ def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFra
     return df
 
 # ==============================================================================
-# 1. MAPEO UNIVERSAL DE COLUMNAS (Incluye campos de la API de Cepheus)
+# 1. MAPEO UNIVERSAL DE COLUMNAS
 # ==============================================================================
 COLUMNS_MAPPING = {
-    'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'HORA INICIO ORDEN', 'FECHA ENTRADA', 'INICIO', 'FECHAENTRADA'],
-    'HORA_LIQ': ['HORA LIQUIDADO', 'HORA CIERRE', 'HORACIERREORDEN', 'HORA CIERRE ORDEN', 'FECHA LIQUIDADO', 'LIQUIDADO', 'FECHALIQUIDADO'],
+    'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'HORA INICIO ORDEN', 'FECHA ENTRADA', 'INICIO'],
+    'HORA_LIQ': ['HORA LIQUIDADO', 'HORA CIERRE', 'HORACIERREORDEN', 'HORA CIERRE ORDEN', 'FECHA LIQUIDADO', 'LIQUIDADO'],
     'TECNICO': ['TÉCNICO', 'TECNICO', 'OPERADOR', 'USER NAME'],
-    'ACTIVIDAD': ['NOMBRE ACTIVIDAD', 'TIPO ORDEN', 'ACTIVIDAD', 'NOMACTIVIDAD'],
-    'FECHA_APE': ['FECHA APERTURA', 'APERTURA', 'DIASASIGNADA', 'Días', 'FECHAAPERTURA'],
+    'ACTIVIDAD': ['NOMBRE ACTIVIDAD', 'TIPO ORDEN', 'ACTIVIDAD'],
+    'FECHA_APE': ['FECHA APERTURA', 'APERTURA', 'DIASASIGNADA', 'Días'],
     'ESTADO': ['ESTADO', 'STATUS'],
     'SECTOR': ['SECTOR', 'Sect', 'Sector', 'CIUDAD', 'Ciudad', 'Zona'],
     'COLONIA': ['COLONIA', 'BARRIO', 'DIRECCION', 'LOCALIDAD'],
     'NUM': ['NUM', 'IDORDEN', 'NÚMERO'],
     'CLIENTE': ['CLIENTE', 'CUENTA', 'NO. CLIENTE'], 
-    'NOMBRE': ['NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE', 'NOMBRECLIENTE'], 
+    'NOMBRE': ['NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE'], 
     'COMENTARIO': ['COMENTARIO', 'OBSERVACIONES'],
     'MX': ['MX', 'VEHICULO', 'UNIDAD'],
     'GPS': ['GPS', 'UBICACION', 'LINK', 'COORDENADAS']
@@ -111,90 +106,6 @@ COLUMNAS_VITALES_SISTEMA = [
 ]
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-
-
-# ==============================================================================
-# MOTOR DE CONEXIÓN CON LA API DE CEPHEUS
-# ==============================================================================
-def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitorISCA") -> pd.DataFrame:
-    """
-    Realiza la descarga automatizada de órdenes desde la API de Cepheus Web.
-    """
-    url = "https://192.168.20.20:8996/API/consultaOrdenes"
-    
-    fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
-    hora_str = fecha_inicio_dt.strftime("%H:%M")
-    
-    params = {
-        "usuario": usuario_api,
-        "medios": "FTTH,C",
-        "fechainicio": fecha_str,
-        "horainicio": hora_str
-    }
-    
-    auth = HTTPBasicAuth("monitorISCA", "54321")
-    
-    try:
-        # Forzar a ignorar proxies para que la conexión vaya directo por la red local de la oficina
-        session = requests.Session()
-        session.trust_env = False  
-        
-        response = session.get(url, params=params, auth=auth, verify=False, timeout=35)
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
-                return pd.DataFrame(data[0].get("ordenes", []))
-            elif isinstance(data, dict) and "ordenes" in data:
-                return pd.DataFrame(data.get("ordenes", []))
-            else:
-                return pd.DataFrame()
-        else:
-            st.error(f"❌ Error API Cepheus ({response.status_code}): {response.text}")
-            return pd.DataFrame()
-    except Exception as e:
-        st.error(f"❌ Error de conexión de red con la API (192.168.20.20): {e}")
-        return pd.DataFrame()
-
-
-def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
-    """
-    Cruza el DataFrame de la API con los dispositivos/vehículos (FTTX) subidos de forma manual
-    o descargados desde la nube.
-    """
-    try:
-        if isinstance(file_dispositivos_o_df, pd.DataFrame):
-            dfdispfull = file_dispositivos_o_df
-        elif isinstance(file_dispositivos_o_df, bytes):
-            dfdispfull = pd.read_excel(io.BytesIO(file_dispositivos_o_df), engine='openpyxl')
-        elif hasattr(file_dispositivos_o_df, 'read'):
-            file_dispositivos_o_df.seek(0)
-            if getattr(file_dispositivos_o_df, 'name', '').lower().endswith('.csv'):
-                dfdispfull = pd.read_csv(file_dispositivos_o_df, sep=None, engine='python')
-            else:
-                dfdispfull = pd.read_excel(file_dispositivos_o_df, engine='openpyxl')
-        else:
-            dfdispfull = pd.DataFrame()
-
-        dfdispref = pd.DataFrame()
-        if not dfdispfull.empty:
-            coltec = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in ['TECNICO', 'USER', 'OPERADOR'])]
-            colmx = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in ['MX', 'VEHICULO', 'PLACA'])]
-            dfdispref['TECREF'] = dfdispfull[coltec[0]].astype(str).str.strip().str.upper() if coltec else "N/D"
-            dfdispref['MXREF'] = dfdispfull[colmx[0]].astype(str).str.strip() if colmx else "N/D"
-
-        dfp = procesar_dataframe_base(df_api)
-        dfp['TECKEY'] = dfp['TECNICO'].astype(str).str.strip().str.upper()
-        
-        if not dfdispref.empty:
-            dffinal = dfp.merge(dfdispref.drop_duplicates('TECREF'), left_on='TECKEY', right_on='TECREF', how='left')
-            if 'MXREF' in dffinal.columns:
-                dffinal['MX'] = dffinal['MXREF'].combine_first(dffinal.get('MX', pd.Series(dtype=str)))
-            return dffinal.drop(columns=['TECKEY', 'TECREF', 'MXREF'], errors='ignore')
-        
-        return dfp.drop(columns=['TECKEY'], errors='ignore')
-    except Exception as e:
-        raise Exception(f"Error en cruce con API: {str(e)}")
-
 
 # ==============================================================================
 # 2. CLASE PARA PDF (REPORTING AVANZADO Y TABLAS COMPLEJAS)
@@ -465,7 +376,6 @@ class ReporteGenerencialPDF(FPDF):
             self.set_font("Helvetica", "", 7)
         self.ln(6)
 
-
 def finalizar_pdf(pdfobj):
     """Guarda y retorna el archivo PDF de manera segura."""
     fd, tmppath = tempfile.mkstemp(suffix=".pdf")
@@ -476,7 +386,6 @@ def finalizar_pdf(pdfobj):
     finally:
         try: os.remove(tmppath)
         except: pass
-
 
 def generar_graficos_temporales(dfbase):
     paths = {}
@@ -538,7 +447,6 @@ def generar_graficos_temporales(dfbase):
     except Exception as e:
         return {}
 
-
 def _generar_dona_png(pct, titulo):
     try:
         import matplotlib
@@ -556,7 +464,6 @@ def _generar_dona_png(pct, titulo):
         return path
     except:
         return None
-
 
 def calcular_aporte_meta(row):
     act = str(row.get('ACTIVIDAD', '')).upper()
@@ -614,7 +521,6 @@ def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
         
     return finalizar_pdf(pdf)
 
-
 def generar_pdf_mensual(df_base, mes, anio):
     df_mes = df_base[
         (df_base['HORA_LIQ'].dt.month == mes) & 
@@ -651,7 +557,6 @@ def generar_pdf_mensual(df_base, mes, anio):
         pdf.cell(0, 6, "Sin datos de ordenes cerradas registradas para este mes.", ln=True)
         
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_cierre_diario(dfbase, fechatarget):
     dfc = dfbase[
@@ -810,7 +715,6 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
                 
     return finalizar_pdf(pdf)
 
-
 def logica_generar_pdf(dfbase):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
@@ -902,7 +806,6 @@ def logica_generar_pdf(dfbase):
             except: pass
             
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
     pdf = ReporteGenerencialPDF()
@@ -1004,7 +907,6 @@ def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen
         
     return finalizar_pdf(pdf)
 
-
 def generar_pdf_primera_orden(df_base, fecha_cierre):
     try:
         mask_vivas = df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -1047,7 +949,6 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
     except Exception as e:
         print(f"Error al generar PDF de Primera Orden: {e}")
         return None
-
 
 def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
     pdf = ReporteGenerencialPDF()
@@ -1190,7 +1091,6 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
 
     return finalizar_pdf(pdf)
 
-
 def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
     pdf.alias_nb_pages()
@@ -1299,7 +1199,6 @@ def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
 
     return finalizar_pdf(pdf)
 
-
 def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
@@ -1339,7 +1238,6 @@ def generar_pdf_promedio_arranque(df_promedios, f_inicio, f_fin):
             pdf.ln()
             
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
@@ -1384,7 +1282,6 @@ def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
         pdf.ln()
 
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
@@ -1448,7 +1345,6 @@ def generar_pdf_unificado_rrhh(df_ausencias, df_tardanzas):
     dibujar_tabla(pdf, df_tardanzas, "2. DETALLE DE LLEGADAS TARDE")
     
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_infracciones(df_res):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
@@ -1529,9 +1425,9 @@ def es_offline_preciso(comentario):
     if not txt or txt == 'NAN': return False
     jergasolucion = ['OK', 'LISTO', 'RECUPERADO', 'SOLUCIONADO', 'NAVEGA', 'YA QUEDO', 'ARRIBA', 'FUNCIONAL', 'ONLINE']
     if any(word in txt for word in jergasolucion): return False
+    # CORRECCIÓN: Dejamos estrictamente términos de equipo caído
     keywordsfalla = ['OFFLINE', 'OFF LINE', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE']
     return any(word in txt for word in keywordsfalla)
-
 
 def depurar_archivos_en_crudo(fileactividades, filedispositivos):
     try:
@@ -1558,7 +1454,6 @@ def depurar_archivos_en_crudo(fileactividades, filedispositivos):
     except Exception as e:
         raise Exception(f"Error en cruce: {str(e)}")
 
-
 def procesar_dataframe_base(df):
     df.columns = df.columns.astype(str).str.strip()
     mapeocolumnas = {}
@@ -1570,7 +1465,11 @@ def procesar_dataframe_base(df):
                 break
     df = df.rename(columns=mapeocolumnas)
 
+    # =========================================================================
     # 🏢 FILTRO POR EMPRESA: Solo procesar registros de ISCA
+    # Descarta cualquier registro de otra empresa (ej. Cable Color) que venga
+    # mezclado en el archivo crudo o en el histórico de GCS.
+    # =========================================================================
     if 'EMPRESA' in df.columns:
         mask_isca = df['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
         df = df[mask_isca].copy()
@@ -1580,14 +1479,11 @@ def procesar_dataframe_base(df):
         
     for cstr in ['ESTADO', 'ACTIVIDAD', 'COMENTARIO', 'CLIENTE', 'TECNICO']:
         df[cstr] = df[cstr].astype(str).replace(['nan', 'None'], 'N/D')
-
-    # Integrar el comentario de cierre (de la API) al campo COMENTARIO para resguardar la bitácora
-    if 'COMENTARIOCIERRE' in df.columns:
-        df['COMENTARIOCIERRE'] = df['COMENTARIOCIERRE'].fillna('')
-        df['COMENTARIO'] = df['COMENTARIO'].astype(str).replace(['nan', 'None', 'N/D'], '') + " | Cierre: " + df['COMENTARIOCIERRE'].astype(str)
-        df['COMENTARIO'] = df['COMENTARIO'].str.strip().replace('', 'N/D')
         
-    # 🧹 DEPURACIÓN RADICAL DESDE LA LECTURA DEL EXCEL / API
+    # =========================================================================
+    # 🧹 NUEVO: DEPURACIÓN RADICAL DESDE LA LECTURA DEL EXCEL
+    # Elimina ACTUALIZARDATOSTECNICOS y otras basuras antes de que toquen la nube
+    # =========================================================================
     if 'ACTIVIDAD' in df.columns:
         actividades_basura = [
             'ACTUALIZARDATOSTECNICOS', 
@@ -1596,11 +1492,11 @@ def procesar_dataframe_base(df):
             'ACTUALIZAINFOTECNICA', 
             'ACTUALIZARSENSOR'
         ]
+        # Filtramos buscando coincidencias exactas o parciales para mayor seguridad
         mask_basura = df['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_basura)
         df = df[~mask_basura].copy()
         
     return df
-
 
 def generar_tablas_gerenciales(df_crudo):
     df = df_crudo.copy()
@@ -1628,7 +1524,6 @@ def generar_tablas_gerenciales(df_crudo):
     resumen_jornada['Max_Horas_Dia'] = resumen_jornada['Max_Horas_Dia'].round(2)
 
     return tabla_produccion, tabla_eficiencia, resumen_jornada
-
 
 def cargar_y_limpiar_crudos_diamante_monitor(file_activ, file_dispos):
     try:
@@ -1815,11 +1710,11 @@ def procesar_auditoria_vehiculos(df_input):
         return forzar_columnas_unicas(final_df), "OK"
     except Exception as e: return None, str(e)
 
-
 def procesar_auditoria_semanal(df_input):
     try:
         df = df_input.copy()
         
+        # 1. Búsqueda inteligente de columnas
         col_placa = next((c for c in df.columns if re.search(r'(?i)PLACA|ALIAS|VEHICULO', str(c))), None)
         if not col_placa:
             for i in range(min(15, len(df))):
@@ -1848,12 +1743,16 @@ def procesar_auditoria_semanal(df_input):
         df['_P'] = df['_P'].astype(str).str.strip()
         df = df[~df['_P'].isin(['nan', '--', 'None', '', 'Columna'])]
         
+        # 2. Limpieza de strings AM/PM
         raw_I = df['_I'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
         raw_S = df['_S'].astype(str).str.replace(r'a\.?\s*m\.?', 'AM', flags=re.I).str.replace(r'p\.?\s*m\.?', 'PM', flags=re.I).str.strip()
         
+        # 3. PARSEO INTELIGENTE DE FECHAS (La cura al bug de los meses/días invertidos)
         dt_I_eu = pd.to_datetime(raw_I, format='mixed', dayfirst=True, errors='coerce')
         dt_I_us = pd.to_datetime(raw_I, format='mixed', dayfirst=False, errors='coerce')
         
+        # Si el parseo Europeo (DD/MM) distribuye las fechas en meses distintos (> 20 días)
+        # pero el US (MM/DD) las mantiene juntitas en la misma semana, entonces el GPS usó formato US.
         if pd.notnull(dt_I_eu.max()) and pd.notnull(dt_I_us.max()):
             if (dt_I_eu.max() - dt_I_eu.min()).days > 20 and (dt_I_us.max() - dt_I_us.min()).days <= 20:
                 df['_I'] = dt_I_us
@@ -1865,6 +1764,7 @@ def procesar_auditoria_semanal(df_input):
             df['_I'] = dt_I_eu
             df['_S'] = pd.to_datetime(raw_S, format='mixed', dayfirst=True, errors='coerce')
 
+        # Si existe una columna FECHA explícita, la usamos para sobrescribir y proteger
         if col_fecha:
             dt_F_eu = pd.to_datetime(df[col_fecha], format='mixed', dayfirst=True, errors='coerce')
             dt_F_us = pd.to_datetime(df[col_fecha], format='mixed', dayfirst=False, errors='coerce')
@@ -1890,9 +1790,11 @@ def procesar_auditoria_semanal(df_input):
         df = df.dropna(subset=['Fecha'])
         if df.empty: return None, None, "No hay fechas válidas en el archivo.", None, None
         
+        # --- ELIMINADO EL FILTRO ESTRICTO DE 7 DÍAS QUE BORRABA LA DATA ---
         f_inicio = df['Fecha'].min()
         f_fin = df['Fecha'].max()
 
+        # 4. Agrupación por Vehículo Y Fecha
         diario = df.groupby(['_P', 'Fecha']).agg(P_S=('_S', 'min'), U_E=('_I', 'max')).reset_index()
         
         def calc_segs(row):
@@ -1957,8 +1859,15 @@ def procesar_auditoria_semanal(df_input):
         return forzar_columnas_unicas(final_diario), forzar_columnas_unicas(final_semanal), "OK", f_inicio, f_fin
     except Exception as e: return None, None, str(e), None, None
 
-
 def procesar_auditoria_mensual(df_input):
+    """
+    Reutiliza el motor de 'procesar_auditoria_semanal' para obtener el desglose
+    diario por vehículo, y luego consolida los resultados por MES (Año-Mes)
+    en lugar de por semana. Devuelve:
+      - final_diario: desglose diario por vehículo (con columna 'Mes')
+      - final_mensual: consolidado por Mes y Vehículo (Días Trabajados, Tiempo Total, Promedio Diario)
+      - msg, f_inicio, f_fin
+    """
     try:
         final_diario, _final_semanal, msg, f_inicio, f_fin = procesar_auditoria_semanal(df_input)
         if final_diario is None:
@@ -2009,7 +1918,6 @@ def procesar_auditoria_mensual(df_input):
         return forzar_columnas_unicas(final_diario_out), forzar_columnas_unicas(final_mensual), "OK", f_inicio, f_fin
     except Exception as e:
         return None, None, str(e), None, None
-
 
 def procesar_matriz_telemetria(df_raw):
     try:
@@ -2067,7 +1975,6 @@ def procesar_matriz_telemetria(df_raw):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-
 def generar_pdf_auditoria_tiempos(df_resumen):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
@@ -2097,7 +2004,6 @@ def generar_pdf_auditoria_tiempos(df_resumen):
                 pdf.cell(anchos[i], 5, safestr(str(item)[:45]), border=1, align="C" if i > 0 else "L", fill=True)
             pdf.ln()
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
@@ -2181,7 +2087,6 @@ def generar_pdf_semanal_tiempos(df_diario, df_semanal, f_inicio, f_fin):
         
     return finalizar_pdf(pdf)
 
-
 def generar_pdf_mensual_tiempos(df_diario, df_mensual, f_inicio, f_fin):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4')
     pdf.alias_nb_pages()
@@ -2198,6 +2103,7 @@ def generar_pdf_mensual_tiempos(df_diario, df_mensual, f_inicio, f_fin):
     pdf.ln(5)
 
     if df_mensual is not None and not df_mensual.empty:
+        # --- TABLA 1: RESUMEN CONSOLIDADO POR MES Y VEHICULO ---
         pdf.seccion_titulo("Resumen Consolidado por Mes y Vehiculo")
 
         w_res = [40, 95, 30, 45, 45]
@@ -2234,6 +2140,7 @@ def generar_pdf_mensual_tiempos(df_diario, df_mensual, f_inicio, f_fin):
             pdf.set_text_color(0, 0, 0)
             pdf.ln()
 
+        # --- TABLA 2: DESGLOSE DIARIO COMPLETO ---
         if df_diario is not None and not df_diario.empty:
             pdf.add_page()
             pdf.seccion_titulo("Desglose Diario Detallado del Periodo")
@@ -2279,7 +2186,6 @@ def generar_pdf_mensual_tiempos(df_diario, df_mensual, f_inicio, f_fin):
         pdf.cell(0, 10, "Sin datos disponibles.", border=0, ln=True)
 
     return finalizar_pdf(pdf)
-
 
 def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
     pdf = ReporteGenerencialPDF(orientation='L', unit='mm', format='A4') 
@@ -2360,8 +2266,6 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
         pdf.cell(0, 6, f"Operacion Segura: Nadie supero los {limite_vel} km/h.", ln=True)
         
     return finalizar_pdf(pdf)
-
-
 def cargar_catalogo_tecnicos():
     """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
     path = "personal_tecnico.txt"
@@ -2372,7 +2276,10 @@ def cargar_catalogo_tecnicos():
                 linea = linea.strip()
                 if not linea: continue
                 
+                # Separar por coma
                 partes = linea.split(',')
+                
+                # El nombre está en la primera parte, reemplazamos tabs por espacios y limpiamos dobles espacios
                 nombre_bruto = partes[0].replace('\t', ' ')
                 nombre = ' '.join(nombre_bruto.split()).upper()
                 
@@ -2385,6 +2292,7 @@ def cargar_catalogo_tecnicos():
                 if len(partes) > 2 and "VACACIONES" in partes[2].upper():
                     estatus = "VACACIONES"
                 
+                # Regla del usuario: Clasificación de Técnico Principal
                 if cargo_area in ['PLEX', 'HFC', 'FTTH']:
                     clasificacion = "TÉCNICO PRINCIPAL"
                 elif 'AYUDANTE' in cargo_area:
@@ -2402,11 +2310,12 @@ def cargar_catalogo_tecnicos():
                 })
     return pd.DataFrame(datos)
 
-
 def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
+    """Cruza marcaciones biométricas contra el catálogo maestro de personal agrupando por áreas."""
     import unicodedata
 
     def limpiar_para_cruce(texto):
+        """Quita tildes, dobles espacios y pasa a mayúsculas para un cruce perfecto."""
         if pd.isnull(texto): return ""
         t = str(texto).upper()
         t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
@@ -2417,6 +2326,7 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
         
     df_cat = df_catalogo.copy()
     
+    # Clasificador automático de Áreas (Plex, Residencial, Otras)
     def categorizar_grupo(area):
         a = str(area).upper()
         if 'PLEX' in a: return 'PLEX'
@@ -2425,6 +2335,7 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
         
     df_cat['Grupo_Tabla'] = df_cat['Cargo/Área'].apply(categorizar_grupo)
     
+    # Si no hay biométrico cargado aún
     if df_biometrico.empty:
         df_cat['Asistencia'] = df_cat['Estatus'].apply(lambda x: '🌴 VACACIONES' if x == 'VACACIONES' else '❌ NO MARCÓ')
         df_cat['Entrada'] = "---"
@@ -2446,8 +2357,8 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
     resultado['Asistencia'] = resultado.apply(determinar_asistencia, axis=1)
     resultado['Entrada'] = resultado['Entrada'].fillna("---")
     
+    # Retornamos solo Entrada, Clasificación y el Grupo_Tabla invisible
     return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Grupo_Tabla']]
-
 
 def generar_pdf_memorandum(row):
     import textwrap
@@ -2455,6 +2366,7 @@ def generar_pdf_memorandum(row):
     import tempfile
     import os
     
+    # --- DICCIONARIO INTERNO DE GRAVEDAD ---
     def clasificar_gravedad(motivo):
         m = str(motivo).upper().strip()
         faltas_graves = ["ABANDONO DE RUTA", "DAÑO A EQUIPO", "FUSIONADORA", "DAÑO AL VEH", "ÓRDENES PENDIENTES", "AUSENCIAS LABORALES"]
@@ -2480,6 +2392,7 @@ def generar_pdf_memorandum(row):
     pdf.cell(0, 6, safestr(f"Tecnico Implicado: {row.get('TECNICO', '')}"), ln=True)
     pdf.cell(0, 6, safestr(f"Fecha de Incidencia: {row.get('FECHA_INCIDENCIA', '')}"), ln=True)
     
+    # --- AQUÍ INYECTAMOS LA GRAVEDAD VISUAL EN EL PDF INDIVIDUAL ---
     pdf.cell(0, 6, safestr(f"Tipo de Falta: {motivo_original} [{nivel_gravedad}]"), ln=True)
     pdf.ln(5)
     
@@ -2529,6 +2442,7 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     import pandas as pd
     from datetime import datetime, timedelta
     
+    # 1. Obtener fecha actual en Honduras
     hoy_date = (datetime.utcnow() - timedelta(hours=6)).date()
     
     df_limpio = df_base.copy()
@@ -2539,6 +2453,7 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     tecnico_upper = str(tecnico_nombre).strip().upper()
     df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
     
+    # --- 2. FILTRAR LA BANDEJA DEL TÉCNICO (Abiertas + Cerradas Hoy) ---
     patron_vivas = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
     mask_vivas = df_limpio['ESTADO'].astype(str).str.contains(patron_vivas, na=False, case=False)
     
@@ -2562,6 +2477,7 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     seguimientos = []
     patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+(agrego el comentario|agrego archivo):\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
     
+    # Pre-calculamos las palabras del nombre del técnico (Ignorando DE, LA)
     tecnico_words = set(tecnico_upper.split())
     tecnico_words = {w for w in tecnico_words if len(w) > 2} 
     
@@ -2581,11 +2497,14 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
                 tipo_accion = match[2].strip().lower()
                 texto_crudo = match[3].strip()
                 
+                # --- NUEVO FILTRO DE IDENTIDAD (Bloqueo a Dispatch) ---
                 autor_limpio = autor.upper().replace('.', ' ')
                 autor_words = set(autor_limpio.split())
                 autor_words = {w for w in autor_words if len(w) > 2}
                 
+                # Exigimos que al menos una palabra del usuario exista en el nombre oficial
                 if len(tecnico_words.intersection(autor_words)) >= 1:
+                    
                     if "archivo" in tipo_accion:
                         texto_final = f"📸 Archivo adjunto: {texto_crudo}"
                     else:
@@ -2614,19 +2533,24 @@ def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
             
     return pd.DataFrame()
 
-
 def verificar_y_alertar_vips(df_diario, lista_vips):
+    """Cruza la base operativa con la lista VIP y dispara alertas SOLO si es Crítica u Offline."""
     if not lista_vips or df_diario.empty:
         return False, 0
         
+    # Aseguramos que la columna CLIENTE sea texto limpio para comparar
     df_diario['CLIENTE_STR'] = df_diario['CLIENTE'].astype(str).str.strip()
+    
+    # 1. Filtrar primero los que pertenecen a la lista VIP
     vips_afectados = df_diario[df_diario['CLIENTE_STR'].isin(lista_vips)].copy()
     
     if vips_afectados.empty:
         return False, 0
 
+    # 2. NUEVO FILTRO: Dejamos SOLO los que son Offline o tienen Alerta de Tiempo (Críticos)
     condicion_offline = vips_afectados.get('ES_OFFLINE', pd.Series([False]*len(vips_afectados))) == True
     condicion_tiempo = vips_afectados.get('ALERTA_TIEMPO', pd.Series([False]*len(vips_afectados))) == True
+    
     vips_criticos = vips_afectados[condicion_offline | condicion_tiempo]
     
     if not vips_criticos.empty:
@@ -2641,11 +2565,14 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
             ticket = str(row.get('NUM', 'Sin Ticket'))
             estado = str(row.get('ESTADO', 'N/D'))
             
+            # Identificamos visualmente por qué se disparó la alerta
             tipo_alerta = "🔴 EQUIPO OFFLINE (CAÍDO)" if row.get('ES_OFFLINE') else "⚠️ ALERTA DE TIEMPO (>2 HORAS)"
             
+            # Evitamos enviar alertas por órdenes que ya fueron cerradas o anuladas
             if estado.upper() in ['CERRADA', 'ANULADA']:
                 continue
             
+            # Llave única para no bombardear el WhatsApp si la página se recarga (incluye etiqueta de critico)
             llave_alerta = f"{ticket}_{id_cliente}_{estado}_critico"
             
             if llave_alerta not in st.session_state['alertas_enviadas']:
@@ -2667,6 +2594,9 @@ def verificar_y_alertar_vips(df_diario, lista_vips):
 
 
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
+    """Genera un PDF con el listado de todas las órdenes PENDIENTES, ordenadas por retraso y con columna Colonia."""
+    
+    # --- 1. ORDENAMIENTO ---
     df_base['DIAS_RETRASO'] = pd.to_numeric(df_base['DIAS_RETRASO'], errors='coerce').fillna(0)
     df_base = df_base.sort_values(by='DIAS_RETRASO', ascending=False)
     
@@ -2689,8 +2619,10 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
     pdf.set_text_color(50, 50, 50)
     pdf.set_font("Helvetica", "B", 7)
     
+    # Anchos ajustados: Días(12), Orden(18), Cliente(20), Tecnico(40), Actividad(50), Colonia(50) = 190mm
     w = [12, 18, 20, 40, 50, 50] 
     
+    # Encabezado
     pdf.cell(w[0], 6, "Días", border=1, align="C", fill=True)
     pdf.cell(w[1], 6, "Orden", border=1, align="C", fill=True)
     pdf.cell(w[2], 6, "Cliente", border=1, align="C", fill=True)
@@ -2716,26 +2648,29 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
             pdf.ln()
             pdf.set_font("Helvetica", "", 6)
 
+        # 1. Semáforo de Días
         dias_val = int(row.get('DIAS_RETRASO', 0))
         if dias_val >= 7:
-            pdf.set_fill_color(211, 47, 47)
+            pdf.set_fill_color(211, 47, 47)   # Rojo
             pdf.set_text_color(255, 255, 255)
         elif 4 <= dias_val <= 6:
-            pdf.set_fill_color(245, 124, 0)
+            pdf.set_fill_color(245, 124, 0)   # Naranja
             pdf.set_text_color(255, 255, 255)
         elif 1 <= dias_val <= 3:
-            pdf.set_fill_color(251, 192, 45)
+            pdf.set_fill_color(251, 192, 45)  # Amarillo
             pdf.set_text_color(0, 0, 0)
         else:
-            pdf.set_fill_color(56, 142, 60)
+            pdf.set_fill_color(56, 142, 60)   # Verde
             pdf.set_text_color(255, 255, 255)
 
         pdf.set_font("Helvetica", "B", 6)
         pdf.cell(w[0], 5, str(dias_val), border=1, align="C", fill=True)
 
+        # 2. Reset para el resto de la fila
         pdf.set_text_color(0, 0, 0)
         pdf.set_font("Helvetica", "", 6)
         
+        # Datos
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
         
@@ -2743,37 +2678,48 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
         tec = "SIN ASIGNAR" if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:25]
         
         act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:32]
-        colonia = safestr(str(row.get('COLONIA', 'N/D')))[:35]
+        colonia = safestr(str(row.get('COLONIA', 'N/D')))[:35] # Obtenemos Colonia
         
         pdf.cell(w[1], 5, num, border=1, align="C")
         pdf.cell(w[2], 5, cliente, border=1, align="C")
         pdf.cell(w[3], 5, tec, border=1, align="L")
         pdf.cell(w[4], 5, act, border=1, align="L")
-        pdf.cell(w[5], 5, colonia, border=1, align="L")
+        pdf.cell(w[5], 5, colonia, border=1, align="L") # Imprimimos Colonia
         pdf.ln()
         
     return finalizar_pdf(pdf)
 
+
 # ==============================================================================
-# 7. MÓDULO DE PERSISTENCIA EN GOOGLE CLOUD STORAGE
+# 7. MÓDULO DE PERSISTENCIA EN GOOGLE CLOUD STORAGE (NUEVO)
 # ==============================================================================
+
 def obtener_cliente_gcs_nativo():
+    """Inicializa el cliente de GCS reciclando las credenciales de gsheets de Streamlit."""
+    import streamlit as st
     creds_dict = st.secrets["connections"]["gsheets"]
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     return storage.Client(credentials=creds, project=creds.project_id)
 
 def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_destino):
+    """
+    Sube un DataFrame (como CSV) o un archivo binario directo a GCS.
+    Si el archivo ya existe, GCS lo borra/sobrescribe automáticamente en el acto.
+    """
     try:
         cliente = obtener_cliente_gcs_nativo()
         bucket = cliente.bucket(nombre_bucket)
         blob = bucket.blob(nombre_archivo_destino)
         
+        # Detectar si es un DataFrame de Pandas (para el Historial Maestro)
         if isinstance(dataframe_o_bytes, pd.DataFrame):
             csv_en_ram = dataframe_o_bytes.to_csv(index=False)
             blob.upload_from_string(csv_en_ram, content_type="text/csv")
+        # Detectar si son bytes puros (para guardar el archivo FTTX tal cual)
         elif isinstance(dataframe_o_bytes, bytes):
             blob.upload_from_string(dataframe_o_bytes, content_type="application/octet-stream")
         else:
+            # Si es un objeto de archivo subido de Streamlit (UploadedFile)
             dataframe_o_bytes.seek(0)
             blob.upload_from_file(dataframe_o_bytes)
             
@@ -2784,6 +2730,10 @@ def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_de
         
 
 def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
+    """
+    Descarga el archivo desde GCS en memoria RAM y lo devuelve como un DataFrame de Pandas.
+    """
+    import io
     try:
         cliente = obtener_cliente_gcs_nativo()
         bucket = cliente.bucket(nombre_bucket)
@@ -2791,18 +2741,23 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
         
         if blob.exists():
             contenido = blob.download_as_bytes()
-            if nombre_archivo_destino.endswith('.csv'):
-                return pd.read_csv(io.BytesIO(contenido))
-            else:
-                return pd.read_excel(io.BytesIO(contenido))
-        return None
+            return pd.read_csv(io.BytesIO(contenido))
+        else:
+            print(f"El archivo {nombre_archivo_destino} no existe en GCS.")
+            return None
     except Exception as e:
         print(f"Error al leer desde GCS: {e}")
         return None
-
-
+        
+# ==============================================================================
+# PROCESAMIENTO DE RENDIMIENTO INTEGRAL (ÓRDENES, GPS, EXPEDIENTES)
+# ==============================================================================
 def procesar_rendimiento_integral(df_act, df_gps, df_exp):
+    import pandas as pd
+    import re
+
     try:
+        # 1. Procesar Actividades (Órdenes)
         col_tec = next((c for c in df_act.columns if 'TECNICO' in str(c).upper() or 'TÉCNICO' in str(c).upper()), None)
         col_ent = next((c for c in df_act.columns if 'ENTRADA' in str(c).upper() or 'INICIO' in str(c).upper()), None)
         col_liq = next((c for c in df_act.columns if 'LIQUIDADO' in str(c).upper() or 'CIERRE' in str(c).upper()), None)
@@ -2815,9 +2770,11 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
         df_act['FECHA_ENTRADA'] = pd.to_datetime(df_act[col_ent], errors='coerce', dayfirst=True)
         df_act['FECHA_LIQUIDADO'] = pd.to_datetime(df_act[col_liq], errors='coerce', dayfirst=True)
         
+        # Calcular el tiempo invertido en cada orden en minutos
         df_act['Minutos_Orden'] = (df_act['FECHA_LIQUIDADO'] - df_act['FECHA_ENTRADA']).dt.total_seconds() / 60
         df_act['Minutos_Orden'] = df_act['Minutos_Orden'].apply(lambda x: x if x > 0 else 0)
 
+        # Agrupar datos de productividad pura
         resumen_act = df_act.groupby('TEC_KEY').agg(
             Cantidad_Ordenes=(col_num, 'count'),
             Tiempo_Prom_Minutos=('Minutos_Orden', 'mean'),
@@ -2827,6 +2784,7 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
         resumen_act['Primera_Orden'] = resumen_act['Primera_Orden'].dt.strftime('%H:%M:%S').fillna('--')
         resumen_act['Tiempo_Prom_Minutos'] = resumen_act['Tiempo_Prom_Minutos'].round(1)
 
+        # 2. Procesar GPS (Zonas y Rutas para extraer salidas/entradas)
         if df_gps is not None and not df_gps.empty:
             col_placa = next((c for c in df_gps.columns if 'PLACA' in str(c).upper() or 'ALIAS' in str(c).upper()), None)
             col_h_in = next((c for c in df_gps.columns if 'HORA INGRESO' in str(c).upper() or 'LLEGADA' in str(c).upper()), None)
@@ -2836,14 +2794,16 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
                 df_gps['Hora Ingreso'] = pd.to_datetime(df_gps[col_h_in], errors='coerce')
                 df_gps['Hora Salida'] = pd.to_datetime(df_gps[col_h_out], errors='coerce')
 
+                # Tomamos la primera hora de salida y la última hora de ingreso reportada en el día
                 gps_res = df_gps.groupby(col_placa).agg(
                     Salida_Plantel=('Hora Salida', 'min'),
                     Entrada_Plantel=('Hora Ingreso', 'max')
                 ).reset_index()
 
+                # Función inteligente para cruzar el Alias del GPS con el nombre del Técnico
                 def match_tec(placa_alias, tecnicos_list):
                     placa_alias = str(placa_alias).upper().replace(',', '').replace('.', '')
-                    placa_alias = re.sub(r'MX-\d+', '', placa_alias)
+                    placa_alias = re.sub(r'MX-\d+', '', placa_alias) # Limpiar el MX-
                     best_match = None
                     max_coincidencias = 0
                     for tec in tecnicos_list:
@@ -2875,6 +2835,7 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
 
         resumen_final.fillna({'Salida_Plantel': '--', 'Entrada_Plantel': '--'}, inplace=True)
 
+        # 3. Procesar Expedientes (Faltas y Llamados de Atención en la Nube)
         if df_exp is not None and not df_exp.empty:
             col_tec_exp = next((c for c in df_exp.columns if 'TECNICO' in str(c).upper()), None)
             col_tipo = next((c for c in df_exp.columns if 'TIPO_FALTA' in str(c).upper() or 'FALTA' in str(c).upper()), None)
@@ -2882,6 +2843,7 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
             if col_tec_exp and col_tipo:
                 df_exp['TEC_KEY'] = df_exp[col_tec_exp].astype(str).str.upper().str.strip()
                 
+                # Separar Ausencias de Llamados de Atención
                 def categorizar(falta):
                     f = str(falta).upper()
                     if any(k in f for k in ['FALTA', 'AUSENCIA', 'INASISTENCIA', 'DIA', 'DÍA']): return 'Dias_Faltados'
@@ -2905,6 +2867,7 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
         resumen_final['Dias_Faltados'] = resumen_final['Dias_Faltados'].astype(int)
         resumen_final['Llamados_Atencion'] = resumen_final['Llamados_Atencion'].astype(int)
 
+        # Dar formato ejecutivo a la tabla resultante
         resumen_final.rename(columns={
             'TEC_KEY': 'TÉCNICO',
             'Cantidad_Ordenes': 'ÓRDENES EJECUTADAS',
@@ -2917,9 +2880,9 @@ def procesar_rendimiento_integral(df_act, df_gps, df_exp):
         }, inplace=True)
 
         return resumen_final, "Cruce exitoso"
+
     except Exception as e:
         return None, f"Error en el cruce integral: {e}"
-
 
 def generar_pdf_rendimiento_integral(df_resumen):
     try:
@@ -2937,7 +2900,7 @@ def generar_pdf_rendimiento_integral(df_resumen):
             self.cell(0, 6, fecha_str, ln=True, align="C")
             self.ln(5)
 
-    pdf = PDF(orientation="L") 
+    pdf = PDF(orientation="L") # Orientación horizontal para que quepan las columnas
     pdf.add_page()
     
     if df_resumen is None or df_resumen.empty:
@@ -2974,6 +2937,7 @@ def generar_pdf_rendimiento_integral(df_resumen):
 # ==============================================================================
 class ReporteIntegral360PDF(FPDF):
     def header(self):
+        # Logo corporativo
         if os.path.exists('logo.png'):
             self.image('logo.png', 10, 8, 33)
         self.set_y(12)
@@ -2996,13 +2960,13 @@ class ReporteIntegral360PDF(FPDF):
         self.set_text_color(128, 128, 128)
         self.cell(0, 10, f"Página {self.page_no()}", align="C")
 
-
 def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     pdf = ReporteIntegral360PDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
+    # --- MÓDULO 1: RESUMEN GERENCIAL (KPIs) ---
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(16, 185, 129) 
+    pdf.set_text_color(16, 185, 129) # Verde
     pdf.cell(0, 8, safestr("1. RESUMEN GERENCIAL (Indicadores Clave)"), ln=True)
     
     pdf.set_font("Helvetica", "", 10)
@@ -3019,14 +2983,16 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     pdf.cell(0, 6, safestr(kpi_text), ln=True)
     pdf.ln(5)
     
+    # --- MÓDULO 2: PRODUCTIVIDAD EN CAMPO (TABLA DESGLOSADA EN PLEX Y RESIDENCIAL) ---
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(59, 130, 246) 
+    pdf.set_text_color(59, 130, 246) # Azul
     pdf.cell(0, 8, safestr("2. EJECUCIÓN OPERATIVA (Productividad y Tiempos de Cierre)"), ln=True)
     
     pdf.set_fill_color(240, 245, 250)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 8)
     
+    # Se ajustaron los anchos y las columnas para dar espacio al promedio segmentado
     w1 = [55, 18, 18, 18, 28, 28, 28, 28] 
     h1 = ["TÉCNICO", "TOTAL", "PLEX", "RESID.", "PROM PLEX(Min)", "PROM RESID(Min)", "1ra ORDEN", "ÚLT. ORDEN"]
     
@@ -3041,12 +3007,14 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         pdf.cell(w1[2], 6, safestr(row.get('ÓRDENES PLEX', 0)), border=1, align="C")
         pdf.cell(w1[3], 6, safestr(row.get('ÓRDENES RESIDENCIAL', 0)), border=1, align="C")
         
+        # Tiempo Promedio PLEX
         t_plex = row.get('TIEMPO PROM. PLEX (Min)', 0.0)
         t_plex_str = f"{t_plex:.1f}" if t_plex > 0 else "---"
         pdf.set_text_color(220, 38, 38) if t_plex > 120 else pdf.set_text_color(0, 0, 0)
         pdf.cell(w1[4], 6, safestr(t_plex_str), border=1, align="C")
         pdf.set_text_color(0, 0, 0)
         
+        # Tiempo Promedio RESIDENCIAL
         t_resi = row.get('TIEMPO PROM. RESIDENCIAL (Min)', 0.0)
         t_resi_str = f"{t_resi:.1f}" if t_resi > 0 else "---"
         pdf.set_text_color(220, 38, 38) if t_resi > 90 else pdf.set_text_color(0, 0, 0)
@@ -3057,9 +3025,10 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         pdf.cell(w1[7], 6, safestr(row.get('HORA ÚLT. ORDEN', '--')), border=1, align="C")
         pdf.ln()
 
+    # --- MÓDULO 3: LOGÍSTICA Y RRHH (GPS y Disciplina) ---
     pdf.ln(8)
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(245, 158, 11) 
+    pdf.set_text_color(245, 158, 11) # Naranja/Ambar
     pdf.cell(0, 8, safestr("3. LOGÍSTICA Y RRHH (Control de Flotilla y Asistencia)"), ln=True)
     
     pdf.set_fill_color(254, 243, 199)
@@ -3092,10 +3061,11 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
         pdf.set_text_color(0, 0, 0)
         pdf.ln()
 
+    # --- MÓDULO 4: DESGLOSE POR ACTIVIDAD ---
     if df_tipo_ord is not None and not df_tipo_ord.empty:
-        pdf.add_page() 
+        pdf.add_page() # Nueva página
         pdf.set_font("Helvetica", "B", 11)
-        pdf.set_text_color(139, 92, 246) 
+        pdf.set_text_color(139, 92, 246) # Morado
         pdf.cell(0, 8, safestr("4. MATRIZ DE RENDIMIENTO POR TIPO DE ACTIVIDAD"), ln=True)
         pdf.set_font("Helvetica", "I", 9)
         pdf.set_text_color(100, 100, 100)
@@ -3136,17 +3106,18 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
             pdf.cell(w3[3], 6, safestr(t_min), border=1, align="C")
             pdf.set_text_color(0, 0, 0)
             
+            # Evaluación de Rendimiento %
             tipo_act = str(row_t.get('TipoOrden', '')).upper().strip()
             rend_val = row_t.get('Rendimiento_Prom') if 'Rendimiento_Prom' in df_tipo_ord.columns else None
             
             if tipo_act in activ_evaluables and pd.notna(rend_val):
                 rend_str = f"{int(round(rend_val))}%"
                 if rend_val >= 100:
-                    pdf.set_text_color(16, 185, 129)
+                    pdf.set_text_color(16, 185, 129) # Verde
                 elif rend_val >= 80:
-                    pdf.set_text_color(217, 119, 6)
+                    pdf.set_text_color(217, 119, 6)   # Naranja
                 else:
-                    pdf.set_text_color(220, 38, 38)
+                    pdf.set_text_color(220, 38, 38)  # Rojo
             else:
                 rend_str = "---"
                 
@@ -3154,10 +3125,16 @@ def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
             pdf.set_text_color(0, 0, 0)
             pdf.ln()
 
-    return finalizar_pdf(pdf)
-
-
+    return finalizar_pdf(pdf) # Asegúrate de que esta función exista en tools.py
+    
+# ==============================================================================
+# BLINDAJE CORE - USO EXCLUSIVO PARA APP.PY (CEREBRO PRINCIPAL)
+# ==============================================================================
 def sanitizar_core_monitor(df):
+    """
+    Filtro de Cero Fricción + Reparador Automático de Fechas (Formato MaxCom)
+    Garantiza que toda orden trabajada hoy, sin importar la actividad, aparezca.
+    """
     import pandas as pd
     import unicodedata
     import re
@@ -3169,27 +3146,33 @@ def sanitizar_core_monitor(df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip().str.upper()
     
+    # 1. DESTRUIR DUPLICADOS (Sin borrar órdenes del mismo técnico)
     df = df.drop_duplicates()
         
     def quitar_tildes(texto):
         if pd.isna(texto): return ""
         return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii').upper()
 
+    # --- 2. REGLA DEL TÉCNICO (A prueba de balas) ---
     col_tec = next((c for c in df.columns if any(k in c for k in ['TECNICO', 'EMPLEADO', 'ASIGNADO', 'RECURSO', 'OPERADOR', 'USER'])), None)
     if col_tec:
         df = df[df[col_tec].notna()]
         df = df[df[col_tec].astype(str).str.strip() != '']
         df = df[~df[col_tec].astype(str).str.upper().isin(['NAN', 'NONE', 'NULL', 'NO ASIGNADO', 'SIN ASIGNAR'])]
 
+    # --- 3. ESTADOS VÁLIDOS (Súper Ampliado) ---
     col_est = next((c for c in df.columns if 'ESTADO' in c or 'STATUS' in c), None)
     if col_est:
+        # Añadidos: RESUELT, ENTREGAD, OK
         raices_validas = ['FINALIZAD', 'CERRAD', 'LIQUIDAD', 'ATENDID', 'COMPLETAD', 'SOLUCIONAD', 'REALIZAD', 'EJECUTAD', 'TERMINAD', 'OK', 'RESUELT', 'ENTREGAD']
         def estado_valido(est):
             est_str = quitar_tildes(est)
+            # Si el sistema dejó el estado en blanco, la dejamos pasar para no perderla
             if not est_str or est_str in ['NAN', 'NONE', '']: return True
             return any(raiz in est_str for raiz in raices_validas)
         df = df[df[col_est].apply(estado_valido)]
 
+    # --- 4. EL ASESINO DE ÓRDENES: FORMATO "a.m. / p.m." ---
     col_liq = next((c for c in df.columns if 'LIQ' in c or 'CIERRE' in c or 'SALIDA' in c or 'FIN' in c), None)
     if not col_liq:
         col_liq = next((c for c in df.columns if 'FECHA' in c), None)
@@ -3203,9 +3186,11 @@ def sanitizar_core_monitor(df):
             
         def limpiar_fecha_maxcom(val):
             if pd.isna(val): return pd.NaT
+            # Si ya es un formato de tiempo nativo, lo respetamos
             if isinstance(val, (pd.Timestamp, datetime, date)): return val
             
             str_val = str(val).strip()
+            # MAGIA: Curamos el "a.m." y "p.m." que hacía que Pandas borrara las filas
             str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
             str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
             return str_val
@@ -3213,14 +3198,17 @@ def sanitizar_core_monitor(df):
         df['FECHA_CURADA'] = df[col_liq].apply(limpiar_fecha_maxcom)
         df['FECHA_TMP'] = pd.to_datetime(df['FECHA_CURADA'], format='mixed', dayfirst=True, errors='coerce').dt.date
         
+        # Nos quedamos estrictamente con las cerradas el día de HOY
         df = df[df['FECHA_TMP'] == fecha_hoy]
         df = df.drop(columns=['FECHA_TMP', 'FECHA_CURADA'])
         
     return df
-
-
+# ==============================================================================
+# MOTOR PDF: REPORTE DE GASTOS Y MANTENIMIENTO DE FLOTA (auditorv.py)
+# ==============================================================================
 class ReporteGastosPDF(FPDF):
     def header(self):
+        # Logo corporativo
         if os.path.exists('logo.png'):
             self.image('logo.png', 10, 8, 33)
         self.set_y(12)
@@ -3243,13 +3231,13 @@ class ReporteGastosPDF(FPDF):
         self.set_text_color(128, 128, 128)
         self.cell(0, 10, safestr(f"Página {self.page_no()}"), align="C")
 
-
 def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
     pdf = ReporteGastosPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
+    # Info de cabecera
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(16, 185, 129) 
+    pdf.set_text_color(16, 185, 129) # Verde
     pdf.cell(0, 8, safestr(f"1. RESUMEN DE GASTOS - UNIDAD: {vehiculo}"), ln=True)
     
     pdf.set_font("Helvetica", "", 10)
@@ -3266,8 +3254,9 @@ def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
     pdf.cell(0, 6, safestr(kpi_text), ln=True)
     pdf.ln(5)
     
+    # Tabla de detalle
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(59, 130, 246) 
+    pdf.set_text_color(59, 130, 246) # Azul
     pdf.cell(0, 8, safestr("2. HISTORIAL DETALLADO DE FACTURAS Y SERVICIOS"), ln=True)
     
     pdf.set_fill_color(240, 245, 250)
@@ -3292,6 +3281,7 @@ def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
         pdf.cell(w[3], 6, safestr(f"{float(row.get('MONTO', 0)):,.2f}"), border=1, align="R")
         pdf.ln()
         
+    # Totales finales en la tabla
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(220, 230, 240)
     pdf.cell(w[0] + w[1] + w[2], 7, safestr("TOTAL GASTOS DEL PERIODO:"), border=1, align="R", fill=True)
@@ -3304,14 +3294,21 @@ def generar_pdf_gastos_vehiculo(df_gastos, vehiculo, rango_fechas, total):
     os.remove(path)
     return data
 
-
 def generar_pdf_reporte_general_gastos(df_gastos):
+    """
+    Genera un PDF gerencial de gastos y flota, agrupado por vehículo,
+    mostrando fecha cronológica y descripciones detalladas de forma robusta.
+    """
     from fpdf import FPDF
     import pandas as pd
     
+    # Configuramos el documento (Letter / Carta)
     pdf = FPDF(orientation='P', unit='mm', format='Letter')
     pdf.add_page()
     
+    # =========================================================
+    # ENCABEZADO PRINCIPAL DEL DOCUMENTO
+    # =========================================================
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(15, 23, 42)
     pdf.cell(0, 10, safestr("REPORTE GERENCIAL DE GASTOS Y FLOTA"), ln=True, align="C")
@@ -3321,44 +3318,55 @@ def generar_pdf_reporte_general_gastos(df_gastos):
     pdf.cell(0, 6, safestr(f"Fecha de Generación: {fecha_gen}"), ln=True, align="C")
     pdf.ln(5)
     
+    # Si la base viene vacía, retornamos un PDF con el aviso
     if df_gastos is None or df_gastos.empty:
         pdf.set_font("Helvetica", "I", 10)
         pdf.cell(0, 10, "No hay gastos registrados en el periodo seleccionado.", ln=True, align="C")
         try: return pdf.output(dest='S').encode('latin1')
         except: return bytes(pdf.output())
 
+    # =========================================================
+    # DETECCIÓN ROBUSTA DE COLUMNAS (Independiente de mayúsculas/minúsculas o espacios)
+    # =========================================================
+    # Creamos un mapa de columnas normalizadas (sin espacios y en minúsculas)
     df_cols = {col.strip().lower(): col for col in df_gastos.columns}
     
+    # 1. Buscar columna del vehículo
     col_vehiculo = None
     for opt in ['vehiculo', 'vehículo', 'placa', 'vehicle', 'unidad']:
         if opt in df_cols:
             col_vehiculo = df_cols[opt]
             break
             
+    # 2. Buscar columna de la fecha
     col_fecha = None
     for opt in ['fecha', 'date', 'fec', 'fecha_gasto']:
         if opt in df_cols:
             col_fecha = df_cols[opt]
             break
 
+    # 3. Buscar columna de categoría / tipo de gasto
     col_tipo = None
     for opt in ['tipo_gasto', 'tipo de gasto', 'tipo_de_gasto', 'categoria', 'categoría', 'tipo', 'category']:
         if opt in df_cols:
             col_tipo = df_cols[opt]
             break
 
+    # 4. Buscar columna de descripción
     col_desc = None
     for opt in ['descripcion', 'descripción', 'detalle', 'description', 'desc']:
         if opt in df_cols:
             col_desc = df_cols[opt]
             break
 
+    # 5. Buscar columna del monto total
     col_total = None
     for opt in ['total', 'costo', 'monto', 'total (l.)', 'total(l.)', 'monto_gasto', 'costo_total', 'precio', 'importe', 'valor']:
         if opt in df_cols:
             col_total = df_cols[opt]
             break
 
+    # Aseguramos la existencia de la columna vehículo para agrupar
     vehiculo_col_real = col_vehiculo if col_vehiculo else 'VEHICULO'
     if vehiculo_col_real not in df_gastos.columns:
         df_gastos[vehiculo_col_real] = "FLOTA GENERAL"
@@ -3366,19 +3374,24 @@ def generar_pdf_reporte_general_gastos(df_gastos):
     vehiculos_unicos = sorted(df_gastos[vehiculo_col_real].dropna().unique().tolist())
     gran_total = 0.0
     
+    # =========================================================
+    # RECORRIDO Y AGRUPACIÓN POR CADA VEHÍCULO
+    # =========================================================
     for vehiculo in vehiculos_unicos:
         df_vehiculo = df_gastos[df_gastos[vehiculo_col_real] == vehiculo]
         if df_vehiculo.empty:
             continue
             
+        # --- TÍTULO DE LA SECCIÓN DEL VEHÍCULO ---
         pdf.set_font("Helvetica", "B", 10)
-        pdf.set_fill_color(30, 58, 138)  
-        pdf.set_text_color(255, 255, 255) 
+        pdf.set_fill_color(30, 58, 138)  # Azul oscuro institucional
+        pdf.set_text_color(255, 255, 255) # Letras blancas
         pdf.cell(190, 8, safestr(f" VEHÍCULO: {vehiculo}"), border=1, ln=True, fill=True, align="L")
         
+        # --- ENCABEZADOS DE LA TABLA (190mm ancho total) ---
         pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(200, 200, 200) 
-        pdf.set_text_color(15, 23, 42)    
+        pdf.set_fill_color(200, 200, 200) # Fondo gris claro para los títulos de columnas
+        pdf.set_text_color(15, 23, 42)    # Letra oscura
         
         pdf.cell(25, 6, "FECHA", border=1, fill=True, align="C")
         pdf.cell(40, 6, "TIPO DE GASTO", border=1, fill=True, align="C")
@@ -3387,48 +3400,61 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         pdf.ln()
 
         subtotal_vehiculo = 0.0
-        pdf.set_font("Helvetica", "", 8) 
+        pdf.set_font("Helvetica", "", 8) # Letra estándar para el contenido
         
+        # --- IMPRESIÓN DEL DETALLE DE GASTOS ---
         for _, row in df_vehiculo.iterrows():
+            # 1. Fecha limpia
             fecha_val = row.get(col_fecha) if col_fecha else None
             fecha_str = safestr(fecha_val)[:10] if pd.notna(fecha_val) else 'N/D'
             
+            # 2. Categoría
             cat_val = row.get(col_tipo) if col_tipo else None
             cat = safestr(cat_val)[:25] if pd.notna(cat_val) else 'N/D'
             
+            # 3. Descripción detallada
             desc_val = row.get(col_desc) if col_desc else None
             desc = safestr(desc_val)[:70] if pd.notna(desc_val) else 'Sin detalle'
             
+            # 4. Obtención y parsing del valor numérico
             raw_val = row.get(col_total) if col_total else 0.0
             
             if pd.isna(raw_val) or raw_val == '':
                 tot = 0.0
             else:
                 try:
+                    # Si el valor ya es numérico, lo convertimos directamente
                     if isinstance(raw_val, (int, float)):
                         tot = float(raw_val)
                     else:
+                        # Si es de tipo string, removemos símbolos de moneda y separadores
                         val_clean = str(raw_val).upper().replace('L.', '').replace('L', '').replace('$', '').replace(',', '').strip()
                         tot = float(val_clean)
-                except:
+                except Exception:
                     tot = 0.0
                 
             subtotal_vehiculo += tot
             
+            # Escribir la fila en el PDF
             pdf.cell(25, 6, fecha_str, border=1, align="C")
             pdf.cell(40, 6, cat, border=1, align="L")
             pdf.cell(95, 6, desc, border=1, align="L")
             pdf.cell(30, 6, safestr(f"{tot:,.2f}"), border=1, align="R")
             pdf.ln()
         
+        # --- FILA DE SUBTOTAL DEL VEHÍCULO ---
         pdf.set_font("Helvetica", "B", 9)
-        pdf.set_fill_color(230, 240, 250) 
+        pdf.set_fill_color(230, 240, 250) # Azul muy clarito
         pdf.cell(160, 6, "SUBTOTAL VEHICULO:", border=1, align="R", fill=True)
         pdf.cell(30, 6, safestr(f"L. {subtotal_vehiculo:,.2f}"), border=1, align="R", fill=True)
-        pdf.ln(8) 
+        pdf.ln(8) # Espacio de separación antes de imprimir el siguiente vehículo
         
+        # Acumulamos para el total general
         gran_total += subtotal_vehiculo
 
+    # =========================================================
+    # GRAN TOTAL INVERTIDO AL FINAL DEL DOCUMENTO
+    # =========================================================
     pdf.ln(5)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_fill_color(30, 58, 138)
@@ -3436,7 +3462,11 @@ def generar_pdf_reporte_general_gastos(df_gastos):
     pdf.cell(140, 10, "GRAN TOTAL INVERTIDO EN FLOTA:", border=1, align="R", fill=True)
     pdf.cell(50, 10, safestr(f"L. {gran_total:,.2f}"), border=1, align="C", fill=True)
     
+    # =========================================================
+    # RETORNO SEGURO DE BYTES
+    # =========================================================
     try:
         return pdf.output(dest='S').encode('latin1')
     except Exception:
         return bytes(pdf.output())
+
