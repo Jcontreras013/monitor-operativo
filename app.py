@@ -633,6 +633,41 @@ def main():
 
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS", use_container_width=True)
 
+
+            # =======================================================
+            # BOTÓN DE ACTUALIZACIÓN AUTOMÁTICA API MAXCOM
+            # =======================================================
+            st.markdown("---")
+            st.markdown("### ⚙️ Control de Datos")
+            
+            if st.button("🔄 Sincronizar API MaxCom", use_container_width=True, type="primary"):
+                with st.spinner("Descargando datos desde el servidor central..."):
+                    from tools import descargar_ordenes_api_maxcom, sobrescribir_archivo_gcs
+                    import time
+                    
+                    # 1. Llamamos a la API
+                    df_nuevo, error = descargar_ordenes_api_maxcom()
+                    
+                    if error:
+                        st.error(f"❌ Falló la sincronización: {error}")
+                    elif df_nuevo is not None and not df_nuevo.empty:
+                        try:
+                            # 2. Subimos el nuevo dataframe a Google Cloud para que reemplace tu archivo manual
+                            # ⚠️ CAMBIA 'nombre_de_tu_archivo_fttx.csv' por el nombre real del archivo que usas actualmente
+                            sobrescribir_archivo_gcs(df_nuevo, "jovial-trilogy-306216.appspot.com", "nombre_de_tu_archivo_fttx.csv")
+                            
+                            # 3. Limpiamos la memoria para forzar la lectura del nuevo archivo
+                            st.cache_data.clear()
+                            if 'df_gps_memoria' in st.session_state:
+                                del st.session_state['df_gps_memoria']
+                                
+                            st.success(f"✅ ¡Éxito! Se descargaron {len(df_nuevo)} órdenes nuevas.")
+                            time.sleep(2) # Pausa breve para que leas el mensaje de éxito
+                            st.rerun() # Recarga la app con los datos frescos
+                            
+                        except Exception as e:
+                            st.error(f"Error al guardar en la nube: {e}")
+
     # ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS)
     # ==============================================================================
