@@ -3470,3 +3470,41 @@ def generar_pdf_reporte_general_gastos(df_gastos):
     except Exception:
         return bytes(pdf.output())
 
+
+
+# ==============================================================================
+# CONEXIÓN DIRECTA A API MAXCOM
+# ==============================================================================
+import requests
+from requests.auth import HTTPBasicAuth
+import urllib3
+import pandas as pd
+
+# Desactiva las alertas de seguridad de Streamlit por usar un certificado autofirmado (verify=False)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def descargar_ordenes_api_maxcom():
+    """Conecta al servidor local de MaxCom y extrae el JSON a un DataFrame"""
+    url = "https://192.168.20.20:8996/API/consultaOrdenes"
+    
+    try:
+        # Extraemos las credenciales seguras de Streamlit
+        usr = st.secrets["api_maxcom"]["usuario"]
+        pwd = st.secrets["api_maxcom"]["password"]
+        
+        # Conexión directa
+        respuesta = requests.get(url, auth=HTTPBasicAuth(usr, pwd), verify=False, timeout=30)
+        
+        if respuesta.status_code == 200:
+            datos = respuesta.json()
+            if not datos:
+                return None, "La API respondió, pero no envió ningún dato (lista vacía)."
+            
+            df_ordenes = pd.DataFrame(datos)
+            return df_ordenes, None
+        else:
+            return None, f"Error del servidor: {respuesta.status_code} - {respuesta.text}"
+            
+    except Exception as e:
+        return None, f"Error de conexión con el firewall de MaxCom: {e}"
+
