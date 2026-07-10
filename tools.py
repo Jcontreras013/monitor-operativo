@@ -12,7 +12,6 @@ from typing import Any, List, Optional, Tuple, Union, Dict
 import io
 from google.cloud import storage
 from google.oauth2 import service_account
-
 # ==============================================================================
 # MOTOR SEGURO DE FECHAS, ZONA HORARIA Y UTILIDADES BASE
 # ==============================================================================
@@ -3469,3 +3468,59 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         return pdf.output(dest='S').encode('latin1')
     except Exception:
         return bytes(pdf.output())
+
+
+
+# ==============================================================================
+# MÓDULO DE BÚSQUEDA INTELIGENTE DE GPS
+# ==============================================================================
+
+@st.cache_data(ttl=3600)
+def cargar_diccionario_gps(ruta_archivo="gps.txt"):
+    """Carga y normaliza el archivo de texto con los links de GPS"""
+    gps_dict = {}
+    try:
+        with open(ruta_archivo, 'r', encoding='utf-8') as f:
+            for linea in f:
+                if not linea.strip(): continue
+                partes = linea.split(',')
+                if len(partes) >= 3:
+                    link = partes[0].strip()
+                    nombre_crudo = partes[2].strip().rstrip('.') 
+                    
+                    # Normalizamos (quitamos tildes y pasamos a minúsculas)
+                    nombre_norm = ''.join(c for c in unicodedata.normalize('NFD', nombre_crudo.lower()) if unicodedata.category(c) != 'Mn')
+                    gps_dict[nombre_norm] = link
+    except Exception as e:
+        print(f"Error leyendo {ruta_archivo}: {e}")
+    return gps_dict
+
+def encontrar_link_gps(nombre_tecnico, gps_dict):
+    """Busca coincidencias aproximadas del nombre del técnico en el diccionario GPS"""
+    if pd.isna(nombre_tecnico): return None
+    
+    tec_norm = ''.join(c for c in unicodedata.normalize('NFD', str(nombre_tecnico).lower()) if unicodedata.category(c) != 'Mn')
+    tec_words = set(tec_norm.split())
+    
+    # 1. Si es exactamente igual
+    if tec_norm in gps_dict:
+        return gps_dict[tec_norm]
+        
+    # 2. Búsqueda inteligente por palabras
+    mejor_link = None
+    max_coincidencias = 0
+    
+    for nombre_gps, link in gps_dict.items():
+        gps_words = set(nombre_gps.split())
+        coincidencias = len(tec_words.intersection(gps_words))
+        
+        if coincidencias > max_coincidencias:
+            max_coincidencias = coincidencias
+            mejor_link = link
+            
+    if max_coincidencias >= 2:
+        return mejor_link
+    elif max_coincidencias == 1 and len(tec_words) == 1:
+        return mejor_link
+        
+    return None
