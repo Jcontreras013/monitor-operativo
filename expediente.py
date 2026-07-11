@@ -11,9 +11,15 @@ from fpdf import FPDF
 import plotly.express as px
 import re
 import io
-from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+# --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
+try:
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -82,14 +88,9 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
 # MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS (EXCLUSIÓN DE ÓRDENES)
 # ==============================================================================
 def es_llegada_tarde(motivo, comentario):
-    """
-    Identifica si el registro es una llegada tarde real de asistencia al plantel.
-    Excluye retrasos operativos de órdenes de Cepheus para evitar duplicidad de gravedad.
-    """
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
     
-    # Exclusión de demoras e incidentes de órdenes de trabajo (SLA)
     EXCL = [
         'ALMUERZO', 'BREAK', 'DESCANSO', 'ORDEN', 'ÓRDEN', 'CIERRE', 
         'CERRADA', 'APERTURA', 'APERTURADA', 'LIQUIDADA', 'LIQUIDACION', 
@@ -109,10 +110,10 @@ def es_llegada_tarde(motivo, comentario):
             return True
     return False
 
+def clasificiar_grave_o_leve(motivo, comentario, n_tardes=0):
+    return clasificar_grave_o_leve(motivo, comentario, n_tardes)
+
 def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
-    """
-    Clasifica automáticamente la gravedad de una falta según criterios de negocio.
-    """
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
     texto = motivo_u + " " + com_u
@@ -488,14 +489,9 @@ def generar_docx_consolidado(df):
     Genera un documento oficial de Word (.docx) estructurado con tablas,
     resúmenes de KPIs y evidencia fotográfica adjunta en el mismo formato.
     """
-    from docx import Document
-    from docx.shared import Inches, Pt, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    import requests
-    import tempfile
-    import os
-    import io
-
+    if not HAS_DOCX:
+        return b""
+        
     doc = Document()
     
     # --- Configuración Estilo y Título ---
@@ -843,29 +839,32 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                 with c_b_docx:
                     if not df_mostrar.empty:
-                        if filtro_nombre == "VER TODOS":
-                            nombre_archivo_docx = "Reporte_General.docx"
-                        else:
-                            nombre_corto = " ".join(filtro_nombre.split()[:2]) 
-                            nombre_archivo_docx = f"Reporte_{nombre_corto.replace(' ', '_')}.docx"
+                        if HAS_DOCX:
+                            if filtro_nombre == "VER TODOS":
+                                nombre_archivo_docx = "Reporte_General.docx"
+                            else:
+                                nombre_corto = " ".join(filtro_nombre.split()[:2]) 
+                                nombre_archivo_docx = f"Reporte_{nombre_corto.replace(' ', '_')}.docx"
 
-                        id_estado_docx = f"docx_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
+                            id_estado_docx = f"docx_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
 
-                        if st.session_state.get('estado_docx_actual') == id_estado_docx:
-                            st.download_button(
-                                label="⬇️ Descargar Word",
-                                data=st.session_state['docx_bytes_listo'],
-                                file_name=nombre_archivo_docx,
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True,
-                                type="primary"
-                            )
+                            if st.session_state.get('estado_docx_actual') == id_estado_docx:
+                                st.download_button(
+                                    label="⬇️ Descargar Word",
+                                    data=st.session_state['docx_bytes_listo'],
+                                    file_name=nombre_archivo_docx,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True,
+                                    type="primary"
+                                )
+                            else:
+                                if st.button("📝 Preparar Word", key=f"btn_docx_{tab_id}", use_container_width=True):
+                                    with st.spinner("Generando Word (.docx)..."):
+                                        st.session_state['docx_bytes_listo'] = generar_docx_consolidado(df_mostrar)
+                                        st.session_state['estado_docx_actual'] = id_estado_docx
+                                        st.rerun()
                         else:
-                            if st.button("📝 Preparar Word", key=f"btn_docx_{tab_id}", use_container_width=True):
-                                with st.spinner("Generando Word (.docx)..."):
-                                    st.session_state['docx_bytes_listo'] = generar_docx_consolidado(df_mostrar)
-                                    st.session_state['estado_docx_actual'] = id_estado_docx
-                                    st.rerun()
+                            st.button("📝 Word Desactivado", disabled=True, help="Agrega 'python-docx' a requirements.txt para habilitar descargas en Word", use_container_width=True, key=f"btn_docx_disabled_{tab_id}")
 
                 # --- 3. DATAFRAME DE EXPEDIENTES ---
                 if df_mostrar.empty:
@@ -984,7 +983,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             if st.button("💾 GUARDAR EN EXPEDIENTE OPERATIVO", type="primary", use_container_width=True):
                 if colaborador_sel == "---" or not comentario:
-                    st.error("⚠️ Complete el nombre and el comentario.")
+                    st.error("⚠️ Complete el nombre y el comentario.")
                 elif tipo_falta_base == "Otro" and not tipo_falta:
                     st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
                 else:
