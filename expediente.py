@@ -10,6 +10,10 @@ import time
 from fpdf import FPDF
 import plotly.express as px
 import re
+import io
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
@@ -75,13 +79,17 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
         return {}
 
 # ==============================================================================
-# MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS (CORREGIDO)
+# MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS (EXCLUSIÓN DE ÓRDENES)
 # ==============================================================================
 def es_llegada_tarde(motivo, comentario):
+    """
+    Identifica si el registro es una llegada tarde real de asistencia al plantel.
+    Excluye retrasos operativos de órdenes de Cepheus para evitar duplicidad de gravedad.
+    """
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
     
-    # Agregamos exclusiones para evitar que problemas de órdenes (SLA) o cierres se cuenten como llegadas tarde al plantel.
+    # Exclusión de demoras e incidentes de órdenes de trabajo (SLA)
     EXCL = [
         'ALMUERZO', 'BREAK', 'DESCANSO', 'ORDEN', 'ÓRDEN', 'CIERRE', 
         'CERRADA', 'APERTURA', 'APERTURADA', 'LIQUIDADA', 'LIQUIDACION', 
@@ -102,6 +110,9 @@ def es_llegada_tarde(motivo, comentario):
     return False
 
 def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
+    """
+    Clasifica automáticamente la gravedad de una falta según criterios de negocio.
+    """
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
     texto = motivo_u + " " + com_u
@@ -210,7 +221,8 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
     clasificacion = clasificar_grave_o_leve(motivo, comentario, n_tardes)
     etiqueta = f"[{clasificacion}]"
     motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").replace("[OTRO]", "").strip()
-    return f"{etiqueta} {motivo_limpio}"    
+    return f"{etiqueta} {motivo_limpio}"
+
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
@@ -236,7 +248,7 @@ def sanitizar(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
-# 2. GENERADORES DE DOCUMENTOS PDF
+# 2. GENERADORES DE DOCUMENTOS DE REPORTES (PDF Y WORD)
 # ==============================================================================
 def generar_pdf_consolidado(df):
     df_work = pd.DataFrame()
@@ -246,7 +258,7 @@ def generar_pdf_consolidado(df):
     if not df.empty:
         df_work = df.copy()
 
-        # Contar llegadas tarde por técnico en el conjunto visible
+        # Contar llegadas tarde filtradas para la promoción por reincidencia
         mask_tarde = df_work.apply(
             lambda r: es_llegada_tarde(
                 str(r.get('TIPO_FALTA', '')).upper(),
@@ -429,7 +441,7 @@ def generar_pdf_consolidado(df):
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 14)
         pdf.set_text_color(40, 50, 100)
-        pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRAFICA", ln=True, align="C")
+        pdf.cell(0, 10, "ANEXOS - EVIDENCIA FOTOGRÁFICA", ln=True, align="C")
         pdf.ln(5)
         for _, row in df.iterrows():
             urls    = str(row.get('URL_FOTO', '')).split(',')
@@ -470,6 +482,175 @@ def generar_pdf_consolidado(df):
     os.remove(path)
     return data
 
+
+def generar_docx_consolidado(df):
+    """
+    Genera un documento oficial de Word (.docx) estructurado con tablas,
+    resúmenes de KPIs y evidencia fotográfica adjunta en el mismo formato.
+    """
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    import requests
+    import tempfile
+    import os
+    import io
+
+    doc = Document()
+    
+    # --- Configuración Estilo y Título ---
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title_p.add_run("REPORTE CONSOLIDADO DE EXPEDIENTES")
+    run.font.name = 'Arial'
+    run.font.size = Pt(16)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(30, 58, 138) # Azul institucional
+    
+    # Fecha de generación
+    date_p = doc.add_paragraph()
+    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_date = date_p.add_run(f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}")
+    run_date.font.name = 'Arial'
+    run_date.font.size = Pt(9.5)
+    run_date.font.color.rgb = RGBColor(100, 116, 139)
+    
+    doc.add_paragraph()
+
+    if df.empty:
+        doc.add_paragraph("No hay registros de incidencias disponibles.")
+    else:
+        df_work = df.copy()
+
+        # Contar llegadas tarde de asistencia
+        mask_tarde = df_work.apply(
+            lambda r: es_llegada_tarde(
+                str(r.get('TIPO_FALTA', '')).upper(),
+                str(r.get('COMENTARIO', '')).upper()
+            ), axis=1
+        )
+        conteo_tardes = (
+            df_work[mask_tarde]['TECNICO']
+            .astype(str).str.upper().str.strip()
+            .value_counts().to_dict()
+        )
+
+        df_work['_CLASIF'] = df_work.apply(
+            lambda r: clasificar_grave_o_leve(
+                str(r.get('TIPO_FALTA', '')),
+                str(r.get('COMENTARIO', '')),
+                conteo_tardes.get(str(r.get('TECNICO', '')).upper().strip(), 0)
+            ), axis=1
+        )
+        df_leves  = df_work[df_work['_CLASIF'] == 'LEVE'].copy()
+        df_graves = df_work[df_work['_CLASIF'] == 'GRAVE'].copy()
+        df_otros  = df_work[df_work['_CLASIF'] == 'OTRO'].copy()
+
+        # Resumen de KPIs en Word
+        doc.add_heading("Resumen General de Gravedad", level=1)
+        p_kpi = doc.add_paragraph()
+        run_kpi = p_kpi.add_run(
+            f"• Faltas Leves Totales: {len(df_leves)}\n"
+            f"• Faltas Graves Totales: {len(df_graves)}\n"
+            f"• Otras Incidencias Registradas: {len(df_otros)}"
+        )
+        run_kpi.font.size = Pt(11)
+        
+        doc.add_paragraph()
+
+        # Función para dibujar las tablas en Word
+        def _agregar_tabla_docx(doc_obj, df_t, titulo_sec, desc):
+            if df_t.empty:
+                return
+            
+            doc_obj.add_heading(titulo_sec, level=2)
+            p_desc = doc_obj.add_paragraph()
+            run_desc = p_desc.add_run(desc)
+            run_desc.italic = True
+            run_desc.font.size = Pt(8.5)
+            run_desc.font.color.rgb = RGBColor(128, 128, 128)
+            
+            headers = ["FECHA", "COLABORADOR", "MOTIVO DE REGISTRO", "DESCRIPCIÓN / COMENTARIO", "SUPERVISOR"]
+            table = doc_obj.add_table(rows=1, cols=5)
+            table.style = 'Table Grid'
+            
+            # Cabecera de la Tabla
+            hdr_cells = table.rows[0].cells
+            for idx_h, header_name in enumerate(headers):
+                hdr_cells[idx_h].text = header_name
+                run_h = hdr_cells[idx_h].paragraphs[0].runs[0]
+                run_h.font.bold = True
+                run_h.font.size = Pt(8)
+                
+            # Filas de datos
+            for _, row in df_t.iterrows():
+                row_cells = table.add_row().cells
+                row_cells[0].text = str(row.get('FECHA_INCIDENCIA', ''))
+                row_cells[1].text = str(row.get('TECNICO', ''))
+                row_cells[2].text = str(row.get('TIPO_FALTA', ''))
+                row_cells[3].text = str(row.get('COMENTARIO', ''))
+                row_cells[4].text = str(row.get('SUPERVISOR', ''))
+                
+                # Tamaño de fuente estándar para el cuerpo de la tabla
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for r_text in paragraph.runs:
+                            r_text.font.size = Pt(8.5)
+            
+            doc_obj.add_paragraph()
+
+        # Generar las secciones de tablas
+        _agregar_tabla_docx(doc, df_leves, "1. SECCIÓN: FALTAS LEVES", "Demoras, almuerzos/breaks excedidos, marcas faltantes o mala documentación.")
+        _agregar_tabla_docx(doc, df_graves, "2. SECCIÓN: FALTAS GRAVES", "Mal cuidado vehicular, órdenes sin cerrar/abrir a tiempo, o reincidencias acumuladas.")
+        _agregar_tabla_docx(doc, df_otros, "3. SECCIÓN: OTRAS INCIDENCIAS", "Incidencias médicas, méritos, contratos o documentos sin clasificación definida.")
+
+        # --- ANEXOS / IMÁGENES DENTRO DEL WORD ---
+        tiene_anexos = False
+        for _, row in df_work.iterrows():
+            urls = str(row.get('URL_FOTO', '')).split(',')
+            if any(u.strip().startswith('http') for u in urls):
+                tiene_anexos = True
+                break
+        
+        if tiene_anexos:
+            doc.add_page_break()
+            doc.add_heading("ANEXOS - EVIDENCIA FOTOGRÁFICA", level=1)
+            
+            for _, row in df_work.iterrows():
+                urls = str(row.get('URL_FOTO', '')).split(',')
+                validas = [u.strip() for u in urls if u.strip().startswith('http')]
+                if validas:
+                    tec_name = str(row.get('TECNICO', ''))
+                    f_inc = str(row.get('FECHA_INCIDENCIA', ''))
+                    motivo_falta = str(row.get('TIPO_FALTA', ''))
+                    
+                    for url in validas:
+                        try:
+                            r = requests.get(url, timeout=5)
+                            if r.status_code == 200:
+                                fd, tp = tempfile.mkstemp(suffix=".png")
+                                os.close(fd)
+                                try:
+                                    with open(tp, 'wb') as f_img:
+                                        f_img.write(r.content)
+                                    p_annex = doc.add_paragraph()
+                                    run_annex = p_annex.add_run(f"Evidencia: {tec_name} | {motivo_falta} | {f_inc}\n")
+                                    run_annex.bold = True
+                                    run_annex.font.size = Pt(9)
+                                    doc.add_picture(tp, width=Inches(5.5))
+                                    doc.add_paragraph()
+                                finally:
+                                    if os.path.exists(tp):
+                                        os.remove(tp)
+                        except:
+                            pass
+
+    # Retornar como Bytes seguros
+    b_io = io.BytesIO()
+    doc.save(b_io)
+    return b_io.getvalue()
+
+
 # ==============================================================================
 # MOTOR DE MEMORIA
 # ==============================================================================
@@ -485,7 +666,7 @@ def obtener_datos_memoria(conn):
     return st.session_state['df_exp_memoria']
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS (COMPLETO CON BOTONES PDF & WORD)
+# 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
@@ -538,7 +719,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 elif filtro_tipo == "Llamado de Atención":
                     df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
 
-                # --- 1. PANEL DE KPIs INTERNO ---
+                # --- PANEL DE KPIs ---
                 with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
                     if not df_mostrar.empty:
                         df_kpi = df_mostrar.copy()
@@ -627,7 +808,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                         df_resumen_rubros = df_kpi['RUBRO'].value_counts().reset_index()
                         df_resumen_rubros.columns = ['Rubro / Tipo de Falta', 'Cantidad de Incidencias']
                         st.dataframe(df_resumen_rubros, use_container_width=True, hide_index=True)
-
                     else:
                         st.info("📊 No hay datos disponibles para los filtros seleccionados.")
 
@@ -758,6 +938,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                 st.info("No hay registros en la base de datos para esta área.")
         except Exception as e:
             st.warning(f"⚠️ Error al cargar el historial: {e}")
+
+    # ==========================================================================
+    # DEFINICIÓN DE PESTAÑAS (Ubicado fuera de generar_vista_historial)
+    # ==========================================================================
+    tab_tecnicos, tab_admin = st.tabs(["⚙️ Operaciones (Técnicos y Auxiliares)", "🏢 Administrativo (SAC, Ventas, etc.)"])
     
     # ==========================================================================
     # PESTAÑA 1: OPERACIONES (TÉCNICOS)
@@ -799,7 +984,7 @@ def mostrar_modulo_expedientes(conn, df_base):
             
             if st.button("💾 GUARDAR EN EXPEDIENTE OPERATIVO", type="primary", use_container_width=True):
                 if colaborador_sel == "---" or not comentario:
-                    st.error("⚠️ Complete el nombre y el comentario.")
+                    st.error("⚠️ Complete el nombre and el comentario.")
                 elif tipo_falta_base == "Otro" and not tipo_falta:
                     st.error("⚠️ Por favor, especifique el motivo de la falta en el campo correspondiente.")
                 else:
@@ -865,138 +1050,138 @@ def mostrar_modulo_expedientes(conn, df_base):
                     except Exception as e:
                         st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
-        st.markdown("---")
-        
-        df_view = obtener_datos_memoria(conn)
-        if df_view is not None and not df_view.empty and 'TECNICO' in df_view.columns:
-            df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
-            df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
-            es_admin_mask = df_view['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
-            df_tecnicos_tab = df_view[~es_admin_mask].copy()
-            df_tecnicos_tab = df_tecnicos_tab[~df_tecnicos_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
+            st.markdown("---")
             
-            generar_vista_historial(df_tecnicos_tab, "Operaciones y Técnicos", "tec")
+            df_view = obtener_datos_memoria(conn)
+            if df_view is not None and not df_view.empty and 'TECNICO' in df_view.columns:
+                df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
+                df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
+                es_admin_mask = df_view['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
+                df_tecnicos_tab = df_view[~es_admin_mask].copy()
+                df_tecnicos_tab = df_tecnicos_tab[~df_tecnicos_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
+                
+                generar_vista_historial(df_tecnicos_tab, "Operaciones y Técnicos", "tec")
 
-    # ==========================================================================
-    # PESTAÑA 2: ADMINISTRATIVO (MÓDULO SAC Y VENTAS)
-    # ==========================================================================
-    with tab_admin:
-        with st.expander("➕ Crear Nuevo Registro - Administrativo", expanded=True):
-            st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
-            
-            c1_admin, c2_admin = st.columns(2)
-            with c1_admin:
-                dict_admin = cargar_personal_admin("personal_sac.txt")
-                opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
+        # ==========================================================================
+        # PESTAÑA 2: ADMINISTRATIVO (MÓDULO SAC Y VENTAS)
+        # ==========================================================================
+        with tab_admin:
+            with st.expander("➕ Crear Nuevo Registro - Administrativo", expanded=True):
+                st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
                 
-                dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
-                
-                opciones_nombres_admin = ["---"]
-                if dept_sel != "--- Seleccione ---":
-                    opciones_nombres_admin += dict_admin.get(dept_sel, [])
+                c1_admin, c2_admin = st.columns(2)
+                with c1_admin:
+                    dict_admin = cargar_personal_admin("personal_sac.txt")
+                    opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
                     
-                if len(opciones_nombres_admin) <= 1:
-                    nombre_admin = st.text_input("👤 Nombre Completo del Colaborador:*", key="txt_nombre_admin").upper()
-                else:
-                    nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
+                    dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
                     
-                tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
-                    "Llamado de Atención Verbal", "Amonestación Escrita", 
-                    "Llegada Tardía / Ausencia", "Incidencia Médica", 
-                    "Felicitación / Mérito", "Curriculum / Contrato", "Otro"
-                ], key="sel_falta_admin")
-                
-                if tipo_falta_admin_base == "Otro":
-                    tipo_falta_admin = st.text_input("📝 Especifique la incidencia:", key="txt_otro_admin").upper()
-                else:
-                    tipo_falta_admin = tipo_falta_admin_base.upper()
-                    
-            with c2_admin:
-                fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
-                archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
-                
-            comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
-            
-            if st.button("💾 REGISTRAR INCIDENCIA ADMINISTRATIVA", type="primary", use_container_width=True):
-                if dept_sel == "--- Seleccione ---":
-                    st.error("⚠️ Debes seleccionar el departamento.")
-                elif not nombre_admin or nombre_admin == "---":
-                    st.error("⚠️ El nombre del empleado es obligatorio.")
-                elif not comentario_admin:
-                    st.error("⚠️ Ingresa una descripción de los hechos.")
-                elif tipo_falta_admin_base == "Otro" and not tipo_falta_admin:
-                    st.error("⚠️ Especifique el motivo en el campo 'Otro'.")
-                else:
-                    try:
-                        urls_admin = []
-                        if archivos_admin:
-                            with st.spinner("Subiendo imágenes al servidor..."):
-                                for a in archivos_admin:
-                                    res = requests.post(
-                                        "https://freeimage.host/api/1/upload",
-                                        data={
-                                            "key": API_KEY_FREEIMAGE,
-                                            "action": "upload",
-                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                            "format": "json"
-                                        }
-                                    )
-                                    if res.status_code == 200:
-                                        urls_admin.append(res.json()["image"]["url"])
+                    opciones_nombres_admin = ["---"]
+                    if dept_sel != "--- Seleccione ---":
+                        opciones_nombres_admin += dict_admin.get(dept_sel, [])
                         
-                        with st.spinner("Guardando en la base de datos principal..."):
-                            df_actual = obtener_datos_memoria(conn)
-                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
-                            nombre_etiquetado = f"{nombre_admin} ({dept_sel})"
+                    if len(opciones_nombres_admin) <= 1:
+                        nombre_admin = st.text_input("👤 Nombre Completo del Colaborador:*", key="txt_nombre_admin").upper()
+                    else:
+                        nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
+                        
+                    tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
+                        "Llamado de Atención Verbal", "Amonestación Escrita", 
+                        "Llegada Tardía / Ausencia", "Incidencia Médica", 
+                        "Felicitación / Mérito", "Curriculum / Contrato", "Otro"
+                    ], key="sel_falta_admin")
+                    
+                    if tipo_falta_admin_base == "Otro":
+                        tipo_falta_admin = st.text_input("📝 Especifique la incidencia:", key="txt_otro_admin").upper()
+                    else:
+                        tipo_falta_admin = tipo_falta_admin_base.upper()
+                        
+                with c2_admin:
+                    fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
+                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
+                    
+                comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
+                
+                if st.button("💾 REGISTRAR INCIDENCIA ADMINISTRATIVA", type="primary", use_container_width=True):
+                    if dept_sel == "--- Seleccione ---":
+                        st.error("⚠️ Debes seleccionar el departamento.")
+                    elif not nombre_admin or nombre_admin == "---":
+                        st.error("⚠️ El nombre del empleado es obligatorio.")
+                    elif not comentario_admin:
+                        st.error("⚠️ Ingresa una descripción de los hechos.")
+                    elif tipo_falta_admin_base == "Otro" and not tipo_falta_admin:
+                        st.error("⚠️ Especifique el motivo en el campo 'Otro'.")
+                    else:
+                        try:
+                            urls_admin = []
+                            if archivos_admin:
+                                with st.spinner("Subiendo imágenes al servidor..."):
+                                    for a in archivos_admin:
+                                        res = requests.post(
+                                            "https://freeimage.host/api/1/upload",
+                                            data={
+                                                "key": API_KEY_FREEIMAGE,
+                                                "action": "upload",
+                                                "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                                "format": "json"
+                                            }
+                                        )
+                                        if res.status_code == 200:
+                                            urls_admin.append(res.json()["image"]["url"])
                             
-                            nueva_fila = [
-                                get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                                nombre_etiquetado,
-                                tipo_falta_admin,
-                                fecha_inc_admin.strftime("%d/%m/%Y"),
-                                comentario_admin,
-                                ", ".join(urls_admin),
-                                supervisor_actual
-                            ]
-                            nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
-                            
-                            if df_actual is not None and not df_actual.empty:
-                                if len(df_actual.columns) > len(cols_exp):
-                                    df_actual = df_actual.iloc[:, :len(cols_exp)]
-                                elif len(df_actual.columns) < len(cols_exp):
-                                    for i in range(len(cols_exp) - len(df_actual.columns)):
-                                        df_actual[f"Columna_Recuperada_{i}"] = ""
-                                        
-                                df_actual.columns = cols_exp
-                                df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
-                            else:
-                                df_final = nuevo_df
+                            with st.spinner("Guardando en la base de datos principal..."):
+                                df_actual = obtener_datos_memoria(conn)
+                                cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
+                                nombre_etiquetado = f"{nombre_admin} ({dept_sel})"
                                 
-                            sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+                                nueva_fila = [
+                                    get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
+                                    nombre_etiquetado,
+                                    tipo_falta_admin,
+                                    fecha_inc_admin.strftime("%d/%m/%Y"),
+                                    comentario_admin,
+                                    ", ".join(urls_admin),
+                                    supervisor_actual
+                                ]
+                                nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                                
+                                if df_actual is not None and not df_actual.empty:
+                                    if len(df_actual.columns) > len(cols_exp):
+                                        df_actual = df_actual.iloc[:, :len(cols_exp)]
+                                    elif len(df_actual.columns) < len(cols_exp):
+                                        for i in range(len(cols_exp) - len(df_actual.columns)):
+                                            df_actual[f"Columna_Recuperada_{i}"] = ""
+                                            
+                                    df_actual.columns = cols_exp
+                                    df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                                else:
+                                    df_final = nuevo_df
+                                    
+                                sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
 
-                        st.success(f"✅ ¡Guardado exitosamente! {nombre_admin} registrado en la base de datos.")
-                        forzar_actualizacion_memoria(conn)
-                        time.sleep(1.5)
-                        
-                        llaves_a_borrar = ["sel_dept_admin", "sel_nombre_admin", "txt_nombre_admin", "sel_falta_admin", "date_inc_admin", "up_archivos_admin", "txt_comentario_admin", "txt_otro_admin"]
-                        for llave in llaves_a_borrar:
-                            if llave in st.session_state:
-                                del st.session_state[llave]
-                        
-                        st.rerun()
+                            st.success(f"✅ ¡Guardado exitosamente! {nombre_admin} registrado en la base de datos.")
+                            forzar_actualizacion_memoria(conn)
+                            time.sleep(1.5)
+                            
+                            llaves_a_borrar = ["sel_dept_admin", "sel_nombre_admin", "txt_nombre_admin", "sel_falta_admin", "date_inc_admin", "up_archivos_admin", "txt_comentario_admin", "txt_otro_admin"]
+                            for llave in llaves_a_borrar:
+                                if llave in st.session_state:
+                                    del st.session_state[llave]
+                            
+                            st.rerun()
 
-                    except Exception as e:
-                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+                        except Exception as e:
+                            st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
 
-        st.markdown("---")
-        
-        df_view_admin = obtener_datos_memoria(conn)
-        if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
-            df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
-            df_view_admin['TECNICO'] = df_view_admin['TECNICO'].replace(r'\s+', ' ', regex=True)
-            es_admin_mask = df_view_admin['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
-            df_admin_tab = df_view_admin[es_admin_mask].copy()
-            df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
+            st.markdown("---")
             
-            generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
+            df_view_admin = obtener_datos_memoria(conn)
+            if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
+                df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
+                df_view_admin['TECNICO'] = df_view_admin['TECNICO'].replace(r'\s+', ' ', regex=True)
+                es_admin_mask = df_view_admin['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
+                df_admin_tab = df_view_admin[es_admin_mask].copy()
+                df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
+                
+                generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
