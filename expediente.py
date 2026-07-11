@@ -75,7 +75,7 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
         return {}
 
 # ==============================================================================
-# MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS
+# MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS (CORREGIDO)
 # ==============================================================================
 def es_llegada_tarde(motivo, comentario):
     motivo_u = str(motivo).upper().strip()
@@ -89,7 +89,6 @@ def es_llegada_tarde(motivo, comentario):
     ]
     KWS  = ['LLEGADA TARDE', 'LLEGADA TARDIA', 'LLEGADA TARDÍA', 'TARDANZA', 'TARDE', 'RETRASO', 'LLEGADA TARDÍA / AUSENCIA']
     
-    # Si detecta palabras de órdenes, almuerzos o cierres, NO es una llegada tarde de asistencia
     texto_completo = motivo_u + " " + com_u
     if any(ex in texto_completo for ex in EXCL):
         return False
@@ -101,6 +100,11 @@ def es_llegada_tarde(motivo, comentario):
         if kw in com_u:
             return True
     return False
+
+def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
+    motivo_u = str(motivo).upper().strip()
+    com_u = str(comentario).upper().strip()
+    texto = motivo_u + " " + com_u
 
     # 1. VEHÍCULO / MAL CUIDADO O DESCUIDO - SIEMPRE GRAVE
     palabras_vehiculo_neglect = [
@@ -119,7 +123,6 @@ def es_llegada_tarde(motivo, comentario):
         return 'GRAVE'
 
     # 2. EVALUACIÓN DE SLA & MANEJO DE ÓRDENES (REGLA ASOCIATIVA INTELIGENTE)
-    # Evita falsos negativos si el supervisor escribe variaciones como "ORDEN CERRADA TARDE", "APERTURADA CON RETRASO", etc.
     roots_objeto = ["ORDEN", "ÓRDEN", "RUTA"]
     roots_accion = ["APERTUR", "CERR", "CIERR", "INIC", "LIQUID", "FINALIZ"]
     roots_anomalia = ["TARDE", "TARDÍ", "TARDI", "DESFAS", "DESFAC", "RETRAS", "INCUMPLI"]
@@ -128,19 +131,15 @@ def es_llegada_tarde(motivo, comentario):
     has_accion = any(acc in texto for acc in roots_accion)
     has_anomalia = any(anom in texto for anom in roots_anomalia)
 
-    # Si se detecta la combinación Objeto + Acción + Anomalía, es automáticamente GRAVE
     if (has_objeto and has_accion and has_anomalia):
         return 'GRAVE'
 
     # 3. ACCIONES GRAVES DIRECTAS (Seguridad y Faltas de Respeto)
     palabras_graves_directas = [
-        # Seguridad y Faltas de respeto
         "FALTA DE RESPETO", "FALTA DE RESPET", "FALTAS DE RESPETO",
         "IRRESPETO", "INSULTO", "INSULTOS", "GOLPE", "PELEA",
         "AGRESION", "AGRESIÓN", "AMENAZA", "HOSTIGAMIENTO",
         "FALTA AL RESPETO", "OFENSA", "OFENSAS", "FALTA RESPETO",
-        
-        # Otras anomalías operacionales graves directas
         "APERTURADA TARDE", "CERRADA TARDE", "APERTURADAS TARDES", "CERRADAS TARDES",
         "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
         "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
@@ -174,22 +173,18 @@ def es_llegada_tarde(motivo, comentario):
 
     # 5. ACCIONES LEVES
     palabras_leves = [
-        # Almuerzo excedido
         'ALMUERZO EXCEDIDO', 'HORA ALMUERZO', 'HORA DE ALMUERZO',
         'EXCEDIÓ ALMUERZO', 'EXCEDIO ALMUERZO',
         'TIEMPO DE ALMUERZO', 'TIEMPO ALMUERZO', 'EXCESO ALMUERZO',
-        # Break excedido
         'BREAK EXCEDIDO', 'HORA BREAK', 'HORA DE BREAK',
         'EXCEDIÓ BREAK', 'EXCEDIO BREAK',
         'TIEMPO DE BREAK', 'TIEMPO BREAK', 'EXCESO BREAK',
         'DESCANSO EXCEDIDO',
-        # Marcajes faltantes
         'NO MARCÓ', 'NO MARCO', 'SIN MARCAJE', 'MARCAJE FALTANTE',
         'NO MARCÓ ENTRADA', 'NO MARCÓ SALIDA',
         'NO MARCO ENTRADA', 'NO MARCO SALIDA',
         'NO REGISTRO ENTRADA', 'NO REGISTRO SALIDA',
         'OLVIDO MARCAJE', 'FALTA DE MARCAJE', 'OLVIDO DE MARCAJE',
-        # Mala documentación menor
         'MALA DOCUMENTACION', 'MALA DOCUMENTACIÓN',
         "TARDE", "RETRASO", "TRÁFICO", "TRAFICO", "LLANTA", "UNIFORME",
         "GAFETE", "SUCIO", "DESORDEN", "OLVIDO", "MINUTOS", "LEVE"
@@ -215,8 +210,7 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
     clasificacion = clasificar_grave_o_leve(motivo, comentario, n_tardes)
     etiqueta = f"[{clasificacion}]"
     motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").replace("[OTRO]", "").strip()
-    return f"{etiqueta} {motivo_limpio}"
-    
+    return f"{etiqueta} {motivo_limpio}"    
 # ==============================================================================
 # 1. LÓGICA DE PDF (Clase Base)
 # ==============================================================================
