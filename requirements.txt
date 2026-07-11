@@ -37,6 +37,7 @@ fpdf2
 pdfplumber
 pymupdf
 reportlab
+python-docx
 
 #--guardado de imagenes--
 requests
