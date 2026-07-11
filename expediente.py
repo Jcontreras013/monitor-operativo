@@ -485,7 +485,7 @@ def obtener_datos_memoria(conn):
     return st.session_state['df_exp_memoria']
 
 # ==============================================================================
-# 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS
+# 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS (COMPLETO CON BOTONES PDF & WORD)
 # ==============================================================================
 def mostrar_modulo_expedientes(conn, df_base):
     supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
@@ -538,7 +538,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 elif filtro_tipo == "Llamado de Atención":
                     df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
 
-                # PANEL DE KPIs
+                # --- 1. PANEL DE KPIs INTERNO ---
                 with st.expander("📊 PANEL DE KPIs: ANALÍTICA DE PERSONAL", expanded=False):
                     if not df_mostrar.empty:
                         df_kpi = df_mostrar.copy()
@@ -633,35 +633,61 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                 st.markdown("---")
 
-                c_v, c_b = st.columns([2, 1])
-                with c_b:
+                # --- 2. SECCIÓN DE DESCARGA DUAL (PDF & WORD) ---
+                c_v, c_b_pdf, c_b_docx = st.columns([2, 1, 1])
+                with c_b_pdf:
                     if not df_mostrar.empty:
                         if filtro_nombre == "VER TODOS":
-                            texto_btn = "Reporte General"
-                            nombre_archivo = "Reporte_General.pdf"
+                            nombre_archivo_pdf = "Reporte_General.pdf"
                         else:
                             nombre_corto = " ".join(filtro_nombre.split()[:2]) 
-                            texto_btn = f"Reporte de {nombre_corto}"
-                            nombre_archivo = f"Reporte_{nombre_corto.replace(' ', '_')}.pdf"
+                            nombre_archivo_pdf = f"Reporte_{nombre_corto.replace(' ', '_')}.pdf"
 
-                        id_estado = f"pdf_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
+                        id_estado_pdf = f"pdf_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
 
-                        if st.session_state.get('estado_pdf_actual') == id_estado:
+                        if st.session_state.get('estado_pdf_actual') == id_estado_pdf:
                             st.download_button(
-                                label=f"⬇️ Descargar {texto_btn}",
+                                label="⬇️ Descargar PDF",
                                 data=st.session_state['pdf_bytes_listo'],
-                                file_name=nombre_archivo,
+                                file_name=nombre_archivo_pdf,
                                 mime="application/pdf",
                                 use_container_width=True,
                                 type="primary"
                             )
                         else:
-                            if st.button(f"⚙️ Preparar {texto_btn}", key=f"btn_pdf_{tab_id}", use_container_width=True):
-                                with st.spinner("Procesando imágenes y generando documento..."):
+                            if st.button("📄 Preparar PDF", key=f"btn_pdf_{tab_id}", use_container_width=True):
+                                with st.spinner("Generando PDF..."):
                                     st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar)
-                                    st.session_state['estado_pdf_actual'] = id_estado
+                                    st.session_state['estado_pdf_actual'] = id_estado_pdf
                                     st.rerun()
 
+                with c_b_docx:
+                    if not df_mostrar.empty:
+                        if filtro_nombre == "VER TODOS":
+                            nombre_archivo_docx = "Reporte_General.docx"
+                        else:
+                            nombre_corto = " ".join(filtro_nombre.split()[:2]) 
+                            nombre_archivo_docx = f"Reporte_{nombre_corto.replace(' ', '_')}.docx"
+
+                        id_estado_docx = f"docx_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
+
+                        if st.session_state.get('estado_docx_actual') == id_estado_docx:
+                            st.download_button(
+                                label="⬇️ Descargar Word",
+                                data=st.session_state['docx_bytes_listo'],
+                                file_name=nombre_archivo_docx,
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True,
+                                type="primary"
+                            )
+                        else:
+                            if st.button("📝 Preparar Word", key=f"btn_docx_{tab_id}", use_container_width=True):
+                                with st.spinner("Generando Word (.docx)..."):
+                                    st.session_state['docx_bytes_listo'] = generar_docx_consolidado(df_mostrar)
+                                    st.session_state['estado_docx_actual'] = id_estado_docx
+                                    st.rerun()
+
+                # --- 3. DATAFRAME DE EXPEDIENTES ---
                 if df_mostrar.empty:
                     st.info("💡 No hay registros para los filtros seleccionados.")
                 else:
@@ -677,6 +703,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                     
                     st.markdown("<br>", unsafe_allow_html=True)
 
+                    # --- 4. ACCIONES SOBRE EL REGISTRO SELECCIONADO ---
                     with st.expander("🛠️ ACCIONES: Ver o Eliminar Registro", expanded=False):
                         st.write("Seleccione un registro de la lista para gestionarlo:")
                         
@@ -731,8 +758,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                 st.info("No hay registros en la base de datos para esta área.")
         except Exception as e:
             st.warning(f"⚠️ Error al cargar el historial: {e}")
-
-    tab_tecnicos, tab_admin = st.tabs(["⚙️ Operaciones (Técnicos y Auxiliares)", "🏢 Administrativo (SAC, Ventas, etc.)"])
     
     # ==========================================================================
     # PESTAÑA 1: OPERACIONES (TÉCNICOS)
