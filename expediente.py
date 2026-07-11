@@ -80,20 +80,27 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
 def es_llegada_tarde(motivo, comentario):
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
-    EXCL = ['ALMUERZO', 'BREAK', 'DESCANSO']
+    
+    # Agregamos exclusiones para evitar que problemas de órdenes (SLA) o cierres se cuenten como llegadas tarde al plantel.
+    EXCL = [
+        'ALMUERZO', 'BREAK', 'DESCANSO', 'ORDEN', 'ÓRDEN', 'CIERRE', 
+        'CERRADA', 'APERTURA', 'APERTURADA', 'LIQUIDADA', 'LIQUIDACION', 
+        'LIQUIDACIÓN', 'CEQUI', 'SOP'
+    ]
     KWS  = ['LLEGADA TARDE', 'LLEGADA TARDIA', 'LLEGADA TARDÍA', 'TARDANZA', 'TARDE', 'RETRASO', 'LLEGADA TARDÍA / AUSENCIA']
+    
+    # Si detecta palabras de órdenes, almuerzos o cierres, NO es una llegada tarde de asistencia
+    texto_completo = motivo_u + " " + com_u
+    if any(ex in texto_completo for ex in EXCL):
+        return False
+        
     for kw in KWS:
-        if kw in motivo_u and not any(ex in motivo_u for ex in EXCL):
+        if kw in motivo_u:
             return True
     for kw in KWS:
-        if kw in com_u and not any(ex in com_u for ex in EXCL):
+        if kw in com_u:
             return True
     return False
-
-def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
-    motivo_u = str(motivo).upper().strip()
-    com_u = str(comentario).upper().strip()
-    texto = motivo_u + " " + com_u
 
     # 1. VEHÍCULO / MAL CUIDADO O DESCUIDO - SIEMPRE GRAVE
     palabras_vehiculo_neglect = [
