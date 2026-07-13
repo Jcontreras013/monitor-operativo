@@ -548,67 +548,78 @@ def generar_docx_consolidado(df):
     fecha_falta_val = str(primer_registro.get('FECHA_INCIDENCIA', ''))
     hora_falta_val = extraer_hora_falta(str(primer_registro.get('COMENTARIO', '')), str(primer_registro.get('FECHA_REGISTRO', '')))
 
-    # ==========================================================================
-    # 1. TABLA ENCABEZADO (Logo | Título | Metadatos)
-    # ==========================================================================
-    header_table = doc.add_table(rows=1, cols=3)
-    header_table.style = 'Table Grid'
-    header_table.autofit = False
-    
-    header_table.columns[0].width = Inches(1.3)
-    header_table.columns[1].width = Inches(3.7)
-    header_table.columns[2].width = Inches(2.5)
-
-    # Columna 1: Logotipo (Utiliza logo_monitor.png con fallback a logo.png) [3]
-    cell_logo = header_table.cell(0, 0)
-    p_logo = cell_logo.paragraphs[0]
-    logo_path = 'logo_monitor.png' if os.path.exists('logo_monitor.png') else 'logo.png' [3]
-    if os.path.exists(logo_path):
-        try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
-        except: p_logo.text = "MAXCOM"
-    else:
-        p_logo.text = "MAXCOM"
-        p_logo.runs[0].font.bold = True
-        p_logo.runs[0].font.size = Pt(12)
-    p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # Columna 2: Título Central (Se eliminó el duplicado de abajo) [3]
-    cell_title = header_table.cell(0, 1)
-    p_title = cell_title.paragraphs[0]
-    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_title = p_title.add_run("\nREPORTE DE FALTAS")
-    run_title.font.size = Pt(11)
-    run_title.font.bold = True
-    run_title.font.color.rgb = RGBColor(30, 41, 59)
-
-    # Columna 3: Cuadro de Metadatos
-    cell_meta = header_table.cell(0, 2)
-    meta_table = cell_meta.add_table(rows=4, cols=2)
-    meta_table.style = 'Table Grid'
-    meta_table.autofit = True
-    
-    meta_fields = [
-        ("CÓDIGO", "HN-GG-RH-FR-09"),
-        ("VERSIÓN", "1.0"),
-        ("FECHA", "12/05/2026"),
-        ("CLASIFICACIÓN", "INTERNO")
-    ]
-    for r_idx, (k, v) in enumerate(meta_fields):
-        m_cells = meta_table.rows[r_idx].cells
-        m_cells[0].text = k
-        m_cells[0].paragraphs[0].runs[0].font.bold = True
-        m_cells[0].paragraphs[0].runs[0].font.size = Pt(7)
+        # ==========================================================================
+        # 1. TABLA ENCABEZADO (Logo | Título | Metadatos) - Imagen 1
+        # ==========================================================================
+        header_table = doc.add_table(rows=1, cols=3)
+        header_table.style = 'Table Grid'
+        header_table.autofit = False
         
-        m_cells[1].text = v
-        m_cells[1].paragraphs[0].runs[0].font.size = Pt(7)
+        header_table.columns[0].width = Inches(1.3)
+        header_table.columns[1].width = Inches(3.7)
+        header_table.columns[2].width = Inches(2.5)
+
+        # Columna 1: Logotipo (Usa logo_monitor.png con fallback a logo.png) [3]
+        cell_logo = header_table.cell(0, 0)
+        p_logo = cell_logo.paragraphs[0]
+        logo_path = 'logo_monitor.png' if os.path.exists('logo_monitor.png') else 'logo.png' [3]
+        if os.path.exists(logo_path):
+            try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
+            except: p_logo.text = "MAXCOM"
+        else:
+            p_logo.text = "MAXCOM"
+            p_logo.runs[0].font.bold = True
+            p_logo.runs[0].font.size = Pt(12)
+        p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Columna 2: Título Central de la tabla de cabecera
+        cell_title = header_table.cell(0, 1)
+        p_title = cell_title.paragraphs[0]
+        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_title = p_title.add_run("\nREPORTE DE FALTAS")
+        run_title.font.size = Pt(10)
+        run_title.font.bold = True
+        run_title.font.color.rgb = RGBColor(128, 128, 128) # Gris opaco
+
+        # Columna 3: Cuadro de Metadatos
+        cell_meta = header_table.cell(0, 2)
+        meta_table = cell_meta.add_table(rows=4, cols=2)
+        meta_table.style = 'Table Grid'
+        meta_table.autofit = True
         
-        aplicar_espaciado_celda(m_cells[0])
-        aplicar_espaciado_celda(m_cells[1])
+        meta_fields = [
+            ("CÓDIGO", "HN-GG-RH-FR-09"),
+            ("VERSIÓN", "1.0"),
+            ("FECHA", "12/05/2026"),
+            ("CLASIFICACIÓN", "INTERNO")
+        ]
+        for r_idx, (k, v) in enumerate(meta_fields):
+            m_cells = meta_table.rows[r_idx].cells
+            m_cells[0].text = k
+            m_cells[0].paragraphs[0].runs[0].font.bold = True
+            m_cells[0].paragraphs[0].runs[0].font.size = Pt(7)
+            m_cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(100, 116, 139)
+            
+            m_cells[1].text = v
+            m_cells[1].paragraphs[0].runs[0].font.size = Pt(7)
+            m_cells[1].paragraphs[0].runs[0].font.color.rgb = RGBColor(100, 116, 139)
+            
+            aplicar_espaciado_celda(m_cells[0])
+            aplicar_espaciado_celda(m_cells[1])
 
-    for cell in header_table.rows[0].cells:
-        aplicar_espaciado_celda(cell)
+        for cell in header_table.rows[0].cells:
+            aplicar_espaciado_celda(cell)
 
-    doc.add_paragraph() # Pequeño espacio
+        # --- TÍTULO INDEPENDIENTE DEBAJO DE LA CABECERA (Imagen 1) --- [3]
+        p_title_below = doc.add_paragraph()
+        p_title_below.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_title_below.paragraph_format.space_before = Pt(12)
+        p_title_below.paragraph_format.space_after = Pt(12)
+        run_title_below = p_title_below.add_run("REPORTE DE FALTAS") # [3]
+        run_title_below.font.name = 'Arial'
+        run_title_below.font.size = Pt(11)
+        run_title_below.font.bold = True
+        run_title_below.font.color.rgb = RGBColor(0, 0, 0)
 
     # ==========================================================================
     # 2. TABLA: DATOS DEL JEFE SOLICITANTE
@@ -746,76 +757,72 @@ def generar_docx_consolidado(df):
     p_legal.paragraph_format.space_before = Pt(4)
     p_legal.paragraph_format.space_after = Pt(4)
 
-    # ==========================================================================
-    # 5. TABLA INFERIOR: FIRMAS Y ELABORACIÓN (CON HORA DEL SISTEMA ACTUAL)
-    # ==========================================================================
-    table_bottom = doc.add_table(rows=2, cols=2)
-    table_bottom.style = 'Table Grid'
-    table_bottom.columns[0].width = Inches(4.5)
-    table_bottom.columns[1].width = Inches(3.0)
+        # ==========================================================================
+        # 5. TABLA INFERIOR DE FIRMAS Y ELABORACIÓN - Imagen 2
+        # ==========================================================================
+        table_bottom = doc.add_table(rows=2, cols=2)
+        table_bottom.style = 'Table Grid'
+        table_bottom.columns[0].width = Inches(4.5)
+        table_bottom.columns[1].width = Inches(3.0)
 
-    # --- FILA 0: ENCABEZADOS AZULES ---
-    cell_elab_hdr = table_bottom.cell(0, 0)
-    cell_elab_hdr.text = "Datos de Elaboración del Reporte"
-    set_cell_background(cell_elab_hdr, "1E1B4B")
-    p_elab_hdr = cell_elab_hdr.paragraphs[0]
-    p_elab_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_elab_hdr = p_elab_hdr.runs[0]
-    run_elab_hdr.font.bold = True
-    run_elab_hdr.font.size = Pt(8.5)
-    run_elab_hdr.font.color.rgb = RGBColor(255, 255, 255)
+        # --- FILA 0: ENCABEZADOS AZULES ---
+        # Celda izquierda: Totalmente azul oscuro sin texto (Imagen 2) [3]
+        cell_elab_hdr = table_bottom.cell(0, 0)
+        cell_elab_hdr.text = "" 
+        set_cell_background(cell_elab_hdr, "1E1B4B")
 
-    cell_firma_hdr = table_bottom.cell(0, 1)
-    cell_firma_hdr.text = "Firma de Jefe de Departamento Solicitante" [3]
-    set_cell_background(cell_firma_hdr, "1E1B4B")
-    p_firma_hdr = cell_firma_hdr.paragraphs[0]
-    p_firma_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_firma_hdr = p_firma_hdr.runs[0]
-    run_firma_hdr.font.bold = True
-    run_firma_hdr.font.size = Pt(8.5)
-    run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
+        # Celda derecha: Azul oscuro con texto de Firma [3]
+        cell_firma_hdr = table_bottom.cell(0, 1)
+        cell_firma_hdr.text = "" 
+        set_cell_background(cell_firma_hdr, "1E1B4B")
+        p_firma_hdr = cell_firma_hdr.paragraphs[0]
+        p_firma_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_firma_hdr = p_firma_hdr.add_run("Firma de Jefe de\nDepartamento Solicitante") [3]
+        run_firma_hdr.font.bold = True
+        run_firma_hdr.font.size = Pt(8.5)
+        run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
 
-    # --- FILA 1: CONTENIDO (Hora del sistema en el momento de descarga) ---
-    cell_elab_cont = table_bottom.cell(1, 0)
-    left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
-    left_subtable.style = 'Table Grid'
+        # --- FILA 1: CONTENIDO ---
+        cell_elab_cont = table_bottom.cell(1, 0)
+        left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
+        left_subtable.style = 'Table Grid'
 
-    # Auto-completar con la fecha y hora actual del sistema (en Honduras) [3]
-    ahora_hn = get_honduras_time()
-    fecha_elab = ahora_hn.strftime("%d/%m/%Y") # [3]
-    hora_elab = ahora_hn.strftime("%I:%M %p").lower() # [3]
+        # Fecha y hora actual del sistema en Honduras [3]
+        ahora_hn = get_honduras_time()
+        fecha_elab = ahora_hn.strftime("%d/%m/%Y") [3]
+        hora_elab = ahora_hn.strftime("%I:%M%p").lower() # Formato compacto como 10:10am [3]
 
-    elab_fields = [
-        ("Fecha de elaboración de reporte", fecha_elab),
-        ("Hora de elaboración de reporte", hora_elab)
-    ]
-    for f_idx, (k, v) in enumerate(elab_fields):
-        l_cells = left_subtable.rows[f_idx].cells
-        l_cells[0].text = k
-        l_cells[0].paragraphs[0].runs[0].font.bold = True
-        l_cells[0].paragraphs[0].runs[0].font.size = Pt(8)
-        
-        l_cells[1].text = v
-        if v:
-            l_cells[1].paragraphs[0].runs[0].font.size = Pt(8)
+        elab_fields = [
+            ("Fecha de elaboración de reporte", fecha_elab),
+            ("Hora de elaboración de reporte", hora_elab)
+        ]
+        for f_idx, (k, v) in enumerate(elab_fields):
+            l_cells = left_subtable.rows[f_idx].cells
+            l_cells[0].text = k
+            l_cells[0].paragraphs[0].runs[0].font.bold = True
+            l_cells[0].paragraphs[0].runs[0].font.size = Pt(8)
             
-        aplicar_espaciado_celda(l_cells[0])
-        aplicar_espaciado_celda(l_cells[1])
+            l_cells[1].text = v
+            if v:
+                l_cells[1].paragraphs[0].runs[0].font.size = Pt(8)
+                
+            aplicar_espaciado_celda(l_cells[0])
+            aplicar_espaciado_celda(l_cells[1])
 
-    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA FIRMA FÍSICA [3]
-    cell_firma_cont = table_bottom.cell(1, 1)
-    cell_firma_cont.text = "" # Limpia y deja el fondo blanco del Word [3]
-    cell_firma_cont.add_paragraph("\n\n\n")
+        # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA LA PLUMA [3]
+        cell_firma_cont = table_bottom.cell(1, 1)
+        cell_firma_cont.text = "" # Fondo blanco liso [3]
+        cell_firma_cont.add_paragraph("\n\n\n")
 
-    # Aplicar sangría final a las celdas de la tabla inferior
-    for r_idx in range(2):
-        for c_idx in range(2):
-            aplicar_espaciado_celda(table_bottom.cell(r_idx, c_idx))
+        # Aplicar sangría final a las celdas de la tabla inferior
+        for r_idx in range(2):
+            for c_idx in range(2):
+                aplicar_espaciado_celda(table_bottom.cell(r_idx, c_idx))
 
     # Retornar como Bytes seguros en memoria
-    b_io = io.BytesIO()
-    doc.save(b_io)
-    return b_io.getvalue()
+        b_io = io.BytesIO()
+        doc.save(b_io)
+        return b_io.getvalue()
 
 
 # ==============================================================================
