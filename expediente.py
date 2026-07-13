@@ -20,7 +20,7 @@ try:
     from docx.oxml import parse_xml
     from docx.oxml.ns import nsdecls
     HAS_DOCX = True
-except ImportError:
+except (ImportError, KeyError, Exception):
     HAS_DOCX = False
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
@@ -141,7 +141,7 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     roots_accion = ["APERTUR", "CERR", "CIERR", "INIC", "LIQUID", "FINALIZ"]
     roots_anomalia = ["TARDE", "TARDÍ", "TARDI", "DESFAS", "DESFAC", "RETRAS", "INCUMPLI"]
 
-    has_objeto = any(obj in texto, roots_objeto)
+    has_objeto = any(obj in texto for obj in roots_objeto) # Corrección aplicada aquí [3]
     has_accion = any(acc in texto for acc in roots_accion)
     has_anomalia = any(anom in texto for anom in roots_anomalia)
 
@@ -231,7 +231,7 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
-        logo_path = 'logo_monitor.png' if os.path.exists('logo_monitor.png') else 'logo.png'
+        logo_path = 'logo_monitor.png' if os.path.exists('logo_monitor.png') else 'logo.png' [3]
         if os.path.exists(logo_path):
             try: self.image(logo_path, 10, 6, 35)
             except: pass
@@ -487,25 +487,6 @@ def generar_pdf_consolidado(df):
     return data
 
 
-# ==============================================================================
-# MOTOR AUXILIAR DE DETECCIÓN INTELIGENTE DE HORA DE FALTA
-# ==============================================================================
-def extraer_hora_falta(comentario, fecha_registro):
-    """
-    Escanea la descripción del supervisor buscando patrones de hora (ej: 08:06 am, 2:47pm).
-    Si no localiza ninguna hora explícita, extrae la hora del registro del sistema.
-    """
-    match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm|AM|PM)?)', str(comentario))
-    if match:
-        return match.group(1).strip()
-    
-    # Intenta extraer de la fecha de registro (ej: 11/07/2026 10:10:00)
-    reg_str = str(fecha_registro).strip()
-    if " " in reg_str:
-        return reg_str.split(" ")[1][:5] # Obtiene el hh:mm
-    return "N/D"
-
-
 def generar_docx_consolidado(df):
     """
     Genera un documento estructurado de Word (.docx) que simula de forma exacta el 
@@ -637,7 +618,7 @@ def generar_docx_consolidado(df):
         "Puesto",
         "Departamento",
         "Ciudad",
-        "Fecha de Ingreso"
+        "Fecha de Ingresos"
     ]
     for f_idx, label in enumerate(jefe_labels):
         cells = table_jefe.rows[f_idx + 1].cells
@@ -1357,4 +1338,4 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_admin_tab = df_view_admin[es_admin_mask].copy()
                 df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
                 
-                generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
+                generar_vista_historial(df_view_admin_tab, "Administración, SAC y Ventas", "adm")
