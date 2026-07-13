@@ -12,7 +12,7 @@ import plotly.express as px
 import re
 import io
 
-# --- ARRANQUE BLINDADO SÚPER AVANZADO: CAPTURA IMPORT-ERROR Y KEY-ERROR ---
+# --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
 try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
@@ -20,8 +20,7 @@ try:
     from docx.oxml import parse_xml
     from docx.oxml.ns import nsdecls
     HAS_DOCX = True
-except (ImportError, KeyError, Exception):
-    # Captura cualquier fallo interno de python-docx para evitar caídas en el inicio
+except ImportError:
     HAS_DOCX = False
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
@@ -142,7 +141,7 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     roots_accion = ["APERTUR", "CERR", "CIERR", "INIC", "LIQUID", "FINALIZ"]
     roots_anomalia = ["TARDE", "TARDÍ", "TARDI", "DESFAS", "DESFAC", "RETRAS", "INCUMPLI"]
 
-    has_objeto = any(obj in texto for obj in roots_objeto)
+    has_objeto = any(obj in texto, roots_objeto)
     has_accion = any(acc in texto for acc in roots_accion)
     has_anomalia = any(anom in texto for anom in roots_anomalia)
 
@@ -232,8 +231,9 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
-        if os.path.exists('logo.png'):
-            try: self.image('logo.png', 10, 6, 35)
+        logo_path = 'logo_monitor.png' if os.path.exists('logo_monitor.png') else 'logo.png'
+        if os.path.exists(logo_path):
+            try: self.image(logo_path, 10, 6, 35)
             except: pass
         self.set_y(10); self.set_x(50); self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "B", 10)
@@ -512,8 +512,8 @@ def generar_docx_consolidado(df):
     formato oficial corporativo de "REPORTE DE FALTAS".
     
     Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
-    en una sola página en la sección "Detalle de la Falta" para optimizar espacio,
-    y la sección de firmas inferior se mantiene 100% en color blanco.
+    en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio [3],
+    y la sección de firmas inferior se mantiene 100% en color blanco para firma manuscrita [3].
     """
     if not HAS_DOCX:
         return b""
@@ -562,11 +562,12 @@ def generar_docx_consolidado(df):
     header_table.columns[1].width = Inches(3.7)
     header_table.columns[2].width = Inches(2.5)
 
-    # Columna 1: Logotipo
+    # Columna 1: Logotipo (Utiliza logo_monitor.png con fallback a logo.png) [3]
     cell_logo = header_table.cell(0, 0)
     p_logo = cell_logo.paragraphs[0]
-    if os.path.exists('logo.png'):
-        try: p_logo.add_run().add_picture('logo.png', width=Inches(1.1))
+    logo_path = 'logo_monitor.png' if os.path.exists('logo_monitor.png') else 'logo.png' [3]
+    if os.path.exists(logo_path):
+        try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
         except: p_logo.text = "MAXCOM"
     else:
         p_logo.text = "MAXCOM"
@@ -574,7 +575,7 @@ def generar_docx_consolidado(df):
         p_logo.runs[0].font.size = Pt(12)
     p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Columna 2: Título Central
+    # Columna 2: Título Central (Se eliminó el duplicado de abajo) [3]
     cell_title = header_table.cell(0, 1)
     p_title = cell_title.paragraphs[0]
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -699,7 +700,7 @@ def generar_docx_consolidado(df):
     doc.add_paragraph()
 
     # ==========================================================================
-    # 4. TABLA: DETALLE DE LA FALTA (CONSOLIDACIÓN DE INCIDENCIAS)
+    # 4. TABLA: DETALLE DE LA FALTA (CON CONSOLIDACIÓN EN RENGLONES DISTINTOS)
     # ==========================================================================
     table_det = doc.add_table(rows=12, cols=1)
     table_det.style = 'Table Grid'
@@ -716,24 +717,23 @@ def generar_docx_consolidado(df):
     run_hdr_d.font.color.rgb = RGBColor(255, 255, 255)
     aplicar_espaciado_celda(hdr_cell_d)
 
-    # --- AGREGAR TODAS LAS INCIDENCIAS CONVERTIDAS A TEXTO CRONOLÓGICO --- [3]
-    lista_comentarios = []
-    for f_idx, row_inc in df.iterrows():
+    # --- AUTOCOMPLETADO DE CADA INCIDENCIA EN RENGLONES DISTINTOS --- [3]
+    idx_renglon = 1
+    for _, row_inc in df.iterrows():
+        if idx_renglon >= 12: # Límite para evitar que salte de página
+            break
         fecha_p = str(row_inc.get('FECHA_INCIDENCIA', ''))
         tipo_p = str(row_inc.get('TIPO_FALTA', ''))
         desc_p = str(row_inc.get('COMENTARIO', ''))
-        lista_comentarios.append(f"• [{fecha_p}] {tipo_p}: {desc_p}") # [3]
+        
+        cell_renglon = table_det.rows[idx_renglon].cells[0]
+        cell_renglon.text = f"• [{fecha_p}] {tipo_p}: {desc_p}" # [3]
+        cell_renglon.paragraphs[0].runs[0].font.size = Pt(8.5)
+        aplicar_espaciado_celda(cell_renglon)
+        idx_renglon += 1
 
-    comentario_consolidado_txt = "\n\n".join(lista_comentarios) # [3]
-
-    # Fila 2: El comentario del supervisor autocompletado en un solo bloque [3]
-    cell_com = table_det.rows[1].cells[0]
-    cell_com.text = comentario_consolidado_txt
-    cell_com.paragraphs[0].runs[0].font.size = Pt(8.5)
-    aplicar_espaciado_celda(cell_com)
-
-    # Filas vacías adicionales de diseño de escritura
-    for r_idx in range(2, 12):
+    # Renglones restantes en blanco con altura para simular diseño impreso original [3]
+    for r_idx in range(idx_renglon, 12):
         cell_vacia = table_det.rows[r_idx].cells[0]
         cell_vacia.text = ""
         table_det.rows[r_idx].height = Inches(0.18)
@@ -750,14 +750,14 @@ def generar_docx_consolidado(df):
     p_legal.paragraph_format.space_after = Pt(4)
 
     # ==========================================================================
-    # 5. TABLA INFERIOR DE FIRMAS Y ELABORACIÓN (ESPACIO FIRMA COLOR BLANCO)
+    # 5. TABLA INFERIOR: FIRMAS Y ELABORACIÓN (CON HORA DEL SISTEMA ACTUAL)
     # ==========================================================================
     table_bottom = doc.add_table(rows=2, cols=2)
     table_bottom.style = 'Table Grid'
     table_bottom.columns[0].width = Inches(4.5)
     table_bottom.columns[1].width = Inches(3.0)
 
-    # --- FILA 0: ENCABEZADOS AZULES (Encabezado Izquierdo y Derecho) ---
+    # --- FILA 0: ENCABEZADOS AZULES ---
     cell_elab_hdr = table_bottom.cell(0, 0)
     cell_elab_hdr.text = "Datos de Elaboración del Reporte"
     set_cell_background(cell_elab_hdr, "1E1B4B")
@@ -778,21 +778,15 @@ def generar_docx_consolidado(df):
     run_firma_hdr.font.size = Pt(8.5)
     run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
 
-    # --- FILA 1: CONTENIDO (Izquierda: Fecha/Hora | Derecha: Firma en Blanco) ---
+    # --- FILA 1: CONTENIDO (Hora del sistema en el momento de descarga) ---
     cell_elab_cont = table_bottom.cell(1, 0)
     left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
     left_subtable.style = 'Table Grid'
 
-    # Desglosar fecha de registro (ej: 11/07/2026 10:10:00)
-    fecha_registro_raw = str(primer_registro.get('FECHA_REGISTRO', ''))
-    fecha_elab = "N/D"
-    hora_elab = "N/D"
-    if " " in fecha_registro_raw:
-        parts_reg = fecha_registro_raw.split(" ")
-        fecha_elab = parts_reg[0]
-        hora_elab = parts_reg[1][:5]
-    else:
-        fecha_elab = fecha_registro_raw
+    # Auto-completar con la fecha y hora actual del sistema (en Honduras) [3]
+    ahora_hn = get_honduras_time()
+    fecha_elab = ahora_hn.strftime("%d/%m/%Y") # [3]
+    hora_elab = ahora_hn.strftime("%I:%M %p").lower() # [3]
 
     elab_fields = [
         ("Fecha de elaboración de reporte", fecha_elab),
@@ -813,7 +807,8 @@ def generar_docx_consolidado(df):
 
     # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA FIRMA FÍSICA [3]
     cell_firma_cont = table_bottom.cell(1, 1)
-    cell_firma_cont.text = "\n\n\n" # Espacio vacío para la pluma [3]
+    cell_firma_cont.text = "" # Limpia y deja el fondo blanco del Word [3]
+    cell_firma_cont.add_paragraph("\n\n\n")
 
     # Aplicar sangría final a las celdas de la tabla inferior
     for r_idx in range(2):
