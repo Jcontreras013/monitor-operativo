@@ -1330,6 +1330,7 @@ def mostrar_modulo_expedientes(conn, df_base):
 
             st.markdown("---")
             
+# --- Corrección en la última consulta de Administración ---
             df_view_admin = obtener_datos_memoria(conn)
             if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
                 df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
@@ -1338,4 +1339,5 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_admin_tab = df_view_admin[es_admin_mask].copy()
                 df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
                 
-                generar_vista_historial(df_view_admin_tab, "Administración, SAC y Ventas", "adm")
+                # CORRECCIÓN: Se cambió 'df_view_admin_tab' por la variable correcta 'df_admin_tab'
+                generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
