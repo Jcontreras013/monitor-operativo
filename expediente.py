@@ -485,7 +485,23 @@ def generar_pdf_consolidado(df):
         data = f.read()
     os.remove(path)
     return data
-
+# ==============================================================================
+# MOTOR AUXILIAR DE DETECCIÓN INTELIGENTE DE HORA DE FALTA
+# ==============================================================================
+def extraer_hora_falta(comentario, fecha_registro):
+    """
+    Escanea la descripción del supervisor buscando patrones de hora (ej: 08:06 am, 2:47pm).
+    Si no localiza ninguna hora explícita, extrae la hora del registro del sistema.
+    """
+    match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm|AM|PM)?)', str(comentario))
+    if match:
+        return match.group(1).strip()
+    
+    # Intenta extraer de la fecha de registro (ej: 11/07/2026 10:10:00)
+    reg_str = str(fecha_registro).strip()
+    if " " in reg_str:
+        return reg_str.split(" ")[1][:5] # Obtiene el hh:mm
+    return "N/D"
 
 def generar_docx_consolidado(df):
     """
