@@ -12,7 +12,7 @@ import plotly.express as px
 import re
 import io
 
-# --- ARRANQUE BLINDADO SÚPER AVANZADO: CAPTURA IMPORT-ERROR Y KEY-ERROR ---
+# --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
 try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
@@ -34,6 +34,7 @@ except ImportError:
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
+CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 def get_honduras_time():
@@ -86,6 +87,61 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
         return personal
     except:
         return {}
+
+# ==============================================================================
+# MOTOR AUXILIAR DE SUBIDA A NUBE (CATBOX PARA PDF / FREEIMAGE PARA IMÁGENES)
+# ==============================================================================
+def subir_archivo_catbox(file_bytes, file_name):
+    """
+    Sube cualquier tipo de archivo (especialmente PDFs) a Catbox.moe
+    utilizando el userhash del usuario para guardarlo en su cuenta [3].
+    """
+    url = "https://catbox.moe/user/api.php"
+    payload = {
+        "reqtype": "fileupload",
+        "userhash": CATBOX_USERHASH
+    }
+    files = {
+        "fileToUpload": (file_name, file_bytes)
+    }
+    try:
+        response = requests.post(url, data=payload, files=files, timeout=35)
+        if response.status_code == 200:
+            return response.text.strip()
+        else:
+            st.error(f"Error de Catbox ({response.status_code}): {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"Error al conectar con Catbox: {e}")
+        return None
+
+def subir_evidencias_inteligente(file_uploader_obj):
+    """
+    Detecta el formato de cada archivo. Si es PDF lo sube a Catbox [3],
+    si es imagen lo hospeda en Freeimage de forma transparente.
+    """
+    name_lower = file_uploader_obj.name.lower()
+    if name_lower.endswith('.pdf'):
+        return subir_archivo_catbox(file_uploader_obj.getvalue(), file_uploader_obj.name)
+    else:
+        # Enrutamiento de imágenes a Freeimage
+        try:
+            res = requests.post(
+                "https://freeimage.host/api/1/upload",
+                data={
+                    "key": API_KEY_FREEIMAGE,
+                    "action": "upload",
+                    "source": base64.b64encode(file_uploader_obj.getvalue()).decode('utf-8'),
+                    "format": "json"
+                },
+                timeout=25
+            )
+            if res.status_code == 200:
+                return res.json()["image"]["url"]
+            return None
+        except:
+            # Fallback a Catbox si falla Freeimage
+            return subir_archivo_catbox(file_uploader_obj.getvalue(), file_uploader_obj.name)
 
 # ==============================================================================
 # MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS (EXCLUSIÓN DE ÓRDENES)
@@ -435,10 +491,11 @@ def generar_pdf_consolidado(df):
                 thr=255, thg=255, thb=255,
             )
 
+    # BLINDAJE DE SEGURIDAD: Evita que el generador intente insertar PDFs como fotos (Imagen 1) [3]
     tiene_anexos = False
     for _, row in df.iterrows():
         urls = str(row.get('URL_FOTO', '')).split(',')
-        if any(u.strip().startswith('http') for u in urls):
+        if any(u.strip().startswith('http') and not u.strip().lower().endswith('.pdf') for u in urls):
             tiene_anexos = True
             break
 
@@ -450,7 +507,7 @@ def generar_pdf_consolidado(df):
         pdf.ln(5)
         for _, row in df.iterrows():
             urls    = str(row.get('URL_FOTO', '')).split(',')
-            validas = [u.strip() for u in urls if u.strip().startswith('http')]
+            validas = [u.strip() for u in urls if u.strip().startswith('http') and not u.strip().lower().endswith('.pdf')]
             if validas:
                 tec_name     = sanitizar(str(row.get('TECNICO', '')))
                 f_inc        = sanitizar(str(row.get('FECHA_INCIDENCIA', '')))
@@ -486,25 +543,6 @@ def generar_pdf_consolidado(df):
         data = f.read()
     os.remove(path)
     return data
-
-
-# ==============================================================================
-# MOTOR AUXILIAR DE DETECCIÓN INTELIGENTE DE HORA DE FALTA
-# ==============================================================================
-def extraer_hora_falta(comentario, fecha_registro):
-    """
-    Escanea la descripción del supervisor buscando patrones de hora (ej: 08:06 am, 2:47pm).
-    Si no localiza ninguna hora explícita, extrae la hora del registro del sistema.
-    """
-    match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm|AM|PM)?)', str(comentario))
-    if match:
-        return match.group(1).strip()
-    
-    # Intenta extraer de la fecha de registro (ej: 11/07/2026 10:10:00)
-    reg_str = str(fecha_registro).strip()
-    if " " in reg_str:
-        return reg_str.split(" ")[1][:5] # Obtiene el hh:mm
-    return "N/D"
 
 
 def generar_docx_consolidado(df):
@@ -950,6 +988,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces')
                             df_reinc = df_reinc[df_reinc['Veces'] > 1].sort_values(by='Veces', ascending=False)
                             if not df_reinc.empty:
+                                Document = df_reinc.head(4) # [3]
                                 st.dataframe(df_reinc.head(4), hide_index=True, use_container_width=True, height=180)
                             else:
                                 st.success("✅ Sin reincidentes.")
@@ -1093,7 +1132,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 cols_img = st.columns(len(validas))
                                 for i, u in enumerate(validas):
                                     with cols_img[i]:
-                                        st.image(u, use_container_width=True)
+                                        if u.lower().endswith('.pdf') or 'catbox' in u.lower() and '.pdf' in u.lower():
+                                            st.info(f"📄 **Documento PDF adjunto:** [Haga clic aquí para ver o descargar]({u})")
+                                        else:
+                                            st.image(u, caption="Evidencia Fotográfica", use_container_width=True)
                             else:
                                 st.caption("🚫 No se adjuntaron evidencias.")
                                 
@@ -1159,7 +1201,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
             with c2:
                 fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
-                archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
+                archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True, key="up_archivos")
             
             comentario = st.text_area("📝 Descripción de los hechos:", key="txt_comentario")
             
@@ -1172,19 +1214,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                     try:
                         urls = []
                         if archivos:
-                            with st.spinner("Subiendo imágenes al servidor..."):
+                            with st.spinner("Subiendo archivos al servidor..."):
                                 for a in archivos:
-                                    res = requests.post(
-                                        "https://freeimage.host/api/1/upload",
-                                        data={
-                                            "key": API_KEY_FREEIMAGE,
-                                            "action": "upload",
-                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                            "format": "json"
-                                        }
-                                    )
-                                    if res.status_code == 200:
-                                        urls.append(res.json()["image"]["url"])
+                                    url_subido = subir_evidencias_inteligente(a)
+                                    if url_subido:
+                                        urls.append(url_subido)
                         
                         with st.spinner("Guardando en la Nube y en Sheets..."):
                             df_actual = obtener_datos_memoria(conn)
@@ -1252,7 +1286,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
                 c1_admin, c2_admin = st.columns(2)
                 with c1_admin:
-                    dict_admin = cargar_personal_admin("personal_sac.txt")
+                    dict_admin = dict_admin = cargar_personal_admin("personal_sac.txt")
                     opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
                     
                     dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
@@ -1279,7 +1313,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         
                 with c2_admin:
                     fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
-                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
+                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True, key="up_archivos_admin")
                     
                 comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
                 
@@ -1296,19 +1330,11 @@ def mostrar_modulo_expedientes(conn, df_base):
                         try:
                             urls_admin = []
                             if archivos_admin:
-                                with st.spinner("Subiendo imágenes al servidor..."):
+                                with st.spinner("Subiendo archivos al servidor..."):
                                     for a in archivos_admin:
-                                        res = requests.post(
-                                            "https://freeimage.host/api/1/upload",
-                                            data={
-                                                "key": API_KEY_FREEIMAGE,
-                                                "action": "upload",
-                                                "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                                "format": "json"
-                                            }
-                                        )
-                                        if res.status_code == 200:
-                                            urls_admin.append(res.json()["image"]["url"])
+                                        url_subido = subir_evidencias_inteligente(a)
+                                        if url_subido:
+                                            urls_admin.append(url_subido)
                             
                             with st.spinner("Guardando en la base de datos principal..."):
                                 df_actual = obtener_datos_memoria(conn)
