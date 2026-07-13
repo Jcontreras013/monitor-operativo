@@ -12,7 +12,7 @@ import plotly.express as px
 import re
 import io
 
-# --- ARRANQUE BLINDADO SÚPER AVANZADO: CAPTURA IMPORT-ERROR Y KEY-ERROR ---
+# --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
 try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
@@ -21,7 +21,7 @@ try:
     from docx.oxml.ns import nsdecls
     HAS_DOCX = True
 except (ImportError, KeyError, Exception):
-    # Captura cualquier fallo interno de python-docx para evitar caídas en el inicio
+    # Evita caídas de arranque en el servidor de Streamlit Cloud
     HAS_DOCX = False
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
@@ -232,8 +232,9 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
-        if os.path.exists('logo.png'):
-            try: self.image('logo.png', 10, 6, 35)
+        logo_path = 'logo.png'
+        if os.path.exists(logo_path):
+            try: self.image(logo_path, 10, 6, 35)
             except: pass
         self.set_y(10); self.set_x(50); self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "B", 10)
@@ -512,8 +513,8 @@ def generar_docx_consolidado(df):
     formato oficial corporativo de "REPORTE DE FALTAS".
     
     Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
-    en una sola página en la sección "Detalle de la Falta" para optimizar espacio,
-    y la sección de firmas inferior se mantiene 100% en color blanco.
+    en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio [3],
+    y la sección de firmas inferior se mantiene 100% en color blanco para firma manuscrita [3].
     """
     if not HAS_DOCX:
         return b""
@@ -552,7 +553,7 @@ def generar_docx_consolidado(df):
     hora_falta_val = extraer_hora_falta(str(primer_registro.get('COMENTARIO', '')), str(primer_registro.get('FECHA_REGISTRO', '')))
 
     # ==========================================================================
-    # 1. TABLA ENCABEZADO (Logo | Título | Metadatos)
+    # 1. TABLA ENCABEZADO (Logo | Título | Metadatos) - Imagen 1
     # ==========================================================================
     header_table = doc.add_table(rows=1, cols=3)
     header_table.style = 'Table Grid'
@@ -562,11 +563,12 @@ def generar_docx_consolidado(df):
     header_table.columns[1].width = Inches(3.7)
     header_table.columns[2].width = Inches(2.5)
 
-    # Columna 1: Logotipo
+    # Columna 1: Logotipo (Utiliza logo.png) [3]
     cell_logo = header_table.cell(0, 0)
     p_logo = cell_logo.paragraphs[0]
-    if os.path.exists('logo.png'):
-        try: p_logo.add_run().add_picture('logo.png', width=Inches(1.1))
+    logo_path = 'logo.png' [3]
+    if os.path.exists(logo_path):
+        try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
         except: p_logo.text = "MAXCOM"
     else:
         p_logo.text = "MAXCOM"
@@ -574,14 +576,14 @@ def generar_docx_consolidado(df):
         p_logo.runs[0].font.size = Pt(12)
     p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Columna 2: Título Central
+    # Columna 2: Título Central de la tabla de cabecera
     cell_title = header_table.cell(0, 1)
     p_title = cell_title.paragraphs[0]
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_title = p_title.add_run("\nREPORTE DE FALTAS")
-    run_title.font.size = Pt(11)
+    run_title.font.size = Pt(10)
     run_title.font.bold = True
-    run_title.font.color.rgb = RGBColor(30, 41, 59)
+    run_title.font.color.rgb = RGBColor(128, 128, 128) # Gris opaco
 
     # Columna 3: Cuadro de Metadatos
     cell_meta = header_table.cell(0, 2)
@@ -600,9 +602,11 @@ def generar_docx_consolidado(df):
         m_cells[0].text = k
         m_cells[0].paragraphs[0].runs[0].font.bold = True
         m_cells[0].paragraphs[0].runs[0].font.size = Pt(7)
+        m_cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(100, 116, 139)
         
         m_cells[1].text = v
         m_cells[1].paragraphs[0].runs[0].font.size = Pt(7)
+        m_cells[1].paragraphs[0].runs[0].font.color.rgb = RGBColor(100, 116, 139)
         
         aplicar_espaciado_celda(m_cells[0])
         aplicar_espaciado_celda(m_cells[1])
@@ -610,7 +614,16 @@ def generar_docx_consolidado(df):
     for cell in header_table.rows[0].cells:
         aplicar_espaciado_celda(cell)
 
-    doc.add_paragraph() # Pequeño espacio
+    # --- TÍTULO INDEPENDIENTE DEBAJO DE LA CABECERA (Imagen 1) --- [3]
+    p_title_below = doc.add_paragraph()
+    p_title_below.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title_below.paragraph_format.space_before = Pt(12)
+    p_title_below.paragraph_format.space_after = Pt(12)
+    run_title_below = p_title_below.add_run("REPORTE DE FALTAS") [3]
+    run_title_below.font.name = 'Arial'
+    run_title_below.font.size = Pt(11)
+    run_title_below.font.bold = True
+    run_title_below.font.color.rgb = RGBColor(0, 0, 0)
 
     # ==========================================================================
     # 2. TABLA: DATOS DEL JEFE SOLICITANTE
@@ -636,7 +649,7 @@ def generar_docx_consolidado(df):
         "Puesto",
         "Departamento",
         "Ciudad",
-        "Fecha de Ingreso"
+        "Fecha de Ingresos"
     ]
     for f_idx, label in enumerate(jefe_labels):
         cells = table_jefe.rows[f_idx + 1].cells
@@ -699,7 +712,7 @@ def generar_docx_consolidado(df):
     doc.add_paragraph()
 
     # ==========================================================================
-    # 4. TABLA: DETALLE DE LA FALTA (CONSOLIDACIÓN DE INCIDENCIAS)
+    # 4. TABLA: DETALLE DE LA FALTA (CON CONSOLIDACIÓN EN RENGLONES DISTINTOS)
     # ==========================================================================
     table_det = doc.add_table(rows=12, cols=1)
     table_det.style = 'Table Grid'
@@ -716,24 +729,23 @@ def generar_docx_consolidado(df):
     run_hdr_d.font.color.rgb = RGBColor(255, 255, 255)
     aplicar_espaciado_celda(hdr_cell_d)
 
-    # --- AGREGAR TODAS LAS INCIDENCIAS CONVERTIDAS A TEXTO CRONOLÓGICO --- [3]
-    lista_comentarios = []
-    for f_idx, row_inc in df.iterrows():
+    # --- AUTOCOMPLETADO DE CADA INCIDENCIA EN RENGLONES DISTINTOS --- [3]
+    idx_renglon = 1
+    for _, row_inc in df.iterrows():
+        if idx_renglon >= 12: # Límite para evitar que salte de página
+            break
         fecha_p = str(row_inc.get('FECHA_INCIDENCIA', ''))
         tipo_p = str(row_inc.get('TIPO_FALTA', ''))
         desc_p = str(row_inc.get('COMENTARIO', ''))
-        lista_comentarios.append(f"• [{fecha_p}] {tipo_p}: {desc_p}") # [3]
+        
+        cell_renglon = table_det.rows[idx_renglon].cells[0]
+        cell_renglon.text = f"• [{fecha_p}] {tipo_p}: {desc_p}" # [3]
+        cell_renglon.paragraphs[0].runs[0].font.size = Pt(8.5)
+        aplicar_espaciado_celda(cell_renglon)
+        idx_renglon += 1
 
-    comentario_consolidado_txt = "\n\n".join(lista_comentarios) # [3]
-
-    # Fila 2: El comentario del supervisor autocompletado en un solo bloque [3]
-    cell_com = table_det.rows[1].cells[0]
-    cell_com.text = comentario_consolidado_txt
-    cell_com.paragraphs[0].runs[0].font.size = Pt(8.5)
-    aplicar_espaciado_celda(cell_com)
-
-    # Filas vacías adicionales de diseño de escritura
-    for r_idx in range(2, 12):
+    # Renglones restantes en blanco con altura para simular diseño impreso original [3]
+    for r_idx in range(idx_renglon, 12):
         cell_vacia = table_det.rows[r_idx].cells[0]
         cell_vacia.text = ""
         table_det.rows[r_idx].height = Inches(0.18)
@@ -750,49 +762,39 @@ def generar_docx_consolidado(df):
     p_legal.paragraph_format.space_after = Pt(4)
 
     # ==========================================================================
-    # 5. TABLA INFERIOR DE FIRMAS Y ELABORACIÓN (ESPACIO FIRMA COLOR BLANCO)
+    # 5. TABLA INFERIOR: FIRMAS Y ELABORACIÓN (CON HORA DEL SISTEMA ACTUAL)
     # ==========================================================================
     table_bottom = doc.add_table(rows=2, cols=2)
     table_bottom.style = 'Table Grid'
     table_bottom.columns[0].width = Inches(4.5)
     table_bottom.columns[1].width = Inches(3.0)
 
-    # --- FILA 0: ENCABEZADOS AZULES (Encabezado Izquierdo y Derecho) ---
+    # --- FILA 0: ENCABEZADOS AZULES ---
+    # Celda izquierda: Totalmente azul oscuro sin texto (Imagen 2) [3]
     cell_elab_hdr = table_bottom.cell(0, 0)
-    cell_elab_hdr.text = "Datos de Elaboración del Reporte"
+    cell_elab_hdr.text = "" 
     set_cell_background(cell_elab_hdr, "1E1B4B")
-    p_elab_hdr = cell_elab_hdr.paragraphs[0]
-    p_elab_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_elab_hdr = p_elab_hdr.runs[0]
-    run_elab_hdr.font.bold = True
-    run_elab_hdr.font.size = Pt(8.5)
-    run_elab_hdr.font.color.rgb = RGBColor(255, 255, 255)
 
+    # Celda derecha: Azul oscuro con texto de Firma [3]
     cell_firma_hdr = table_bottom.cell(0, 1)
-    cell_firma_hdr.text = "Firma de Jefe de Departamento Solicitante" [3]
+    cell_firma_hdr.text = "" 
     set_cell_background(cell_firma_hdr, "1E1B4B")
     p_firma_hdr = cell_firma_hdr.paragraphs[0]
     p_firma_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_firma_hdr = p_firma_hdr.runs[0]
+    run_firma_hdr = p_firma_hdr.add_run("Firma de Jefe de\nDepartamento Solicitante") [3]
     run_firma_hdr.font.bold = True
     run_firma_hdr.font.size = Pt(8.5)
     run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
 
-    # --- FILA 1: CONTENIDO (Izquierda: Fecha/Hora | Derecha: Firma en Blanco) ---
+    # --- FILA 1: CONTENIDO ---
     cell_elab_cont = table_bottom.cell(1, 0)
     left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
     left_subtable.style = 'Table Grid'
 
-    # Desglosar fecha de registro (ej: 11/07/2026 10:10:00)
-    fecha_registro_raw = str(primer_registro.get('FECHA_REGISTRO', ''))
-    fecha_elab = "N/D"
-    hora_elab = "N/D"
-    if " " in fecha_registro_raw:
-        parts_reg = fecha_registro_raw.split(" ")
-        fecha_elab = parts_reg[0]
-        hora_elab = parts_reg[1][:5]
-    else:
-        fecha_elab = fecha_registro_raw
+    # Fecha y hora actual del sistema en Honduras [3]
+    ahora_hn = get_honduras_time()
+    fecha_elab = ahora_hn.strftime("%d/%m/%Y") [3]
+    hora_elab = ahora_hn.strftime("%I:%M%p").lower() # Formato compacto como 10:10am [3]
 
     elab_fields = [
         ("Fecha de elaboración de reporte", fecha_elab),
@@ -811,9 +813,10 @@ def generar_docx_consolidado(df):
         aplicar_espaciado_celda(l_cells[0])
         aplicar_espaciado_celda(l_cells[1])
 
-    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA FIRMA FÍSICA [3]
+    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA LA PLUMA [3]
     cell_firma_cont = table_bottom.cell(1, 1)
-    cell_firma_cont.text = "\n\n\n" # Espacio vacío para la pluma [3]
+    cell_firma_cont.text = "" # Fondo blanco liso [3]
+    cell_firma_cont.add_paragraph("\n\n\n")
 
     # Aplicar sangría final a las celdas de la tabla inferior
     for r_idx in range(2):
@@ -1186,180 +1189,4 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with st.spinner("Guardando en la Nube y en Sheets..."):
                             df_actual = obtener_datos_memoria(conn)
                                 
-                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
-                            
-                            nueva_fila = [
-                                get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                                colaborador_sel,
-                                tipo_falta,
-                                fecha_inc.strftime("%d/%m/%Y"),
-                                comentario,
-                                ", ".join(urls),
-                                supervisor_actual
-                            ]
-                            nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
-                            
-                            if df_actual is not None and not df_actual.empty:
-                                if len(df_actual.columns) > len(cols_exp):
-                                    df_actual = df_actual.iloc[:, :len(cols_exp)]
-                                elif len(df_actual.columns) < len(cols_exp):
-                                    for i in range(len(cols_exp) - len(df_actual.columns)):
-                                        df_actual[f"Columna_Recuperada_{i}"] = ""
-                                        
-                                df_actual.columns = cols_exp
-                                df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
-                            else:
-                                df_final = nuevo_df
-                                
-                            sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-
-                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
-                        forzar_actualizacion_memoria(conn)
-                        time.sleep(1.5)
-                        
-                        llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
-                        for llave in llaves_a_borrar:
-                            if llave in st.session_state:
-                                del st.session_state[llave]
-                        
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
-
-            st.markdown("---")
-            
-            df_view = obtener_datos_memoria(conn)
-            if df_view is not None and not df_view.empty and 'TECNICO' in df_view.columns:
-                df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
-                df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
-                es_admin_mask = df_view['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
-                df_tecnicos_tab = df_view[~es_admin_mask].copy()
-                df_tecnicos_tab = df_tecnicos_tab[~df_tecnicos_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
-                
-                generar_vista_historial(df_tecnicos_tab, "Operaciones y Técnicos", "tec")
-
-        # ==========================================================================
-        # PESTAÑA 2: ADMINISTRATIVO (MÓDULO SAC Y VENTAS)
-        # ==========================================================================
-        with tab_admin:
-            with st.expander("➕ Crear Nuevo Registro - Administrativo", expanded=True):
-                st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
-                
-                c1_admin, c2_admin = st.columns(2)
-                with c1_admin:
-                    dict_admin = cargar_personal_admin("personal_sac.txt")
-                    opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
-                    
-                    dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
-                    
-                    opciones_nombres_admin = ["---"]
-                    if dept_sel != "--- Seleccione ---":
-                        opciones_nombres_admin += dict_admin.get(dept_sel, [])
-                        
-                    if len(opciones_nombres_admin) <= 1:
-                        nombre_admin = st.text_input("👤 Nombre Completo del Colaborador:*", key="txt_nombre_admin").upper()
-                    else:
-                        nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
-                        
-                    tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
-                        "Llamado de Atención Verbal", "Amonestación Escrita", 
-                        "Llegada Tardía / Ausencia", "Incidencia Médica", 
-                        "Felicitación / Mérito", "Curriculum / Contrato", "Otro"
-                    ], key="sel_falta_admin")
-                    
-                    if tipo_falta_admin_base == "Otro":
-                        tipo_falta_admin = st.text_input("📝 Especifique la incidencia:", key="txt_otro_admin").upper()
-                    else:
-                        tipo_falta_admin = tipo_falta_admin_base.upper()
-                        
-                with c2_admin:
-                    fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
-                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
-                    
-                comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
-                
-                if st.button("💾 REGISTRAR INCIDENCIA ADMINISTRATIVA", type="primary", use_container_width=True):
-                    if dept_sel == "--- Seleccione ---":
-                        st.error("⚠️ Debes seleccionar el departamento.")
-                    elif not nombre_admin or nombre_admin == "---":
-                        st.error("⚠️ El nombre del empleado es obligatorio.")
-                    elif not comentario_admin:
-                        st.error("⚠️ Ingresa una descripción de los hechos.")
-                    elif tipo_falta_admin_base == "Otro" and not tipo_falta_admin:
-                        st.error("⚠️ Especifique el motivo en el campo 'Otro'.")
-                    else:
-                        try:
-                            urls_admin = []
-                            if archivos_admin:
-                                with st.spinner("Subiendo imágenes al servidor..."):
-                                    for a in archivos_admin:
-                                        res = requests.post(
-                                            "https://freeimage.host/api/1/upload",
-                                            data={
-                                                "key": API_KEY_FREEIMAGE,
-                                                "action": "upload",
-                                                "source": base64.b64encode(a.getvalue()).decode('utf-8'),
-                                                "format": "json"
-                                            }
-                                        )
-                                        if res.status_code == 200:
-                                            urls_admin.append(res.json()["image"]["url"])
-                            
-                            with st.spinner("Guardando en la base de datos principal..."):
-                                df_actual = obtener_datos_memoria(conn)
-                                cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
-                                nombre_etiquetado = f"{nombre_admin} ({dept_sel})"
-                                
-                                nueva_fila = [
-                                    get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
-                                    nombre_etiquetado,
-                                    tipo_falta_admin,
-                                    fecha_inc_admin.strftime("%d/%m/%Y"),
-                                    comentario_admin,
-                                    ", ".join(urls_admin),
-                                    supervisor_actual
-                                ]
-                                nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
-                                
-                                if df_actual is not None and not df_actual.empty:
-                                    if len(df_actual.columns) > len(cols_exp):
-                                        df_actual = df_actual.iloc[:, :len(cols_exp)]
-                                    elif len(df_actual.columns) < len(cols_exp):
-                                        for i in range(len(cols_exp) - len(df_actual.columns)):
-                                            df_actual[f"Columna_Recuperada_{i}"] = ""
-                                            
-                                    df_actual.columns = cols_exp
-                                    df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
-                                else:
-                                    df_final = nuevo_df
-                                    
-                                sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
-
-                            st.success(f"✅ ¡Guardado exitosamente! {nombre_admin} registrado en la base de datos.")
-                            forzar_actualizacion_memoria(conn)
-                            time.sleep(1.5)
-                            
-                            llaves_a_borrar = ["sel_dept_admin", "sel_nombre_admin", "txt_nombre_admin", "sel_falta_admin", "date_inc_admin", "up_archivos_admin", "txt_comentario_admin", "txt_otro_admin"]
-                            for llave in llaves_a_borrar:
-                                if llave in st.session_state:
-                                    del st.session_state[llave]
-                            
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
-
-            st.markdown("---")
-            
-            df_view_admin = obtener_datos_memoria(conn)
-            if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
-                df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
-                df_view_admin['TECNICO'] = df_view_admin['TECNICO'].replace(r'\s+', ' ', regex=True)
-                es_admin_mask = df_view_admin['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
-                df_admin_tab = df_view_admin[es_admin_mask].copy()
-                df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
-                
-                generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
+                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_F
