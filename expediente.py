@@ -34,7 +34,7 @@ except ImportError:
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
+CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 def get_honduras_time():
@@ -94,7 +94,7 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
 def subir_archivo_catbox(file_bytes, file_name):
     """
     Sube cualquier tipo de archivo (especialmente PDFs) a Catbox.moe
-    utilizando el userhash del usuario para guardarlo en su cuenta [3].
+    utilizando el userhash del usuario para guardarlo en su cuenta.
     """
     url = "https://catbox.moe/user/api.php"
     payload = {
@@ -117,7 +117,7 @@ def subir_archivo_catbox(file_bytes, file_name):
 
 def subir_evidencias_inteligente(file_uploader_obj):
     """
-    Detecta el formato de cada archivo. Si es PDF lo sube a Catbox [3],
+    Detecta el formato de cada archivo. Si es PDF lo sube a Catbox,
     si es imagen lo hospeda en Freeimage de forma transparente.
     """
     name_lower = file_uploader_obj.name.lower()
@@ -551,8 +551,8 @@ def generar_docx_consolidado(df):
     formato oficial corporativo de "REPORTE DE FALTAS".
     
     Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
-    en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio [3],
-    y la sección de firmas inferior se mantiene 100% en color blanco para firma manuscrita [3].
+    en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio,
+    y la sección de firmas inferior se mantiene 100% en color blanco.
     """
     if not HAS_DOCX:
         return b""
@@ -582,7 +582,7 @@ def generar_docx_consolidado(df):
             p.paragraph_format.space_after = Pt(2)
             p.paragraph_format.line_spacing = 1.0
 
-    # Extraemos información base del primer elemento para las cabeceras principales [3]
+    # Extraemos información base del primer elemento para las cabeceras principales
     primer_registro = df.iloc[0]
     nombre_completo = str(primer_registro.get('TECNICO', ''))
     nombre_limpio_emp = re.sub(r'\s*\(.*\)$', '', nombre_completo).strip()
@@ -601,10 +601,10 @@ def generar_docx_consolidado(df):
     header_table.columns[1].width = Inches(3.7)
     header_table.columns[2].width = Inches(2.5)
 
-    # Columna 1: Logotipo (Utiliza logo.png) [3]
+    # Columna 1: Logotipo (Utiliza logo.png)
     cell_logo = header_table.cell(0, 0)
     p_logo = cell_logo.paragraphs[0]
-    logo_path = 'logo.png' [3]
+    logo_path = 'logo.png'
     if os.path.exists(logo_path):
         try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
         except: p_logo.text = "MAXCOM"
@@ -652,12 +652,12 @@ def generar_docx_consolidado(df):
     for cell in header_table.rows[0].cells:
         aplicar_espaciado_celda(cell)
 
-    # --- TÍTULO INDEPENDIENTE DEBAJO DE LA CABECERA (Imagen 1) --- [3]
+    # --- TÍTULO INDEPENDIENTE DEBAJO DE LA CABECERA (Imagen 1) ---
     p_title_below = doc.add_paragraph()
     p_title_below.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_title_below.paragraph_format.space_before = Pt(12)
     p_title_below.paragraph_format.space_after = Pt(12)
-    run_title_below = p_title_below.add_run("REPORTE DE FALTAS") [3]
+    run_title_below = p_title_below.add_run("REPORTE DE FALTAS")
     run_title_below.font.name = 'Arial'
     run_title_below.font.size = Pt(11)
     run_title_below.font.bold = True
@@ -724,12 +724,12 @@ def generar_docx_consolidado(df):
     run_hdr_e.font.color.rgb = RGBColor(255, 255, 255)
 
     emp_fields = [
-        ("Nombre del Empleado", nombre_limpio_emp), # Autocompletado [3]
+        ("Nombre del Empleado", nombre_limpio_emp), # Autocompletado
         ("Código de Empleado", ""),
         ("Puesto", ""),
         ("Horario de Trabajo", ""),
-        ("Fecha de la Falta Ocurrida", fecha_falta_val), # Autocompletado [3]
-        ("Hora de la Falta Ocurrida", hora_falta_val)   # Autocompletado [3]
+        ("Fecha de la Falta Ocurrida", fecha_falta_val), # Autocompletado
+        ("Hora de la Falta Ocurrida", hora_falta_val)   # Autocompletado
     ]
 
     for f_idx, (label, val) in enumerate(emp_fields):
@@ -767,7 +767,7 @@ def generar_docx_consolidado(df):
     run_hdr_d.font.color.rgb = RGBColor(255, 255, 255)
     aplicar_espaciado_celda(hdr_cell_d)
 
-    # --- AUTOCOMPLETADO DE CADA INCIDENCIA EN RENGLONES DISTINTOS --- [3]
+    # --- AUTOCOMPLETADO DE CADA INCIDENCIA EN RENGLONES DISTINTOS ---
     idx_renglon = 1
     for _, row_inc in df.iterrows():
         if idx_renglon >= 12: # Límite para evitar que salte de página
@@ -777,12 +777,12 @@ def generar_docx_consolidado(df):
         desc_p = str(row_inc.get('COMENTARIO', ''))
         
         cell_renglon = table_det.rows[idx_renglon].cells[0]
-        cell_renglon.text = f"• [{fecha_p}] {tipo_p}: {desc_p}" # [3]
+        cell_renglon.text = f"• [{fecha_p}] {tipo_p}: {desc_p}"
         cell_renglon.paragraphs[0].runs[0].font.size = Pt(8.5)
         aplicar_espaciado_celda(cell_renglon)
         idx_renglon += 1
 
-    # Renglones restantes en blanco con altura para simular diseño impreso original [3]
+    # Renglones restantes en blanco con altura para simular diseño impreso original
     for r_idx in range(idx_renglon, 12):
         cell_vacia = table_det.rows[r_idx].cells[0]
         cell_vacia.text = ""
@@ -808,18 +808,18 @@ def generar_docx_consolidado(df):
     table_bottom.columns[1].width = Inches(3.0)
 
     # --- FILA 0: ENCABEZADOS AZULES ---
-    # Celda izquierda: Totalmente azul oscuro sin texto (Imagen 2) [3]
+    # Celda izquierda: Totalmente azul oscuro sin texto (Imagen 2)
     cell_elab_hdr = table_bottom.cell(0, 0)
     cell_elab_hdr.text = "" 
     set_cell_background(cell_elab_hdr, "1E1B4B")
 
-    # Celda derecha: Azul oscuro con texto de Firma [3]
+    # Celda derecha: Azul oscuro con texto de Firma
     cell_firma_hdr = table_bottom.cell(0, 1)
     cell_firma_hdr.text = "" 
     set_cell_background(cell_firma_hdr, "1E1B4B")
     p_firma_hdr = cell_firma_hdr.paragraphs[0]
     p_firma_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_firma_hdr = p_firma_hdr.add_run("Firma de Jefe de\nDepartamento Solicitante") [3]
+    run_firma_hdr = p_firma_hdr.add_run("Firma de Jefe de\nDepartamento Solicitante")
     run_firma_hdr.font.bold = True
     run_firma_hdr.font.size = Pt(8.5)
     run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
@@ -829,10 +829,10 @@ def generar_docx_consolidado(df):
     left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
     left_subtable.style = 'Table Grid'
 
-    # Fecha y hora actual del sistema en Honduras [3]
+    # Fecha y hora actual del sistema en Honduras
     ahora_hn = get_honduras_time()
-    fecha_elab = ahora_hn.strftime("%d/%m/%Y") [3]
-    hora_elab = ahora_hn.strftime("%I:%M%p").lower() # Formato compacto como 10:10am [3]
+    fecha_elab = ahora_hn.strftime("%d/%m/%Y")
+    hora_elab = ahora_hn.strftime("%I:%M%p").lower() # Formato compacto como 10:10am
 
     elab_fields = [
         ("Fecha de elaboración de reporte", fecha_elab),
@@ -851,9 +851,9 @@ def generar_docx_consolidado(df):
         aplicar_espaciado_celda(l_cells[0])
         aplicar_espaciado_celda(l_cells[1])
 
-    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA LA PLUMA [3]
+    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA LA PLUMA
     cell_firma_cont = table_bottom.cell(1, 1)
-    cell_firma_cont.text = "" # Fondo blanco liso [3]
+    cell_firma_cont.text = "" # Fondo blanco liso
     cell_firma_cont.add_paragraph("\n\n\n")
 
     # Aplicar sangría final a las celdas de la tabla inferior
