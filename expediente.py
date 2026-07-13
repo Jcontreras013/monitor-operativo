@@ -34,7 +34,7 @@ except ImportError:
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado
+CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash de Catbox integrado [3]
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 def get_honduras_time():
@@ -94,7 +94,7 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
 def subir_archivo_catbox(file_bytes, file_name):
     """
     Sube cualquier tipo de archivo (especialmente PDFs) a Catbox.moe
-    utilizando el userhash del usuario para guardarlo en su cuenta.
+    utilizando el userhash del usuario para guardarlo en su cuenta [3].
     """
     url = "https://catbox.moe/user/api.php"
     payload = {
@@ -117,7 +117,7 @@ def subir_archivo_catbox(file_bytes, file_name):
 
 def subir_evidencias_inteligente(file_uploader_obj):
     """
-    Detecta el formato de cada archivo. Si es PDF lo sube a Catbox,
+    Detecta el formato de cada archivo. Si es PDF lo sube a Catbox [3],
     si es imagen lo hospeda en Freeimage de forma transparente.
     """
     name_lower = file_uploader_obj.name.lower()
@@ -552,7 +552,7 @@ def generar_docx_consolidado(df):
     
     Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
     en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio,
-    y la sección de firmas inferior se mantiene 100% en color blanco.
+    y la sección de firmas inferior se mantiene 100% en color blanco para firma manuscrita.
     """
     if not HAS_DOCX:
         return b""
@@ -988,7 +988,6 @@ def mostrar_modulo_expedientes(conn, df_base):
                             df_reinc = df_kpi.groupby(['TECNICO', 'TIPO_FALTA']).size().reset_index(name='Veces')
                             df_reinc = df_reinc[df_reinc['Veces'] > 1].sort_values(by='Veces', ascending=False)
                             if not df_reinc.empty:
-                                Document = df_reinc.head(4) # [3]
                                 st.dataframe(df_reinc.head(4), hide_index=True, use_container_width=True, height=180)
                             else:
                                 st.success("✅ Sin reincidentes.")
@@ -1286,7 +1285,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
                 c1_admin, c2_admin = st.columns(2)
                 with c1_admin:
-                    dict_admin = dict_admin = cargar_personal_admin("personal_sac.txt")
+                    dict_admin = cargar_personal_admin("personal_sac.txt")
                     opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
                     
                     dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
