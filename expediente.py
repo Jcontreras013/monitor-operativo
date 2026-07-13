@@ -112,6 +112,9 @@ def es_llegada_tarde(motivo, comentario):
             return True
     return False
 
+def clasificiar_grave_o_leve(motivo, comentario, n_tardes=0):
+    return clasificar_grave_o_leve(motivo, comentario, n_tardes)
+
 def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
@@ -504,22 +507,26 @@ def extraer_hora_falta(comentario, fecha_registro):
 
 def generar_docx_consolidado(df):
     """
-    Genera un documento estructurado de Word (.docx) donde cada fila/incidencia del df
-    se convierte en una página independiente formateada como el "REPORTE DE FALTAS" oficial.
+    Genera un documento estructurado de Word (.docx) que simula de forma exacta el 
+    formato oficial corporativo de "REPORTE DE FALTAS".
+    
+    Si el DataFrame contiene múltiples incidencias, se agrupan cronológicamente
+    en una sola página en la sección "Detalle de la Falta" para optimizar espacio,
+    y la sección de firmas inferior se mantiene 100% en color blanco.
     """
     if not HAS_DOCX:
         return b""
         
     doc = Document()
     
-    # --- Estilo de Página Compacto (Márgenes de 0.5 pulg para que todo quepa en una página) ---
+    # --- Estilo de Página Compacto (Márgenes de 0.5 pulg para asegurar que quepa en una página) ---
     for section in doc.sections:
         section.top_margin = Inches(0.5)
         section.bottom_margin = Inches(0.5)
         section.left_margin = Inches(0.5)
         section.right_margin = Inches(0.5)
         
-    # --- Configurar tipografía por defecto ---
+    # --- Configurar tipografía estándar ---
     style_normal = doc.styles['Normal']
     font_normal = style_normal.font
     font_normal.name = 'Arial'
@@ -535,268 +542,284 @@ def generar_docx_consolidado(df):
             p.paragraph_format.space_after = Pt(2)
             p.paragraph_format.line_spacing = 1.0
 
-    for idx, row in df.iterrows():
-        if idx > 0:
-            doc.add_page_break()
+    # Extraemos información base del primer elemento para las cabeceras principales [3]
+    primer_registro = df.iloc[0]
+    nombre_completo = str(primer_registro.get('TECNICO', ''))
+    nombre_limpio_emp = re.sub(r'\s*\(.*\)$', '', nombre_completo).strip()
+    
+    fecha_falta_val = str(primer_registro.get('FECHA_INCIDENCIA', ''))
+    hora_falta_val = extraer_hora_falta(str(primer_registro.get('COMENTARIO', '')), str(primer_registro.get('FECHA_REGISTRO', '')))
 
-        # ======================================================================
-        # 1. TABLA ENCABEZADO (Logo | Título | Metadatos)
-        # ======================================================================
-        header_table = doc.add_table(rows=1, cols=3)
-        header_table.style = 'Table Grid'
-        header_table.autofit = False
+    # ==========================================================================
+    # 1. TABLA ENCABEZADO (Logo | Título | Metadatos)
+    # ==========================================================================
+    header_table = doc.add_table(rows=1, cols=3)
+    header_table.style = 'Table Grid'
+    header_table.autofit = False
+    
+    header_table.columns[0].width = Inches(1.3)
+    header_table.columns[1].width = Inches(3.7)
+    header_table.columns[2].width = Inches(2.5)
+
+    # Columna 1: Logotipo
+    cell_logo = header_table.cell(0, 0)
+    p_logo = cell_logo.paragraphs[0]
+    if os.path.exists('logo.png'):
+        try: p_logo.add_run().add_picture('logo.png', width=Inches(1.1))
+        except: p_logo.text = "MAXCOM"
+    else:
+        p_logo.text = "MAXCOM"
+        p_logo.runs[0].font.bold = True
+        p_logo.runs[0].font.size = Pt(12)
+    p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Columna 2: Título Central
+    cell_title = header_table.cell(0, 1)
+    p_title = cell_title.paragraphs[0]
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_title = p_title.add_run("\nREPORTE DE FALTAS")
+    run_title.font.size = Pt(11)
+    run_title.font.bold = True
+    run_title.font.color.rgb = RGBColor(30, 41, 59)
+
+    # Columna 3: Cuadro de Metadatos
+    cell_meta = header_table.cell(0, 2)
+    meta_table = cell_meta.add_table(rows=4, cols=2)
+    meta_table.style = 'Table Grid'
+    meta_table.autofit = True
+    
+    meta_fields = [
+        ("CÓDIGO", "HN-GG-RH-FR-09"),
+        ("VERSIÓN", "1.0"),
+        ("FECHA", "12/05/2026"),
+        ("CLASIFICACIÓN", "INTERNO")
+    ]
+    for r_idx, (k, v) in enumerate(meta_fields):
+        m_cells = meta_table.rows[r_idx].cells
+        m_cells[0].text = k
+        m_cells[0].paragraphs[0].runs[0].font.bold = True
+        m_cells[0].paragraphs[0].runs[0].font.size = Pt(7)
         
-        header_table.columns[0].width = Inches(1.3)
-        header_table.columns[1].width = Inches(3.7)
-        header_table.columns[2].width = Inches(2.5)
-
-        # Columna 1: Logotipo
-        cell_logo = header_table.cell(0, 0)
-        p_logo = cell_logo.paragraphs[0]
-        if os.path.exists('logo.png'):
-            try: p_logo.add_run().add_picture('logo.png', width=Inches(1.1))
-            except: p_logo.text = "MAXCOM"
-        else:
-            p_logo.text = "MAXCOM"
-            p_logo.runs[0].font.bold = True
-            p_logo.runs[0].font.size = Pt(12)
-        p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        # Columna 2: Título Central
-        cell_title = header_table.cell(0, 1)
-        p_title = cell_title.paragraphs[0]
-        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_title = p_title.add_run("\nREPORTE DE FALTAS")
-        run_title.font.size = Pt(11)
-        run_title.font.bold = True
-        run_title.font.color.rgb = RGBColor(30, 41, 59)
-
-        # Columna 3: Cuadro de Metadatos
-        cell_meta = header_table.cell(0, 2)
-        meta_table = cell_meta.add_table(rows=4, cols=2)
-        meta_table.style = 'Table Grid'
-        meta_table.autofit = True
+        m_cells[1].text = v
+        m_cells[1].paragraphs[0].runs[0].font.size = Pt(7)
         
-        meta_fields = [
-            ("CÓDIGO", "HN-GG-RH-FR-09"),
-            ("VERSIÓN", "1.0"),
-            ("FECHA", "12/05/2026"),
-            ("CLASIFICACIÓN", "INTERNO")
-        ]
-        for r_idx, (k, v) in enumerate(meta_fields):
-            m_cells = meta_table.rows[r_idx].cells
-            
-            m_cells[0].text = k
-            m_cells[0].paragraphs[0].runs[0].font.bold = True
-            m_cells[0].paragraphs[0].runs[0].font.size = Pt(7)
-            
-            m_cells[1].text = v
-            m_cells[1].paragraphs[0].runs[0].font.size = Pt(7)
-            
-            aplicar_espaciado_celda(m_cells[0])
-            aplicar_espaciado_celda(m_cells[1])
+        aplicar_espaciado_celda(m_cells[0])
+        aplicar_espaciado_celda(m_cells[1])
 
-        for cell in header_table.rows[0].cells:
-            aplicar_espaciado_celda(cell)
+    for cell in header_table.rows[0].cells:
+        aplicar_espaciado_celda(cell)
 
-        doc.add_paragraph() # Pequeño espacio
+    doc.add_paragraph() # Pequeño espacio
 
-        # ======================================================================
-        # 2. TABLA: DATOS DEL JEFE SOLICITANTE
-        # ======================================================================
-        table_jefe = doc.add_table(rows=6, cols=2)
-        table_jefe.style = 'Table Grid'
-        table_jefe.columns[0].width = Inches(2.5)
-        table_jefe.columns[1].width = Inches(5.0)
+    # ==========================================================================
+    # 2. TABLA: DATOS DEL JEFE SOLICITANTE
+    # ==========================================================================
+    table_jefe = doc.add_table(rows=6, cols=2)
+    table_jefe.style = 'Table Grid'
+    table_jefe.columns[0].width = Inches(2.5)
+    table_jefe.columns[1].width = Inches(5.0)
 
-        # Celda de Cabecera azul
-        hdr_cell_j = table_jefe.rows[0].cells[0].merge(table_jefe.rows[0].cells[1])
-        hdr_cell_j.text = "Datos del Jefe del Departamento Solicitante"
-        set_cell_background(hdr_cell_j, "1E1B4B") # Navy oscuro institucional
-        p_hdr_j = hdr_cell_j.paragraphs[0]
-        p_hdr_j.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_hdr_j = p_hdr_j.runs[0]
-        run_hdr_j.font.bold = True
-        run_hdr_j.font.size = Pt(9)
-        run_hdr_j.font.color.rgb = RGBColor(255, 255, 255)
+    # Cabecera azul
+    hdr_cell_j = table_jefe.rows[0].cells[0].merge(table_jefe.rows[0].cells[1])
+    hdr_cell_j.text = "Datos del Jefe del Departamento Solicitante"
+    set_cell_background(hdr_cell_j, "1E1B4B") # Navy oscuro institucional
+    p_hdr_j = hdr_cell_j.paragraphs[0]
+    p_hdr_j.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_hdr_j = p_hdr_j.runs[0]
+    run_hdr_j.font.bold = True
+    run_hdr_j.font.size = Pt(9)
+    run_hdr_j.font.color.rgb = RGBColor(255, 255, 255)
 
-        jefe_labels = [
-            "Nombre del Jefe del Departamento",
-            "Puesto",
-            "Departamento",
-            "Ciudad",
-            "Fecha de Ingreso"
-        ]
-        for f_idx, label in enumerate(jefe_labels):
-            cells = table_jefe.rows[f_idx + 1].cells
-            cells[0].text = label
-            cells[0].paragraphs[0].runs[0].font.bold = True
-            cells[0].paragraphs[0].runs[0].font.size = Pt(8.5)
-            cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(30, 41, 59)
-            
-            # Dejamos la columna derecha vacía para llenado físico manual
-            cells[1].text = "" 
-            
-            aplicar_espaciado_celda(cells[0])
-            aplicar_espaciado_celda(cells[1])
-
-        aplicar_espaciado_celda(hdr_cell_j)
-        doc.add_paragraph()
-
-        # ======================================================================
-        # 3. TABLA: DATOS DEL EMPLEADO REPORTADO (AUTO-COMPLETADOS)
-        # ======================================================================
-        table_emp = doc.add_table(rows=7, cols=2)
-        table_emp.style = 'Table Grid'
-        table_emp.columns[0].width = Inches(2.5)
-        table_emp.columns[1].width = Inches(5.0)
-
-        # Celda de Cabecera azul
-        hdr_cell_e = table_emp.rows[0].cells[0].merge(table_emp.rows[0].cells[1])
-        hdr_cell_e.text = "Datos de Empleado Reportado"
-        set_cell_background(hdr_cell_e, "1E1B4B")
-        p_hdr_e = hdr_cell_e.paragraphs[0]
-        p_hdr_e.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_hdr_e = p_hdr_e.runs[0]
-        run_hdr_e.font.bold = True
-        run_hdr_e.font.size = Pt(9)
-        run_hdr_e.font.color.rgb = RGBColor(255, 255, 255)
-
-        # Extracción inteligente de Fecha e Intento de Hora de falta
-        comentario_raw = str(row.get('COMENTARIO', ''))
-        fecha_registro_raw = str(row.get('FECHA_REGISTRO', ''))
+    jefe_labels = [
+        "Nombre del Jefe del Departamento",
+        "Puesto",
+        "Departamento",
+        "Ciudad",
+        "Fecha de Ingreso"
+    ]
+    for f_idx, label in enumerate(jefe_labels):
+        cells = table_jefe.rows[f_idx + 1].cells
+        cells[0].text = label
+        cells[0].paragraphs[0].runs[0].font.bold = True
+        cells[0].paragraphs[0].runs[0].font.size = Pt(8.5)
+        cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(30, 41, 59)
         
-        fecha_falta_val = str(row.get('FECHA_INCIDENCIA', ''))
-        hora_falta_val = extraer_hora_falta(comentario_raw, fecha_registro_raw)
+        cells[1].text = "" # Editable manual
+        
+        aplicar_espaciado_celda(cells[0])
+        aplicar_espaciado_celda(cells[1])
 
-        # Limpiar posible indicador de departamento del nombre
-        nombre_completo = str(row.get('TECNICO', ''))
-        nombre_limpio_emp = re.sub(r'\s*\(.*\)$', '', nombre_completo).strip()
+    aplicar_espaciado_celda(hdr_cell_j)
+    doc.add_paragraph()
 
-        emp_fields = [
-            ("Nombre del Empleado", nombre_limpio_emp), # Autocompletado
-            ("Código de Empleado", ""),
-            ("Puesto", ""),
-            ("Horario de Trabajo", ""),
-            ("Fecha de la Falta Ocurrida", fecha_falta_val), # Autocompletado
-            ("Hora de la Falta Ocurrida", hora_falta_val)   # Autocompletado
-        ]
+    # ==========================================================================
+    # 3. TABLA: DATOS DEL EMPLEADO REPORTADO (AUTO-COMPLETADOS)
+    # ==========================================================================
+    table_emp = doc.add_table(rows=7, cols=2)
+    table_emp.style = 'Table Grid'
+    table_emp.columns[0].width = Inches(2.5)
+    table_emp.columns[1].width = Inches(5.0)
 
-        for f_idx, (label, val) in enumerate(emp_fields):
-            cells = table_emp.rows[f_idx + 1].cells
-            cells[0].text = label
-            cells[0].paragraphs[0].runs[0].font.bold = True
-            cells[0].paragraphs[0].runs[0].font.size = Pt(8.5)
-            cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(30, 41, 59)
+    # Cabecera azul
+    hdr_cell_e = table_emp.rows[0].cells[0].merge(table_emp.rows[0].cells[1])
+    hdr_cell_e.text = "Datos de Empleado Reportado"
+    set_cell_background(hdr_cell_e, "1E1B4B")
+    p_hdr_e = hdr_cell_e.paragraphs[0]
+    p_hdr_e.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_hdr_e = p_hdr_e.runs[0]
+    run_hdr_e.font.bold = True
+    run_hdr_e.font.size = Pt(9)
+    run_hdr_e.font.color.rgb = RGBColor(255, 255, 255)
+
+    emp_fields = [
+        ("Nombre del Empleado", nombre_limpio_emp), # Autocompletado [3]
+        ("Código de Empleado", ""),
+        ("Puesto", ""),
+        ("Horario de Trabajo", ""),
+        ("Fecha de la Falta Ocurrida", fecha_falta_val), # Autocompletado [3]
+        ("Hora de la Falta Ocurrida", hora_falta_val)   # Autocompletado [3]
+    ]
+
+    for f_idx, (label, val) in enumerate(emp_fields):
+        cells = table_emp.rows[f_idx + 1].cells
+        cells[0].text = label
+        cells[0].paragraphs[0].runs[0].font.bold = True
+        cells[0].paragraphs[0].runs[0].font.size = Pt(8.5)
+        cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(30, 41, 59)
+        
+        cells[1].text = val
+        if val:
+            cells[1].paragraphs[0].runs[0].font.size = Pt(8.5)
             
-            cells[1].text = val
-            if val:
-                cells[1].paragraphs[0].runs[0].font.size = Pt(8.5)
-                
-            aplicar_espaciado_celda(cells[0])
-            aplicar_espaciado_celda(cells[1])
+        aplicar_espaciado_celda(cells[0])
+        aplicar_espaciado_celda(cells[1])
 
-        aplicar_espaciado_celda(hdr_cell_e)
-        doc.add_paragraph()
+    aplicar_espaciado_celda(hdr_cell_e)
+    doc.add_paragraph()
 
-        # ======================================================================
-        # 4. TABLA: DETALLE DE LA FALTA
-        # ======================================================================
-        # 1 fila para cabecera azul + 1 fila para comentario + 10 líneas vacías simuladas
-        table_det = doc.add_table(rows=12, cols=1)
-        table_det.style = 'Table Grid'
+    # ==========================================================================
+    # 4. TABLA: DETALLE DE LA FALTA (CONSOLIDACIÓN DE INCIDENCIAS)
+    # ==========================================================================
+    table_det = doc.add_table(rows=12, cols=1)
+    table_det.style = 'Table Grid'
 
-        # Celda de Cabecera azul
-        hdr_cell_d = table_det.rows[0].cells[0]
-        hdr_cell_d.text = "Detalle de la Falta"
-        set_cell_background(hdr_cell_d, "1E1B4B")
-        p_hdr_d = hdr_cell_d.paragraphs[0]
-        p_hdr_d.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_hdr_d = p_hdr_d.runs[0]
-        run_hdr_d.font.bold = True
-        run_hdr_d.font.size = Pt(9)
-        run_hdr_d.font.color.rgb = RGBColor(255, 255, 255)
-        aplicar_espaciado_celda(hdr_cell_d)
+    # Cabecera azul
+    hdr_cell_d = table_det.rows[0].cells[0]
+    hdr_cell_d.text = "Detalle de la Falta"
+    set_cell_background(hdr_cell_d, "1E1B4B")
+    p_hdr_d = hdr_cell_d.paragraphs[0]
+    p_hdr_d.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_hdr_d = p_hdr_d.runs[0]
+    run_hdr_d.font.bold = True
+    run_hdr_d.font.size = Pt(9)
+    run_hdr_d.font.color.rgb = RGBColor(255, 255, 255)
+    aplicar_espaciado_celda(hdr_cell_d)
 
-        # Fila 2: El comentario del supervisor autocompletado
-        cell_com = table_det.rows[1].cells[0]
-        cell_com.text = comentario_raw
-        cell_com.paragraphs[0].runs[0].font.size = Pt(8.5)
-        aplicar_espaciado_celda(cell_com)
+    # --- AGREGAR TODAS LAS INCIDENCIAS CONVERTIDAS A TEXTO CRONOLÓGICO --- [3]
+    lista_comentarios = []
+    for f_idx, row_inc in df.iterrows():
+        fecha_p = str(row_inc.get('FECHA_INCIDENCIA', ''))
+        tipo_p = str(row_inc.get('TIPO_FALTA', ''))
+        desc_p = str(row_inc.get('COMENTARIO', ''))
+        lista_comentarios.append(f"• [{fecha_p}] {tipo_p}: {desc_p}") # [3]
 
-        # Resto de filas vacías para imitar el reporte impreso rayado
-        for r_idx in range(2, 12):
-            cell_vacia = table_det.rows[r_idx].cells[0]
-            cell_vacia.text = ""
-            table_det.rows[r_idx].height = Inches(0.18) # Fija la altura de las líneas
-            aplicar_espaciado_celda(cell_vacia)
+    comentario_consolidado_txt = "\n\n".join(lista_comentarios) # [3]
 
-        doc.add_paragraph()
+    # Fila 2: El comentario del supervisor autocompletado en un solo bloque [3]
+    cell_com = table_det.rows[1].cells[0]
+    cell_com.text = comentario_consolidado_txt
+    cell_com.paragraphs[0].runs[0].font.size = Pt(8.5)
+    aplicar_espaciado_celda(cell_com)
 
-        # Texto Legal intermedio
-        p_legal = doc.add_paragraph()
-        run_legal = p_legal.add_run("Firmo en señal de solicitud/autorización/aprobación lo de arriba detallado.")
-        run_legal.font.size = Pt(8.5)
-        run_legal.italic = True
-        p_legal.paragraph_format.space_before = Pt(4)
-        p_legal.paragraph_format.space_after = Pt(4)
+    # Filas vacías adicionales de diseño de escritura
+    for r_idx in range(2, 12):
+        cell_vacia = table_det.rows[r_idx].cells[0]
+        cell_vacia.text = ""
+        table_det.rows[r_idx].height = Inches(0.18)
+        aplicar_espaciado_celda(cell_vacia)
 
-        # ======================================================================
-        # 5. TABLA INFERIOR DE FIRMAS Y ELABORACIÓN
-        # ======================================================================
-        table_bottom = doc.add_table(rows=1, cols=2)
-        table_bottom.style = 'Table Grid'
-        table_bottom.columns[0].width = Inches(4.5)
-        table_bottom.columns[1].width = Inches(3.0)
+    doc.add_paragraph()
 
-        # Columna Izquierda: Fecha y hora de elaboración
-        cell_left = table_bottom.cell(0, 0)
-        left_subtable = cell_left.add_table(rows=2, cols=2)
-        left_subtable.style = 'Table Grid'
+    # Texto Legal intermedio
+    p_legal = doc.add_paragraph()
+    run_legal = p_legal.add_run("Firmo en señal de solicitud/autorización/aprobación lo de arriba detallado.")
+    run_legal.font.size = Pt(8.5)
+    run_legal.italic = True
+    p_legal.paragraph_format.space_before = Pt(4)
+    p_legal.paragraph_format.space_after = Pt(4)
+
+    # ==========================================================================
+    # 5. TABLA INFERIOR DE FIRMAS Y ELABORACIÓN (ESPACIO FIRMA COLOR BLANCO)
+    # ==========================================================================
+    table_bottom = doc.add_table(rows=2, cols=2)
+    table_bottom.style = 'Table Grid'
+    table_bottom.columns[0].width = Inches(4.5)
+    table_bottom.columns[1].width = Inches(3.0)
+
+    # --- FILA 0: ENCABEZADOS AZULES (Encabezado Izquierdo y Derecho) ---
+    cell_elab_hdr = table_bottom.cell(0, 0)
+    cell_elab_hdr.text = "Datos de Elaboración del Reporte"
+    set_cell_background(cell_elab_hdr, "1E1B4B")
+    p_elab_hdr = cell_elab_hdr.paragraphs[0]
+    p_elab_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_elab_hdr = p_elab_hdr.runs[0]
+    run_elab_hdr.font.bold = True
+    run_elab_hdr.font.size = Pt(8.5)
+    run_elab_hdr.font.color.rgb = RGBColor(255, 255, 255)
+
+    cell_firma_hdr = table_bottom.cell(0, 1)
+    cell_firma_hdr.text = "Firma de Jefe de Departamento Solicitante" [3]
+    set_cell_background(cell_firma_hdr, "1E1B4B")
+    p_firma_hdr = cell_firma_hdr.paragraphs[0]
+    p_firma_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_firma_hdr = p_firma_hdr.runs[0]
+    run_firma_hdr.font.bold = True
+    run_firma_hdr.font.size = Pt(8.5)
+    run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
+
+    # --- FILA 1: CONTENIDO (Izquierda: Fecha/Hora | Derecha: Firma en Blanco) ---
+    cell_elab_cont = table_bottom.cell(1, 0)
+    left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
+    left_subtable.style = 'Table Grid'
+
+    # Desglosar fecha de registro (ej: 11/07/2026 10:10:00)
+    fecha_registro_raw = str(primer_registro.get('FECHA_REGISTRO', ''))
+    fecha_elab = "N/D"
+    hora_elab = "N/D"
+    if " " in fecha_registro_raw:
+        parts_reg = fecha_registro_raw.split(" ")
+        fecha_elab = parts_reg[0]
+        hora_elab = parts_reg[1][:5]
+    else:
+        fecha_elab = fecha_registro_raw
+
+    elab_fields = [
+        ("Fecha de elaboración de reporte", fecha_elab),
+        ("Hora de elaboración de reporte", hora_elab)
+    ]
+    for f_idx, (k, v) in enumerate(elab_fields):
+        l_cells = left_subtable.rows[f_idx].cells
+        l_cells[0].text = k
+        l_cells[0].paragraphs[0].runs[0].font.bold = True
+        l_cells[0].paragraphs[0].runs[0].font.size = Pt(8)
         
-        # Desglosar fecha de registro (ej: 11/07/2026 10:10:00)
-        fecha_elab = "N/D"
-        hora_elab = "N/D"
-        if " " in fecha_registro_raw:
-            parts_reg = fecha_registro_raw.split(" ")
-            fecha_elab = parts_reg[0]
-            hora_elab = parts_reg[1][:5] # Remueve segundos si existieran
-
-        elab_fields = [
-            ("Fecha de elaboración de reporte", fecha_elab),
-            ("Hora de elaboración de reporte", hora_elab)
-        ]
-        for f_idx, (k, v) in enumerate(elab_fields):
-            l_cells = left_subtable.rows[f_idx].cells
-            l_cells[0].text = k
-            l_cells[0].paragraphs[0].runs[0].font.bold = True
-            l_cells[0].paragraphs[0].runs[0].font.size = Pt(8)
+        l_cells[1].text = v
+        if v:
+            l_cells[1].paragraphs[0].runs[0].font.size = Pt(8)
             
-            l_cells[1].text = v
-            if v:
-                l_cells[1].paragraphs[0].runs[0].font.size = Pt(8)
-                
-            aplicar_espaciado_celda(l_cells[0])
-            aplicar_espaciado_celda(l_cells[1])
+        aplicar_espaciado_celda(l_cells[0])
+        aplicar_espaciado_celda(l_cells[1])
 
-        # Columna Derecha: Bloque de Firma Jefe
-        cell_right = table_bottom.cell(0, 1)
-        set_cell_background(cell_right, "1E1B4B")
-        
-        p_right_hdr = cell_right.paragraphs[0]
-        p_right_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_right_hdr = p_right_hdr.add_run("Firma de Jefe de\nDepartamento Solicitante")
-        run_right_hdr.font.bold = True
-        run_right_hdr.font.size = Pt(8.5)
-        run_right_hdr.font.color.rgb = RGBColor(255, 255, 255)
-        
-        # Agrega espacio vacío para firma física manuscrita en Word
-        cell_right.add_paragraph("\n\n\n")
+    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA FIRMA FÍSICA [3]
+    cell_firma_cont = table_bottom.cell(1, 1)
+    cell_firma_cont.text = "\n\n\n" # Espacio vacío para la pluma [3]
 
-        for cell in table_bottom.rows[0].cells:
-            aplicar_espaciado_celda(cell)
+    # Aplicar sangría final a las celdas de la tabla inferior
+    for r_idx in range(2):
+        for c_idx in range(2):
+            aplicar_espaciado_celda(table_bottom.cell(r_idx, c_idx))
 
-    # Retornar como Bytes seguros
+    # Retornar como Bytes seguros en memoria
     b_io = io.BytesIO()
     doc.save(b_io)
     return b_io.getvalue()
