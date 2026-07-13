@@ -12,7 +12,7 @@ import plotly.express as px
 import re
 import io
 
-# --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
+# --- ARRANQUE BLINDADO SÚPER AVANZADO: CAPTURA IMPORT-ERROR Y KEY-ERROR ---
 try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
@@ -20,7 +20,8 @@ try:
     from docx.oxml import parse_xml
     from docx.oxml.ns import nsdecls
     HAS_DOCX = True
-except ImportError:
+except (ImportError, KeyError, Exception):
+    # Captura cualquier fallo interno de python-docx para evitar caídas en el inicio
     HAS_DOCX = False
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
@@ -510,7 +511,7 @@ def generar_docx_consolidado(df):
     Genera un documento estructurado de Word (.docx) que simula de forma exacta el 
     formato oficial corporativo de "REPORTE DE FALTAS".
     
-    Si el DataFrame contiene múltiples incidencias, se agrupan cronológicamente
+    Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
     en una sola página en la sección "Detalle de la Falta" para optimizar espacio,
     y la sección de firmas inferior se mantiene 100% en color blanco.
     """
