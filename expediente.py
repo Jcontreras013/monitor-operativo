@@ -12,7 +12,7 @@ import plotly.express as px
 import re
 import io
 
-# --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
+# --- ARRANQUE BLINDADO SÚPER AVANZADO: CAPTURA IMPORT-ERROR Y KEY-ERROR ---
 try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
@@ -1189,4 +1189,180 @@ def mostrar_modulo_expedientes(conn, df_base):
                         with st.spinner("Guardando en la Nube y en Sheets..."):
                             df_actual = obtener_datos_memoria(conn)
                                 
-                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_F
+                            cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
+                            
+                            nueva_fila = [
+                                get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
+                                colaborador_sel,
+                                tipo_falta,
+                                fecha_inc.strftime("%d/%m/%Y"),
+                                comentario,
+                                ", ".join(urls),
+                                supervisor_actual
+                            ]
+                            nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                            
+                            if df_actual is not None and not df_actual.empty:
+                                if len(df_actual.columns) > len(cols_exp):
+                                    df_actual = df_actual.iloc[:, :len(cols_exp)]
+                                elif len(df_actual.columns) < len(cols_exp):
+                                    for i in range(len(cols_exp) - len(df_actual.columns)):
+                                        df_actual[f"Columna_Recuperada_{i}"] = ""
+                                        
+                                df_actual.columns = cols_exp
+                                df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                            else:
+                                df_final = nuevo_df
+                                
+                            sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+
+                        st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
+                        forzar_actualizacion_memoria(conn)
+                        time.sleep(1.5)
+                        
+                        llaves_a_borrar = ["sel_colab", "sel_falta", "date_inc", "up_archivos", "txt_comentario", "txt_motivo_otro"]
+                        for llave in llaves_a_borrar:
+                            if llave in st.session_state:
+                                del st.session_state[llave]
+                        
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+
+            st.markdown("---")
+            
+            df_view = obtener_datos_memoria(conn)
+            if df_view is not None and not df_view.empty and 'TECNICO' in df_view.columns:
+                df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
+                df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
+                es_admin_mask = df_view['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
+                df_tecnicos_tab = df_view[~es_admin_mask].copy()
+                df_tecnicos_tab = df_tecnicos_tab[~df_tecnicos_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
+                
+                generar_vista_historial(df_tecnicos_tab, "Operaciones y Técnicos", "tec")
+
+        # ==========================================================================
+        # PESTAÑA 2: ADMINISTRATIVO (MÓDULO SAC Y VENTAS)
+        # ==========================================================================
+        with tab_admin:
+            with st.expander("➕ Crear Nuevo Registro - Administrativo", expanded=True):
+                st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
+                
+                c1_admin, c2_admin = st.columns(2)
+                with c1_admin:
+                    dict_admin = cargar_personal_admin("personal_sac.txt")
+                    opciones_dept = ["--- Seleccione ---"] + list(dict_admin.keys()) if dict_admin else ["--- Seleccione ---"]
+                    
+                    dept_sel = st.selectbox("🏢 Área / Departamento:", opciones_dept, key="sel_dept_admin")
+                    
+                    opciones_nombres_admin = ["---"]
+                    if dept_sel != "--- Seleccione ---":
+                        opciones_nombres_admin += dict_admin.get(dept_sel, [])
+                        
+                    if len(opciones_nombres_admin) <= 1:
+                        nombre_admin = st.text_input("👤 Nombre Completo del Colaborador:*", key="txt_nombre_admin").upper()
+                    else:
+                        nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
+                        
+                    tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
+                        "Llamado de Atención Verbal", "Amonestación Escrita", 
+                        "Llegada Tardía / Ausencia", "Incidencia Médica", 
+                        "Felicitación / Mérito", "Curriculum / Contrato", "Otro"
+                    ], key="sel_falta_admin")
+                    
+                    if tipo_falta_admin_base == "Otro":
+                        tipo_falta_admin = st.text_input("📝 Especifique la incidencia:", key="txt_otro_admin").upper()
+                    else:
+                        tipo_falta_admin = tipo_falta_admin_base.upper()
+                        
+                with c2_admin:
+                    fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
+                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
+                    
+                comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
+                
+                if st.button("💾 REGISTRAR INCIDENCIA ADMINISTRATIVA", type="primary", use_container_width=True):
+                    if dept_sel == "--- Seleccione ---":
+                        st.error("⚠️ Debes seleccionar el departamento.")
+                    elif not nombre_admin or nombre_admin == "---":
+                        st.error("⚠️ El nombre del empleado es obligatorio.")
+                    elif not comentario_admin:
+                        st.error("⚠️ Ingresa una descripción de los hechos.")
+                    elif tipo_falta_admin_base == "Otro" and not tipo_falta_admin:
+                        st.error("⚠️ Especifique el motivo en el campo 'Otro'.")
+                    else:
+                        try:
+                            urls_admin = []
+                            if archivos_admin:
+                                with st.spinner("Subiendo imágenes al servidor..."):
+                                    for a in archivos_admin:
+                                        res = requests.post(
+                                            "https://freeimage.host/api/1/upload",
+                                            data={
+                                                "key": API_KEY_FREEIMAGE,
+                                                "action": "upload",
+                                                "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                                "format": "json"
+                                            }
+                                        )
+                                        if res.status_code == 200:
+                                            urls_admin.append(res.json()["image"]["url"])
+                            
+                            with st.spinner("Guardando en la base de datos principal..."):
+                                df_actual = obtener_datos_memoria(conn)
+                                cols_exp = ['FECHA_REGISTRO', 'TECNICO', 'TIPO_FALTA', 'FECHA_INCIDENCIA', 'COMENTARIO', 'URL_FOTO', 'SUPERVISOR']
+                                nombre_etiquetado = f"{nombre_admin} ({dept_sel})"
+                                
+                                nueva_fila = [
+                                    get_honduras_time().strftime("%d/%m/%Y %H:%M:%S"),
+                                    nombre_etiquetado,
+                                    tipo_falta_admin,
+                                    fecha_inc_admin.strftime("%d/%m/%Y"),
+                                    comentario_admin,
+                                    ", ".join(urls_admin),
+                                    supervisor_actual
+                                ]
+                                nuevo_df = pd.DataFrame([nueva_fila], columns=cols_exp)
+                                
+                                if df_actual is not None and not df_actual.empty:
+                                    if len(df_actual.columns) > len(cols_exp):
+                                        df_actual = df_actual.iloc[:, :len(cols_exp)]
+                                    elif len(df_actual.columns) < len(cols_exp):
+                                        for i in range(len(cols_exp) - len(df_actual.columns)):
+                                            df_actual[f"Columna_Recuperada_{i}"] = ""
+                                            
+                                    df_actual.columns = cols_exp
+                                    df_final = pd.concat([df_actual, nuevo_df], ignore_index=True)
+                                else:
+                                    df_final = nuevo_df
+                                    
+                                sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
+                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+
+                            st.success(f"✅ ¡Guardado exitosamente! {nombre_admin} registrado en la base de datos.")
+                            forzar_actualizacion_memoria(conn)
+                            time.sleep(1.5)
+                            
+                            llaves_a_borrar = ["sel_dept_admin", "sel_nombre_admin", "txt_nombre_admin", "sel_falta_admin", "date_inc_admin", "up_archivos_admin", "txt_comentario_admin", "txt_otro_admin"]
+                            for llave in llaves_a_borrar:
+                                if llave in st.session_state:
+                                    del st.session_state[llave]
+                            
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"❌ Error al intentar escribir en la base de datos: {e}")
+
+            st.markdown("---")
+            
+            df_view_admin = obtener_datos_memoria(conn)
+            if df_view_admin is not None and not df_view_admin.empty and 'TECNICO' in df_view_admin.columns:
+                df_view_admin['TECNICO'] = df_view_admin['TECNICO'].astype(str).str.upper().str.strip()
+                df_view_admin['TECNICO'] = df_view_admin['TECNICO'].replace(r'\s+', ' ', regex=True)
+                es_admin_mask = df_view_admin['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
+                df_admin_tab = df_view_admin[es_admin_mask].copy()
+                df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
+                
+                generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
