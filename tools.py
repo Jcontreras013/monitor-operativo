@@ -116,24 +116,29 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # ==============================================================================
 def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitorISCA") -> pd.DataFrame:
     """
-    Realiza la descarga automatizada de órdenes desde la API de Cepheus Web.
-    Evita la necesidad de subir archivos manuales por parte del usuario.
+    Realiza la descarga automatizada de órdenes desde la API de Cepheus Web utilizando
+    las credenciales seguras de Streamlit Secrets con fallbacks automatizados.
     """
-    url = "https://192.168.20.20:8996/API/consultaOrdenes"
+    # 1. Lectura segura de secretos con fallbacks hacia la nueva IP y credenciales
+    api_config = st.secrets.get("cepheus_api", {})
+    base_url = api_config.get("url", "https://192.168.20.23:8996/API/consultaOrdenes")
+    auth_user = api_config.get("usuario", "monitorISCA")
+    auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
     hora_str = fecha_inicio_dt.strftime("%H:%M")
     
-    # Construcción manual (Raw URL) con las mayúsculas correctas para evitar fallos de codificación
-    full_url = f"{url}?usuario={usuario_api}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+    # 2. Construcción de la URL con los parámetros requeridos
+    full_url = f"{base_url}?usuario={usuario_api}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
     
-    auth = HTTPBasicAuth("monitorISCA", "54321")
+    auth = HTTPBasicAuth(auth_user, auth_pass)
     
     try:
         session = requests.Session()
-        session.trust_env = False  # Asegura que ignore proxies de internet para usar la red local
+        session.trust_env = False  # Ignora proxies externos para priorizar enrutamiento local
         
-        response = session.get(full_url, auth=auth, verify=False, timeout=35)
+        # 3. Timeout ampliado a 45 segundos para mitigar la latencia del servidor de la base de datos
+        response = session.get(full_url, auth=auth, verify=False, timeout=45)
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
@@ -146,7 +151,8 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitor
             st.error(f"❌ Error API Cepheus ({response.status_code}): {response.text}")
             return pd.DataFrame()
     except Exception as e:
-        st.error(f"❌ Error de conexión de red con la API (192.168.20.20): {e}")
+        # Se dinaminiza el mensaje de error para reflejar la URL o IP real en uso
+        st.error(f"❌ Error de conexión de red con la API ({base_url}): {e}")
         return pd.DataFrame()
 
 def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
