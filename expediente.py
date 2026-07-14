@@ -17,10 +17,8 @@ try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml import parse_xml
-    from docx.oxml.ns import nsdecls
     HAS_DOCX = True
-except (ImportError, KeyError, Exception):
+except ImportError:
     HAS_DOCX = False
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
@@ -231,9 +229,8 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
-        logo_path = 'logo.png'
-        if os.path.exists(logo_path):
-            try: self.image(logo_path, 10, 6, 35)
+        if os.path.exists('logo.png'):
+            try: self.image('logo.png', 10, 6, 35)
             except: pass
         self.set_y(10); self.set_x(50); self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "B", 10)
@@ -437,7 +434,7 @@ def generar_pdf_consolidado(df):
     tiene_anexos = False
     for _, row in df.iterrows():
         urls = str(row.get('URL_FOTO', '')).split(',')
-        if any(u.strip().startswith('http') and not u.strip().lower().endswith('.pdf') for u in urls):
+        if any(u.strip().startswith('http') for u in urls):
             tiene_anexos = True
             break
 
@@ -449,7 +446,7 @@ def generar_pdf_consolidado(df):
         pdf.ln(5)
         for _, row in df.iterrows():
             urls    = str(row.get('URL_FOTO', '')).split(',')
-            validas = [u.strip() for u in urls if u.strip().startswith('http') and not u.strip().lower().endswith('.pdf')]
+            validas = [u.strip() for u in urls if u.strip().startswith('http')]
             if validas:
                 tec_name     = sanitizar(str(row.get('TECNICO', '')))
                 f_inc        = sanitizar(str(row.get('FECHA_INCIDENCIA', '')))
@@ -489,321 +486,162 @@ def generar_pdf_consolidado(df):
 
 def generar_docx_consolidado(df):
     """
-    Genera un documento estructurado de Word (.docx) que simula de forma exacta el 
-    formato oficial corporativo de "REPORTE DE FALTAS".
-    
-    Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
-    en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio,
-    y la sección de firmas inferior se mantiene 100% en color blanco.
+    Genera un documento oficial de Word (.docx) estructurado con tablas,
+    resúmenes de KPIs y evidencia fotográfica adjunta en el mismo formato.
     """
     if not HAS_DOCX:
         return b""
         
     doc = Document()
     
-    # --- Estilo de Página Compacto (Márgenes de 0.5 pulg para asegurar que quepa en una página) ---
-    for section in doc.sections:
-        section.top_margin = Inches(0.5)
-        section.bottom_margin = Inches(0.5)
-        section.left_margin = Inches(0.5)
-        section.right_margin = Inches(0.5)
-        
-    # --- Configurar tipografía estándar ---
-    style_normal = doc.styles['Normal']
-    font_normal = style_normal.font
-    font_normal.name = 'Arial'
-    font_normal.size = Pt(8.5)
-
-    def set_cell_background(cell, hex_color):
-        shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}"/>')
-        cell._tc.get_or_add_tcPr().append(shading_elm)
-
-    def aplicar_espaciado_celda(cell):
-        for p in cell.paragraphs:
-            p.paragraph_format.space_before = Pt(2)
-            p.paragraph_format.space_after = Pt(2)
-            p.paragraph_format.line_spacing = 1.0
-
-    # Extraemos información base del primer elemento para las cabeceras principales
-    primer_registro = df.iloc[0]
-    nombre_completo = str(primer_registro.get('TECNICO', ''))
-    nombre_limpio_emp = re.sub(r'\s*\(.*\)$', '', nombre_completo).strip()
+    # --- Configuración Estilo y Título ---
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title_p.add_run("REPORTE CONSOLIDADO DE EXPEDIENTES")
+    run.font.name = 'Arial'
+    run.font.size = Pt(16)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(30, 58, 138) # Azul institucional
     
-    fecha_falta_val = str(primer_registro.get('FECHA_INCIDENCIA', ''))
-    hora_falta_val = extraer_hora_falta(str(primer_registro.get('COMENTARIO', '')), str(primer_registro.get('FECHA_REGISTRO', '')))
-
-    # ==========================================================================
-    # 1. TABLA ENCABEZADO (Logo | Título | Metadatos) - Imagen 1
-    # ==========================================================================
-    header_table = doc.add_table(rows=1, cols=3)
-    header_table.style = 'Table Grid'
-    header_table.autofit = False
+    # Fecha de generación
+    date_p = doc.add_paragraph()
+    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run_date = date_p.add_run(f"Generado el: {get_honduras_time().strftime('%d/%m/%Y a las %H:%M:%S')}")
+    run_date.font.name = 'Arial'
+    run_date.font.size = Pt(9.5)
+    run_date.font.color.rgb = RGBColor(100, 116, 139)
     
-    header_table.columns[0].width = Inches(1.3)
-    header_table.columns[1].width = Inches(3.7)
-    header_table.columns[2].width = Inches(2.5)
+    doc.add_paragraph()
 
-    # Columna 1: Logotipo (Utiliza logo.png)
-    cell_logo = header_table.cell(0, 0)
-    p_logo = cell_logo.paragraphs[0]
-    logo_path = 'logo.png'
-    if os.path.exists(logo_path):
-        try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
-        except: p_logo.text = "MAXCOM"
+    if df.empty:
+        doc.add_paragraph("No hay registros de incidencias disponibles.")
     else:
-        p_logo.text = "MAXCOM"
-        p_logo.runs[0].font.bold = True
-        p_logo.runs[0].font.size = Pt(12)
-    p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        df_work = df.copy()
 
-    # Columna 2: Título Central de la tabla de cabecera
-    cell_title = header_table.cell(0, 1)
-    p_title = cell_title.paragraphs[0]
-    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_title = p_title.add_run("\nREPORTE DE FALTAS")
-    run_title.font.size = Pt(10)
-    run_title.font.bold = True
-    run_title.font.color.rgb = RGBColor(128, 128, 128) # Gris opaco
+        # Contar llegadas tarde de asistencia
+        mask_tarde = df_work.apply(
+            lambda r: es_llegada_tarde(
+                str(r.get('TIPO_FALTA', '')).upper(),
+                str(r.get('COMENTARIO', '')).upper()
+            ), axis=1
+        )
+        conteo_tardes = (
+            df_work[mask_tarde]['TECNICO']
+            .astype(str).str.upper().str.strip()
+            .value_counts().to_dict()
+        )
 
-    # Columna 3: Cuadro de Metadatos
-    cell_meta = header_table.cell(0, 2)
-    meta_table = cell_meta.add_table(rows=4, cols=2)
-    meta_table.style = 'Table Grid'
-    meta_table.autofit = True
-    
-    meta_fields = [
-        ("CÓDIGO", "HN-GG-RH-FR-09"),
-        ("VERSIÓN", "1.0"),
-        ("FECHA", "12/05/2026"),
-        ("CLASIFICACIÓN", "INTERNO")
-    ]
-    for r_idx, (k, v) in enumerate(meta_fields):
-        m_cells = meta_table.rows[r_idx].cells
-        m_cells[0].text = k
-        m_cells[0].paragraphs[0].runs[0].font.bold = True
-        m_cells[0].paragraphs[0].runs[0].font.size = Pt(7)
-        m_cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(100, 116, 139)
+        df_work['_CLASIF'] = df_work.apply(
+            lambda r: clasificar_grave_o_leve(
+                str(r.get('TIPO_FALTA', '')),
+                str(r.get('COMENTARIO', '')),
+                conteo_tardes.get(str(r.get('TECNICO', '')).upper().strip(), 0)
+            ), axis=1
+        )
+        df_leves  = df_work[df_work['_CLASIF'] == 'LEVE'].copy()
+        df_graves = df_work[df_work['_CLASIF'] == 'GRAVE'].copy()
+        df_otros  = df_work[df_work['_CLASIF'] == 'OTRO'].copy()
+
+        # Resumen de KPIs en Word
+        doc.add_heading("Resumen General de Gravedad", level=1)
+        p_kpi = doc.add_paragraph()
+        run_kpi = p_kpi.add_run(
+            f"• Faltas Leves Totales: {len(df_leves)}\n"
+            f"• Faltas Graves Totales: {len(df_graves)}\n"
+            f"• Otras Incidencias Registradas: {len(df_otros)}"
+        )
+        run_kpi.font.size = Pt(11)
         
-        m_cells[1].text = v
-        m_cells[1].paragraphs[0].runs[0].font.size = Pt(7)
-        m_cells[1].paragraphs[0].runs[0].font.color.rgb = RGBColor(100, 116, 139)
-        
-        aplicar_espaciado_celda(m_cells[0])
-        aplicar_espaciado_celda(m_cells[1])
+        doc.add_paragraph()
 
-    for cell in header_table.rows[0].cells:
-        aplicar_espaciado_celda(cell)
-
-    # --- TÍTULO INDEPENDIENTE DEBAJO DE LA CABECERA (Imagen 1) ---
-    p_title_below = doc.add_paragraph()
-    p_title_below.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_title_below.paragraph_format.space_before = Pt(12)
-    p_title_below.paragraph_format.space_after = Pt(12)
-    run_title_below = p_title_below.add_run("REPORTE DE FALTAS")
-    run_title_below.font.name = 'Arial'
-    run_title_below.font.size = Pt(11)
-    run_title_below.font.bold = True
-    run_title_below.font.color.rgb = RGBColor(0, 0, 0)
-
-    # ==========================================================================
-    # 2. TABLA: DATOS DEL JEFE SOLICITANTE
-    # ==========================================================================
-    table_jefe = doc.add_table(rows=6, cols=2)
-    table_jefe.style = 'Table Grid'
-    table_jefe.columns[0].width = Inches(2.5)
-    table_jefe.columns[1].width = Inches(5.0)
-
-    # Cabecera azul
-    hdr_cell_j = table_jefe.rows[0].cells[0].merge(table_jefe.rows[0].cells[1])
-    hdr_cell_j.text = "Datos del Jefe del Departamento Solicitante"
-    set_cell_background(hdr_cell_j, "1E1B4B") # Navy oscuro institucional
-    p_hdr_j = hdr_cell_j.paragraphs[0]
-    p_hdr_j.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_hdr_j = p_hdr_j.runs[0]
-    run_hdr_j.font.bold = True
-    run_hdr_j.font.size = Pt(9)
-    run_hdr_j.font.color.rgb = RGBColor(255, 255, 255)
-
-    jefe_labels = [
-        "Nombre del Jefe del Departamento",
-        "Puesto",
-        "Departamento",
-        "Ciudad",
-        "Fecha de Ingresos"
-    ]
-    for f_idx, label in enumerate(jefe_labels):
-        cells = table_jefe.rows[f_idx + 1].cells
-        cells[0].text = label
-        cells[0].paragraphs[0].runs[0].font.bold = True
-        cells[0].paragraphs[0].runs[0].font.size = Pt(8.5)
-        cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(30, 41, 59)
-        
-        cells[1].text = "" # Editable manual
-        
-        aplicar_espaciado_celda(cells[0])
-        aplicar_espaciado_celda(cells[1])
-
-    aplicar_espaciado_celda(hdr_cell_j)
-    doc.add_paragraph()
-
-    # ==========================================================================
-    # 3. TABLA: DATOS DEL EMPLEADO REPORTADO (AUTO-COMPLETADOS)
-    # ==========================================================================
-    table_emp = doc.add_table(rows=7, cols=2)
-    table_emp.style = 'Table Grid'
-    table_emp.columns[0].width = Inches(2.5)
-    table_emp.columns[1].width = Inches(5.0)
-
-    # Cabecera azul
-    hdr_cell_e = table_emp.rows[0].cells[0].merge(table_emp.rows[0].cells[1])
-    hdr_cell_e.text = "Datos de Empleado Reportado"
-    set_cell_background(hdr_cell_e, "1E1B4B")
-    p_hdr_e = hdr_cell_e.paragraphs[0]
-    p_hdr_e.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_hdr_e = p_hdr_e.runs[0]
-    run_hdr_e.font.bold = True
-    run_hdr_e.font.size = Pt(9)
-    run_hdr_e.font.color.rgb = RGBColor(255, 255, 255)
-
-    emp_fields = [
-        ("Nombre del Empleado", nombre_limpio_emp), # Autocompletado
-        ("Código de Empleado", ""),
-        ("Puesto", ""),
-        ("Horario de Trabajo", ""),
-        ("Fecha de la Falta Ocurrida", fecha_falta_val), # Autocompletado
-        ("Hora de la Falta Ocurrida", hora_falta_val)   # Autocompletado
-    ]
-
-    for f_idx, (label, val) in enumerate(emp_fields):
-        cells = table_emp.rows[f_idx + 1].cells
-        cells[0].text = label
-        cells[0].paragraphs[0].runs[0].font.bold = True
-        cells[0].paragraphs[0].runs[0].font.size = Pt(8.5)
-        cells[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(30, 41, 59)
-        
-        cells[1].text = val
-        if val:
-            cells[1].paragraphs[0].runs[0].font.size = Pt(8.5)
+        # Función para dibujar las tablas en Word
+        def _agregar_tabla_docx(doc_obj, df_t, titulo_sec, desc):
+            if df_t.empty:
+                return
             
-        aplicar_espaciado_celda(cells[0])
-        aplicar_espaciado_celda(cells[1])
-
-    aplicar_espaciado_celda(hdr_cell_e)
-    doc.add_paragraph()
-
-    # ==========================================================================
-    # 4. TABLA: DETALLE DE LA FALTA (CON CONSOLIDACIÓN EN RENGLONES DISTINTOS)
-    # ==========================================================================
-    table_det = doc.add_table(rows=12, cols=1)
-    table_det.style = 'Table Grid'
-
-    # Cabecera azul
-    hdr_cell_d = table_det.rows[0].cells[0]
-    hdr_cell_d.text = "Detalle de la Falta"
-    set_cell_background(hdr_cell_d, "1E1B4B")
-    p_hdr_d = hdr_cell_d.paragraphs[0]
-    p_hdr_d.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_hdr_d = p_hdr_d.runs[0]
-    run_hdr_d.font.bold = True
-    run_hdr_d.font.size = Pt(9)
-    run_hdr_d.font.color.rgb = RGBColor(255, 255, 255)
-    aplicar_espaciado_celda(hdr_cell_d)
-
-    # --- AUTOCOMPLETADO DE CADA INCIDENCIA EN RENGLONES DISTINTOS ---
-    idx_renglon = 1
-    for _, row_inc in df.iterrows():
-        if idx_renglon >= 12: # Límite para evitar que salte de página
-            break
-        fecha_p = str(row_inc.get('FECHA_INCIDENCIA', ''))
-        tipo_p = str(row_inc.get('TIPO_FALTA', ''))
-        desc_p = str(row_inc.get('COMENTARIO', ''))
-        
-        cell_renglon = table_det.rows[idx_renglon].cells[0]
-        cell_renglon.text = f"• [{fecha_p}] {tipo_p}: {desc_p}"
-        cell_renglon.paragraphs[0].runs[0].font.size = Pt(8.5)
-        aplicar_espaciado_celda(cell_renglon)
-        idx_renglon += 1
-
-    # Renglones restantes en blanco con altura para simular diseño impreso original
-    for r_idx in range(idx_renglon, 12):
-        cell_vacia = table_det.rows[r_idx].cells[0]
-        cell_vacia.text = ""
-        table_det.rows[r_idx].height = Inches(0.18)
-        aplicar_espaciado_celda(cell_vacia)
-
-    doc.add_paragraph()
-
-    # Texto Legal intermedio
-    p_legal = doc.add_paragraph()
-    run_legal = p_legal.add_run("Firmo en señal de solicitud/autorización/aprobación lo de arriba detallado.")
-    run_legal.font.size = Pt(8.5)
-    run_legal.italic = True
-    p_legal.paragraph_format.space_before = Pt(4)
-    p_legal.paragraph_format.space_after = Pt(4)
-
-    # ==========================================================================
-    # 5. TABLA INFERIOR: FIRMAS Y ELABORACIÓN (CON HORA DEL SISTEMA ACTUAL)
-    # ==========================================================================
-    table_bottom = doc.add_table(rows=2, cols=2)
-    table_bottom.style = 'Table Grid'
-    table_bottom.columns[0].width = Inches(4.5)
-    table_bottom.columns[1].width = Inches(3.0)
-
-    # --- FILA 0: ENCABEZADOS AZULES ---
-    # Celda izquierda: Totalmente azul oscuro sin texto (Imagen 2)
-    cell_elab_hdr = table_bottom.cell(0, 0)
-    cell_elab_hdr.text = "" 
-    set_cell_background(cell_elab_hdr, "1E1B4B")
-
-    # Celda derecha: Azul oscuro con texto de Firma
-    cell_firma_hdr = table_bottom.cell(0, 1)
-    cell_firma_hdr.text = "" 
-    set_cell_background(cell_firma_hdr, "1E1B4B")
-    p_firma_hdr = cell_firma_hdr.paragraphs[0]
-    p_firma_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run_firma_hdr = p_firma_hdr.add_run("Firma de Jefe de\nDepartamento Solicitante")
-    run_firma_hdr.font.bold = True
-    run_firma_hdr.font.size = Pt(8.5)
-    run_firma_hdr.font.color.rgb = RGBColor(255, 255, 255)
-
-    # --- FILA 1: CONTENIDO ---
-    cell_elab_cont = table_bottom.cell(1, 0)
-    left_subtable = cell_elab_cont.add_table(rows=2, cols=2)
-    left_subtable.style = 'Table Grid'
-
-    # Fecha y hora actual del sistema en Honduras
-    ahora_hn = get_honduras_time()
-    fecha_elab = ahora_hn.strftime("%d/%m/%Y")
-    hora_elab = ahora_hn.strftime("%I:%M%p").lower() # Formato compacto como 10:10am
-
-    elab_fields = [
-        ("Fecha de elaboración de reporte", fecha_elab),
-        ("Hora de elaboración de reporte", hora_elab)
-    ]
-    for f_idx, (k, v) in enumerate(elab_fields):
-        l_cells = left_subtable.rows[f_idx].cells
-        l_cells[0].text = k
-        l_cells[0].paragraphs[0].runs[0].font.bold = True
-        l_cells[0].paragraphs[0].runs[0].font.size = Pt(8)
-        
-        l_cells[1].text = v
-        if v:
-            l_cells[1].paragraphs[0].runs[0].font.size = Pt(8)
+            doc_obj.add_heading(titulo_sec, level=2)
+            p_desc = doc_obj.add_paragraph()
+            run_desc = p_desc.add_run(desc)
+            run_desc.italic = True
+            run_desc.font.size = Pt(8.5)
+            run_desc.font.color.rgb = RGBColor(128, 128, 128)
             
-        aplicar_espaciado_celda(l_cells[0])
-        aplicar_espaciado_celda(l_cells[1])
+            headers = ["FECHA", "COLABORADOR", "MOTIVO DE REGISTRO", "DESCRIPCIÓN / COMENTARIO", "SUPERVISOR"]
+            table = doc_obj.add_table(rows=1, cols=5)
+            table.style = 'Table Grid'
+            
+            # Cabecera de la Tabla
+            hdr_cells = table.rows[0].cells
+            for idx_h, header_name in enumerate(headers):
+                hdr_cells[idx_h].text = header_name
+                run_h = hdr_cells[idx_h].paragraphs[0].runs[0]
+                run_h.font.bold = True
+                run_h.font.size = Pt(8)
+                
+            # Filas de datos
+            for _, row in df_t.iterrows():
+                row_cells = table.add_row().cells
+                row_cells[0].text = str(row.get('FECHA_INCIDENCIA', ''))
+                row_cells[1].text = str(row.get('TECNICO', ''))
+                row_cells[2].text = str(row.get('TIPO_FALTA', ''))
+                row_cells[3].text = str(row.get('COMENTARIO', ''))
+                row_cells[4].text = str(row.get('SUPERVISOR', ''))
+                
+                # Tamaño de fuente estándar para el cuerpo de la tabla
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for r_text in paragraph.runs:
+                            r_text.font.size = Pt(8.5)
+            
+            doc_obj.add_paragraph()
 
-    # Columna Derecha de Firma: SE MANTIENE TOTALMENTE COLOR BLANCO PARA LA PLUMA
-    cell_firma_cont = table_bottom.cell(1, 1)
-    cell_firma_cont.text = "" # Fondo blanco liso
-    cell_firma_cont.add_paragraph("\n\n\n")
+        # Generar las secciones de tablas
+        _agregar_tabla_docx(doc, df_leves, "1. SECCIÓN: FALTAS LEVES", "Demoras, almuerzos/breaks excedidos, marcas faltantes o mala documentación.")
+        _agregar_tabla_docx(doc, df_graves, "2. SECCIÓN: FALTAS GRAVES", "Mal cuidado vehicular, órdenes sin cerrar/abrir a tiempo, o reincidencias acumuladas.")
+        _agregar_tabla_docx(doc, df_otros, "3. SECCIÓN: OTRAS INCIDENCIAS", "Incidencias médicas, méritos, contratos o documentos sin clasificación definida.")
 
-    # Aplicar sangría final a las celdas de la tabla inferior
-    for r_idx in range(2):
-        for c_idx in range(2):
-            aplicar_espaciado_celda(table_bottom.cell(r_idx, c_idx))
+        # --- ANEXOS / IMÁGENES DENTRO DEL WORD ---
+        tiene_anexos = False
+        for _, row in df_work.iterrows():
+            urls = str(row.get('URL_FOTO', '')).split(',')
+            if any(u.strip().startswith('http') for u in urls):
+                tiene_anexos = True
+                break
+        
+        if tiene_anexos:
+            doc.add_page_break()
+            doc.add_heading("ANEXOS - EVIDENCIA FOTOGRÁFICA", level=1)
+            
+            for _, row in df_work.iterrows():
+                urls = str(row.get('URL_FOTO', '')).split(',')
+                validas = [u.strip() for u in urls if u.strip().startswith('http')]
+                if validas:
+                    tec_name = str(row.get('TECNICO', ''))
+                    f_inc = str(row.get('FECHA_INCIDENCIA', ''))
+                    motivo_falta = str(row.get('TIPO_FALTA', ''))
+                    
+                    for url in validas:
+                        try:
+                            r = requests.get(url, timeout=5)
+                            if r.status_code == 200:
+                                fd, tp = tempfile.mkstemp(suffix=".png")
+                                os.close(fd)
+                                try:
+                                    with open(tp, 'wb') as f_img:
+                                        f_img.write(r.content)
+                                    p_annex = doc.add_paragraph()
+                                    run_annex = p_annex.add_run(f"Evidencia: {tec_name} | {motivo_falta} | {f_inc}\n")
+                                    run_annex.bold = True
+                                    run_annex.font.size = Pt(9)
+                                    doc.add_picture(tp, width=Inches(5.5))
+                                    doc.add_paragraph()
+                                finally:
+                                    if os.path.exists(tp):
+                                        os.remove(tp)
+                        except:
+                            pass
 
-    # Retornar como Bytes seguros en memoria
+    # Retornar como Bytes seguros
     b_io = io.BytesIO()
     doc.save(b_io)
     return b_io.getvalue()
@@ -1073,10 +911,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 cols_img = st.columns(len(validas))
                                 for i, u in enumerate(validas):
                                     with cols_img[i]:
-                                        if u.lower().endswith('.pdf') or 'catbox' in u.lower() and '.pdf' in u.lower():
-                                            st.info(f"📄 **Documento PDF adjunto:** [Haga clic aquí para ver o descargar]({u})")
-                                        else:
-                                            st.image(u, caption="Evidencia Fotográfica", use_container_width=True)
+                                        st.image(u, use_container_width=True)
                             else:
                                 st.caption("🚫 No se adjuntaron evidencias.")
                                 
@@ -1142,7 +977,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
             with c2:
                 fecha_inc = st.date_input("📅 Fecha:", value=get_honduras_time().date(), key="date_inc")
-                archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True, key="up_archivos")
+                archivos = st.file_uploader("🖼️ Evidencias:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos")
             
             comentario = st.text_area("📝 Descripción de los hechos:", key="txt_comentario")
             
@@ -1155,11 +990,19 @@ def mostrar_modulo_expedientes(conn, df_base):
                     try:
                         urls = []
                         if archivos:
-                            with st.spinner("Subiendo archivos al servidor..."):
+                            with st.spinner("Subiendo imágenes al servidor..."):
                                 for a in archivos:
-                                    url_subido = subir_evidencias_inteligente(a)
-                                    if url_subido:
-                                        urls.append(url_subido)
+                                    res = requests.post(
+                                        "https://freeimage.host/api/1/upload",
+                                        data={
+                                            "key": API_KEY_FREEIMAGE,
+                                            "action": "upload",
+                                            "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                            "format": "json"
+                                        }
+                                    )
+                                    if res.status_code == 200:
+                                        urls.append(res.json()["image"]["url"])
                         
                         with st.spinner("Guardando en la Nube y en Sheets..."):
                             df_actual = obtener_datos_memoria(conn)
@@ -1213,7 +1056,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_view['TECNICO'] = df_view['TECNICO'].astype(str).str.upper().str.strip()
                 df_view['TECNICO'] = df_view['TECNICO'].replace(r'\s+', ' ', regex=True)
                 es_admin_mask = df_view['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
-                df_tecnicos_tab = df_view[es_admin_mask].copy()
+                df_tecnicos_tab = df_view[~es_admin_mask].copy()
                 df_tecnicos_tab = df_tecnicos_tab[~df_tecnicos_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
                 
                 generar_vista_historial(df_tecnicos_tab, "Operaciones y Técnicos", "tec")
@@ -1254,7 +1097,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                         
                 with c2_admin:
                     fecha_inc_admin = st.date_input("📅 Fecha del Evento:", value=get_honduras_time().date(), key="date_inc_admin")
-                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True, key="up_archivos_admin")
+                    archivos_admin = st.file_uploader("🖼️ Evidencias Fotográficas:", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="up_archivos_admin")
                     
                 comentario_admin = st.text_area("📝 Descripción de los hechos o detalles:", key="txt_comentario_admin")
                 
@@ -1271,11 +1114,19 @@ def mostrar_modulo_expedientes(conn, df_base):
                         try:
                             urls_admin = []
                             if archivos_admin:
-                                with st.spinner("Subiendo archivos al servidor..."):
+                                with st.spinner("Subiendo imágenes al servidor..."):
                                     for a in archivos_admin:
-                                        url_subido = subir_evidencias_inteligente(a)
-                                        if url_subido:
-                                            urls_admin.append(url_subido)
+                                        res = requests.post(
+                                            "https://freeimage.host/api/1/upload",
+                                            data={
+                                                "key": API_KEY_FREEIMAGE,
+                                                "action": "upload",
+                                                "source": base64.b64encode(a.getvalue()).decode('utf-8'),
+                                                "format": "json"
+                                            }
+                                        )
+                                        if res.status_code == 200:
+                                            urls_admin.append(res.json()["image"]["url"])
                             
                             with st.spinner("Guardando en la base de datos principal..."):
                                 df_actual = obtener_datos_memoria(conn)
