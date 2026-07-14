@@ -30,6 +30,11 @@ try:
 except ImportError:
     pass
 
+try:
+    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs, generar_docx_reporte_faltas_individual
+except ImportError:
+    pass
+
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
@@ -547,15 +552,21 @@ def generar_pdf_consolidado(df):
 
 def generar_docx_consolidado(df):
     """
-    Genera un documento estructurado de Word (.docx) que simula de forma exacta el 
-    formato oficial corporativo de "REPORTE DE FALTAS".
-    
-    Si el DataFrame contiene múltiples incidencias, se agrupan de manera cronológica
-    en renglones distintos dentro del cuadro "Detalle de la Falta" para optimizar espacio,
-    y la sección de firmas inferior se mantiene 100% en color blanco.
+    Genera un documento oficial de Word (.docx) estructurado con tablas,
+    resúmenes de KPIs y evidencia fotográfica adjunta en el mismo formato.
+    Si se detecta un solo colaborador, genera automáticamente la plantilla idéntica
+    al reporte de faltas de la imagen.
     """
     if not HAS_DOCX:
         return b""
+        
+    # --- REDIRECCIÓN AL FORMATO EXACTO DE REPORTE DE FALTAS DE LA IMAGEN ---
+    if not df.empty and df['TECNICO'].nunique() == 1:
+        try:
+            return generar_docx_reporte_faltas_individual(df)
+        except Exception as e:
+            # Fallback en caso de que ocurra algún error inesperado
+            pass
         
     doc = Document()
     
