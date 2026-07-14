@@ -118,6 +118,7 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitor
     """
     Realiza la descarga automatizada de órdenes desde la API de Cepheus Web utilizando
     las credenciales seguras de Streamlit Secrets con fallbacks automatizados.
+    Soporta un usuario de consulta independiente del usuario de autenticación.
     """
     # 1. Lectura segura de secretos con fallbacks hacia la nueva IP y credenciales
     api_config = st.secrets.get("cepheus_api", {})
@@ -125,11 +126,14 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitor
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
+    # Extrae el usuario de consulta del secreto, si no existe usa el argumento de la función
+    query_user = api_config.get("query_usuario", usuario_api)
+    
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
     hora_str = fecha_inicio_dt.strftime("%H:%M")
     
-    # 2. Construcción de la URL con los parámetros requeridos
-    full_url = f"{base_url}?usuario={usuario_api}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+    # 2. Construcción de la URL usando query_user en lugar del usuario de autenticación
+    full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
     
     auth = HTTPBasicAuth(auth_user, auth_pass)
     
@@ -137,7 +141,7 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitor
         session = requests.Session()
         session.trust_env = False  # Ignora proxies externos para priorizar enrutamiento local
         
-        # 3. Timeout ampliado a 45 segundos para mitigar la latencia del servidor de la base de datos
+        # 3. Timeout de 45 segundos para mitigar la latencia del servidor de la base de datos
         response = session.get(full_url, auth=auth, verify=False, timeout=45)
         if response.status_code == 200:
             data = response.json()
