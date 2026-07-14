@@ -3553,11 +3553,8 @@ def generar_pdf_reporte_general_gastos(df_gastos):
 
 
 
-#======================================
-# PDF RRHH INCIDENCIAS 
-#======================================
 # ==============================================================================
-# MOTOR DOCX: REPORTE DE FALTAS INDIVIDUAL DE COLABORADOR
+# MOTOR DOCX: REPORTE DE FALTAS INDIVIDUAL DE COLABORADOR (RÉPLICA EXACTA)
 # ==============================================================================
 def generar_docx_reporte_faltas_individual(df):
     import io
@@ -3576,25 +3573,25 @@ def generar_docx_reporte_faltas_individual(df):
         
     doc = Document()
     
-    # Ajustar márgenes a 0.5 pulgadas para un calce idéntico de página
+    # Ajustar márgenes a 0.5 pulgadas para un calce milimétrico de página
     for section in doc.sections:
         section.top_margin = Inches(0.5)
         section.bottom_margin = Inches(0.5)
         section.left_margin = Inches(0.5)
         section.right_margin = Inches(0.5)
         
-    # Establecer fuente global Arial
+    # Configuración de fuente base Arial
     style = doc.styles['Normal']
     font = style.font
     font.name = 'Arial'
     font.size = Pt(8.5)
     
-    # Helpers XML de docx para sombreados, bordes y márgenes internos
+    # Helpers XML de docx para sombreados, bordes negros/gris oscuro y márgenes
     def set_cell_shading(cell, color_hex):
         shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>')
         cell._tc.get_or_add_tcPr().append(shading)
         
-    def set_cell_borders(cell, color="CCCCCC", sz="4", val="single"):
+    def set_cell_borders(cell, color="555555", sz="4", val="single"):
         tcPr = cell._tc.get_or_add_tcPr()
         tcBorders = parse_xml(f'''
             <w:tcBorders {nsdecls("w")}>
@@ -3606,7 +3603,7 @@ def generar_docx_reporte_faltas_individual(df):
         ''')
         tcPr.append(tcBorders)
 
-    def set_cell_margins(cell, top=100, bottom=100, left=150, right=150):
+    def set_cell_margins(cell, top=80, bottom=80, left=120, right=120):
         tcPr = cell._tc.get_or_add_tcPr()
         tcMar = OxmlElement('w:tcMar')
         for m, val in [('top', top), ('bottom', bottom), ('left', left), ('right', right)]:
@@ -3615,25 +3612,32 @@ def generar_docx_reporte_faltas_individual(df):
             node.set(qn('w:type'), 'dxa')
             tcMar.append(node)
         tcPr.append(tcMar)
+
+    def format_cell_p(cell, align=WD_ALIGN_PARAGRAPH.LEFT):
+        p = cell.paragraphs[0]
+        p.alignment = align
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.line_spacing = 1.0
+        return p
         
+    NAVY_HEX = "1A1D54"  # Azul marino idéntico al corporativo
+    BORDER_COLOR = "000000"  # Bordes negros nítidos para emular el documento escaneado
+
     # 1. Tabla de Encabezado Principal (1 fila, 3 columnas)
     header_table = doc.add_table(rows=1, cols=3)
     header_table.style = 'Table Grid'
     header_table.autofit = False
     
     col_widths = [Inches(1.8), Inches(3.7), Inches(2.0)]
-    for i, width in enumerate(col_widths):
-        header_table.columns[i].width = width
-        
     cells = header_table.rows[0].cells
     for i, width in enumerate(col_widths):
         cells[i].width = width
-        set_cell_borders(cells[i], color="999999", sz="4")
+        set_cell_borders(cells[i], color=BORDER_COLOR, sz="4")
         set_cell_margins(cells[i], top=60, bottom=60, left=100, right=100)
         
     # Celda 1: Área del logo de Maxcom
-    p1 = cells[0].paragraphs[0]
-    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p1 = format_cell_p(cells[0], WD_ALIGN_PARAGRAPH.CENTER)
     if os.path.exists('logo.png'):
         try:
             p1.add_run().add_picture('logo.png', width=Inches(1.3))
@@ -3649,18 +3653,18 @@ def generar_docx_reporte_faltas_individual(df):
         r.font.color.rgb = RGBColor(30, 58, 138)
         
     # Celda 2: Nombre del Formulario
-    p2 = cells[1].paragraphs[0]
-    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p2.paragraph_format.space_before = Pt(8)
+    p2 = format_cell_p(cells[1], WD_ALIGN_PARAGRAPH.CENTER)
+    p2.paragraph_format.space_before = Pt(10)
     r2 = p2.add_run("REPORTE DE FALTAS")
     r2.font.bold = True
     r2.font.size = Pt(11)
-    r2.font.color.rgb = RGBColor(100, 100, 100)
+    r2.font.color.rgb = RGBColor(80, 80, 80)
     
-    # Celda 3: Datos de Control de Calidad / RH
-    p3 = cells[2].paragraphs[0]
-    p3.paragraph_format.line_spacing = 1.05
-    p3.paragraph_format.space_after = Pt(0)
+    # Celda 3: Datos de Control de Calidad / nested table para alineación perfecta
+    nested_meta = cells[2].add_table(rows=4, cols=2)
+    nested_meta.autofit = False
+    nested_meta.columns[0].width = Inches(0.9)
+    nested_meta.columns[1].width = Inches(1.1)
     
     metadata = [
         ("CÓDIGO", "HN-GG-RH-FR-09"),
@@ -3668,28 +3672,33 @@ def generar_docx_reporte_faltas_individual(df):
         ("FECHA", "12/05/2026"),
         ("CLASIFICACIÓN", "INTERNO")
     ]
-    for key, val in metadata:
-        p = cells[2].add_paragraph() if cells[2].paragraphs[0].text else cells[2].paragraphs[0]
-        p.paragraph_format.space_after = Pt(1)
-        p.paragraph_format.space_before = Pt(1)
-        r_key = p.add_run(f"{key}: ")
-        r_key.font.bold = True
-        r_key.font.size = Pt(7)
-        r_val = p.add_run(val)
-        r_val.font.size = Pt(7)
+    for row_idx, (key, val) in enumerate(metadata):
+        n_row = nested_meta.rows[row_idx]
+        n_row.cells[0].width = Inches(0.9)
+        n_row.cells[1].width = Inches(1.1)
+        for nc in n_row.cells:
+            set_cell_borders(nc, color=BORDER_COLOR, sz="4")
+            set_cell_margins(nc, top=20, bottom=20, left=40, right=40)
+            
+        p_k = format_cell_p(n_row.cells[0], WD_ALIGN_PARAGRAPH.CENTER)
+        r_k = p_k.add_run(key)
+        r_k.font.bold = True
+        r_k.font.size = Pt(7)
+        
+        p_v = format_cell_p(n_row.cells[1], WD_ALIGN_PARAGRAPH.CENTER)
+        r_v = p_v.add_run(val)
+        r_v.font.size = Pt(7)
         
     doc.add_paragraph().paragraph_format.space_after = Pt(6)
     
-    # Título central
+    # Título central "REPORTE DE FALTAS"
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_title = p_title.add_run("REPORTE DE FALTAS")
     r_title.font.bold = True
     r_title.font.size = Pt(13)
-    r_title.font.color.rgb = RGBColor(30, 58, 138)
-    p_title.paragraph_format.space_after = Pt(10)
-    
-    NAVY_HEX = "1E293B"
+    r_title.font.color.rgb = RGBColor(0, 0, 0)
+    p_title.paragraph_format.space_after = Pt(8)
     
     # 2. Tabla: Datos del Jefe del Departamento Solicitante
     table_jefe = doc.add_table(rows=6, cols=2)
@@ -3702,11 +3711,10 @@ def generar_docx_reporte_faltas_individual(df):
     hdr_cell.merge(table_jefe.rows[0].cells[1])
     set_cell_shading(hdr_cell, NAVY_HEX)
     set_cell_margins(hdr_cell, top=60, bottom=60, left=100, right=100)
-    p_hdr = hdr_cell.paragraphs[0]
-    p_hdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_hdr = format_cell_p(hdr_cell, WD_ALIGN_PARAGRAPH.CENTER)
     r_hdr = p_hdr.add_run("Datos del Jefe del Departamento Solicitante")
     r_hdr.font.bold = True
-    r_hdr.font.size = Pt(9)
+    r_hdr.font.size = Pt(9.5)
     r_hdr.font.color.rgb = RGBColor(255, 255, 255)
     
     jefe_labels = [
@@ -3714,7 +3722,7 @@ def generar_docx_reporte_faltas_individual(df):
         "Puesto",
         "Departamento",
         "Ciudad",
-        "Fecha de Ingresos"
+        "Fecha de Ingreso"  # Modificado a singular para calzar con la imagen
     ]
     
     for idx, label in enumerate(jefe_labels, start=1):
@@ -3723,10 +3731,10 @@ def generar_docx_reporte_faltas_individual(df):
         row.cells[1].width = Inches(4.7)
         
         for c in row.cells:
-            set_cell_borders(c, color="CCCCCC", sz="4")
+            set_cell_borders(c, color=BORDER_COLOR, sz="4")
             set_cell_margins(c, top=40, bottom=40, left=80, right=80)
             
-        p_lbl = row.cells[0].paragraphs[0]
+        p_lbl = format_cell_p(row.cells[0])
         r_lbl = p_lbl.add_run(label)
         r_lbl.font.bold = True
         r_lbl.font.size = Pt(8.5)
@@ -3744,18 +3752,16 @@ def generar_docx_reporte_faltas_individual(df):
     hdr_cell_emp.merge(table_emp.rows[0].cells[1])
     set_cell_shading(hdr_cell_emp, NAVY_HEX)
     set_cell_margins(hdr_cell_emp, top=60, bottom=60, left=100, right=100)
-    p_hdr_emp = hdr_cell_emp.paragraphs[0]
-    p_hdr_emp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_hdr_emp = format_cell_p(hdr_cell_emp, WD_ALIGN_PARAGRAPH.CENTER)
     r_hdr_emp = p_hdr_emp.add_run("Datos de Empleado Reportado")
     r_hdr_emp.font.bold = True
-    r_hdr_emp.font.size = Pt(9)
+    r_hdr_emp.font.size = Pt(9.5)
     r_hdr_emp.font.color.rgb = RGBColor(255, 255, 255)
     
     emp_name = "N/D"
     if not df.empty and 'TECNICO' in df.columns:
         emp_name = str(df['TECNICO'].iloc[0]).upper().strip()
         
-    # Agrupar y ordenar cronológicamente las fechas únicas de las faltas
     fechas_list = []
     if not df.empty and 'FECHA_INCIDENCIA' in df.columns:
         raw_dates = df['FECHA_INCIDENCIA'].dropna().astype(str).unique()
@@ -3768,7 +3774,6 @@ def generar_docx_reporte_faltas_individual(df):
         
     fecha_falta_str = " - ".join(fechas_list) if fechas_list else "N/D"
     
-    # Extraer las horas de elaboración de las incidencias del sistema
     horas_list = []
     if not df.empty and 'FECHA_REGISTRO' in df.columns:
         for val in df['FECHA_REGISTRO'].dropna():
@@ -3794,15 +3799,15 @@ def generar_docx_reporte_faltas_individual(df):
         row.cells[1].width = Inches(4.7)
         
         for c in row.cells:
-            set_cell_borders(c, color="CCCCCC", sz="4")
+            set_cell_borders(c, color=BORDER_COLOR, sz="4")
             set_cell_margins(c, top=40, bottom=40, left=80, right=80)
             
-        p_lbl = row.cells[0].paragraphs[0]
+        p_lbl = format_cell_p(row.cells[0])
         r_lbl = p_lbl.add_run(label)
         r_lbl.font.bold = True
         r_lbl.font.size = Pt(8.5)
         
-        p_val = row.cells[1].paragraphs[0]
+        p_val = format_cell_p(row.cells[1])
         r_val = p_val.add_run(val_text)
         r_val.font.size = Pt(8.5)
         
@@ -3818,11 +3823,10 @@ def generar_docx_reporte_faltas_individual(df):
     hdr_cell_det = table_detail.rows[0].cells[0]
     set_cell_shading(hdr_cell_det, NAVY_HEX)
     set_cell_margins(hdr_cell_det, top=60, bottom=60, left=100, right=100)
-    p_hdr_det = hdr_cell_det.paragraphs[0]
-    p_hdr_det.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_hdr_det = format_cell_p(hdr_cell_det, WD_ALIGN_PARAGRAPH.CENTER)
     r_hdr_det = p_hdr_det.add_run("Detalle de la Falta")
     r_hdr_det.font.bold = True
-    r_hdr_det.font.size = Pt(9)
+    r_hdr_det.font.size = Pt(9.5)
     r_hdr_det.font.color.rgb = RGBColor(255, 255, 255)
     
     incidents = []
@@ -3846,14 +3850,11 @@ def generar_docx_reporte_faltas_individual(df):
     for idx in range(1, TOTAL_ROWS + 1):
         row_cell = table_detail.rows[idx].cells[0]
         row_cell.width = Inches(7.5)
-        set_cell_borders(row_cell, color="CCCCCC", sz="4")
+        set_cell_borders(row_cell, color=BORDER_COLOR, sz="4")
         set_cell_margins(row_cell, top=35, bottom=35, left=80, right=80)
         
-        p_det = row_cell.paragraphs[0]
-        p_det.paragraph_format.space_before = Pt(1)
-        p_det.paragraph_format.space_after = Pt(1)
+        p_det = format_cell_p(row_cell)
         
-        # Colocar los datos cronológicamente en renglones secuenciales si existen
         if idx - 1 < len(incidents):
             r_det = p_det.add_run(incidents[idx - 1])
             r_det.font.size = Pt(8)
@@ -3866,86 +3867,83 @@ def generar_docx_reporte_faltas_individual(df):
     p_sign_note.paragraph_format.space_after = Pt(4)
     r_sign_note = p_sign_note.add_run("Firmo en señal de solicitud/autorización/aprobación lo de arriba detallado.")
     r_sign_note.font.italic = True
-    r_sign_note.font.size = Pt(8)
+    r_sign_note.font.size = Pt(8.5)
     
-    # 5. Tabla Footer (Fecha/Hora de elaboración real y Box de Firma física)
-    footer_table = doc.add_table(rows=1, cols=2)
+    # 5. Tabla Footer (Estructurada en Rejilla Unificada de 3 columnas para alineación perfecta)
+    footer_table = doc.add_table(rows=3, cols=3)
     footer_table.style = 'Table Grid'
     footer_table.autofit = False
-    footer_table.columns[0].width = Inches(3.6)
-    footer_table.columns[1].width = Inches(3.9)
     
-    cell_left = footer_table.rows[0].cells[0]
-    cell_right = footer_table.rows[0].cells[1]
-    
-    cell_left.width = Inches(3.6)
-    cell_right.width = Inches(3.9)
-    
-    for c in [cell_left, cell_right]:
-        set_cell_borders(c, color="CCCCCC", sz="4")
-        set_cell_margins(c, top=0, bottom=0, left=0, right=0)
-        
+    col_widths_foot = [Inches(1.9), Inches(1.7), Inches(3.9)]
+    for row in footer_table.rows:
+        for i, w in enumerate(col_widths_foot):
+            row.cells[i].width = w
+            
     # Obtener hora y fecha del sistema en el instante preciso de descarga (Honduras)
     hn_now = datetime.utcnow() - timedelta(hours=6)
     system_date_str = hn_now.strftime("%d/%m/%Y")
     system_time_str = hn_now.strftime("%I:%M%p").lower()
     
-    nested_left = cell_left.add_table(rows=2, cols=2)
-    nested_left.style = 'Table Grid'
-    nested_left.autofit = False
-    nested_left.columns[0].width = Inches(1.9)
-    nested_left.columns[1].width = Inches(1.7)
+    # Configurar Fila 0 (Encabezados Navy)
+    # Mergear Col 0 y Col 1 para la barra azul izquierda
+    cell_navy_left = footer_table.rows[0].cells[0].merge(footer_table.rows[0].cells[1])
+    set_cell_shading(cell_navy_left, NAVY_HEX)
+    set_cell_borders(cell_navy_left, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_navy_left, top=40, bottom=40, left=60, right=60)
+    format_cell_p(cell_navy_left)
     
-    left_rows = [
-        ("Fecha de elaboración de\nreporte", system_date_str),
-        ("Hora de elaboración de\nreporte", system_time_str)
-    ]
-    for row_idx, (lbl, val) in enumerate(left_rows):
-        n_row = nested_left.rows[row_idx]
-        n_row.cells[0].width = Inches(1.9)
-        n_row.cells[1].width = Inches(1.7)
-        
-        for nc in n_row.cells:
-            set_cell_borders(nc, color="CCCCCC", sz="4")
-            set_cell_margins(nc, top=60, bottom=60, left=80, right=80)
-            
-        p_nlbl = n_row.cells[0].paragraphs[0]
-        r_nlbl = p_nlbl.add_run(lbl)
-        r_nlbl.font.bold = True
-        r_nlbl.font.size = Pt(8)
-        
-        p_nval = n_row.cells[1].paragraphs[0]
-        p_nval.paragraph_format.space_before = Pt(3)
-        r_nval = p_nval.add_run(val)
-        r_nval.font.size = Pt(8.5)
-        
-    nested_right = cell_right.add_table(rows=2, cols=1)
-    nested_right.style = 'Table Grid'
-    nested_right.autofit = False
-    nested_right.columns[0].width = Inches(3.9)
-    
-    r_hdr_cell = nested_right.rows[0].cells[0]
-    r_hdr_cell.width = Inches(3.9)
-    set_cell_shading(r_hdr_cell, NAVY_HEX)
-    set_cell_borders(r_hdr_cell, color="CCCCCC", sz="4")
-    set_cell_margins(r_hdr_cell, top=40, bottom=40, left=60, right=60)
-    p_rhdr = r_hdr_cell.paragraphs[0]
-    p_rhdr.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Celda Navy Derecha con el texto de Firma
+    cell_navy_right = footer_table.rows[0].cells[2]
+    set_cell_shading(cell_navy_right, NAVY_HEX)
+    set_cell_borders(cell_navy_right, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_navy_right, top=40, bottom=40, left=60, right=60)
+    p_rhdr = format_cell_p(cell_navy_right, WD_ALIGN_PARAGRAPH.CENTER)
     r_rhdr = p_rhdr.add_run("Firma de Jefe de\nDepartamento Solicitante")
     r_rhdr.font.bold = True
-    r_rhdr.font.size = Pt(8)
+    r_rhdr.font.size = Pt(8.5)
     r_rhdr.font.color.rgb = RGBColor(255, 255, 255)
     
-    r_space_cell = nested_right.rows[1].cells[0]
-    r_space_cell.width = Inches(3.9)
-    set_cell_borders(r_space_cell, color="CCCCCC", sz="4")
-    set_cell_margins(r_space_cell, top=350, bottom=350, left=60, right=60)
-    p_rspace = r_space_cell.paragraphs[0]
-    p_rspace.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_space_run = p_rspace.add_run("")
-    r_space_run.font.size = Pt(8)
+    # Configurar Fila 1 (Fecha de Elaboración)
+    cell_f_lbl = footer_table.rows[1].cells[0]
+    set_cell_borders(cell_f_lbl, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_f_lbl, top=40, bottom=40, left=80, right=80)
+    p_f_lbl = format_cell_p(cell_f_lbl)
+    r_f_lbl = p_f_lbl.add_run("Fecha de elaboración\nde reporte")
+    r_f_lbl.font.bold = True
+    r_f_lbl.font.size = Pt(8.5)
+    
+    cell_f_val = footer_table.rows[1].cells[1]
+    set_cell_borders(cell_f_val, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_f_val, top=40, bottom=40, left=80, right=80)
+    p_f_val = format_cell_p(cell_f_val)
+    p_f_val.paragraph_format.space_before = Pt(6)  # Centrado vertical visual
+    r_f_val = p_f_val.add_run(system_date_str)
+    r_f_val.font.size = Pt(8.5)
+    
+    # Configurar Fila 2 (Hora de Elaboración)
+    cell_h_lbl = footer_table.rows[2].cells[0]
+    set_cell_borders(cell_h_lbl, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_h_lbl, top=40, bottom=40, left=80, right=80)
+    p_h_lbl = format_cell_p(cell_h_lbl)
+    r_h_lbl = p_h_lbl.add_run("Hora de elaboración\nde reporte")
+    r_h_lbl.font.bold = True
+    r_h_lbl.font.size = Pt(8.5)
+    
+    cell_h_val = footer_table.rows[2].cells[1]
+    set_cell_borders(cell_h_val, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_h_val, top=40, bottom=40, left=80, right=80)
+    p_h_val = format_cell_p(cell_h_val)
+    p_h_val.paragraph_format.space_before = Pt(6)  # Centrado vertical visual
+    r_h_val = p_h_val.add_run(system_time_str)
+    r_h_val.font.size = Pt(8.5)
+    
+    # Mergear las celdas de firma (Fila 1 y Fila 2 de la Columna 2) para el cuadro de firma físico
+    cell_signature_box = footer_table.rows[1].cells[2].merge(footer_table.rows[2].cells[2])
+    set_cell_borders(cell_signature_box, color=BORDER_COLOR, sz="4")
+    set_cell_margins(cell_signature_box, top=150, bottom=150, left=60, right=60)
+    p_sig = format_cell_p(cell_signature_box)
+    p_sig.add_run("")
     
     b_io = io.BytesIO()
     doc.save(b_io)
     return b_io.getvalue()
-
