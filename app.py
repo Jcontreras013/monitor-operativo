@@ -371,28 +371,12 @@ def main():
                     if df_api_raw is None or df_api_raw.empty:
                         st.error("❌ No se obtuvieron órdenes de la API de Cepheus para el rango de fecha configurado.")
                     else:
-                        if file_disp_ptr is not None:
-                            fttx_data = file_disp_ptr
-                            try:
-                                if isinstance(file_disp_ptr, bytes):
-                                    bytes_fttx = file_disp_ptr
-                                elif hasattr(file_disp_ptr, 'read'):
-                                    file_disp_ptr.seek(0)
-                                    bytes_fttx = file_disp_ptr.read()
-                                    file_disp_ptr.seek(0)
-                                else: bytes_fttx = None
-                                
-                                if bytes_fttx:
-                                    sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
-                            except Exception as e_save:
-                                print(f"Fallo al respaldar FTTX en GCS: {e_save}")
-                        else:
-                            df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
-                            if df_fttx_cloud is None or df_fttx_cloud.empty:
-                                df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=0)
-                            fttx_data = df_fttx_cloud
+                        # Descargar o resolver catálogo FTTX
+                        df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                        if df_fttx_cloud is None or df_fttx_cloud.empty:
+                            df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=0)
                         
-                        df_depurado = depurar_api_con_dispositivos(df_api_raw, fttx_data)
+                        df_depurado = depurar_api_con_dispositivos(df_api_raw, df_fttx_cloud)
                         df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                         
                         ahora_momento_ts = pd.Timestamp(get_honduras_time())
@@ -404,9 +388,9 @@ def main():
                         if 'TECNICO' in df_depurado.columns:
                             df_depurado.loc[df_depurado['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
 
+                        # Cálculos operativos básicos en vivo
                         act_upper = df_depurado['ACTIVIDAD'].fillna('').astype(str).str.upper()
                         est_upper = df_depurado['ESTADO'].fillna('').astype(str).str.upper().str.strip()
-                        tec_upper = df_depurado['TECNICO'].fillna('').astype(str).str.upper().str.strip()
                         com_upper = df_depurado['COMENTARIO'].fillna('').astype(str).str.upper()
                         cli_upper = df_depurado['CLIENTE'].fillna('').astype(str).str.upper()
                         
@@ -419,12 +403,7 @@ def main():
                             (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
                         )
                         
-                        mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
-                        mask_est_abierto = est_upper != 'CERRADA'
-                        mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
-                        mask_precisa = com_upper.apply(es_offline_preciso) 
-                        
-                        df_depurado['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
+                        df_depurado['ES_OFFLINE'] = ((df_depurado['TECNICO'].astype(str).str.upper() != 'JOSUE MIGUEL SAUCEDA') & mask_est_abierto & mask_sop & ~mask_falsos & (com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True) | com_upper.apply(es_offline_preciso)))
                         df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
                         
                         texto_seg = act_upper + " " + cli_upper + " " + com_upper
@@ -438,6 +417,7 @@ def main():
                             ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
                         )
 
+                        # Consolidar con el histórico maestro
                         df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
                         if df_cloud is None or df_cloud.empty:
                             df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
@@ -454,8 +434,7 @@ def main():
                                 mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                 df_cloud = df_cloud[mask_isca_cloud].copy()
 
-                            PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-                            mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
+                            mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False)
                             df_historial_puro = df_cloud[~mask_vivas_nube].copy()
                             df_combined = pd.concat([df_historial_puro, df_depurado])
                         else:
@@ -468,6 +447,7 @@ def main():
                             df_nd = df_combined[df_combined['NUM'] == 'N/D']
                             df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')
 
+                        # Formatear fechas antes de persistir
                         df_to_upload = df_combined.copy()
                         for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
                             if c_date in df_to_upload.columns:
@@ -477,12 +457,12 @@ def main():
                         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
                         
                         st.session_state.df_base = df_combined
-                        st.success("✅ ¡Datos descargados e historial consolidado con la nube exitosamente!")
+                        st.success("✅ ¡Actualización manual completada en la nube y pantalla recargada!")
                         import time
                         time.sleep(1)
                         st.rerun()
-                except Exception as e_api_proc:
-                    st.error(f"❌ Fallo al reprocesar los datos de la API: {e_api_proc}")
+                except Exception as e_manual:
+                    st.error(f"❌ Error al intentar forzar la consulta manual: {e_manual}")
 
         elif btn_reprocesar:
             if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
