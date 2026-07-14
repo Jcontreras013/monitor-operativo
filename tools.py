@@ -9,9 +9,15 @@ import numpy as np
 import streamlit as st
 import io
 from typing import Any, List, Optional, Tuple, Union, Dict
-import io
 from google.cloud import storage
 from google.oauth2 import service_account
+import requests
+import urllib3
+from requests.auth import HTTPBasicAuth
+
+# Desactivar advertencias de certificados locales/autofirmados de red
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ==============================================================================
 # MOTOR SEGURO DE FECHAS, ZONA HORARIA Y UTILIDADES BASE
 # ==============================================================================
@@ -75,25 +81,24 @@ def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFra
     for col in columnas:
         if col in df.columns:
             df[col] = df[col].apply(parse_date_ultra_safe)
-            # CRÍTICO: Forzar formato de pandas para evitar errores de ploteo en el Gantt
             df[col] = pd.to_datetime(df[col], errors='coerce')
     return df
 
 # ==============================================================================
-# 1. MAPEO UNIVERSAL DE COLUMNAS
+# 1. MAPEO UNIVERSAL DE COLUMNAS (Soporta archivos Cepheus y formatos de la API)
 # ==============================================================================
 COLUMNS_MAPPING = {
-    'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'HORA INICIO ORDEN', 'FECHA ENTRADA', 'INICIO'],
-    'HORA_LIQ': ['HORA LIQUIDADO', 'HORA CIERRE', 'HORACIERREORDEN', 'HORA CIERRE ORDEN', 'FECHA LIQUIDADO', 'LIQUIDADO'],
+    'HORA_INI': ['HORA ENTRADA', 'HORA INICIO', 'HORAINICIOORDEN', 'HORA INICIO ORDEN', 'FECHA ENTRADA', 'INICIO', 'FECHAENTRADA'],
+    'HORA_LIQ': ['HORA LIQUIDADO', 'HORA CIERRE', 'HORACIERREORDEN', 'HORA CIERRE ORDEN', 'FECHA LIQUIDADO', 'LIQUIDADO', 'FECHALIQUIDADO'],
     'TECNICO': ['TÉCNICO', 'TECNICO', 'OPERADOR', 'USER NAME'],
-    'ACTIVIDAD': ['NOMBRE ACTIVIDAD', 'TIPO ORDEN', 'ACTIVIDAD'],
-    'FECHA_APE': ['FECHA APERTURA', 'APERTURA', 'DIASASIGNADA', 'Días'],
+    'ACTIVIDAD': ['NOMBRE ACTIVIDAD', 'TIPO ORDEN', 'ACTIVIDAD', 'NOMACTIVIDAD'],
+    'FECHA_APE': ['FECHA APERTURA', 'APERTURA', 'DIASASIGNADA', 'Días', 'FECHAAPERTURA'],
     'ESTADO': ['ESTADO', 'STATUS'],
     'SECTOR': ['SECTOR', 'Sect', 'Sector', 'CIUDAD', 'Ciudad', 'Zona'],
     'COLONIA': ['COLONIA', 'BARRIO', 'DIRECCION', 'LOCALIDAD'],
     'NUM': ['NUM', 'IDORDEN', 'NÚMERO'],
     'CLIENTE': ['CLIENTE', 'CUENTA', 'NO. CLIENTE'], 
-    'NOMBRE': ['NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE'], 
+    'NOMBRE': ['NOMBRE CLIENTE', 'SUSCRIPTOR', 'NOMBRE', 'NOMBRECLIENTE'], 
     'COMENTARIO': ['COMENTARIO', 'OBSERVACIONES'],
     'MX': ['MX', 'VEHICULO', 'UNIDAD'],
     'GPS': ['GPS', 'UBICACION', 'LINK', 'COORDENADAS']
@@ -105,6 +110,83 @@ COLUMNAS_VITALES_SISTEMA = [
 ]
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+
+# ==============================================================================
+# MOTOR DE CONEXIÓN CON LA API DE CEPHEUS
+# ==============================================================================
+def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitorISCA") -> pd.DataFrame:
+    """
+    Realiza la descarga automatizada de órdenes desde la API de Cepheus Web.
+    Evita la necesidad de subir archivos manuales por parte del usuario.
+    """
+    url = "https://192.168.20.20:8996/API/consultaOrdenes"
+    
+    fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
+    hora_str = fecha_inicio_dt.strftime("%H:%M")
+    
+    # Construcción manual (Raw URL) con las mayúsculas correctas para evitar fallos de codificación
+    full_url = f"{url}?usuario={usuario_api}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+    
+    auth = HTTPBasicAuth("monitorISCA", "54321")
+    
+    try:
+        session = requests.Session()
+        session.trust_env = False  # Asegura que ignore proxies de internet para usar la red local
+        
+        response = session.get(full_url, auth=auth, verify=False, timeout=35)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
+                return pd.DataFrame(data[0].get("ordenes", []))
+            elif isinstance(data, dict) and "ordenes" in data:
+                return pd.DataFrame(data.get("ordenes", []))
+            else:
+                return pd.DataFrame()
+        else:
+            st.error(f"❌ Error API Cepheus ({response.status_code}): {response.text}")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"❌ Error de conexión de red con la API (192.168.20.20): {e}")
+        return pd.DataFrame()
+
+def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
+    """
+    Cruza el DataFrame de la API con los dispositivos/vehículos (FTTX) subidos de forma manual
+    o descargados desde la nube.
+    """
+    try:
+        if isinstance(file_dispositivos_o_df, pd.DataFrame):
+            dfdispfull = file_dispositivos_o_df
+        elif isinstance(file_dispositivos_o_df, bytes):
+            dfdispfull = pd.read_excel(io.BytesIO(file_dispositivos_o_df), engine='openpyxl')
+        elif hasattr(file_dispositivos_o_df, 'read'):
+            file_dispositivos_o_df.seek(0)
+            if getattr(file_dispositivos_o_df, 'name', '').lower().endswith('.csv'):
+                dfdispfull = pd.read_csv(file_dispositivos_o_df, sep=None, engine='python')
+            else:
+                dfdispfull = pd.read_excel(file_dispositivos_o_df, engine='openpyxl')
+        else:
+            dfdispfull = pd.DataFrame()
+
+        dfdispref = pd.DataFrame()
+        if not dfdispfull.empty:
+            coltec = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in ['TECNICO', 'USER', 'OPERADOR'])]
+            colmx = [c for c in dfdispfull.columns if any(x in str(c).upper() for x in ['MX', 'VEHICULO', 'PLACA'])]
+            dfdispref['TECREF'] = dfdispfull[coltec[0]].astype(str).str.strip().str.upper() if coltec else "N/D"
+            dfdispref['MXREF'] = dfdispfull[colmx[0]].astype(str).str.strip() if colmx else "N/D"
+
+        dfp = procesar_dataframe_base(df_api)
+        dfp['TECKEY'] = dfp['TECNICO'].astype(str).str.strip().str.upper()
+        
+        if not dfdispref.empty:
+            dffinal = dfp.merge(dfdispref.drop_duplicates('TECREF'), left_on='TECKEY', right_on='TECREF', how='left')
+            if 'MXREF' in dffinal.columns:
+                dffinal['MX'] = dffinal['MXREF'].combine_first(dffinal.get('MX', pd.Series(dtype=str)))
+            return dffinal.drop(columns=['TECKEY', 'TECREF', 'MXREF'], errors='ignore')
+        
+        return dfp.drop(columns=['TECKEY'], errors='ignore')
+    except Exception as e:
+        raise Exception(f"Error en cruce con API: {str(e)}")
 
 # ==============================================================================
 # 2. CLASE PARA PDF (REPORTING AVANZADO Y TABLAS COMPLEJAS)
@@ -1250,7 +1332,7 @@ def generar_pdf_evaluacion(df, fecha_inicio, fecha_fin):
     pdf.set_font("Helvetica", '', 10)
     pdf.set_text_color(100, 100, 100)
     f_ini = fecha_inicio.strftime('%d/%m/%Y') if hasattr(fecha_inicio, 'strftime') else str(fecha_inicio)
-    f_fin = fecha_fin.strftime('%d/%m/%Y') if hasattr(fecha_fin, 'strftime') else str(fecha_fin)
+    f_fin = fecha_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
     f_emision = datetime.now().strftime('%d/%m/%Y %I:%M %p')
     pdf.cell(0, 6, safestr(f"Periodo de Evaluacion: {f_ini} al {f_fin}"), ln=True, align='C')
     pdf.cell(0, 6, safestr(f"Fecha de Emision: {f_emision}"), ln=True, align='C')
@@ -1351,7 +1433,7 @@ def generar_pdf_infracciones(df_res):
     pdf.add_page()
     
     pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(277, 10, safestr("Resumen Consolidado de Infracciones Biometricas"), ln=True, align='C')
+    pdf.cell(277, 10, safestr("Resumen Conosolidado de Infracciones Biometricas"), ln=True, align='C')
     pdf.set_font("Helvetica", 'I', 10)
     pdf.cell(277, 6, safestr(f"Generado el: {datetime.now().strftime('%d/%m/%Y')}"), ln=True, align='C')
     pdf.ln(10)
@@ -2265,6 +2347,7 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
         pdf.cell(0, 6, f"Operacion Segura: Nadie supero los {limite_vel} km/h.", ln=True)
         
     return finalizar_pdf(pdf)
+
 def cargar_catalogo_tecnicos():
     """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
     path = "personal_tecnico.txt"
@@ -2434,7 +2517,6 @@ def generar_pdf_memorandum(row):
         pdf.cell(0, 5, "(No se adjunto evidencia grafica en este reporte).", ln=True)
         
     return finalizar_pdf(pdf)
-
 
 def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
     import re
@@ -3189,7 +3271,7 @@ def sanitizar_core_monitor(df):
             if isinstance(val, (pd.Timestamp, datetime, date)): return val
             
             str_val = str(val).strip()
-            # MAGIA: Curamos el "a.m." y "p.m." que hacía que Pandas borrara las filas
+            # MAGIA: Curamos el "a.m." and "p.m." que hacía que Pandas borrara las filas
             str_val = re.sub(r'(?i)a\.?\s*m\.?', 'AM', str_val)
             str_val = re.sub(r'(?i)p\.?\s*m\.?', 'PM', str_val)
             return str_val
@@ -3468,59 +3550,3 @@ def generar_pdf_reporte_general_gastos(df_gastos):
         return pdf.output(dest='S').encode('latin1')
     except Exception:
         return bytes(pdf.output())
-
-
-
-# ==============================================================================
-# MÓDULO DE BÚSQUEDA INTELIGENTE DE GPS
-# ==============================================================================
-
-@st.cache_data(ttl=3600)
-def cargar_diccionario_gps(ruta_archivo="gps.txt"):
-    """Carga y normaliza el archivo de texto con los links de GPS"""
-    gps_dict = {}
-    try:
-        with open(ruta_archivo, 'r', encoding='utf-8') as f:
-            for linea in f:
-                if not linea.strip(): continue
-                partes = linea.split(',')
-                if len(partes) >= 3:
-                    link = partes[0].strip()
-                    nombre_crudo = partes[2].strip().rstrip('.') 
-                    
-                    # Normalizamos (quitamos tildes y pasamos a minúsculas)
-                    nombre_norm = ''.join(c for c in unicodedata.normalize('NFD', nombre_crudo.lower()) if unicodedata.category(c) != 'Mn')
-                    gps_dict[nombre_norm] = link
-    except Exception as e:
-        print(f"Error leyendo {ruta_archivo}: {e}")
-    return gps_dict
-
-def encontrar_link_gps(nombre_tecnico, gps_dict):
-    """Busca coincidencias aproximadas del nombre del técnico en el diccionario GPS"""
-    if pd.isna(nombre_tecnico): return None
-    
-    tec_norm = ''.join(c for c in unicodedata.normalize('NFD', str(nombre_tecnico).lower()) if unicodedata.category(c) != 'Mn')
-    tec_words = set(tec_norm.split())
-    
-    # 1. Si es exactamente igual
-    if tec_norm in gps_dict:
-        return gps_dict[tec_norm]
-        
-    # 2. Búsqueda inteligente por palabras
-    mejor_link = None
-    max_coincidencias = 0
-    
-    for nombre_gps, link in gps_dict.items():
-        gps_words = set(nombre_gps.split())
-        coincidencias = len(tec_words.intersection(gps_words))
-        
-        if coincidencias > max_coincidencias:
-            max_coincidencias = coincidencias
-            mejor_link = link
-            
-    if max_coincidencias >= 2:
-        return mejor_link
-    elif max_coincidencias == 1 and len(tec_words) == 1:
-        return mejor_link
-        
-    return None
