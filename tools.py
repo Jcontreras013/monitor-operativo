@@ -3554,7 +3554,7 @@ def generar_pdf_reporte_general_gastos(df_gastos):
 
 
 # ==============================================================================
-# MOTOR DOCX: REPORTE DE FALTAS INDIVIDUAL DE COLABORADOR (RÉPLICA EXACTA)
+# MOTOR DOCX: REPORTE DE FALTAS INDIVIDUAL (DISEÑO AJUSTADO A UNA SOLA HOJA)
 # ==============================================================================
 def generar_docx_reporte_faltas_individual(df):
     import io
@@ -3573,7 +3573,7 @@ def generar_docx_reporte_faltas_individual(df):
         
     doc = Document()
     
-    # Ajustar márgenes a 0.5 pulgadas para un calce milimétrico de página
+    # Ajustar márgenes a 0.5 pulgadas para maximizar el espacio útil de la hoja
     for section in doc.sections:
         section.top_margin = Inches(0.5)
         section.bottom_margin = Inches(0.5)
@@ -3586,7 +3586,7 @@ def generar_docx_reporte_faltas_individual(df):
     font.name = 'Arial'
     font.size = Pt(8.5)
     
-    # Helpers XML de docx para sombreados, bordes negros/gris oscuro y márgenes
+    # Helpers XML de docx para sombreados, bordes y márgenes
     def set_cell_shading(cell, color_hex):
         shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{color_hex}"/>')
         cell._tc.get_or_add_tcPr().append(shading)
@@ -3603,7 +3603,7 @@ def generar_docx_reporte_faltas_individual(df):
         ''')
         tcPr.append(tcBorders)
 
-    def set_cell_margins(cell, top=80, bottom=80, left=120, right=120):
+    def set_cell_margins(cell, top=60, bottom=60, left=100, right=100):
         tcPr = cell._tc.get_or_add_tcPr()
         tcMar = OxmlElement('w:tcMar')
         for m, val in [('top', top), ('bottom', bottom), ('left', left), ('right', right)]:
@@ -3616,13 +3616,22 @@ def generar_docx_reporte_faltas_individual(df):
     def format_cell_p(cell, align=WD_ALIGN_PARAGRAPH.LEFT):
         p = cell.paragraphs[0]
         p.alignment = align
-        p.paragraph_format.space_before = Pt(2)
-        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.space_before = Pt(1.5)
+        p.paragraph_format.space_after = Pt(1.5)
         p.paragraph_format.line_spacing = 1.0
         return p
+
+    def add_micro_spacing(doc, space_pt):
+        # Genera un espaciador ultra-preciso sin crear párrafos vacíos gigantescos
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(space_pt)
+        p.paragraph_format.line_spacing = Pt(1)
+        r = p.add_run()
+        r.font.size = Pt(1)
         
     NAVY_HEX = "1A1D54"  # Azul marino idéntico al corporativo
-    BORDER_COLOR = "000000"  # Bordes negros nítidos para emular el documento escaneado
+    BORDER_COLOR = "000000"  # Bordes negros limpios
 
     # 1. Tabla de Encabezado Principal (1 fila, 3 columnas)
     header_table = doc.add_table(rows=1, cols=3)
@@ -3634,7 +3643,7 @@ def generar_docx_reporte_faltas_individual(df):
     for i, width in enumerate(col_widths):
         cells[i].width = width
         set_cell_borders(cells[i], color=BORDER_COLOR, sz="4")
-        set_cell_margins(cells[i], top=60, bottom=60, left=100, right=100)
+        set_cell_margins(cells[i], top=40, bottom=40, left=100, right=100)
         
     # Celda 1: Área del logo de Maxcom
     p1 = format_cell_p(cells[0], WD_ALIGN_PARAGRAPH.CENTER)
@@ -3654,13 +3663,13 @@ def generar_docx_reporte_faltas_individual(df):
         
     # Celda 2: Nombre del Formulario
     p2 = format_cell_p(cells[1], WD_ALIGN_PARAGRAPH.CENTER)
-    p2.paragraph_format.space_before = Pt(10)
+    p2.paragraph_format.space_before = Pt(8)
     r2 = p2.add_run("REPORTE DE FALTAS")
     r2.font.bold = True
     r2.font.size = Pt(11)
     r2.font.color.rgb = RGBColor(80, 80, 80)
     
-    # Celda 3: Datos de Control de Calidad / nested table para alineación perfecta
+    # Celda 3: Datos de Control de Calidad / nested table
     nested_meta = cells[2].add_table(rows=4, cols=2)
     nested_meta.autofit = False
     nested_meta.columns[0].width = Inches(0.9)
@@ -3678,7 +3687,7 @@ def generar_docx_reporte_faltas_individual(df):
         n_row.cells[1].width = Inches(1.1)
         for nc in n_row.cells:
             set_cell_borders(nc, color=BORDER_COLOR, sz="4")
-            set_cell_margins(nc, top=20, bottom=20, left=40, right=40)
+            set_cell_margins(nc, top=15, bottom=15, left=30, right=30)
             
         p_k = format_cell_p(n_row.cells[0], WD_ALIGN_PARAGRAPH.CENTER)
         r_k = p_k.add_run(key)
@@ -3689,16 +3698,16 @@ def generar_docx_reporte_faltas_individual(df):
         r_v = p_v.add_run(val)
         r_v.font.size = Pt(7)
         
-    doc.add_paragraph().paragraph_format.space_after = Pt(6)
+    add_micro_spacing(doc, 4)
     
     # Título central "REPORTE DE FALTAS"
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_title = p_title.add_run("REPORTE DE FALTAS")
     r_title.font.bold = True
-    r_title.font.size = Pt(13)
-    r_title.font.color.rgb = RGBColor(0, 0, 0)
-    p_title.paragraph_format.space_after = Pt(8)
+    r_title.font.size = Pt(12)
+    p_title.paragraph_format.space_before = Pt(0)
+    p_title.paragraph_format.space_after = Pt(6)
     
     # 2. Tabla: Datos del Jefe del Departamento Solicitante
     table_jefe = doc.add_table(rows=6, cols=2)
@@ -3710,11 +3719,11 @@ def generar_docx_reporte_faltas_individual(df):
     hdr_cell = table_jefe.rows[0].cells[0]
     hdr_cell.merge(table_jefe.rows[0].cells[1])
     set_cell_shading(hdr_cell, NAVY_HEX)
-    set_cell_margins(hdr_cell, top=60, bottom=60, left=100, right=100)
+    set_cell_margins(hdr_cell, top=45, bottom=40, left=100, right=100)
     p_hdr = format_cell_p(hdr_cell, WD_ALIGN_PARAGRAPH.CENTER)
     r_hdr = p_hdr.add_run("Datos del Jefe del Departamento Solicitante")
     r_hdr.font.bold = True
-    r_hdr.font.size = Pt(9.5)
+    r_hdr.font.size = Pt(9)
     r_hdr.font.color.rgb = RGBColor(255, 255, 255)
     
     jefe_labels = [
@@ -3722,7 +3731,7 @@ def generar_docx_reporte_faltas_individual(df):
         "Puesto",
         "Departamento",
         "Ciudad",
-        "Fecha de Ingreso"  # Modificado a singular para calzar con la imagen
+        "Fecha de Ingreso"
     ]
     
     for idx, label in enumerate(jefe_labels, start=1):
@@ -3732,14 +3741,14 @@ def generar_docx_reporte_faltas_individual(df):
         
         for c in row.cells:
             set_cell_borders(c, color=BORDER_COLOR, sz="4")
-            set_cell_margins(c, top=40, bottom=40, left=80, right=80)
+            set_cell_margins(c, top=30, bottom=30, left=80, right=80)
             
         p_lbl = format_cell_p(row.cells[0])
         r_lbl = p_lbl.add_run(label)
         r_lbl.font.bold = True
         r_lbl.font.size = Pt(8.5)
         
-    doc.add_paragraph().paragraph_format.space_after = Pt(6)
+    add_micro_spacing(doc, 4)
     
     # 3. Tabla: Datos de Empleado Reportado
     table_emp = doc.add_table(rows=7, cols=2)
@@ -3751,11 +3760,11 @@ def generar_docx_reporte_faltas_individual(df):
     hdr_cell_emp = table_emp.rows[0].cells[0]
     hdr_cell_emp.merge(table_emp.rows[0].cells[1])
     set_cell_shading(hdr_cell_emp, NAVY_HEX)
-    set_cell_margins(hdr_cell_emp, top=60, bottom=60, left=100, right=100)
+    set_cell_margins(hdr_cell_emp, top=45, bottom=40, left=100, right=100)
     p_hdr_emp = format_cell_p(hdr_cell_emp, WD_ALIGN_PARAGRAPH.CENTER)
     r_hdr_emp = p_hdr_emp.add_run("Datos de Empleado Reportado")
     r_hdr_emp.font.bold = True
-    r_hdr_emp.font.size = Pt(9.5)
+    r_hdr_emp.font.size = Pt(9)
     r_hdr_emp.font.color.rgb = RGBColor(255, 255, 255)
     
     emp_name = "N/D"
@@ -3800,7 +3809,7 @@ def generar_docx_reporte_faltas_individual(df):
         
         for c in row.cells:
             set_cell_borders(c, color=BORDER_COLOR, sz="4")
-            set_cell_margins(c, top=40, bottom=40, left=80, right=80)
+            set_cell_margins(c, top=30, bottom=30, left=80, right=80)
             
         p_lbl = format_cell_p(row.cells[0])
         r_lbl = p_lbl.add_run(label)
@@ -3811,24 +3820,9 @@ def generar_docx_reporte_faltas_individual(df):
         r_val = p_val.add_run(val_text)
         r_val.font.size = Pt(8.5)
         
-    doc.add_paragraph().paragraph_format.space_after = Pt(6)
+    add_micro_spacing(doc, 4)
     
-    # 4. Tabla: Detalle de la Falta (Pautada a 15 renglones idénticos a la imagen)
-    TOTAL_ROWS = 15
-    table_detail = doc.add_table(rows=1 + TOTAL_ROWS, cols=1)
-    table_detail.style = 'Table Grid'
-    table_detail.autofit = False
-    table_detail.columns[0].width = Inches(7.5)
-    
-    hdr_cell_det = table_detail.rows[0].cells[0]
-    set_cell_shading(hdr_cell_det, NAVY_HEX)
-    set_cell_margins(hdr_cell_det, top=60, bottom=60, left=100, right=100)
-    p_hdr_det = format_cell_p(hdr_cell_det, WD_ALIGN_PARAGRAPH.CENTER)
-    r_hdr_det = p_hdr_det.add_run("Detalle de la Falta")
-    r_hdr_det.font.bold = True
-    r_hdr_det.font.size = Pt(9.5)
-    r_hdr_det.font.color.rgb = RGBColor(255, 255, 255)
-    
+    # 4. Tabla: Detalle de la Falta (DISEÑO RESPONSIVO DINÁMICO PARA INTEGRACIÓN EN 1 HOJA)
     incidents = []
     if not df.empty:
         df_sorted = df.copy()
@@ -3846,14 +3840,35 @@ def generar_docx_reporte_faltas_individual(df):
             coment = str(row.get('COMENTARIO', ''))
             bullet_text = f"• [{f_inc}] {motivo}: {coment}"
             incidents.append(bullet_text)
-            
+
+    # El número total de filas vacías se ajusta dinámicamente para prevenir desbordes de página
+    num_incidents = len(incidents)
+    empty_rows_needed = max(2, 8 - num_incidents)  # Mínimo 2 filas vacías, máximo adaptativo
+    TOTAL_ROWS = num_incidents + empty_rows_needed
+    
+    table_detail = doc.add_table(rows=1 + TOTAL_ROWS, cols=1)
+    table_detail.style = 'Table Grid'
+    table_detail.autofit = False
+    table_detail.columns[0].width = Inches(7.5)
+    
+    hdr_cell_det = table_detail.rows[0].cells[0]
+    set_cell_shading(hdr_cell_det, NAVY_HEX)
+    set_cell_margins(hdr_cell_det, top=45, bottom=40, left=100, right=100)
+    p_hdr_det = format_cell_p(hdr_cell_det, WD_ALIGN_PARAGRAPH.CENTER)
+    r_hdr_det = p_hdr_det.add_run("Detalle de la Falta")
+    r_hdr_det.font.bold = True
+    r_hdr_det.font.size = Pt(9)
+    r_hdr_det.font.color.rgb = RGBColor(255, 255, 255)
+    
     for idx in range(1, TOTAL_ROWS + 1):
         row_cell = table_detail.rows[idx].cells[0]
         row_cell.width = Inches(7.5)
         set_cell_borders(row_cell, color=BORDER_COLOR, sz="4")
-        set_cell_margins(row_cell, top=35, bottom=35, left=80, right=80)
+        set_cell_margins(row_cell, top=25, bottom=25, left=80, right=80)
         
         p_det = format_cell_p(row_cell)
+        p_det.paragraph_format.space_before = Pt(0.5)
+        p_det.paragraph_format.space_after = Pt(0.5)
         
         if idx - 1 < len(incidents):
             r_det = p_det.add_run(incidents[idx - 1])
@@ -3863,13 +3878,14 @@ def generar_docx_reporte_faltas_individual(df):
             r_det.font.size = Pt(8)
             
     p_sign_note = doc.add_paragraph()
-    p_sign_note.paragraph_format.space_before = Pt(12)
-    p_sign_note.paragraph_format.space_after = Pt(4)
+    p_sign_note.paragraph_format.space_before = Pt(6)
+    p_sign_note.paragraph_format.space_after = Pt(2)
+    p_sign_note.paragraph_format.line_spacing = Pt(1)
     r_sign_note = p_sign_note.add_run("Firmo en señal de solicitud/autorización/aprobación lo de arriba detallado.")
     r_sign_note.font.italic = True
-    r_sign_note.font.size = Pt(8.5)
+    r_sign_note.font.size = Pt(8)
     
-    # 5. Tabla Footer (Estructurada en Rejilla Unificada de 3 columnas para alineación perfecta)
+    # 5. Tabla Footer (Estructurada en Rejilla Unificada compacta para calce de página)
     footer_table = doc.add_table(rows=3, cols=3)
     footer_table.style = 'Table Grid'
     footer_table.autofit = False
@@ -3879,24 +3895,22 @@ def generar_docx_reporte_faltas_individual(df):
         for i, w in enumerate(col_widths_foot):
             row.cells[i].width = w
             
-    # Obtener hora y fecha del sistema en el instante preciso de descarga (Honduras)
+    # Fecha/Hora del sistema en tiempo real
     hn_now = datetime.utcnow() - timedelta(hours=6)
     system_date_str = hn_now.strftime("%d/%m/%Y")
     system_time_str = hn_now.strftime("%I:%M%p").lower()
     
-    # Configurar Fila 0 (Encabezados Navy)
-    # Mergear Col 0 y Col 1 para la barra azul izquierda
+    # Configurar Fila 0 (Encabezados Navy compactos)
     cell_navy_left = footer_table.rows[0].cells[0].merge(footer_table.rows[0].cells[1])
     set_cell_shading(cell_navy_left, NAVY_HEX)
     set_cell_borders(cell_navy_left, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_navy_left, top=40, bottom=40, left=60, right=60)
+    set_cell_margins(cell_navy_left, top=30, bottom=30, left=60, right=60)
     format_cell_p(cell_navy_left)
     
-    # Celda Navy Derecha con el texto de Firma
     cell_navy_right = footer_table.rows[0].cells[2]
     set_cell_shading(cell_navy_right, NAVY_HEX)
     set_cell_borders(cell_navy_right, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_navy_right, top=40, bottom=40, left=60, right=60)
+    set_cell_margins(cell_navy_right, top=30, bottom=30, left=60, right=60)
     p_rhdr = format_cell_p(cell_navy_right, WD_ALIGN_PARAGRAPH.CENTER)
     r_rhdr = p_rhdr.add_run("Firma de Jefe de\nDepartamento Solicitante")
     r_rhdr.font.bold = True
@@ -3906,7 +3920,7 @@ def generar_docx_reporte_faltas_individual(df):
     # Configurar Fila 1 (Fecha de Elaboración)
     cell_f_lbl = footer_table.rows[1].cells[0]
     set_cell_borders(cell_f_lbl, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_f_lbl, top=40, bottom=40, left=80, right=80)
+    set_cell_margins(cell_f_lbl, top=30, bottom=30, left=80, right=80)
     p_f_lbl = format_cell_p(cell_f_lbl)
     r_f_lbl = p_f_lbl.add_run("Fecha de elaboración\nde reporte")
     r_f_lbl.font.bold = True
@@ -3914,16 +3928,16 @@ def generar_docx_reporte_faltas_individual(df):
     
     cell_f_val = footer_table.rows[1].cells[1]
     set_cell_borders(cell_f_val, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_f_val, top=40, bottom=40, left=80, right=80)
+    set_cell_margins(cell_f_val, top=30, bottom=30, left=80, right=80)
     p_f_val = format_cell_p(cell_f_val)
-    p_f_val.paragraph_format.space_before = Pt(6)  # Centrado vertical visual
+    p_f_val.paragraph_format.space_before = Pt(4)
     r_f_val = p_f_val.add_run(system_date_str)
     r_f_val.font.size = Pt(8.5)
     
     # Configurar Fila 2 (Hora de Elaboración)
     cell_h_lbl = footer_table.rows[2].cells[0]
     set_cell_borders(cell_h_lbl, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_h_lbl, top=40, bottom=40, left=80, right=80)
+    set_cell_margins(cell_h_lbl, top=30, bottom=30, left=80, right=80)
     p_h_lbl = format_cell_p(cell_h_lbl)
     r_h_lbl = p_h_lbl.add_run("Hora de elaboración\nde reporte")
     r_h_lbl.font.bold = True
@@ -3931,16 +3945,16 @@ def generar_docx_reporte_faltas_individual(df):
     
     cell_h_val = footer_table.rows[2].cells[1]
     set_cell_borders(cell_h_val, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_h_val, top=40, bottom=40, left=80, right=80)
+    set_cell_margins(cell_h_val, top=30, bottom=30, left=80, right=80)
     p_h_val = format_cell_p(cell_h_val)
-    p_h_val.paragraph_format.space_before = Pt(6)  # Centrado vertical visual
+    p_h_val.paragraph_format.space_before = Pt(4)
     r_h_val = p_h_val.add_run(system_time_str)
     r_h_val.font.size = Pt(8.5)
     
-    # Mergear las celdas de firma (Fila 1 y Fila 2 de la Columna 2) para el cuadro de firma físico
+    # Unificar espacio para firma física (snug fit para evitar saltos de página)
     cell_signature_box = footer_table.rows[1].cells[2].merge(footer_table.rows[2].cells[2])
     set_cell_borders(cell_signature_box, color=BORDER_COLOR, sz="4")
-    set_cell_margins(cell_signature_box, top=150, bottom=150, left=60, right=60)
+    set_cell_margins(cell_signature_box, top=120, bottom=120, left=60, right=60)
     p_sig = format_cell_p(cell_signature_box)
     p_sig.add_run("")
     
