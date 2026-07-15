@@ -124,8 +124,8 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
-    # Extraer la lista de usuarios. Si por error se dejó como texto simple, se convierte a lista.
-    usuarios_lista = api_config.get("usuarios_consulta", ["jaison.contreras"])
+    # Extraer la lista de usuarios
+    usuarios_lista = api_config.get("usuarios_consulta", [])
     if isinstance(usuarios_lista, str):
         usuarios_lista = [usuarios_lista]
     
@@ -141,37 +141,35 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
         
         print(f"[*] Iniciando consulta masiva en API para {len(usuarios_lista)} usuarios...")
         
-        for idx, query_user in enumerate(usuarios_lista):
-            # Limpiar espacios en blanco por seguridad
+        for query_user in usuarios_lista:
             query_user = query_user.strip()
             full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
             
             try:
                 response = session.get(full_url, auth=auth, timeout=45)
+                
                 if response.status_code == 200:
                     data = response.json()
                     
-                    # Extraer el bloque 'ordenes' dependiendo de la estructura que envíe Cepheus
-                    df_temp = pd.DataFrame()
-                    if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
-                        df_temp = pd.DataFrame(data[0].get("ordenes", []))
-                    elif isinstance(data, dict) and "ordenes" in data:
-                        df_temp = pd.DataFrame(data.get("ordenes", []))
+                    # CORRECCIÓN AQUÍ: Volvemos a la conversión directa y segura
+                    df_temp = pd.DataFrame(data)
                     
                     if not df_temp.empty:
-                        df_temp['FUENTE_DESCARGA'] = query_user # Para auditoría
+                        df_temp['FUENTE_DESCARGA'] = query_user # Etiqueta para saber de quién es la orden
                         lista_dataframes.append(df_temp)
                         print(f"  -> [+] {query_user}: {len(df_temp)} registros descargados.")
                     else:
                         print(f"  -> [!] {query_user}: Sin registros en estas fechas.")
                 else:
-                    print(f"  -> [-] Error API para {query_user} (Código {response.status_code}): {response.text}")
+                    print(f"  -> [-] Error API para {query_user} (Código {response.status_code})")
             except Exception as e_user:
                 print(f"  -> [-] Error de conexión aislado para {query_user}: {e_user}")
                 
-        # Consolidar todos los resultados
+        # Consolidar todos los resultados en un solo bloque
         if lista_dataframes:
             df_final = pd.concat(lista_dataframes, ignore_index=True)
+            # Estandarizamos los nombres de las columnas en mayúsculas para tu script principal
+            df_final.columns = df_final.columns.str.upper().str.strip()
             print(f"[*] TOTAL DESCARGADO: {len(df_final)} registros unificados.")
             return df_final
         else:
