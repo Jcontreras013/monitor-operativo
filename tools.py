@@ -116,15 +116,15 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # ==============================================================================
 def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     """
-    Descarga el reporte general desde la API utilizando una cuenta 
-    de usuario con permisos de extracción.
+    Descarga el reporte general desde la API iterando sobre las cuentas autorizadas,
+    consolidando los datos de todos los usuarios y eliminando duplicados por orden.
     """
     api_config = st.secrets.get("cepheus_api", {})
     base_url = api_config.get("url", "https://limitations-train-defence-magnitude.trycloudflare.com/API/consultaOrdenes")
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
-    # Esta lista ahora actúa como un "grupo de cuentas autorizadas"
+    # Extraemos el listado de usuarios de consulta válidos en Cepheus (ej. ["jaison.contreras"])
     usuarios_autorizados = api_config.get("usuarios_consulta", [])
     if isinstance(usuarios_autorizados, str):
         usuarios_autorizados = [usuarios_autorizados]
@@ -133,19 +133,23 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     hora_str = fecha_inicio_dt.strftime("%H:%M")
     auth = HTTPBasicAuth(auth_user, auth_pass)
     
+    # DataFrame vacío para acumular las órdenes de todos los usuarios
+    df_acumulado = pd.DataFrame()
+    
     try:
         session = requests.Session()
         session.trust_env = False  
         
-        print(f"[*] Intentando descargar el reporte general de actividades...")
+        print(f"[*] Iniciando consolidación de reportes desde la API...")
         
         for query_user in usuarios_autorizados:
             query_user = query_user.strip()
             full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
             
-            print(f"  -> Solicitando archivo usando los permisos de: {query_user}")
+            print(f"  -> Consultando órdenes bajo el ámbito de: {query_user}")
             
             try:
+                # Realizar la petición con el timeout optimizado de 45 segundos
                 response = session.get(full_url, auth=auth, timeout=45)
                 
                 if response.status_code == 200:
@@ -153,23 +157,31 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                     df_temp = pd.DataFrame(data)
                     
                     if not df_temp.empty:
-                        # Estandarizamos los nombres de las columnas en mayúsculas
+                        # Estandarizamos los nombres de las columnas a mayúsculas
                         df_temp.columns = df_temp.columns.str.upper().str.strip()
-                        print(f"  -> [+] ¡Éxito! Reporte general descargado desde la cuenta de {query_user}.")
-                        print(f"[*] TOTAL DESCARGADO: {len(df_temp)} registros maestros.")
                         
-                        # ¡RETORNAMOS INMEDIATAMENTE! No iteramos más para evitar datos duplicados.
-                        return df_temp 
+                        # Acumulamos el resultado en nuestro DataFrame maestro
+                        df_acumulado = pd.concat([df_acumulado, df_temp], ignore_index=True)
+                        print(f"  -> [+] {len(df_temp)} registros agregados de {query_user}.")
                     else:
-                        print(f"  -> [!] {query_user} accedió, pero el reporte está vacío para estas fechas.")
+                        print(f"  -> [!] {query_user} no tiene órdenes registradas en este rango.")
                 else:
-                    print(f"  -> [-] La cuenta {query_user} no pudo extraer el reporte (Código {response.status_code})")
+                    print(f"  -> [-] Error {response.status_code} al consultar con el usuario {query_user}.")
             except Exception as e_user:
-                print(f"  -> [-] Error de conexión al intentar usar la cuenta {query_user}: {e_user}")
+                print(f"  -> [-] Error de conexión para {query_user}: {e_user}")
+        
+        # Procesar y limpiar el acumulado final antes de retornarlo
+        if not df_acumulado.empty:
+            # Eliminar órdenes duplicadas por su número de orden (NUM) si varios usuarios ven la misma orden
+            if 'NUM' in df_acumulado.columns:
+                df_acumulado['NUM'] = df_acumulado['NUM'].astype(str).str.strip()
+                df_acumulado = df_acumulado.drop_duplicates(subset=['NUM'], keep='last')
                 
-        # Si el ciclo termina y no retornó nada, significa que ninguna cuenta funcionó
-        print("[-] Error: Ninguna de las cuentas autorizadas logró descargar el reporte.")
-        return pd.DataFrame()
+            print(f"[*] PROCESO TERMINADO: {len(df_acumulado)} órdenes consolidadas y listas.")
+            return df_acumulado
+        else:
+            print("[-] Error: No se logró recuperar información de ningún usuario autorizado.")
+            return pd.DataFrame()
             
     except Exception as e:
         print(f"❌ Error crítico en el motor de peticiones: {e}")
