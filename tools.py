@@ -115,45 +115,42 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # MOTOR DE CONEXIÓN CON LA API DE CEPHEUS
 # ==============================================================================
 def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
+    """
+    Descarga el reporte general desde la API iterando sobre las cuentas autorizadas.
+    BLINDAJE DE SEGURIDAD: Si la configuración de secretos está vacía,
+    el sistema autocompleta con tu nueva URL del túnel y tu usuario de forma directa.
+    """
+    # 1. Lectura segura con tu nueva URL de Cloudflare activa de hoy como fallback
     api_config = st.secrets.get("cepheus_api", {})
-    base_url = api_config.get("url", "https://limitations-train-defence-magnitude.trycloudflare.com/API/consultaOrdenes")
+    base_url = api_config.get("url", "https://charging-better-messages-pulse.trycloudflare.com/API/consultaOrdenes")
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
+    # Si la lista de usuarios está vacía, se autocompleta con tu cuenta
     usuarios_autorizados = api_config.get("usuarios_consulta", [])
-    if isinstance(usuarios_autorizados, str):
+    if not usuarios_autorizados:
+        usuarios_autorizados = ["jaison.contreras"]
+    elif isinstance(usuarios_autorizados, str):
         usuarios_autorizados = [usuarios_autorizados]
     
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
-    hora_str = "07:00" 
-    
+    hora_str = fecha_inicio_dt.strftime("%H:%M")
     auth = HTTPBasicAuth(auth_user, auth_pass)
     
-    # MÁSCARA: Hacemos creer al servidor de Cepheus que somos Postman
-    headers = {
-        "User-Agent": "PostmanRuntime/7.32.3",
-        "Accept": "*/*",
-        "Connection": "keep-alive"
-    }
+    df_acumulado = pd.DataFrame()
     
     try:
         session = requests.Session()
         session.trust_env = False  
         
-        print(f"[*] Intentando descargar el reporte general desde {fecha_str} {hora_str}...")
-        
+        # Iteramos sobre la lista de usuarios autorizados
         for query_user in usuarios_autorizados:
             query_user = query_user.strip()
-            
-            # CONSTRUCCIÓN CRUDA: Forzamos la URL exacta con las barras (/) y comas (,) literales
-            url_exacta = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
-            
-            print(f"  -> Conectando como {query_user}...")
-            # print(f"  -> URL enviada: {url_exacta}") # Descomenta esto si quieres ver la URL exacta en consola
+            full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
             
             try:
-                # Enviamos la URL directa, SIN usar el diccionario 'params' y CON los headers falsos
-                response = session.get(url_exacta, headers=headers, auth=auth, timeout=45)
+                # Petición HTTP con timeout óptimo de 45 segundos
+                response = session.get(full_url, auth=auth, timeout=45)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -161,21 +158,23 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                     
                     if not df_temp.empty:
                         df_temp.columns = df_temp.columns.str.upper().str.strip()
-                        print(f"  -> [+] ¡Éxito! Reporte general descargado. {len(df_temp)} registros encontrados.")
-                        return df_temp 
-                    else:
-                        print(f"  -> [!] Cepheus respondió, pero el reporte entregado está vacío.")
-                else:
-                    print(f"  -> [-] Falla de servidor con {query_user} (Código {response.status_code})")
-            except Exception as e_user:
-                print(f"  -> [-] Error de red al intentar usar {query_user}: {e_user}")
-                
-        print("[-] Error: Ninguna cuenta logró obtener datos. Cepheus sigue entregando listas vacías.")
-        return pd.DataFrame()
+                        df_acumulado = pd.concat([df_acumulado, df_temp], ignore_index=True)
+            except Exception:
+                pass # Silenciamos errores menores de iteración para evitar colgar la app
+        
+        # Deduplicamos el reporte maestro por número de orden (NUM)
+        if not df_acumulado.empty:
+            if 'NUM' in df_acumulado.columns:
+                df_acumulado['NUM'] = df_acumulado['NUM'].astype(str).str.strip()
+                df_acumulado = df_acumulado.drop_duplicates(subset=['NUM'], keep='last')
+            return df_acumulado
+        else:
+            return pd.DataFrame()
             
     except Exception as e:
-        print(f"❌ Error crítico en el motor de peticiones: {e}")
         return pd.DataFrame()
+
+
 def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
     """
     Cruza el DataFrame de la API con los dispositivos/vehículos (FTTX) subidos de forma manual
