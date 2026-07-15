@@ -116,65 +116,60 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # ==============================================================================
 def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     """
-    Descarga órdenes para MÚLTIPLES usuarios desde la API de Cepheus Web 
-    y consolida los resultados.
+    Descarga el reporte general desde la API utilizando una cuenta 
+    de usuario con permisos de extracción.
     """
     api_config = st.secrets.get("cepheus_api", {})
     base_url = api_config.get("url", "https://limitations-train-defence-magnitude.trycloudflare.com/API/consultaOrdenes")
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
-    # Extraer la lista de usuarios
-    usuarios_lista = api_config.get("usuarios_consulta", [])
-    if isinstance(usuarios_lista, str):
-        usuarios_lista = [usuarios_lista]
+    # Esta lista ahora actúa como un "grupo de cuentas autorizadas"
+    usuarios_autorizados = api_config.get("usuarios_consulta", [])
+    if isinstance(usuarios_autorizados, str):
+        usuarios_autorizados = [usuarios_autorizados]
     
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
     hora_str = fecha_inicio_dt.strftime("%H:%M")
     auth = HTTPBasicAuth(auth_user, auth_pass)
     
-    lista_dataframes = []
-    
     try:
         session = requests.Session()
         session.trust_env = False  
         
-        print(f"[*] Iniciando consulta masiva en API para {len(usuarios_lista)} usuarios...")
+        print(f"[*] Intentando descargar el reporte general de actividades...")
         
-        for query_user in usuarios_lista:
+        for query_user in usuarios_autorizados:
             query_user = query_user.strip()
             full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+            
+            print(f"  -> Solicitando archivo usando los permisos de: {query_user}")
             
             try:
                 response = session.get(full_url, auth=auth, timeout=45)
                 
                 if response.status_code == 200:
                     data = response.json()
-                    
-                    # CORRECCIÓN AQUÍ: Volvemos a la conversión directa y segura
                     df_temp = pd.DataFrame(data)
                     
                     if not df_temp.empty:
-                        df_temp['FUENTE_DESCARGA'] = query_user # Etiqueta para saber de quién es la orden
-                        lista_dataframes.append(df_temp)
-                        print(f"  -> [+] {query_user}: {len(df_temp)} registros descargados.")
+                        # Estandarizamos los nombres de las columnas en mayúsculas
+                        df_temp.columns = df_temp.columns.str.upper().str.strip()
+                        print(f"  -> [+] ¡Éxito! Reporte general descargado desde la cuenta de {query_user}.")
+                        print(f"[*] TOTAL DESCARGADO: {len(df_temp)} registros maestros.")
+                        
+                        # ¡RETORNAMOS INMEDIATAMENTE! No iteramos más para evitar datos duplicados.
+                        return df_temp 
                     else:
-                        print(f"  -> [!] {query_user}: Sin registros en estas fechas.")
+                        print(f"  -> [!] {query_user} accedió, pero el reporte está vacío para estas fechas.")
                 else:
-                    print(f"  -> [-] Error API para {query_user} (Código {response.status_code})")
+                    print(f"  -> [-] La cuenta {query_user} no pudo extraer el reporte (Código {response.status_code})")
             except Exception as e_user:
-                print(f"  -> [-] Error de conexión aislado para {query_user}: {e_user}")
+                print(f"  -> [-] Error de conexión al intentar usar la cuenta {query_user}: {e_user}")
                 
-        # Consolidar todos los resultados en un solo bloque
-        if lista_dataframes:
-            df_final = pd.concat(lista_dataframes, ignore_index=True)
-            # Estandarizamos los nombres de las columnas en mayúsculas para tu script principal
-            df_final.columns = df_final.columns.str.upper().str.strip()
-            print(f"[*] TOTAL DESCARGADO: {len(df_final)} registros unificados.")
-            return df_final
-        else:
-            print("[-] No se obtuvieron datos de ningún usuario.")
-            return pd.DataFrame()
+        # Si el ciclo termina y no retornó nada, significa que ninguna cuenta funcionó
+        print("[-] Error: Ninguna de las cuentas autorizadas logró descargar el reporte.")
+        return pd.DataFrame()
             
     except Exception as e:
         print(f"❌ Error crítico en el motor de peticiones: {e}")
