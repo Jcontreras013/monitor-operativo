@@ -115,78 +115,67 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # MOTOR DE CONEXIÓN CON LA API DE CEPHEUS
 # ==============================================================================
 def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
-    """
-    Descarga el reporte general desde la API iterando sobre las cuentas autorizadas,
-    consolidando los datos de todos los usuarios y eliminando duplicados por orden.
-    """
     api_config = st.secrets.get("cepheus_api", {})
     base_url = api_config.get("url", "https://limitations-train-defence-magnitude.trycloudflare.com/API/consultaOrdenes")
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
-    # Extraemos el listado de usuarios de consulta válidos en Cepheus (ej. ["jaison.contreras"])
     usuarios_autorizados = api_config.get("usuarios_consulta", [])
     if isinstance(usuarios_autorizados, str):
         usuarios_autorizados = [usuarios_autorizados]
     
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
-    hora_str = fecha_inicio_dt.strftime("%H:%M")
+    hora_str = "07:00" 
+    
     auth = HTTPBasicAuth(auth_user, auth_pass)
     
-    # DataFrame vacío para acumular las órdenes de todos los usuarios
-    df_acumulado = pd.DataFrame()
+    # MÁSCARA: Hacemos creer al servidor de Cepheus que somos Postman
+    headers = {
+        "User-Agent": "PostmanRuntime/7.32.3",
+        "Accept": "*/*",
+        "Connection": "keep-alive"
+    }
     
     try:
         session = requests.Session()
         session.trust_env = False  
         
-        print(f"[*] Iniciando consolidación de reportes desde la API...")
+        print(f"[*] Intentando descargar el reporte general desde {fecha_str} {hora_str}...")
         
         for query_user in usuarios_autorizados:
             query_user = query_user.strip()
-            full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
             
-            print(f"  -> Consultando órdenes bajo el ámbito de: {query_user}")
+            # CONSTRUCCIÓN CRUDA: Forzamos la URL exacta con las barras (/) y comas (,) literales
+            url_exacta = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+            
+            print(f"  -> Conectando como {query_user}...")
+            # print(f"  -> URL enviada: {url_exacta}") # Descomenta esto si quieres ver la URL exacta en consola
             
             try:
-                # Realizar la petición con el timeout optimizado de 45 segundos
-                response = session.get(full_url, auth=auth, timeout=45)
+                # Enviamos la URL directa, SIN usar el diccionario 'params' y CON los headers falsos
+                response = session.get(url_exacta, headers=headers, auth=auth, timeout=45)
                 
                 if response.status_code == 200:
                     data = response.json()
                     df_temp = pd.DataFrame(data)
                     
                     if not df_temp.empty:
-                        # Estandarizamos los nombres de las columnas a mayúsculas
                         df_temp.columns = df_temp.columns.str.upper().str.strip()
-                        
-                        # Acumulamos el resultado en nuestro DataFrame maestro
-                        df_acumulado = pd.concat([df_acumulado, df_temp], ignore_index=True)
-                        print(f"  -> [+] {len(df_temp)} registros agregados de {query_user}.")
+                        print(f"  -> [+] ¡Éxito! Reporte general descargado. {len(df_temp)} registros encontrados.")
+                        return df_temp 
                     else:
-                        print(f"  -> [!] {query_user} no tiene órdenes registradas en este rango.")
+                        print(f"  -> [!] Cepheus respondió, pero el reporte entregado está vacío.")
                 else:
-                    print(f"  -> [-] Error {response.status_code} al consultar con el usuario {query_user}.")
+                    print(f"  -> [-] Falla de servidor con {query_user} (Código {response.status_code})")
             except Exception as e_user:
-                print(f"  -> [-] Error de conexión para {query_user}: {e_user}")
-        
-        # Procesar y limpiar el acumulado final antes de retornarlo
-        if not df_acumulado.empty:
-            # Eliminar órdenes duplicadas por su número de orden (NUM) si varios usuarios ven la misma orden
-            if 'NUM' in df_acumulado.columns:
-                df_acumulado['NUM'] = df_acumulado['NUM'].astype(str).str.strip()
-                df_acumulado = df_acumulado.drop_duplicates(subset=['NUM'], keep='last')
+                print(f"  -> [-] Error de red al intentar usar {query_user}: {e_user}")
                 
-            print(f"[*] PROCESO TERMINADO: {len(df_acumulado)} órdenes consolidadas y listas.")
-            return df_acumulado
-        else:
-            print("[-] Error: No se logró recuperar información de ningún usuario autorizado.")
-            return pd.DataFrame()
+        print("[-] Error: Ninguna cuenta logró obtener datos. Cepheus sigue entregando listas vacías.")
+        return pd.DataFrame()
             
     except Exception as e:
         print(f"❌ Error crítico en el motor de peticiones: {e}")
         return pd.DataFrame()
-
 def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
     """
     Cruza el DataFrame de la API con los dispositivos/vehículos (FTTX) subidos de forma manual
