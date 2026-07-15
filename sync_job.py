@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
+import time
 
 # Importar gspread y credenciales nativas de Google
 try:
@@ -149,4 +150,21 @@ def ejecutar_sincronizacion_background():
         print(f"[-] Error menor al respaldar en GCS (Sheets se guardó bien): {e_gcs}")
 
 if __name__ == '__main__':
-    ejecutar_sincronizacion_background()
+    print("="*60)
+    print("🚀 INICIANDO DEMONIO DE SINCRONIZACIÓN MAXCOM PRO")
+    print("="*60)
+    
+    while True:
+        try:
+            # Ejecuta tu función principal intacta
+            ejecutar_sincronizacion_background()
+        except Exception as e_critico:
+            # Evitamos que el programa se caiga permanentemente si un ciclo falla (ej: caída de internet)
+            print(f"[-] Falla crítica en el ciclo actual. Se reintentará en la siguiente ventana. Detalle: {e_critico}")
+        
+        print("="*60)
+        hora_prox = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M:%S")
+        print(f"⏳ Ciclo terminado. Esperando 30 minutos. Próxima ejecución a las: {hora_prox}")
+        
+        # 1800 segundos = 30 minutos
+        time.sleep(1800)
