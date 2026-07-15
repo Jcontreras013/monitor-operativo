@@ -114,49 +114,72 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # ==============================================================================
 # MOTOR DE CONEXIÓN CON LA API DE CEPHEUS
 # ==============================================================================
-def consultar_api_ordenes(fecha_inicio_dt: datetime, usuario_api: str = "monitorISCA") -> pd.DataFrame:
+def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     """
-    Realiza la descarga automatizada de órdenes desde la API de Cepheus Web utilizando
-    las credenciales seguras de Streamlit Secrets con fallbacks automatizados.
-    Soporta un usuario de consulta independiente del usuario de autenticación.
+    Descarga órdenes para MÚLTIPLES usuarios desde la API de Cepheus Web 
+    y consolida los resultados.
     """
-    # 1. Lectura segura de secretos con fallbacks hacia la nueva IP y credenciales
     api_config = st.secrets.get("cepheus_api", {})
-    base_url = api_config.get("url", "https://192.168.20.23:8996/API/consultaOrdenes")
+    base_url = api_config.get("url", "https://limitations-train-defence-magnitude.trycloudflare.com/API/consultaOrdenes")
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
-    # Extrae el usuario de consulta del secreto, si no existe usa el argumento de la función
-    query_user = api_config.get("query_usuario", usuario_api)
+    # Extraer la lista de usuarios. Si por error se dejó como texto simple, se convierte a lista.
+    usuarios_lista = api_config.get("usuarios_consulta", ["jaison.contreras"])
+    if isinstance(usuarios_lista, str):
+        usuarios_lista = [usuarios_lista]
     
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
     hora_str = fecha_inicio_dt.strftime("%H:%M")
-    
-    # 2. Construcción de la URL usando query_user en lugar del usuario de autenticación
-    full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
-    
     auth = HTTPBasicAuth(auth_user, auth_pass)
+    
+    lista_dataframes = []
     
     try:
         session = requests.Session()
-        session.trust_env = False  # Ignora proxies externos para priorizar enrutamiento local
+        session.trust_env = False  
         
-        # 3. Timeout de 45 segundos para mitigar la latencia del servidor de la base de datos
-        response = session.get(full_url, auth=auth, verify=False, timeout=45)
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
-                return pd.DataFrame(data[0].get("ordenes", []))
-            elif isinstance(data, dict) and "ordenes" in data:
-                return pd.DataFrame(data.get("ordenes", []))
-            else:
-                return pd.DataFrame()
+        print(f"[*] Iniciando consulta masiva en API para {len(usuarios_lista)} usuarios...")
+        
+        for idx, query_user in enumerate(usuarios_lista):
+            # Limpiar espacios en blanco por seguridad
+            query_user = query_user.strip()
+            full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+            
+            try:
+                response = session.get(full_url, auth=auth, timeout=45)
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Extraer el bloque 'ordenes' dependiendo de la estructura que envíe Cepheus
+                    df_temp = pd.DataFrame()
+                    if isinstance(data, list) and len(data) > 0 and "ordenes" in data[0]:
+                        df_temp = pd.DataFrame(data[0].get("ordenes", []))
+                    elif isinstance(data, dict) and "ordenes" in data:
+                        df_temp = pd.DataFrame(data.get("ordenes", []))
+                    
+                    if not df_temp.empty:
+                        df_temp['FUENTE_DESCARGA'] = query_user # Para auditoría
+                        lista_dataframes.append(df_temp)
+                        print(f"  -> [+] {query_user}: {len(df_temp)} registros descargados.")
+                    else:
+                        print(f"  -> [!] {query_user}: Sin registros en estas fechas.")
+                else:
+                    print(f"  -> [-] Error API para {query_user} (Código {response.status_code}): {response.text}")
+            except Exception as e_user:
+                print(f"  -> [-] Error de conexión aislado para {query_user}: {e_user}")
+                
+        # Consolidar todos los resultados
+        if lista_dataframes:
+            df_final = pd.concat(lista_dataframes, ignore_index=True)
+            print(f"[*] TOTAL DESCARGADO: {len(df_final)} registros unificados.")
+            return df_final
         else:
-            st.error(f"❌ Error API Cepheus ({response.status_code}): {response.text}")
+            print("[-] No se obtuvieron datos de ningún usuario.")
             return pd.DataFrame()
+            
     except Exception as e:
-        # Se dinaminiza el mensaje de error para reflejar la URL o IP real en uso
-        st.error(f"❌ Error de conexión de red con la API ({base_url}): {e}")
+        print(f"❌ Error crítico en el motor de peticiones: {e}")
         return pd.DataFrame()
 
 def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
