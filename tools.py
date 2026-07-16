@@ -734,15 +734,20 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
             if types_count > 1: return 10.0 
             return 0.0
             
-        df_tec['BONO_MIXTO'] = df_tec.apply(calcular_bono, axis=1)
+df_tec['BONO_MIXTO'] = df_tec.apply(calcular_bono, axis=1)
         df_tec['LOGRO_FINAL'] = df_tec['PUNTOS_BASE'] + df_tec['BONO_MIXTO']
         df_tec = df_tec.sort_values(by='LOGRO_FINAL', ascending=False)
         
         df_tec_table = df_tec[['TECNICO', 'CANT_INS', 'CANT_SOP', 'CANT_OTR', 'PUNTOS_BASE', 'BONO_MIXTO', 'LOGRO_FINAL']].copy()
+        
+        # 1. Renombramos las columnas (ahora tienen espacios)
         df_tec_table.columns = ['TECNICO', 'INS', 'SOP', 'OTR', 'PUNTOS BASE', 'BONO MIXTO', '% LOGRO FINAL']
+        
+        # 2. Aplicamos el formato leyendo exactamente el nombre NUEVO con espacio
         df_tec_table['PUNTOS BASE'] = df_tec_table['PUNTOS BASE'].round(1).astype(str) + '%'
-        df_tec_table['BONO MIXTO'] = '+' + df_tec_table['BONO_MIXTO'].round(1).astype(str) + '%'
+        df_tec_table['BONO MIXTO'] = '+' + df_tec_table['BONO MIXTO'].round(1).astype(str) + '%' # <-- CORREGIDO AQUÍ
         df_tec_table['% LOGRO FINAL'] = df_tec_table['% LOGRO FINAL'].round(1).astype(str) + '%'
+        
         pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[55, 15, 15, 15, 30, 30, 30], alineaciones=["L", "C", "C", "C", "C", "C", "C"])
     else:
         pdf.set_font("Helvetica", "", 8)
