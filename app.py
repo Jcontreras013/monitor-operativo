@@ -72,7 +72,9 @@ try:
         extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
-        leer_espejo_gcs
+        leer_espejo_gcs,
+        clasificar_materiales,               
+        generar_pdf_materiales_mensual
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
