@@ -666,7 +666,7 @@ def generar_pdf_mensual(df_base, mes, anio):
     return finalizar_pdf(pdf)
 
 def generar_pdf_cierre_diario(dfbase, fechatarget):
-       pdf.add_page()
+    pdf.add_page()
     pdf.seccion_titulo("Resumen Consolidado por Tipo de Actividad")
     df_act_summary = dfc['ACTIVIDAD'].value_counts().reset_index()
     df_act_summary.columns = ['Actividad Realizada', 'Total de Ordenes']
