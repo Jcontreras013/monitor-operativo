@@ -3987,3 +3987,116 @@ def generar_docx_reporte_faltas_individual(df):
     b_io = io.BytesIO()
     doc.save(b_io)
     return b_io.getvalue()
+
+
+# ==============================================================================
+# MOTOR DE INVENTARIO: CONTROL DE EQUIPOS Y DROP ACOMETIDAS
+# ==============================================================================
+def clasificar_materiales(row) -> str:
+    """
+    Analiza la actividad y el comentario de cierre para categorizar de forma robusta
+    si la transacción fue un cambio de equipo terminal o un reemplazo de cable Drop.
+    """
+    act = str(row.get('ACTIVIDAD', '')).upper()
+    com = str(row.get('COMENTARIO', '')).upper()
+    texto = act + " " + com
+    
+    # 1. Detección de cableado y drop de acometidas
+    if any(k in texto for k in ['DROP', 'ACOMETIDA', 'REEMPLAZO CABLE', 'REEMPLAZO DE CABLE', 'TENDIDO CABLE', 'CABLE DROP']):
+        return 'CAMBIO_ACOMETIDA'
+        
+    # 2. Detección de equipos terminales (ONT, ONU, CPE o Módems)
+    if any(k in texto for k in ['ONT', 'ONU', 'CPE', 'CPE ', 'MODEM', 'EQUIPO', 'CAMBIO EQUIPO', 'ROUTER', 'CAMBIO DE EQUIPO']):
+        return 'CAMBIO_EQUIPO'
+        
+    return 'OTROS'
+
+def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_sel, anio_sel) -> bytes:
+    """
+    Dibuja y genera el reporte PDF de materiales e inventarios de forma ejecutiva.
+    """
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE MENSUAL DE CONTROL DE MATERIALES"), ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Periodo: {mes_sel} {anio_sel}"), ln=True, align="C")
+    pdf.ln(10)
+    
+    # --- SECCIÓN 1: RESUMEN DE INTERVENCIONES POR COLABORADOR ---
+    pdf.seccion_titulo("1. RESUMEN DE INTERVENCIONES POR COLABORADOR")
+    if not tech_summary.empty:
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 8)
+        
+        headers = ["COLABORADOR", "EQUIPOS CAMBIADOS", "ACOMETIDAS CAMBIADAS", "TOTAL INTERVENCIONES"]
+        w = [80, 40, 40, 30]
+        for idx_h, h in enumerate(headers):
+            pdf.cell(w[idx_h], 7, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in tech_summary.iterrows():
+            pdf.cell(w[0], 6, safestr(row.get('TECNICO', '')), border=1)
+            pdf.cell(w[1], 6, str(int(row.get('Equipos Cambiados', 0))), border=1, align="C")
+            pdf.cell(w[2], 6, str(int(row.get('Acometidas Cambiadas', 0))), border=1, align="C")
+            pdf.cell(w[3], 6, str(int(row.get('Total Intervenciones', 0))), border=1, align="C")
+            pdf.ln()
+    else:
+        pdf.cell(0, 6, "Sin transacciones de materiales registradas en el periodo.", ln=True)
+        
+    pdf.ln(10)
+    
+    # --- SECCIÓN 2: DETALLE DE CAMBIOS DE EQUIPOS ---
+    pdf.seccion_titulo("2. DETALLE DE CAMBIOS DE EQUIPO TERMINAL (Primeras 20 transacciones)")
+    if not df_equipos.empty:
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_font("Helvetica", "B", 7)
+        headers_eq = ["ORDEN", "CLIENTE", "TECNICO", "COMENTARIO DE CIERRE"]
+        w_eq = [20, 25, 45, 100]
+        for idx_h, h in enumerate(headers_eq):
+            pdf.cell(w_eq[idx_h], 6, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 7)
+        for _, row in df_equipos.head(20).iterrows():
+            p_com = safestr(row.get('COMENTARIO', ''))[:65]
+            pdf.cell(w_eq[0], 5, safestr(row.get('NUM', '')), border=1, align="C")
+            pdf.cell(w_eq[1], 5, safestr(row.get('CLIENTE', '')), border=1, align="C")
+            pdf.cell(w_eq[2], 5, safestr(row.get('TECNICO', ''))[:28], border=1)
+            pdf.cell(w_eq[3], 5, p_com, border=1)
+            pdf.ln()
+    else:
+        pdf.cell(0, 6, "No se registraron cambios de equipos en el mes.", ln=True)
+        
+    pdf.ln(10)
+    
+    # --- SECCIÓN 3: DETALLE DE ACOMETIDAS ---
+    pdf.seccion_titulo("3. DETALLE DE REEMPLAZOS DE ACOMETIDA - DROP (Primeras 20 transacciones)")
+    if not df_acometidas.empty:
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_font("Helvetica", "B", 7)
+        headers_ac = ["ORDEN", "CLIENTE", "TECNICO", "COMENTARIO DE CIERRE"]
+        w_ac = [20, 25, 45, 100]
+        for idx_h, h in enumerate(headers_ac):
+            pdf.cell(w_ac[idx_h], 6, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 7)
+        for _, row in df_acometidas.head(20).iterrows():
+            p_com = safestr(row.get('COMENTARIO', ''))[:65]
+            pdf.cell(w_ac[0], 5, safestr(row.get('NUM', '')), border=1, align="C")
+            pdf.cell(w_ac[1], 5, safestr(row.get('CLIENTE', '')), border=1, align="C")
+            pdf.cell(w_ac[2], 5, safestr(row.get('TECNICO', ''))[:28], border=1)
+            pdf.cell(w_ac[3], 5, p_com, border=1)
+            pdf.ln()
+    else:
+        pdf.cell(0, 6, "No se registraron reemplazos de acometidas en el mes.", ln=True)
+        
+    return finalizar_pdf(pdf)
