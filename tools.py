@@ -666,10 +666,29 @@ def generar_pdf_mensual(df_base, mes, anio):
     return finalizar_pdf(pdf)
 
 def generar_pdf_cierre_diario(dfbase, fechatarget):
-    dfc = dfbase[
-        (dfbase['HORA_LIQ'].dt.date == fechatarget) & 
-        (dfbase['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-    ].copy()
+       pdf.add_page()
+    pdf.seccion_titulo("Resumen Consolidado por Tipo de Actividad")
+    df_act_summary = dfc['ACTIVIDAD'].value_counts().reset_index()
+    df_act_summary.columns = ['Actividad Realizada', 'Total de Ordenes']
+    
+    # 1. Dibujamos la tabla estándar
+    pdf.dibujar_tabla(df_act_summary, anchos=[120, 40], alineaciones=["L", "C"])
+    
+    # 2. Ajustamos sutilmente el espaciado para pegar el totalizador a la tabla
+    pdf.set_y(pdf.get_y() - 4)
+    
+    # 3. Configuramos el estilo de la fila de Sumatoria Total
+    pdf.set_fill_color(240, 240, 240)  # Fondo gris claro institucional
+    pdf.set_text_color(0, 0, 0)        # Texto negro
+    pdf.set_font("Helvetica", "B", 7)  # Fuente en negrita
+    
+    # Calcular la suma total de las órdenes
+    total_ords = df_act_summary['Total de Ordenes'].sum()
+    
+    # Dibujamos las celdas alineadas con las columnas superiores (120 y 40 de ancho)
+    pdf.cell(120, 6, safestr("TOTAL GENERAL"), border=1, fill=True, align="R")
+    pdf.cell(40, 6, safestr(str(int(total_ords))), border=1, fill=True, align="C")
+    pdf.ln(10)
     
     def get_tipo_detalle(row):
         txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
