@@ -146,15 +146,15 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                 response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=60)
                 
                 if response.status_code == 200:
-                    # --- INICIO DEL ESPÍA DE DIAGNÓSTICO ---
                     tipo_archivo = response.headers.get('Content-Type', 'Desconocido')
                     print(f"  -> [INFO] Cepheus respondió con un archivo tipo: {tipo_archivo}")
                     print(f"  -> [INFO] Tamaño del archivo: {len(response.content)} bytes")
                     
-                    if len(response.content) < 1000: 
-                        print(f"  -> [CONTENIDO CRUDO]: {response.text[:250]}")
-                    # --- FIN DEL ESPÍA ---
-
+                    # === PROTECCIÓN: Si la respuesta es un error en formato JSON, la saltamos ===
+                    if 'json' in tipo_archivo.lower() or response.text.strip().startswith('{'):
+                        print(f"  -> [!] Cepheus devolvió un error JSON para {query_user}. Pasando al siguiente usuario...")
+                        continue  # Salta al siguiente usuario de la lista sin romper el ciclo
+                    
                     try:
                         df_temp = pd.read_excel(io.BytesIO(response.content))
                     except Exception as e_excel:
@@ -170,11 +170,11 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                         print(f"  -> [+] ¡Archivo rep_actividades descargado con éxito desde la cuenta {query_user}!")
                         return df_temp 
                     else:
-                        print(f"  -> [!] Archivo procesado, pero la tabla quedó completamente vacía.")
+                        print(f"  -> [!] Archivo procesado, pero la tabla quedó completamente vacía para {query_user}.")
                 else:
                     print(f"  -> [-] Error de acceso con {query_user} (Código {response.status_code})")
             except Exception as e_user:
-                print(f"  -> [-] Error descargando el archivo: {e_user}")
+                print(f"  -> [-] Error descargando el archivo de {query_user}: {e_user}")
                 
         return pd.DataFrame()
             
