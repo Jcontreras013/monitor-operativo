@@ -142,39 +142,32 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
             url_exacta = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
             
             try:
-                # verify=False porque tu sistema está en la red local de la empresa
+                # verify=False porque es un servidor interno
                 response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=60)
                 
-        
-                    # ========================================================
-                    # EL CAMBIO MAESTRO: Procesamos la respuesta como ARCHIVO
-                    # ========================================================
-                 if response.status_code == 200:
+                if response.status_code == 200:
                     # --- INICIO DEL ESPÍA DE DIAGNÓSTICO ---
                     tipo_archivo = response.headers.get('Content-Type', 'Desconocido')
                     print(f"  -> [INFO] Cepheus respondió con un archivo tipo: {tipo_archivo}")
                     print(f"  -> [INFO] Tamaño del archivo: {len(response.content)} bytes")
                     
-                    # Imprimimos lo que trae adentro si es un error de texto/HTML
                     if len(response.content) < 1000: 
                         print(f"  -> [CONTENIDO CRUDO]: {response.text[:250]}")
                     # --- FIN DEL ESPÍA ---
 
                     try:
-                        # Intenta leerlo asumiendo que es un archivo Excel (.xlsx o .xls)
                         df_temp = pd.read_excel(io.BytesIO(response.content))
                     except Exception as e_excel:
                         print(f"  -> [!] No es un Excel válido: {e_excel}. Intentando como CSV...")
                         try:
-                            # Si falla como Excel, asume que es un archivo de texto/CSV
                             df_temp = pd.read_csv(io.StringIO(response.text), sep=None, engine='python')
                         except Exception as e_csv:
-                            print(f"  -> [-] Falla total al leer el archivo. No es Excel ni CSV. Error: {e_csv}")
-                            df_temp = pd.DataFrame() # Creamos tabla vacía para que no se caiga
+                            print(f"  -> [-] Falla total al leer el archivo. Error: {e_csv}")
+                            df_temp = pd.DataFrame() 
                     
                     if not df_temp.empty:
                         df_temp.columns = df_temp.columns.str.upper().str.strip()
-                        print(f"  -> [+] ¡Archivo rep_actividades descargado y leído con éxito desde la cuenta {query_user}!")
+                        print(f"  -> [+] ¡Archivo rep_actividades descargado con éxito desde la cuenta {query_user}!")
                         return df_temp 
                     else:
                         print(f"  -> [!] Archivo procesado, pero la tabla quedó completamente vacía.")
@@ -188,7 +181,7 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     except Exception as e:
         print(f"❌ Error crítico en motor de descarga: {e}")
         return pd.DataFrame()
-
+        
 def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
     """
     Cruza el DataFrame de la API con los dispositivos/vehículos (FTTX) subidos de forma manual
