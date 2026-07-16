@@ -395,17 +395,22 @@ def main():
                         est_upper = df_depurado['ESTADO'].fillna('').astype(str).str.upper().str.strip()
                         com_upper = df_depurado['COMENTARIO'].fillna('').astype(str).str.upper()
                         cli_upper = df_depurado['CLIENTE'].fillna('').astype(str).str.upper()
-                        
                         mins_diff = (ahora_momento_ts - df_depurado['HORA_INI']).dt.total_seconds() / 60
+
                         mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
                         mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
 
                         df_depurado['ALERTA_TIEMPO'] = (
-                            (df_depurado['HORA_INI'].notnull()) & (df_depurado['HORA_LIQ'].isnull()) & 
-                            (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
-                        )
-                        
+                            (df_depurado['HORA_INI'].notnull()) & (df_depurado['HORA_LIQ'].isnull()) & (mins_diff > 120) & 
+                            (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
+)
+
+                    # === 1. DEFINICIÓN DE LA VARIABLE FALTANTE ===
+                        mask_est_abierto = est_upper != 'CERRADA'
+
+                    # === 2. CÁLCULO SEGURO ===
                         df_depurado['ES_OFFLINE'] = ((df_depurado['TECNICO'].astype(str).str.upper() != 'JOSUE MIGUEL SAUCEDA') & mask_est_abierto & mask_sop & ~mask_falsos & (com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True) | com_upper.apply(es_offline_preciso)))
+
                         df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
                         
                         texto_seg = act_upper + " " + cli_upper + " " + com_upper
