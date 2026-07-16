@@ -4030,6 +4030,7 @@ def clasificar_materiales(row) -> str:
         
     return 'OTROS'
 
+
 def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_sel, anio_sel) -> bytes:
     """
     Dibuja y genera el reporte PDF de materiales e inventarios de forma ejecutiva.
