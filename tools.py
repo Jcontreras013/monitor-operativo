@@ -145,25 +145,39 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                 # verify=False porque tu sistema está en la red local de la empresa
                 response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=60)
                 
-                if response.status_code == 200:
+        
                     # ========================================================
                     # EL CAMBIO MAESTRO: Procesamos la respuesta como ARCHIVO
                     # ========================================================
+                 if response.status_code == 200:
+                    # --- INICIO DEL ESPÍA DE DIAGNÓSTICO ---
+                    tipo_archivo = response.headers.get('Content-Type', 'Desconocido')
+                    print(f"  -> [INFO] Cepheus respondió con un archivo tipo: {tipo_archivo}")
+                    print(f"  -> [INFO] Tamaño del archivo: {len(response.content)} bytes")
+                    
+                    # Imprimimos lo que trae adentro si es un error de texto/HTML
+                    if len(response.content) < 1000: 
+                        print(f"  -> [CONTENIDO CRUDO]: {response.text[:250]}")
+                    # --- FIN DEL ESPÍA ---
+
                     try:
                         # Intenta leerlo asumiendo que es un archivo Excel (.xlsx o .xls)
                         df_temp = pd.read_excel(io.BytesIO(response.content))
-                    except Exception:
-                        # Si falla como Excel, asume que es un archivo de texto/CSV
-                        df_temp = pd.read_csv(io.StringIO(response.text), sep=None, engine='python')
+                    except Exception as e_excel:
+                        print(f"  -> [!] No es un Excel válido: {e_excel}. Intentando como CSV...")
+                        try:
+                            # Si falla como Excel, asume que es un archivo de texto/CSV
+                            df_temp = pd.read_csv(io.StringIO(response.text), sep=None, engine='python')
+                        except Exception as e_csv:
+                            print(f"  -> [-] Falla total al leer el archivo. No es Excel ni CSV. Error: {e_csv}")
+                            df_temp = pd.DataFrame() # Creamos tabla vacía para que no se caiga
                     
                     if not df_temp.empty:
                         df_temp.columns = df_temp.columns.str.upper().str.strip()
                         print(f"  -> [+] ¡Archivo rep_actividades descargado y leído con éxito desde la cuenta {query_user}!")
-                        
-                        # Retornamos los datos para que tu script principal los mande a Google Sheets
                         return df_temp 
                     else:
-                        print(f"  -> [!] Archivo descargado, pero está vacío adentro.")
+                        print(f"  -> [!] Archivo procesado, pero la tabla quedó completamente vacía.")
                 else:
                     print(f"  -> [-] Error de acceso con {query_user} (Código {response.status_code})")
             except Exception as e_user:
