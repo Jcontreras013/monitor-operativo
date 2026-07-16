@@ -734,7 +734,7 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
             if types_count > 1: return 10.0 
             return 0.0
             
-df_tec['BONO_MIXTO'] = df_tec.apply(calcular_bono, axis=1)
+        df_tec['BONO_MIXTO'] = df_tec.apply(calcular_bono, axis=1)
         df_tec['LOGRO_FINAL'] = df_tec['PUNTOS_BASE'] + df_tec['BONO_MIXTO']
         df_tec = df_tec.sort_values(by='LOGRO_FINAL', ascending=False)
         
