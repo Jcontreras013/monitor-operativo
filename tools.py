@@ -115,65 +115,65 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # MOTOR DE CONEXIÓN CON LA API DE CEPHEUS
 # ==============================================================================
 def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
-    """
-    Descarga el reporte general desde la API iterando sobre las cuentas autorizadas.
-    BLINDAJE DE SEGURIDAD: Si la configuración de secretos está vacía,
-    el sistema autocompleta con tu nueva URL del túnel y tu usuario de forma directa.
-    """
-    # 1. Lectura segura con tu nueva URL de Cloudflare activa de hoy como fallback
     api_config = st.secrets.get("cepheus_api", {})
-    base_url = api_config.get("url", "https://charging-better-messages-pulse.trycloudflare.com/API/consultaOrdenes")
+    base_url = api_config.get("url")
     auth_user = api_config.get("usuario", "monitorISCA")
     auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
     
-    # Si la lista de usuarios está vacía, se autocompleta con tu cuenta
     usuarios_autorizados = api_config.get("usuarios_consulta", [])
-    if not usuarios_autorizados:
-        usuarios_autorizados = ["jaison.contreras"]
-    elif isinstance(usuarios_autorizados, str):
+    if isinstance(usuarios_autorizados, str):
         usuarios_autorizados = [usuarios_autorizados]
     
     fecha_str = fecha_inicio_dt.strftime("%d/%m/%Y")
-    hora_str = fecha_inicio_dt.strftime("%H:%M")
+    hora_str = "07:00" 
     auth = HTTPBasicAuth(auth_user, auth_pass)
     
-    df_acumulado = pd.DataFrame()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", 
+        "Accept": "*/*"
+    }
     
     try:
         session = requests.Session()
         session.trust_env = False  
         
-        # Iteramos sobre la lista de usuarios autorizados
         for query_user in usuarios_autorizados:
             query_user = query_user.strip()
-            full_url = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
+            url_exacta = f"{base_url}?usuario={query_user}&medios=FTTH,C&fechaInicio={fecha_str}&horaInicio={hora_str}"
             
             try:
-                # Petición HTTP con timeout óptimo de 45 segundos
-                response = session.get(full_url, auth=auth, timeout=45)
+                # verify=False porque tu sistema está en la red local de la empresa
+                response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=60)
                 
                 if response.status_code == 200:
-                    data = response.json()
-                    df_temp = pd.DataFrame(data)
+                    # ========================================================
+                    # EL CAMBIO MAESTRO: Procesamos la respuesta como ARCHIVO
+                    # ========================================================
+                    try:
+                        # Intenta leerlo asumiendo que es un archivo Excel (.xlsx o .xls)
+                        df_temp = pd.read_excel(io.BytesIO(response.content))
+                    except Exception:
+                        # Si falla como Excel, asume que es un archivo de texto/CSV
+                        df_temp = pd.read_csv(io.StringIO(response.text), sep=None, engine='python')
                     
                     if not df_temp.empty:
                         df_temp.columns = df_temp.columns.str.upper().str.strip()
-                        df_acumulado = pd.concat([df_acumulado, df_temp], ignore_index=True)
-            except Exception:
-                pass # Silenciamos errores menores de iteración para evitar colgar la app
-        
-        # Deduplicamos el reporte maestro por número de orden (NUM)
-        if not df_acumulado.empty:
-            if 'NUM' in df_acumulado.columns:
-                df_acumulado['NUM'] = df_acumulado['NUM'].astype(str).str.strip()
-                df_acumulado = df_acumulado.drop_duplicates(subset=['NUM'], keep='last')
-            return df_acumulado
-        else:
-            return pd.DataFrame()
+                        print(f"  -> [+] ¡Archivo rep_actividades descargado y leído con éxito desde la cuenta {query_user}!")
+                        
+                        # Retornamos los datos para que tu script principal los mande a Google Sheets
+                        return df_temp 
+                    else:
+                        print(f"  -> [!] Archivo descargado, pero está vacío adentro.")
+                else:
+                    print(f"  -> [-] Error de acceso con {query_user} (Código {response.status_code})")
+            except Exception as e_user:
+                print(f"  -> [-] Error descargando el archivo: {e_user}")
+                
+        return pd.DataFrame()
             
     except Exception as e:
+        print(f"❌ Error crítico en motor de descarga: {e}")
         return pd.DataFrame()
-
 
 def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: Any) -> pd.DataFrame:
     """
