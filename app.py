@@ -798,12 +798,15 @@ def main():
                 
                 df_cat_tecs = cargar_catalogo_tecnicos()
                 if not df_cat_tecs.empty:
-                    # Filtramos el catálogo para quedarnos sólo con los clasificados como TÉCNICO PRINCIPAL
-                    df_principales = df_cat_tecs[df_cat_tecs['Clasificación'] == "TÉCNICO PRINCIPAL"]
+                    # === FILTRACIÓN ESTRICTA: Debe ser Técnico Principal y estar ACTIVO ===
+                    df_principales = df_cat_tecs[
+                        (df_cat_tecs['Clasificación'] == "TÉCNICO PRINCIPAL") & 
+                        (df_cat_tecs['Estatus'] == "ACTIVO")
+                    ]
                     tecs_validos_set = {normalizar_nombre_cruce(n) for n in df_principales['Nombre'].dropna()}
                     
                     tecs_en_base = df_base_activa['TECNICO'].dropna().unique().tolist()
-                    # Filtramos la lista de la pantalla quedándonos únicamente con los activos
+                    # Filtramos la lista de la pantalla quedándonos únicamente con los activos autorizados
                     tecs_filtrados = [t for t in tecs_en_base if normalizar_nombre_cruce(t) in tecs_validos_set]
                     lista_tecs_monitor = ["Todos"] + sorted(tecs_filtrados)
                 else:
