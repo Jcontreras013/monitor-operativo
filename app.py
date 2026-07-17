@@ -2251,7 +2251,7 @@ def main():
                 else:
                     st.info("Sin datos de cierres para generar gráfico horario.")
 
-                with t_analitica_v:
+            with t_analitica_v:
                 st.markdown("### 📈 Análisis de Rendimiento Operativo")
                 
                 if df_v_tabla_monitor.empty:
@@ -2282,8 +2282,7 @@ def main():
                                 st.caption("Sin datos de segmentos para graficar.")
                                 
                         with col_an2:
-                            # CORREGIDO: Se cambió 'motifs_conteo' por 'motivos_conteo'
-                            if not motivos_conteo.empty:
+                            if not motifs_conteo.empty:
                                 fig, ax = plt.subplots(figsize=(6, 4))
                                 motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
                                 ax.set_ylabel('')
@@ -2291,3 +2290,9 @@ def main():
                                 st.pyplot(fig)
                             else:
                                 st.caption("Sin datos de diagnósticos para graficar.")
+
+if __name__ == '__main__':
+    if verificar_autenticacion():
+        main()
+    else:
+        mostrar_pantalla_login()
