@@ -786,6 +786,9 @@ def main():
             
             try:
                 
+                # === IMPORTACIÓN INTERNA DIRECTA ===
+                from tools import cargar_catalogo_tecnicos
+                
                 def normalizar_nombre_cruce(texto):
                     if pd.isnull(texto): return ""
                     t = str(texto).upper().strip()
