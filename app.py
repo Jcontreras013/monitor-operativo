@@ -1909,7 +1909,7 @@ def main():
 
             t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
-with t_panel_v:
+            with t_panel_v:
                 if not df_v_tabla_monitor.empty:
                     if es_movil:
                         st.markdown("<br>", unsafe_allow_html=True)
@@ -2003,7 +2003,7 @@ with t_panel_v:
                 else:
                     st.warning("No hay registros disponibles para mostrar.")
 
-                with t_graphs_v:
+            with t_graphs_v:
                 st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
             
                 df_graficas = df_base.copy()
