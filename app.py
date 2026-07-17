@@ -2058,7 +2058,6 @@ if st.session_state.get('config_mostrar_panel', True):
                         
                         # === CONTROL DE COLUMNA GPS Y CONDICIONES DE APERTURA ===
                         if "GPS" in df_v_tabla_monitor.columns:
-                            # Se evalúa si el técnico ha aperturado la orden
                             raw_hora_ini = df_v_tabla_monitor['HORA_INI']
                             hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
                             is_hora_ini_valid = raw_hora_ini.notna() & (~hora_ini_str.isin(['', '---', 'NAT', 'NONE', 'NAN']))
@@ -2067,14 +2066,11 @@ if st.session_state.get('config_mostrar_panel', True):
                                 ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
                             )
                             
-                            # La orden se considera aperturada si ya tiene hora de inicio o si su estado es de campo
                             mask_aperturada = is_hora_ini_valid | is_estado_active
                             
-                            # Solo se asigna el link de GPS si cumple con la condición de apertura
                             gps_filtrado = np.where(mask_aperturada, df_v_tabla_monitor["GPS"].fillna(""), "")
                             df_estilo_v["GPS"] = gps_filtrado
                             
-                            # Reordenar las columnas para fijar estáticamente "GPS" antes de "COLONIA"
                             cols = list(df_estilo_v.columns)
                             if "GPS" in cols:
                                 cols.remove("GPS")
@@ -2088,7 +2084,6 @@ if st.session_state.get('config_mostrar_panel', True):
                         evento_monitor_diam = st.dataframe(
                             df_estilo_v.style.apply(row_styler, axis=1),
                             column_config={
-                                # display_text renderiza el enlace largo como el texto simple "🔍 Ver"
                                 "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
                                 "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                 "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
@@ -2134,13 +2129,11 @@ if st.session_state.get('config_mostrar_panel', True):
             with t_analitica_v:
                 st.markdown("### 📈 Análisis de Rendimiento Operativo")
                 
-                # === PROTECCIÓN: Si no hay datos, muestra un mensaje amigable en lugar de fallar ===
                 if df_v_tabla_monitor.empty:
                     st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
                 else:
                     plt.style.use('dark_background')
                     
-                    # Generamos los conteos de forma segura
                     segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
                     motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
                     
