@@ -1,42 +1,42 @@
 Harin Joel	Sevilla Pérez, Jefe de operaciones 
-Jose Rafael	Campos Pérez, Supervisor-PLEX
-Edy Florentino	Guzman Pérez, Plex
-Elias Mizael Alonzo Sabillon, Plex, Vacaciones 
-Olvin Jose Pineda Castellanos, Plex
+Jose Rafael	Campos Pérez,Tecnico principal, ACTIVO
+Edy Florentino	Guzman Pérez, Tecnico principal, ACTIVO
+Elias Mizael Alonzo Sabillon,Tecnico principal, ACTIVO
+Olvin Jose Pineda Castellanos, Tecnico principal, ACTIVO
 Marly Lennon Rich James, Ayudante-FTTH
-Daniel Ezequiel Ponce Guzman, HFC
-Marvin Darrel	Bodden Sanchez, Plex
+Daniel Ezequiel Ponce Guzman, Tecnico principal, ACTIVO
+Marvin Darrel	Bodden Sanchez, Tecnico principal, ACTIVO
 Denis Javier	Colon Sandoval, Supervisor 
-David Antonio	Rivera Sabillon,  IT
-Selvin Adonis	Duarte Delcid, FTTH, Vacaciones
-Nelson Ramon	Ferrufino Leon, FTTH, Vacaciones
-Josue Miguel	Sauceda Hernández, Supervisor 
-Rayam Orlin	Maclin Alvarez, FTTH
-Quien Charlee	Fritz Matute, FTTH
+David Antonio	Rivera Sabillon, Tecnico principal, ACTIVO
+Selvin Adonis	Duarte Delcid, FTTH, Tecnico principal, ACTIVO
+Nelson Ramon	Ferrufino Leon, FTTH, Tecnico principal, ACTIVO
+Josue Miguel	Sauceda Hernández, Tecnico principal, ACTIVO 
+Rayam Orlin	Maclin Alvarez, Tecnico principal, ACTIVO
+Quien Charlee	Fritz Matute, Tecnico principal, ACTIVO
 Norman Daniel	Guardado Guardado, Planificación
-Josue Dario	Cano Hernández, IT
+Josue Dario	Cano Hernández, Tecnico principal, ACTIVO
 Reina Marisol Alvarenga Orellana, IT
 Isaac Cubillas Platino, Ayudante-FTTH 
 Melvin Josue	Barrios Walter, IT
-Allan Ricardo	Echeverry Medina, Cortes
+Allan Ricardo	Echeverry Medina, Tecnico principal, ACTIVO
 Roberto Carlos Reyes Lopez, Ayudante-HFC
-Darren Henley	Webster Bennett, FTTH
+Darren Henley	Webster Bennett, Tecnico principal, ACTIVO
 Zoiner Gualberto Hernandez Hernández, Ayudante-Plex
 Andres Alberto Alvarado Velasquez, Supervisor
-Jermy Modesto	Padilla Cardona, Ayudante-Plex
+Jermy Modesto	Padilla Cardona,Tecnico principal, ACTIVO
 Jose Adan Lijan Alvarado, Ayudante-FTTH
 Kevin Oswaldo Martinez Ruiz, Ayudante-Plex
 Francisco Josue Padilla Izaguirre, Ayudante-FTTH
 Noel Santos Padilla, Ayudante-Plex
-Darwin Raul	Aguilar Benítez, FTTH
+Darwin Raul	Aguilar Benítez, Tecnico principal, ACTIVO
 Axel Jose	Alberto Lainez, Ayudante-Plex
 Victor Manuel	Castellanos Duron, FTTH
-Roberto Carlos Juarez Padilla, FTTH
+Roberto Carlos Juarez Padilla, Tecnico principal, ACTIVO
 Marvin Eduardo Gamoneda Díaz, IT
 Aydon Oliver	Fisher Richards, Ayudante-FTTH
 Johan Dariel	Sosa Santos, Ayudante-FTTH
 Dorby	Taylor Greham, Ayudante-FTTH
 Elvin Alexander Menocal Martinez, Ayudante-FTTH
-Franklin Alonzo Delarca Zelaya, FTTH
+Franklin Alonzo Delarca Zelaya, Tecnico principal, ACTIVO
 Oscar Manuel Lobo Murillo, Ayudante-FTTH
 Hector Dario maldonado Hernandez, FTTH
