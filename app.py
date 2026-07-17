@@ -1843,126 +1843,129 @@ def main():
                         df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
                         
 
-                t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
-                
-                with t_panel_v:
-                    if not df_v_tabla_monitor.empty:
-                        if es_movil:
-                            st.markdown("<br>", unsafe_allow_html=True)
-                            for idx, row in df_v_tabla_monitor.iterrows():
-                                color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
-                                estado_txt = str(row.get('ESTADO', 'N/D')).upper()
-                                bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
-                                
-                                st.markdown(f"""
-                                <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span style="color: white; font-weight: bold; font-size: 16px;">ORD-{row.get('NUM', 'N/D')}</span>
-                                        <span style="background: {bg_estado}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">{estado_txt}</span>
-                                    </div>
-                                    <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
-                                        👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
-                                        📍 {str(row.get('COLONIA', 'N/D'))[:30]}
-                                    </div>
-                                    <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
-                                        🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
-                                        👨‍🔧 {str(row.get('TECNICO', ''))[:20]}
-                                    </div>
+# Este bloque completo está a 12 espacios del borde izquierdo
+            t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
+            
+            with t_panel_v:
+                if not df_v_tabla_monitor.empty:
+                    if es_movil:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        for idx, row in df_v_tabla_monitor.iterrows():
+                            color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
+                            estado_txt = str(row.get('ESTADO', 'N/D')).upper()
+                            bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
+                            
+                            st.markdown(f"""
+                            <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <span style="color: white; font-weight: bold; font-size: 16px;">ORD-{row.get('NUM', 'N/D')}</span>
+                                    <span style="background: {bg_estado}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">{estado_txt}</span>
                                 </div>
-                                """, unsafe_allow_html=True)
-                                
-                                if st.button(f"👁️ Ver Detalle de Orden {row.get('NUM')}", key=f"btn_mobile_{row.get('NUM')}_{idx}", use_container_width=True):
-                                    mostrar_comentario_cierre(row)
-                                st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
-                        else:
-                            df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
+                                <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
+                                    👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
+                                    📍 {str(row.get('COLONIA', 'N/D'))[:30]}
+                                </div>
+                                <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
+                                    🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
+                                    👨‍🔧 {str(row.get('TECNICO', ''))[:20]}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
                             
-                            evento_monitor_diam = st.dataframe(
-                                df_estilo_v.style.apply(row_styler, axis=1),
-                                column_config={
-                                    "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
-                                    "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
-                                    "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
-                                    "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                    "ES_OFFLINE": None,
-                                    "MINUTOS_CALC": None
-                                }, 
-                                use_container_width=True, 
-                                height=600, 
-                                hide_index=True, 
-                                on_select="rerun", 
-                                selection_mode="single-row"
-                            )
-                            
-                            if evento_monitor_diam.selection.rows:
-                                mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
+                            if st.button(f"👁️ Ver Detalle de Orden {row.get('NUM')}", key=f"btn_mobile_{row.get('NUM')}_{idx}", use_container_width=True):
+                                mostrar_comentario_cierre(row)
+                            st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
                     else:
-                        st.warning("No hay registros disponibles para mostrar.")
-
-                with t_graphs_v:
-                    st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
-                
-                    df_graficas = df_base.copy()
-                    df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
-                
-                    df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
-                
-                    if not df_productividad_v.empty:
-                        df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
-                        conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
+                        df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
-                        conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
-                        
-                        fig_barras_v = px.bar(
-                            conteo_horario_v, x='Hora_Format', y='Ord', 
-                            labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
-                            template="plotly_dark", height=300
+                        evento_monitor_diam = st.dataframe(
+                            df_estilo_v.style.apply(row_styler, axis=1),
+                            column_config={
+                                "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
+                                "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
+                                "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
+                                "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
+                                "ES_OFFLINE": None,
+                                "MINUTOS_CALC": None
+                            }, 
+                            use_container_width=True, 
+                            height=600, 
+                            hide_index=True, 
+                            on_select="rerun", 
+                            selection_mode="single-row"
                         )
-                        st.plotly_chart(fig_barras_v, use_container_width=True)
-                    else:
-                        st.info("Sin datos de cierres para generar gráfico horario.")
+                        
+                        if evento_monitor_diam.selection.rows:
+                            mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
+                else:
+                    st.warning("No hay registros disponibles para mostrar.")
 
-with t_analitica_v:
-                    st.markdown("### 📈 Análisis de Rendimiento Operativo")
+            with t_graphs_v:
+                st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+            
+                df_graficas = df_base.copy()
+                df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+            
+                df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
+            
+                if not df_productividad_v.empty:
+                    df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
+                    conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
                     
-                    # === PROTECCIÓN: Si no hay datos, muestra un mensaje amigable en lugar de fallar ===
-                    if df_v_tabla_monitor.empty:
-                        st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
+                    conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
+                    
+                    fig_barras_v = px.bar(
+                        conteo_horario_v, x='Hora_Format', y='Ord', 
+                        labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
+                        template="plotly_dark", height=300
+                    )
+                    st.plotly_chart(fig_barras_v, use_container_width=True)
+                else:
+                    st.info("Sin datos de cierres para generar gráfico horario.")
+
+            with t_analitica_v:
+                st.markdown("### 📈 Análisis de Rendimiento Operativo")
+                
+                # === PROTECCIÓN: Si no hay datos, muestra un mensaje amigable en lugar de fallar ===
+                if df_v_tabla_monitor.empty:
+                    st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
+                else:
+                    plt.style.use('dark_background')
+                    
+                    # Generamos los conteos de forma segura
+                    segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
+                    motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
+                    
+                    if es_movil:
+                        if not segmentos_conteo.empty:
+                            fig, ax = plt.subplots(figsize=(6, 4))
+                            segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
+                            ax.set_title("Órdenes por Segmento")
+                            st.pyplot(fig)
+                        else:
+                            st.caption("Sin datos de segmentos.")
                     else:
-                        plt.style.use('dark_background')
-                        
-                        # Generamos los conteos de forma segura
-                        segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
-                        motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
-                        
-                        if es_movil:
+                        col_an1, col_an2 = st.columns(2)
+                        with col_an1:
                             if not segmentos_conteo.empty:
                                 fig, ax = plt.subplots(figsize=(6, 4))
                                 segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
                                 ax.set_title("Órdenes por Segmento")
                                 st.pyplot(fig)
                             else:
-                                st.caption("Sin datos de segmentos.")
-                        else:
-                            col_an1, col_an2 = st.columns(2)
-                            with col_an1:
-                                if not segmentos_conteo.empty:
-                                    fig, ax = plt.subplots(figsize=(6, 4))
-                                    segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
-                                    ax.set_title("Órdenes por Segmento")
-                                    st.pyplot(fig)
-                                else:
-                                    st.caption("Sin datos de segmentos para graficar.")
-                                    
-                            with col_an2:
-                                if not motivos_conteo.empty:
-                                    fig, ax = plt.subplots(figsize=(6, 4))
-                                    motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
-                                    ax.set_ylabel('')
-                                    ax.set_title("Motivo / Diagnóstico")
-                                    st.pyplot(fig)
-                                else:
-                                    st.caption("Sin datos de diagnósticos para graficar.")
+                                st.caption("Sin datos de segmentos para graficar.")
+                                
+                        with col_an2:
+                            if not motivos_conteo.empty:
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
+                                ax.set_ylabel('')
+                                ax.set_title("Motivo / Diagnóstico")
+                                st.pyplot(fig)
+                            else:
+                                st.caption("Sin datos de diagnósticos para graficar.")
+
+# Este bloque final de ejecución queda al ras del margen izquierdo (0 espacios)
 if __name__ == '__main__':
     if verificar_autenticacion():
         main()
