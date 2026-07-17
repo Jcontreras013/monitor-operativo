@@ -1909,7 +1909,7 @@ def main():
 
             t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
-            with t_panel_v:
+with t_panel_v:
                 if not df_v_tabla_monitor.empty:
                     if es_movil:
                         st.markdown("<br>", unsafe_allow_html=True)
@@ -1918,8 +1918,14 @@ def main():
                             estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                             bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
-                            # Generar enlace GPS para la tarjeta móvil si existe
-                            gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_blank" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if row.get("GPS") else ""
+                            # Identificar si la orden está aperturada en móvil
+                            raw_hi = row.get('HORA_INI')
+                            hi_str = str(raw_hi).strip().upper() if pd.notnull(raw_hi) else ""
+                            is_hi_val = pd.notnull(raw_hi) and hi_str not in ['', '---', 'NAT', 'NONE', 'NAN']
+                            is_est_act = str(row.get('ESTADO', '')).upper().strip() in ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
+                            
+                            show_gps_mobile = (is_hi_val or is_est_act) and row.get('GPS')
+                            gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_blank" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
                             
                             st.markdown(f"""
                             <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
@@ -1945,14 +1951,40 @@ def main():
                     else:
                         df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
-                        # === SOLUCIÓN: Re-inyectar la columna GPS si aplicar_estilos_df la removió ===
+                        # === CONTROL DE COLUMNA GPS Y CONDICIONES DE APERTURA ===
                         if "GPS" in df_v_tabla_monitor.columns:
-                            df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"]
+                            # Se evalúa si el técnico ha aperturado la orden
+                            raw_hora_ini = df_v_tabla_monitor['HORA_INI']
+                            hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
+                            is_hora_ini_valid = raw_hora_ini.notna() & (~hora_ini_str.isin(['', '---', 'NAT', 'NONE', 'NAN']))
+                            
+                            is_estado_active = df_v_tabla_monitor['ESTADO'].astype(str).str.upper().str.strip().isin(
+                                ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
+                            )
+                            
+                            # La orden se considera aperturada si ya tiene hora de inicio o si su estado es de campo
+                            mask_aperturada = is_hora_ini_valid | is_estado_active
+                            
+                            # Solo se asigna el link de GPS si cumple con la condición de apertura
+                            gps_filtrado = np.where(mask_aperturada, df_v_tabla_monitor["GPS"].fillna(""), "")
+                            df_estilo_v["GPS"] = gps_filtrado
+                            
+                            # Reordenar las columnas para fijar estáticamente "GPS" antes de "COLONIA"
+                            cols = list(df_estilo_v.columns)
+                            if "GPS" in cols:
+                                cols.remove("GPS")
+                            if "COLONIA" in cols:
+                                idx_colonia = cols.index("COLONIA")
+                                cols.insert(idx_colonia, "GPS")
+                            else:
+                                cols.append("GPS")
+                            df_estilo_v = df_estilo_v[cols]
                         
                         evento_monitor_diam = st.dataframe(
                             df_estilo_v.style.apply(row_styler, axis=1),
                             column_config={
-                                "GPS": st.column_config.LinkColumn("UBICACIÓN GPS"),
+                                # display_text renderiza el enlace largo como el texto simple "🔍 Ver"
+                                "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
                                 "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                 "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
                                 "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
