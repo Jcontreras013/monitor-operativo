@@ -2435,8 +2435,7 @@ def cargar_catalogo_tecnicos():
                     estatus = "VACACIONES"
                 
                 # Regla del usuario: Clasificación de Técnico Principal
-                # Ahora acepta "TECNICO PRINCIPAL", "TECNICO" y los formatos estándar de áreas
-                if cargo_area in ['PLEX', 'HFC', 'FTTH', 'TECNICO PRINCIPAL', 'TECNICO', 'TECNICO_PRINCIPAL']:
+                if cargo_area in ['PLEX', 'HFC', 'FTTH']:
                     clasificacion = "TÉCNICO PRINCIPAL"
                 elif 'AYUDANTE' in cargo_area:
                     clasificacion = "AYUDANTE"
