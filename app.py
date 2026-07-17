@@ -1918,6 +1918,9 @@ def main():
                             estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                             bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
+                            # Generar enlace GPS para la tarjeta móvil si existe
+                            gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_blank" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if row.get("GPS") else ""
+                            
                             st.markdown(f"""
                             <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -1927,6 +1930,7 @@ def main():
                                 <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
                                     👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
                                     📍 {str(row.get('COLONIA', 'N/D'))[:30]}
+                                    {gps_link_html}
                                 </div>
                                 <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
                                     🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
@@ -1940,6 +1944,10 @@ def main():
                             st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
                     else:
                         df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
+                        
+                        # === SOLUCIÓN: Re-inyectar la columna GPS si aplicar_estilos_df la removió ===
+                        if "GPS" in df_v_tabla_monitor.columns:
+                            df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"]
                         
                         evento_monitor_diam = st.dataframe(
                             df_estilo_v.style.apply(row_styler, axis=1),
