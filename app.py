@@ -214,7 +214,7 @@ def sincronizar_datos_nube(conn):
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                     df_invalidos = df_nube[df_nube['NUM'] == 'N/D']
                     df_nube = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
-                        
+                            
                 if 'DIAS_RETRASO' in df_nube.columns: df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
                 if 'ESTADO' in df_nube.columns: df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
 
@@ -1863,6 +1863,24 @@ def main():
                         alertas_9am = []
                         alertas_tiempo_muerto = []
                         
+                        # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
+                        tecnicos_validos_alertas = set()
+                        file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
+                        if file_to_load:
+                            try:
+                                with open(file_to_load, "r", encoding="utf-8") as f:
+                                    for line in f:
+                                        line = line.strip()
+                                        if line:
+                                            parts = line.split(",")
+                                            if len(parts) >= 3:
+                                                name = parts[2].strip().rstrip(".")
+                                            else:
+                                                name = parts[-1].strip().rstrip(".")
+                                            tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
+                            except Exception as e:
+                                pass
+                        
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
                         
@@ -1875,6 +1893,11 @@ def main():
                             ]['TECNICO'].unique()
                             
                             for tec in tecs_con_asignacion:
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                # Filtrar para evaluar únicamente técnicos del personal activo autorizado
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    continue
+                                    
                                 df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
                                 ordenes_iniciadas_hoy = df_tec_hoy[
                                     df_tec_hoy['HORA_INI'].notna() & 
@@ -1893,6 +1916,11 @@ def main():
                         
                         if not df_jornada_hoy.empty:
                             for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                # Filtrar para evaluar únicamente técnicos del personal activo autorizado
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    continue
+                                    
                                 group_sorted = group.sort_values(by='HORA_INI')
                                 
                                 # Brechas históricas entre tareas finalizadas e iniciadas
@@ -1931,31 +1959,6 @@ def main():
                                                 "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
                                                 "hora_fin": liq_last.strftime('%H:%M')
                                             })
-                                            
-                        # Renderizado visual de alertas detectadas en la UI
-                        if alertas_9am or alertas_tiempo_muerto:
-                            st.markdown("#### 🚨 ALERTAS OPERATIVAS DETECTADAS")
-                            col_al1, col_al2 = st.columns(2)
-                            
-                            with col_al1:
-                                if alertas_9am:
-                                    st.markdown("<h6 style='color: #EF4444;'>⏰ Inicio Tardío (Sin apertura hoy)</h6>", unsafe_allow_html=True)
-                                    for t_name in alertas_9am:
-                                        st.error(f"⚠️ **{t_name}** tiene asignación pero **no ha aperturado** labores.")
-                                else:
-                                    st.success("✅ Todos los técnicos activos iniciaron labores hoy.")
-                                    
-                            with col_al2:
-                                if alertas_tiempo_muerto:
-                                    st.markdown("<h6 style='color: #F59E0B;'>⏳ Tiempos Muertos / Inactividad (> 30 min)</h6>", unsafe_allow_html=True)
-                                    for item in alertas_tiempo_muerto:
-                                        if item["tipo"] == "vivo":
-                                            st.warning(f"🚨 **{item['tecnico']}** lleva **{item['gap']} min inactivo** desde cierre ORD-{item['orden_prev']} ({item['hora_fin']}).")
-                                        else:
-                                            st.info(f"⚠️ **{item['tecnico']}** tuvo **{item['gap']} min de ocio** entre ORD-{item['orden_prev']} y ORD-{item['orden_next']}.")
-                                else:
-                                    st.success("✅ Sin tiempos muertos excesivos registrados.")
-                            st.markdown("---")
 
                         # ==============================================================================
                         # CONTINUACIÓN: PROCESAMIENTO Y DIBUJADO DEL GANTT
@@ -1964,6 +1967,22 @@ def main():
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
                         
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
+                        
+                        # Inyectar filas "SIN INICIO" para técnicos que no han empezado labores (para que aparezcan en la gráfica)
+                        for tec in alertas_9am:
+                            if tec not in df_para_gantt_final['TECNICO'].unique():
+                                dummy_row = {
+                                    'TECNICO': tec,
+                                    'ACTIVIDAD': 'SIN INICIO',
+                                    'NUM': 'N/D',
+                                    'COLONIA': 'N/D',
+                                    'ESTADO': 'PENDIENTE',
+                                    'HORA_INI': datetime.combine(hoy_date_valor, dt_time(8, 0)),
+                                    'HORA_LIQ': datetime.combine(hoy_date_valor, dt_time(8, 5)),
+                                    'TIEMPO_REAL': '---',
+                                    'COMENTARIO': 'Sin apertura de labores hoy.'
+                                }
+                                df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame([dummy_row])], ignore_index=True)
                         
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
@@ -1982,6 +2001,35 @@ def main():
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
+                            # === MAPEO DE ETIQUETAS Y ALERTAS DIRECTAMENTE EN EL GJE Y DE LA GRÁFICA ===
+                            tec_label_mapping = {}
+                            for tec in df_para_gantt_final['TECNICO'].unique():
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                
+                                # Si hay listado de personal cargado y el técnico no es de ruta válido, se excluye de las alertas
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    tec_label_mapping[tec] = tec
+                                    continue
+                                    
+                                if tec in alertas_9am:
+                                    tec_label_mapping[tec] = f"⚠️ {tec} ⏰ (Sin Inicio)"
+                                    continue
+                                    
+                                tec_alerts = [a for a in alertas_tiempo_muerto if a["tecnico"] == tec]
+                                if tec_alerts:
+                                    live_alerts = [a for a in tec_alerts if a["tipo"] == "vivo"]
+                                    if live_alerts:
+                                        alert_info = live_alerts[0]
+                                        tec_label_mapping[tec] = f"🚨 {tec} 🛑 (Inactivo {alert_info['gap']}m)"
+                                    else:
+                                        hist_alert = tec_alerts[0]
+                                        tec_label_mapping[tec] = f"⚠️ {tec} ⏳ (Ocio {hist_alert['gap']}m)"
+                                    continue
+                                    
+                                tec_label_mapping[tec] = tec
+                                
+                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].map(tec_label_mapping)
+                            
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
@@ -1991,7 +2039,7 @@ def main():
                                 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
                                 'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                                'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+                                'TRASLADOINTFIBRACORP', 'TVADICIONAL', 'SIN INICIO'
                             ]
                             
                             df_para_gantt_final = df_para_gantt_final[
@@ -2023,7 +2071,8 @@ def main():
                                 "CEQUI": "#fbc02d",          
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
-                                "REVISION": "#0288d1"
+                                "REVISION": "#0288d1",
+                                "SIN INICIO": "#4B5563"  # Bloque de advertencia gris para inicios tardíos
                             }
 
                             fig_gantt = px.timeline(
@@ -2233,7 +2282,7 @@ def main():
                                 st.caption("Sin datos de segmentos para graficar.")
                                 
                         with col_an2:
-                            if not motivos_conteo.empty:
+                            if not motifs_conteo.empty:
                                 fig, ax = plt.subplots(figsize=(6, 4))
                                 motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
                                 ax.set_ylabel('')
