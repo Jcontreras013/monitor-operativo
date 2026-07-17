@@ -94,7 +94,22 @@ def normalizar_nombre_cruce(texto):
     # Limpieza de caracteres invisibles típicos en archivos txt/copias de portales
     t = t.replace('\u200c', '').replace('\u200b', '')
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
-    return ' '.join(t.split())
+    t = ' '.join(t.split())
+    
+    # === TABLA DE HOMOLOGACIÓN / ALIAS PARA DISCREPANCIAS ORTOGRÁFICAS ===
+    alias_map = {
+        "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
+        "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+        "JEREMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+        "ELIAS MIZAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
+        "ELIAS MISAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
+        "ELIAS MISAEL ALONZO": "ELIAS MISAEL ALONZO SABILLON",
+        "DANIEL EZEQUIEL PONCE GUZMAN": "DANIEL EZEQUIEL GUZMAN PONCE"
+    }
+    
+    if t in alias_map:
+        return alias_map[t]
+    return t
 
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
@@ -121,7 +136,7 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
-# SIFCRONIZACIÓN DE DATOS CON LA NUBE
+# SINCROFONIZACIÓN DE DATOS CON LA NUBE
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
@@ -144,7 +159,8 @@ def sincronizar_datos_nube(conn):
                     df_nube = df_nube[~mask_basura_sync].copy()
 
             if 'EMPRESA' in df_nube.columns:
-                mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA|CEQUI', na=False)
+                # Filtrar únicamente por la empresa ISCA
+                mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                 df_nube = df_nube[mask_empresas_sync].copy()
 
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
@@ -181,12 +197,23 @@ def sincronizar_datos_nube(conn):
                         df_nube[col_txt] = df_nube[col_txt].replace('0', 'N/D')
                         
                 if 'NUM' in df_nube.columns:
-                    temp_date = df_nube.get('HORA_LIQ', df_nube.get('FECHA_APE', pd.NaT))
-                    df_nube['FECHA_SORT'] = pd.to_datetime(temp_date, errors='coerce')
-                    df_nube = df_nube.sort_values(by='FECHA_SORT', na_position='first')
+                    df_nube['NUM'] = df_nube['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    
+                    # Convertir fechas de forma segura para ordenar cronológicamente
+                    df_nube['SORT_DATE'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
+                    df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.to_datetime(df_nube['FECHA_APE'], errors='coerce'))
+                    df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
+                    
+                    # Priorizar estados finales (Cerrada, Anulada) sobre estados activos
+                    PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                    df_nube['ES_VIVA'] = df_nube['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+                    
+                    # Ordenar: las activas (True) van primero y las cerradas (False) al final para conservarlas con keep='last'
+                    df_nube = df_nube.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
+                    
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                     df_invalidos = df_nube[df_nube['NUM'] == 'N/D']
-                    df_nube = pd.concat([df_validos, df_invalidos]).drop(columns=['FECHA_SORT'], errors='ignore')
+                    df_nube = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
                         
                 if 'DIAS_RETRASO' in df_nube.columns: df_nube['DIAS_RETRASO'] = pd.to_numeric(df_nube['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
                 if 'ESTADO' in df_nube.columns: df_nube['ESTADO'] = df_nube['ESTADO'].astype(str).str.upper().str.strip()
@@ -197,7 +224,12 @@ def sincronizar_datos_nube(conn):
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
                 ahora_momento_ts = pd.Timestamp(get_honduras_time())
-                fecha_limite_7d = ahora_momento_ts - timedelta(days=7) 
+                # Forzar formato naive si los datetimes son naive
+                if df_nube['HORA_LIQ'].dt.tz is None:
+                    ahora_naive = ahora_momento_ts.tz_localize(None)
+                else:
+                    ahora_naive = ahora_momento_ts
+                fecha_limite_7d = ahora_naive - timedelta(days=7) 
                 
                 if 'HORA_LIQ' in df_nube.columns and 'FECHA_APE' in df_nube.columns and 'ESTADO' in df_nube.columns:
                     mask_vivas = df_nube['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
@@ -455,6 +487,7 @@ def main():
                                 mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
                                 df_cloud = df_cloud[~mask_basura_cloud].copy()
                             if 'EMPRESA' in df_cloud.columns:
+                                # Filtrar estrictamente por la empresa ISCA
                                 mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                 df_cloud = df_cloud[mask_isca_cloud].copy()
 
@@ -465,11 +498,20 @@ def main():
                             df_combined = df_depurado
                             
                         if 'NUM' in df_combined.columns:
-                            df_combined['TIENE_LIQ'] = df_combined.get('HORA_LIQ').notna()
-                            df_combined = df_combined.sort_values(by=['TIENE_LIQ'], ascending=True)
+                            df_combined['NUM'] = df_combined['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                            
+                            df_combined['SORT_DATE'] = pd.to_datetime(df_combined['HORA_LIQ'], errors='coerce')
+                            df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.to_datetime(df_combined['FECHA_APE'], errors='coerce'))
+                            df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
+                            
+                            PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                            df_combined['ES_VIVA'] = df_combined['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+                            
+                            df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
+                            
                             df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                             df_nd = df_combined[df_combined['NUM'] == 'N/D']
-                            df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')
+                            df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
                         # Formatear fechas antes de persistir
                         df_to_upload = df_combined.copy()
@@ -490,7 +532,7 @@ def main():
 
         elif btn_reprocesar:
             if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
-                with st.spinner("☁️ Descargando base de Vehículos/Dispositivos desde GCS..."):
+                with st.spinner("⏳ Descargando base de Vehículos/Dispositivos desde GCS..."):
                     try:
                         df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
                         if df_fttx_cloud is None or df_fttx_cloud.empty:
@@ -533,7 +575,7 @@ def main():
                 if res_p_diamante is not None:
                     st.session_state.df_hist = res_h_diamante
                     if conn is not None:
-                        with st.spinner("☁️ Sincronizando y uniendo con histórico en GCS..."):
+                        with st.spinner("⏳ Sincronizando y uniendo con histórico en GCS..."):
                             try:
                                 df_new = res_p_diamante.copy()
                                 if 'NUM' in df_new.columns:
@@ -554,6 +596,7 @@ def main():
                                         df_cloud = df_cloud[~mask_basura_cloud].copy()
                                     
                                     if 'EMPRESA' in df_cloud.columns:
+                                        # Filtrar estrictamente por la empresa ISCA
                                         mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                         df_cloud = df_cloud[mask_isca_cloud].copy()
 
@@ -564,11 +607,20 @@ def main():
                                 else: df_combined = df_new
                                     
                                 if 'NUM' in df_combined.columns:
-                                    df_combined['TIENE_LIQ'] = df_combined.get('HORA_LIQ').notna()
-                                    df_combined = df_combined.sort_values(by=['TIENE_LIQ'], ascending=True)
+                                    df_combined['NUM'] = df_combined['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                    
+                                    df_combined['SORT_DATE'] = pd.to_datetime(df_combined['HORA_LIQ'], errors='coerce')
+                                    df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.to_datetime(df_combined['FECHA_APE'], errors='coerce'))
+                                    df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
+                                    
+                                    PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                                    df_combined['ES_VIVA'] = df_combined['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+                                    
+                                    df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
+                                    
                                     df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                                     df_nd = df_combined[df_combined['NUM'] == 'N/D']
-                                    df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')
+                                    df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
                                 df_to_upload = df_combined.copy()
                                 for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
@@ -642,7 +694,26 @@ def main():
             
             # Asignar la columna GPS dinámicamente mediante cruce de nombres normalizados
             df_base['TECNICO_NORM'] = df_base['TECNICO'].apply(normalizar_nombre_cruce)
-            df_base['GPS'] = df_base['TECNICO_NORM'].map(gps_map).fillna("")
+            
+            # === BUSCADOR INTELIGENTE CON TOLERANCIA A NOMBRES INCOMPLETOS ===
+            def buscar_enlace_gps(tecnico_norm):
+                if not tecnico_norm:
+                    return ""
+                # 1. Coincidencia exacta post-normalización
+                if tecnico_norm in gps_map:
+                    return gps_map[tecnico_norm]
+                # 2. Coincidencia parcial por sub-palabras (ej: "Nelson Ferrufino" dentro de "Nelson Ramon Ferrufino Leon")
+                for gps_name, url in gps_map.items():
+                    words_gps = set(gps_name.split())
+                    words_tec = set(tecnico_norm.split())
+                    # Si el nombre de gps.txt está completamente contenido en el de la base de datos
+                    if words_gps.issubset(words_tec) and len(words_gps) >= 2:
+                        return url
+                    if words_tec.issubset(words_gps) and len(words_tec) >= 2:
+                        return url
+                return ""
+                
+            df_base['GPS'] = df_base['TECNICO_NORM'].apply(buscar_enlace_gps)
             df_base.drop(columns=['TECNICO_NORM'], errors='ignore', inplace=True)
         else:
             df_base['GPS'] = ""
@@ -661,13 +732,20 @@ def main():
         df_base = df_base[~mask_basura_global].copy()
 
     if 'NUM' in df_base.columns:
-        df_base['NUM'] = df_base['NUM'].astype(str)
-        temp_date_b = df_base.get('HORA_LIQ', df_base.get('FECHA_APE', pd.NaT))
-        df_base['FECHA_SORT'] = pd.to_datetime(temp_date_b, errors='coerce')
-        df_base = df_base.sort_values(by='FECHA_SORT', na_position='first')
+        df_base['NUM'] = df_base['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
+        df_base['SORT_DATE'] = pd.to_datetime(df_base['HORA_LIQ'], errors='coerce')
+        df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.to_datetime(df_base['FECHA_APE'], errors='coerce'))
+        df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
+        
+        PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+        df_base['ES_VIVA'] = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+        
+        df_base = df_base.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
+        
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
         df_invalidos = df_base[df_base['NUM'] == 'N/D']
-        df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['FECHA_SORT'], errors='ignore')
+        df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
     if 'SUSCRIPTOR' in df_base.columns and 'NOMBRE' not in df_base.columns: df_base.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
@@ -950,7 +1028,7 @@ def main():
                         df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
                         cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                         df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
-                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Dispatch_{hoy_date_valor}')
                         st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                         if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary"):
                             with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
@@ -1768,8 +1846,8 @@ def main():
                     renderizar_metrica(col3, stats_global, "🌍 Global", "#10B981", "glob")
 
                 st.markdown("---")
-
-    if st.session_state.get('config_mostrar_panel', True):
+        
+        if st.session_state.get('config_mostrar_panel', True):
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
