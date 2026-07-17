@@ -1768,9 +1768,8 @@ def main():
                     renderizar_metrica(col3, stats_global, "🌍 Global", "#10B981", "glob")
 
                 st.markdown("---")
-        
-        if st.session_state.get('config_ver_panel', True):
-if st.session_state.get('config_mostrar_panel', True):
+
+    if st.session_state.get('config_mostrar_panel', True):
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
