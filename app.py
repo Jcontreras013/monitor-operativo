@@ -1771,7 +1771,7 @@ def main():
         
         if st.session_state.get('config_ver_panel', True):
             if not es_movil:
-                if st.session_state.get('config_ver_gantt', True):
+if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
@@ -1779,6 +1779,109 @@ def main():
                         
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
                         
+                        # ==============================================================================
+                        # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
+                        # ==============================================================================
+                        alertas_9am = []
+                        alertas_tiempo_muerto = []
+                        
+                        ahora_local = get_honduras_time()
+                        limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
+                        
+                        # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
+                        if ahora_local > limite_9am:
+                            tecs_con_asignacion = df_monitor_filtrado[
+                                (df_monitor_filtrado['TECNICO'].notna()) & 
+                                (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
+                                (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                            ]['TECNICO'].unique()
+                            
+                            for tec in tecs_con_asignacion:
+                                df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
+                                ordenes_iniciadas_hoy = df_tec_hoy[
+                                    df_tec_hoy['HORA_INI'].notna() & 
+                                    (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
+                                ]
+                                if ordenes_iniciadas_hoy.empty:
+                                    alertas_9am.append(tec)
+                                    
+                        # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
+                        df_jornada_hoy = df_monitor_filtrado[
+                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
+                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
+                            (df_monitor_filtrado['TECNICO'].notna()) &
+                            (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
+                        ].copy()
+                        
+                        if not df_jornada_hoy.empty:
+                            for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                                group_sorted = group.sort_values(by='HORA_INI')
+                                
+                                # Brechas históricas entre tareas finalizadas e iniciadas
+                                for i in range(len(group_sorted) - 1):
+                                    task_actual = group_sorted.iloc[i]
+                                    task_siguiente = group_sorted.iloc[i+1]
+                                    
+                                    liq_actual = task_actual.get('HORA_LIQ')
+                                    ini_siguiente = task_siguiente.get('HORA_INI')
+                                    
+                                    if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
+                                        gap_mins = (ini_siguiente - liq_actual).total_seconds() / 60
+                                        if gap_mins > 30:
+                                            alertas_tiempo_muerto.append({
+                                                "tipo": "historico",
+                                                "tecnico": tec,
+                                                "gap": int(gap_mins),
+                                                "orden_prev": task_actual.get('NUM', 'N/D'),
+                                                "orden_next": task_siguiente.get('NUM', 'N/D'),
+                                                "hora_fin": liq_actual.strftime('%H:%M')
+                                            })
+                                
+                                # Brechas en vivo (tiempo de inactividad actual desde el último cierre)
+                                tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
+                                if not tiene_orden_activa:
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
+                                    if not ordenes_cerradas.empty:
+                                        ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
+                                        liq_last = ultima_cerrada.get('HORA_LIQ')
+                                        gap_vivo_mins = (ahora_local - liq_last).total_seconds() / 60
+                                        if gap_vivo_mins > 30:
+                                            alertas_tiempo_muerto.append({
+                                                "tipo": "vivo",
+                                                "tecnico": tec,
+                                                "gap": int(gap_vivo_mins),
+                                                "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
+                                                "hora_fin": liq_last.strftime('%H:%M')
+                                            })
+                                            
+                        # Renderizado visual de alertas detectadas en la UI
+                        if alertas_9am or alertas_tiempo_muerto:
+                            st.markdown("#### 🚨 ALERTAS OPERATIVAS DETECTADAS")
+                            col_al1, col_al2 = st.columns(2)
+                            
+                            with col_al1:
+                                if alertas_9am:
+                                    st.markdown("<h6 style='color: #EF4444;'>⏰ Inicio Tardío (Sin apertura hoy)</h6>", unsafe_allow_html=True)
+                                    for t_name in alertas_9am:
+                                        st.error(f"⚠️ **{t_name}** tiene asignación pero **no ha aperturado** labores.")
+                                else:
+                                    st.success("✅ Todos los técnicos activos iniciaron labores hoy.")
+                                    
+                            with col_al2:
+                                if alertas_tiempo_muerto:
+                                    st.markdown("<h6 style='color: #F59E0B;'>⏳ Tiempos Muertos / Inactividad (> 30 min)</h6>", unsafe_allow_html=True)
+                                    for item in alertas_tiempo_muerto:
+                                        if item["tipo"] == "vivo":
+                                            st.warning(f"🚨 **{item['tecnico']}** lleva **{item['gap']} min inactivo** desde cierre ORD-{item['orden_prev']} ({item['hora_fin']}).")
+                                        else:
+                                            st.info(f"⚠️ **{item['tecnico']}** tuvo **{item['gap']} min de ocio** entre ORD-{item['orden_prev']} y ORD-{item['orden_next']}.")
+                                else:
+                                    st.success("✅ Sin tiempos muertos excesivos registrados.")
+                            st.markdown("---")
+
+                        # ==============================================================================
+                        # CONTINUACIÓN: PROCESAMIENTO Y DIBUJADO DEL GANTT
+                        # ==============================================================================
                         mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
                         
