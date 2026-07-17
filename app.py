@@ -81,6 +81,22 @@ except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
 
 # ==============================================================================
+# FUNCIONES AUXILIARES DE SOPORTE GLOBAL
+# ==============================================================================
+def normalizar_nombre_cruce(texto):
+    """
+    Normaliza texto eliminando acentos, caracteres invisibles (como el Zero-Width Non-Joiner)
+    y espacios extra para asegurar un cruce de nombres óptimo.
+    """
+    if pd.isnull(texto): 
+        return ""
+    t = str(texto).upper().strip()
+    # Limpieza de caracteres invisibles típicos en archivos txt/copias de portales
+    t = t.replace('\u200c', '').replace('\u200b', '')
+    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+    return ' '.join(t.split())
+
+# ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
 # ==============================================================================
 st.set_page_config(
@@ -404,12 +420,12 @@ def main():
                         df_depurado['ALERTA_TIEMPO'] = (
                             (df_depurado['HORA_INI'].notnull()) & (df_depurado['HORA_LIQ'].isnull()) & (mins_diff > 120) & 
                             (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
-)
+                        )
 
-                    # === 1. DEFINICIÓN DE LA VARIABLE FALTANTE ===
+                        # === 1. DEFINICIÓN DE LA VARIABLE FALTANTE ===
                         mask_est_abierto = est_upper != 'CERRADA'
 
-                    # === 2. CÁLCULO SEGURO ===
+                        # === 2. CÁLCULO SEGURO ===
                         df_depurado['ES_OFFLINE'] = ((df_depurado['TECNICO'].astype(str).str.upper() != 'JOSUE MIGUEL SAUCEDA') & mask_est_abierto & mask_sop & ~mask_falsos & (com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True) | com_upper.apply(es_offline_preciso)))
 
                         df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
@@ -598,12 +614,38 @@ def main():
                 return
 
     df_base = st.session_state.df_base.copy()
+
+    # ==============================================================================
+    # EXTRACCIÓN Y MAPEO DINÁMICO DEL ARCHIVO GPS.TXT
+    # ==============================================================================
+    gps_map = {}
+    if os.path.exists("gps.txt"):
+        try:
+            with open("gps.txt", "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(",")
+                    if len(parts) >= 3:
+                        g_url = parts[0].strip()
+                        g_name = parts[2].strip().rstrip(".")
+                        gps_map[normalizar_nombre_cruce(g_name)] = g_url
+        except Exception as e:
+            pass
     
     if not df_base.empty:
         if 'TECNICO' in df_base.columns:
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
             valores_invalidos_tec = ['NONE', 'NAN', 'N/D', 'NULL', '', '0']
             df_base = df_base[~df_base['TECNICO'].isin(valores_invalidos_tec) & df_base['TECNICO'].notna()]
+            
+            # Asignar la columna GPS dinámicamente mediante cruce de nombres normalizados
+            df_base['TECNICO_NORM'] = df_base['TECNICO'].apply(normalizar_nombre_cruce)
+            df_base['GPS'] = df_base['TECNICO_NORM'].map(gps_map).fillna("")
+            df_base.drop(columns=['TECNICO_NORM'], errors='ignore', inplace=True)
+        else:
+            df_base['GPS'] = ""
             
         if 'ACTIVIDAD' in df_base.columns:
             df_base['ACTIVIDAD'] = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper()
@@ -785,16 +827,8 @@ def main():
                     st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
             
             try:
-                
                 # === IMPORTACIÓN INTERNA DIRECTA ===
                 from tools import cargar_catalogo_tecnicos
-                
-                def normalizar_nombre_cruce(texto):
-                    if pd.isnull(texto): return ""
-                    t = str(texto).upper().strip()
-                    # Remueve acentos (tildes) de forma segura
-                    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
-                    return ' '.join(t.split())
                 
                 df_cat_tecs = cargar_catalogo_tecnicos()
                 if not df_cat_tecs.empty:
@@ -815,7 +849,6 @@ def main():
                 lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
                 
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
-            
 
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
@@ -856,7 +889,7 @@ def main():
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
-                def clasificar_dispatch(row):
+                def clasificiar_dispatch(row):
                     act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
                     if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
                     elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
@@ -1736,7 +1769,7 @@ def main():
 
                 st.markdown("---")
         
-        if st.session_state.get('config_mostrar_panel', True):
+        if st.session_state.get('config_ver_panel', True):
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
@@ -1874,8 +1907,6 @@ def main():
                         df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
                         
 
-# Este bloque completo está a 12 espacios del borde izquierdo
-           # Este bloque completo está a 12 espacios del borde izquierdo
             t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
             with t_panel_v:
@@ -1997,7 +2028,6 @@ def main():
                             else:
                                 st.caption("Sin datos de diagnósticos para graficar.")
 
-# Este bloque final de ejecución queda al ras del margen izquierdo (0 espacios)
 if __name__ == '__main__':
     if verificar_autenticacion():
         main()
