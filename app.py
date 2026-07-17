@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit st
 import pandas as pd
 import numpy as np
 import os
@@ -2001,7 +2001,7 @@ def main():
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
-                            # === MAPEO DE ETIQUETAS Y ALERTAS DIRECTAMENTE EN EL GJE Y DE LA GRÁFICA ===
+                            # === MAPEO DE ETIQUETAS Y ALERTAS DIRECTAMENTE EN EL EJE Y DE LA GRÁFICA ===
                             tec_label_mapping = {}
                             for tec in df_para_gantt_final['TECNICO'].unique():
                                 tec_norm = normalizar_nombre_cruce(tec)
@@ -2282,7 +2282,7 @@ def main():
                                 st.caption("Sin datos de segmentos para graficar.")
                                 
                         with col_an2:
-                            if not motifs_conteo.empty:
+                            if not motivos_conteo.empty:
                                 fig, ax = plt.subplots(figsize=(6, 4))
                                 motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
                                 ax.set_ylabel('')
