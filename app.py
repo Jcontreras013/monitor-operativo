@@ -2003,7 +2003,7 @@ with t_panel_v:
                 else:
                     st.warning("No hay registros disponibles para mostrar.")
 
-            with t_graphs_v:
+                with t_graphs_v:
                 st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
             
                 df_graficas = df_base.copy()
