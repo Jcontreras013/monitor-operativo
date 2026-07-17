@@ -13,6 +13,7 @@ from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente # Importación modular correcta al inicio [3]
+import unicodedata
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
@@ -783,8 +784,32 @@ def main():
                 if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
                     st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
             
-            lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+            try:
+                
+                def normalizar_nombre_cruce(texto):
+                    if pd.isnull(texto): return ""
+                    t = str(texto).upper().strip()
+                    # Remueve acentos (tildes) de forma segura
+                    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+                    return ' '.join(t.split())
+                
+                df_cat_tecs = cargar_catalogo_tecnicos()
+                if not df_cat_tecs.empty:
+                    # Filtramos el catálogo para quedarnos sólo con los clasificados como TÉCNICO PRINCIPAL
+                    df_principales = df_cat_tecs[df_cat_tecs['Clasificación'] == "TÉCNICO PRINCIPAL"]
+                    tecs_validos_set = {normalizar_nombre_cruce(n) for n in df_principales['Nombre'].dropna()}
+                    
+                    tecs_en_base = df_base_activa['TECNICO'].dropna().unique().tolist()
+                    # Filtramos la lista de la pantalla quedándonos únicamente con los activos
+                    tecs_filtrados = [t for t in tecs_en_base if normalizar_nombre_cruce(t) in tecs_validos_set]
+                    lista_tecs_monitor = ["Todos"] + sorted(tecs_filtrados)
+                else:
+                    lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+            except Exception:
+                lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
+                
             tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            
 
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
@@ -1844,6 +1869,7 @@ def main():
                         
 
 # Este bloque completo está a 12 espacios del borde izquierdo
+           # Este bloque completo está a 12 espacios del borde izquierdo
             t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
             with t_panel_v:
