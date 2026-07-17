@@ -1922,29 +1922,47 @@ def main():
                     else:
                         st.info("Sin datos de cierres para generar gráfico horario.")
 
-                with t_analitica_v:
+with t_analitica_v:
                     st.markdown("### 📈 Análisis de Rendimiento Operativo")
-                    plt.style.use('dark_background')
                     
-                    if es_movil:
-                        fig, ax = plt.subplots(figsize=(6, 4))
-                        df_v_tabla_monitor['SEGMENTO'].value_counts().plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
-                        ax.set_title("Órdenes por Segmento")
-                        st.pyplot(fig)
+                    # === PROTECCIÓN: Si no hay datos, muestra un mensaje amigable en lugar de fallar ===
+                    if df_v_tabla_monitor.empty:
+                        st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
                     else:
-                        col_an1, col_an2 = st.columns(2)
-                        with col_an1:
-                            fig, ax = plt.subplots(figsize=(6, 4))
-                            df_v_tabla_monitor['SEGMENTO'].value_counts().plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
-                            ax.set_title("Órdenes por Segmento")
-                            st.pyplot(fig)
-                        with col_an2:
-                            fig, ax = plt.subplots(figsize=(6, 4))
-                            df_v_tabla_monitor['MOTIVO'].value_counts().plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
-                            ax.set_ylabel('')
-                            ax.set_title("Motivo / Diagnóstico")
-                            st.pyplot(fig)
-
+                        plt.style.use('dark_background')
+                        
+                        # Generamos los conteos de forma segura
+                        segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
+                        motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
+                        
+                        if es_movil:
+                            if not segmentos_conteo.empty:
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
+                                ax.set_title("Órdenes por Segmento")
+                                st.pyplot(fig)
+                            else:
+                                st.caption("Sin datos de segmentos.")
+                        else:
+                            col_an1, col_an2 = st.columns(2)
+                            with col_an1:
+                                if not segmentos_conteo.empty:
+                                    fig, ax = plt.subplots(figsize=(6, 4))
+                                    segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
+                                    ax.set_title("Órdenes por Segmento")
+                                    st.pyplot(fig)
+                                else:
+                                    st.caption("Sin datos de segmentos para graficar.")
+                                    
+                            with col_an2:
+                                if not motivos_conteo.empty:
+                                    fig, ax = plt.subplots(figsize=(6, 4))
+                                    motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
+                                    ax.set_ylabel('')
+                                    ax.set_title("Motivo / Diagnóstico")
+                                    st.pyplot(fig)
+                                else:
+                                    st.caption("Sin datos de diagnósticos para graficar.")
 if __name__ == '__main__':
     if verificar_autenticacion():
         main()
