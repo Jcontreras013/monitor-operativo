@@ -1914,20 +1914,21 @@ def main():
                 alertas_tiempo_muerto = []
                 
                 # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
-                tecnicos_validos_alertas = set()
-                file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
-                if file_to_load:
-                    try:
-                        with open(file_to_load, "r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if line:
-                                    parts = line.split(",")
-                                    if len(parts) >= 3:
-                                        name = parts[2].strip().rstrip(".")
-                                    else:
-                                        name = parts[-1].strip().rstrip(".")
-                                    tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
+# Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
+                        tecnicos_validos_alertas = set()
+                        file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
+                        if file_to_load:
+                            try:
+                                with open(file_to_load, "r", encoding="utf-8") as f:
+                                    for line in f:
+                                        line = line.strip()
+                                        if line:
+                                            parts = line.split(",")
+                                            if len(parts) >= 3:
+                                                name = parts[2].strip().rstrip(".")
+                                            else:
+                                                name = parts[-1].strip().rstrip(".")
+                                            tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
                             except Exception as e:
                                 pass
                 
