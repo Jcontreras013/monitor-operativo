@@ -2178,59 +2178,127 @@ def main():
                             st.plotly_chart(fig_gantt, use_container_width=True)
 
                         # ==============================================================================
-                        # TABLA DE APERTURA TARDÍA Y TIEMPO MUERTO (separada del gráfico)
+                        # TABLA 1: APERTURA TARDÍA (separada del gráfico)
                         # ==============================================================================
-                        tecnicos_con_alerta = set(alertas_9am) | {a["tecnico"] for a in alertas_tiempo_muerto}
-
-                        with st.expander("📋 Detalle de Apertura Tardía y Tiempo Muerto", expanded=False):
-                            if not tecnicos_con_alerta:
-                                st.success("🎉 Sin retrasos de apertura ni tiempo muerto registrado hoy.")
+                        with st.expander("📋 Detalle de Apertura Tardía", expanded=False):
+                            if not alertas_9am:
+                                st.success("🎉 Sin retrasos de apertura registrados hoy.")
                             else:
-                                filas_tabla = []
-                                for tec in tecnicos_con_alerta:
-                                    # --- Apertura tardía: minutos entre las 9:00am y el inicio de la primera orden ---
-                                    es_tardio = tec in alertas_9am
-                                    atraso_min = 0
-                                    detalle_apertura = "✅ A tiempo"
-                                    if es_tardio:
-                                        primera_ini = primera_orden_por_tec.get(tec)
-                                        if primera_ini is not None:
-                                            atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
-                                            detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
-                                        else:
-                                            atraso_min = max(0, int((ahora_local - limite_9am).total_seconds() / 60))
-                                            detalle_apertura = f"🚨 Aún sin abrir ({atraso_min}m tarde)"
+                                filas_apertura = []
+                                for tec in alertas_9am:
+                                    primera_ini = primera_orden_por_tec.get(tec)
+                                    if primera_ini is not None:
+                                        atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
+                                        detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
+                                    else:
+                                        atraso_min = max(0, int((ahora_local - limite_9am).total_seconds() / 60))
+                                        detalle_apertura = f"🚨 Aún sin abrir ({atraso_min}m tarde)"
 
-                                    # --- Tiempo muerto: suma de huecos > 30 min, con 1 hora de almuerzo descontada ---
-                                    gaps_tec = [a["gap"] for a in alertas_tiempo_muerto if a["tecnico"] == tec]
-                                    tiempo_muerto_bruto = sum(gaps_tec)
-                                    descuento_almuerzo = 60 if tiempo_muerto_bruto > 0 else 0
-                                    tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
-
-                                    tiempo_perdido_total = atraso_min + tiempo_muerto_neto
-
-                                    filas_tabla.append({
+                                    filas_apertura.append({
                                         "TÉCNICO": tec,
-                                        "APERTURA TARDÍA": detalle_apertura,
-                                        "TIEMPO MUERTO BRUTO": f"{tiempo_muerto_bruto} min" if tiempo_muerto_bruto else "—",
-                                        "DESCUENTO ALMUERZO": f"-{descuento_almuerzo} min" if descuento_almuerzo else "—",
-                                        "TIEMPO MUERTO NETO": f"{tiempo_muerto_neto} min" if tiempo_muerto_neto else "—",
-                                        "TIEMPO PERDIDO TOTAL": tiempo_perdido_total
+                                        "DETALLE APERTURA": detalle_apertura,
+                                        "MINUTOS DE ATRASO": atraso_min
                                     })
 
-                                filas_tabla.sort(key=lambda f: f["TIEMPO PERDIDO TOTAL"], reverse=True)
-                                total_equipo = sum(f["TIEMPO PERDIDO TOTAL"] for f in filas_tabla)
+                                filas_apertura.sort(key=lambda f: f["MINUTOS DE ATRASO"], reverse=True)
+                                df_tabla_apertura = pd.DataFrame(filas_apertura)
+                                st.dataframe(
+                                    df_tabla_apertura,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "MINUTOS DE ATRASO": st.column_config.NumberColumn("⏰ Min. de Atraso", format="%d")
+                                    }
+                                )
 
-                                for f in filas_tabla:
-                                    minutos = f["TIEMPO PERDIDO TOTAL"]
-                                    horas, mins = divmod(minutos, 60)
-                                    f["TIEMPO PERDIDO TOTAL"] = f"⏱️ {horas}h {mins}m" if horas else f"⏱️ {mins} min"
+                        # ==============================================================================
+                        # TABLA 2: TIEMPO MUERTO TOTAL DE LA JORNADA (por técnico, desde su 1ra orden del día)
+                        # ------------------------------------------------------------------------------
+                        # Para cada técnico con actividad hoy:
+                        #   Tiempo Transcurrido = (última actividad u "ahora") - (inicio de su primera orden)
+                        #   Tiempo Trabajado    = suma de la duración de cada orden (cerradas + la activa)
+                        #   Tiempo Muerto Bruto = Tiempo Transcurrido - Tiempo Trabajado  (todos los huecos, no solo >30m)
+                        # ==============================================================================
+                        with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
+                            filas_muerto = []
+                            if not df_jornada_hoy.empty:
+                                for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                                    tec_norm = normalizar_nombre_cruce(tec)
+                                    if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                        continue
 
-                                df_tabla_alertas = pd.DataFrame(filas_tabla)
-                                st.dataframe(df_tabla_alertas, use_container_width=True, hide_index=True)
+                                    group_sorted = group.sort_values(by='HORA_INI')
+                                    ordenes_ini_hoy = group_sorted[
+                                        group_sorted['HORA_INI'].notna() &
+                                        (group_sorted['HORA_INI'].dt.date == hoy_date_valor)
+                                    ]
+                                    if ordenes_ini_hoy.empty:
+                                        continue
 
-                                horas_t, mins_t = divmod(total_equipo, 60)
-                                st.metric("⏱️ Tiempo Perdido Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
+                                    primera_orden_ini = ordenes_ini_hoy['HORA_INI'].min()
+
+                                    tiene_orden_activa_tm = not group_sorted[
+                                        group_sorted['HORA_INI'].notnull() & group_sorted['HORA_LIQ'].isnull()
+                                    ].empty
+
+                                    cerradas_hoy_tec = group_sorted[
+                                        group_sorted['HORA_LIQ'].notnull() &
+                                        (group_sorted['HORA_LIQ'].dt.date == hoy_date_valor)
+                                    ]
+
+                                    if tiene_orden_activa_tm:
+                                        referencia_fin = ahora_local
+                                    elif not cerradas_hoy_tec.empty:
+                                        referencia_fin = cerradas_hoy_tec['HORA_LIQ'].max()
+                                    else:
+                                        referencia_fin = ahora_local
+
+                                    tiempo_transcurrido_min = max(0.0, (referencia_fin - primera_orden_ini).total_seconds() / 60)
+
+                                    tiempo_trabajado_min = 0.0
+                                    for _, r_ord in ordenes_ini_hoy.iterrows():
+                                        ini_r = r_ord.get('HORA_INI')
+                                        liq_r = r_ord.get('HORA_LIQ')
+                                        if pd.isnull(ini_r):
+                                            continue
+                                        if pd.notnull(liq_r):
+                                            tiempo_trabajado_min += max(0.0, (liq_r - ini_r).total_seconds() / 60)
+                                        else:
+                                            tiempo_trabajado_min += max(0.0, (ahora_local - ini_r).total_seconds() / 60)
+
+                                    tiempo_muerto_bruto = int(round(max(0.0, tiempo_transcurrido_min - tiempo_trabajado_min)))
+                                    descuento_almuerzo = min(60, tiempo_muerto_bruto)
+                                    tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
+
+                                    filas_muerto.append({
+                                        "TÉCNICO": tec,
+                                        "1RA ORDEN DEL DÍA": primera_orden_ini.strftime('%H:%M'),
+                                        "REFERENCIA (Última act. / Ahora)": referencia_fin.strftime('%H:%M') + (" (en curso)" if tiene_orden_activa_tm else ""),
+                                        "TIEMPO MUERTO BRUTO": tiempo_muerto_bruto,
+                                        "DESCUENTO ALMUERZO": descuento_almuerzo,
+                                        "TIEMPO MUERTO NETO": tiempo_muerto_neto
+                                    })
+
+                            if not filas_muerto:
+                                st.success("🎉 Sin tiempo muerto registrado hoy.")
+                            else:
+                                filas_muerto.sort(key=lambda f: f["TIEMPO MUERTO NETO"], reverse=True)
+                                total_equipo_muerto = sum(f["TIEMPO MUERTO NETO"] for f in filas_muerto)
+
+                                df_tabla_muerto = pd.DataFrame(filas_muerto)
+                                st.dataframe(
+                                    df_tabla_muerto,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config={
+                                        "TIEMPO MUERTO BRUTO": st.column_config.NumberColumn("⏳ Muerto Bruto (min)", format="%d"),
+                                        "DESCUENTO ALMUERZO": st.column_config.NumberColumn("🍽️ Descuento Almuerzo (min)", format="%d"),
+                                        "TIEMPO MUERTO NETO": st.column_config.NumberColumn("🕳️ Muerto Neto (min)", format="%d"),
+                                    }
+                                )
+
+                                horas_t, mins_t = divmod(total_equipo_muerto, 60)
+                                st.metric("⏱️ Tiempo Muerto Neto Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
 
             st.markdown("---")
             if st.session_state.get('config_ver_panel', True):
