@@ -782,22 +782,32 @@ def main():
             t = str(val).lower().strip()
             if not t:
                 return False
-            if "onustatus: down" in t or "status: offline" in t or "status_text: offline" in t or "statustext: offline" in t:
+            if "onustatus: down" in t or "onustatus:down" in t or "status: offline" in t or "status_text: offline" in t or "statustext: offline" in t or "statustext:offline" in t:
                 return False
             is_up = "onustatus: up" in t or "onustatus:up" in t or "statustext: online" in t or "status_text: online" in t or "statustext:online" in t
             if is_up:
-                rx_val = None
-                rx_match = re.search(r'rx:\s*(-?\d+)', t)
+                dbm_real = None
+
+                # Formato "rx:" (ej. vendorId CDKT / equipos ONU residenciales)
+                # El valor crudo viene en CENTÉSIMAS de dBm → dividir entre 100.
+                # Ej: rx: -3045  ==  -30.45 dBm reales
+                rx_match = re.search(r'\brx:\s*(-?\d+\.?\d*)', t)
                 if rx_match:
-                    try: rx_val = float(rx_match.group(1))
+                    try: dbm_real = float(rx_match.group(1)) / 100.0
                     except: pass
+
+                # Formato "rxPower:" (ej. type GPNC14C / tarjetas OLT)
+                # El valor crudo viene en MILÉSIMAS de dBm → dividir entre 1000.
+                # Ej: rxPower: -16460.000  ==  -16.46 dBm reales
                 rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
                 if rxpower_match:
-                    try: rx_val = float(rxpower_match.group(1))
+                    try: dbm_real = float(rxpower_match.group(1)) / 1000.0
                     except: pass
-                if rx_val is not None:
-                    # Umbral de potencia degradada en fibra óptica (-35 dBm a -30 dBm)
-                    if rx_val < -35000 or (-10000 < rx_val < -3500):
+
+                if dbm_real is not None:
+                    # Umbral real de potencia óptica degradada: -30 dBm o peor
+                    # (ya convertido a dBm real, ambos formatos quedan en la misma escala)
+                    if dbm_real <= -30:
                         return False
                 return True
             return False
