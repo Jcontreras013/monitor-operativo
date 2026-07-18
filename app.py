@@ -351,6 +351,13 @@ def main():
         st.divider()
 
     with sidebar_bottom:
+        # Inicialización por defecto: sin esto, un usuario no-admin provoca
+        # UnboundLocalError porque btn_api_procesar nunca se asignaba fuera
+        # de la rama "if es_admin:".
+        btn_api_procesar = False
+        file_act_ptr = None
+        file_disp_ptr = None
+
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
 
