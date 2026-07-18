@@ -372,9 +372,9 @@ def main():
         st.markdown("### 📥 Carga de Archivos")
         
         if es_admin:
-            st.markdown("#### ⚡ Sincronización por API (Cepheus)")
-            fecha_inicio_api = st.date_input("Fecha de Extracción API:", value=get_honduras_time().date() - timedelta(days=7), key="api_date_input_sidebar")
-            btn_api_procesar = st.button("🔌 DESCARGAR DE CEPHEUS API", use_container_width=True, type="primary")
+            st.markdown("#### ⚡ Actualización Inmediata")
+            st.caption("El demonio interno (sync_job.py) sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
+            btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
             
             st.divider()
             st.markdown("#### 🚙 Carga FTTX e Históricos")
@@ -415,121 +415,15 @@ def main():
     # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar or btn_api_procesar:
         if btn_api_procesar:
-            with st.spinner("🔌 Conectando y descargando actividades de Cepheus API en Vivo..."):
-                try:
-                    fecha_dt_api = datetime.combine(fecha_inicio_api, dt_time(0, 0))
-                    df_api_raw = consultar_api_ordenes(fecha_dt_api)
-                    
-                    if df_api_raw is None or df_api_raw.empty:
-                        st.error("❌ No se obtuvieron órdenes de la API de Cepheus para el rango de fecha configurado.")
-                    else:
-                        # Descargar o resolver catálogo FTTX
-                        df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
-                        if df_fttx_cloud is None or df_fttx_cloud.empty:
-                            df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=0)
-                        
-                        df_depurado = depurar_api_con_dispositivos(df_api_raw, df_fttx_cloud)
-                        df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
-                        
-                        ahora_momento_ts = pd.Timestamp(get_honduras_time())
-                        fecha_limite_7d_ventana = ahora_momento_ts - timedelta(days=7) 
-                        mask_vivas_loc = df_depurado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                        df_depurado = df_depurado[(df_depurado['HORA_LIQ'] >= fecha_limite_7d_ventana) | (df_depurado['FECHA_APE'] >= fecha_limite_7d_ventana) | (df_depurado['HORA_LIQ'].isna()) | mask_vivas_loc].copy()
-                        
-                        df_depurado['DIAS_RETRASO'] = (ahora_momento_ts.normalize() - df_depurado['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
-                        if 'TECNICO' in df_depurado.columns:
-                            df_depurado.loc[df_depurado['TECNICO'].str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA', 'DIAS_RETRASO'] = 0
-
-                        # Cálculos operativos básicos en vivo
-                        act_upper = df_depurado['ACTIVIDAD'].fillna('').astype(str).str.upper()
-                        est_upper = df_depurado['ESTADO'].fillna('').astype(str).str.upper().str.strip()
-                        com_upper = df_depurado['COMENTARIO'].fillna('').astype(str).str.upper()
-                        cli_upper = df_depurado['CLIENTE'].fillna('').astype(str).str.upper()
-                        mins_diff = (ahora_momento_ts - df_depurado['HORA_INI']).dt.total_seconds() / 60
-
-                        mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
-                        mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
-
-                        df_depurado['ALERTA_TIEMPO'] = (
-                            (df_depurado['HORA_INI'].notnull()) & (df_depurado['HORA_LIQ'].isnull()) & (mins_diff > 120) & 
-                            (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
-                        )
-
-                        # === 1. DEFINICIÓN DE LA VARIABLE FALTANTE ===
-                        mask_est_abierto = est_upper != 'CERRADA'
-
-                        # === 2. CÁLCULO SEGURO ===
-                        df_depurado['ES_OFFLINE'] = ((df_depurado['TECNICO'].astype(str).str.upper() != 'JOSUE MIGUEL SAUCEDA') & mask_est_abierto & mask_sop & ~mask_falsos & (com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True) | com_upper.apply(es_offline_preciso)))
-
-                        df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
-                        
-                        texto_seg = act_upper + " " + cli_upper + " " + com_upper
-                        df_depurado['SEGMENTO'] = np.where(texto_seg.str.contains('PLEX|PEXTERNO|SPLITTEROPT', regex=True), 'PLEX', 'RESIDENCIAL')
-                        
-                        diff_temp = df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']
-                        df_depurado['TIEMPO_REAL'] = np.where(
-                            df_depurado['HORA_INI'].isnull() | df_depurado['HORA_LIQ'].isnull(),
-                            "---",
-                            (diff_temp.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
-                            ((diff_temp.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
-                        )
-
-                        # Consolidar con el histórico maestro
-                        df_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-                        if df_cloud is None or df_cloud.empty:
-                            df_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                            
-                        if df_cloud is not None and not df_cloud.empty:
-                            df_cloud.columns = df_cloud.columns.str.upper().str.strip()
-                            if 'NUM' in df_cloud.columns:
-                                df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                                df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'
-                            if 'ACTIVIDAD' in df_cloud.columns:
-                                mask_basura_cloud = df_cloud['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
-                                df_cloud = df_cloud[~mask_basura_cloud].copy()
-                            if 'EMPRESA' in df_cloud.columns:
-                                # Filtrar estrictamente por la empresa ISCA
-                                mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
-                                df_cloud = df_cloud[mask_isca_cloud].copy()
-
-                            mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False)
-                            df_historial_puro = df_cloud[~mask_vivas_nube].copy()
-                            df_combined = pd.concat([df_historial_puro, df_depurado])
-                        else:
-                            df_combined = df_depurado
-                            
-                        if 'NUM' in df_combined.columns:
-                            df_combined['NUM'] = df_combined['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                            
-                            df_combined['SORT_DATE'] = pd.to_datetime(df_combined['HORA_LIQ'], errors='coerce')
-                            df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.to_datetime(df_combined['FECHA_APE'], errors='coerce'))
-                            df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
-                            
-                            PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-                            df_combined['ES_VIVA'] = df_combined['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
-                            
-                            df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
-                            
-                            df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
-                            df_nd = df_combined[df_combined['NUM'] == 'N/D']
-                            df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
-
-                        # Formatear fechas antes de persistir
-                        df_to_upload = df_combined.copy()
-                        for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
-                            if c_date in df_to_upload.columns:
-                                df_to_upload[c_date] = pd.to_datetime(df_to_upload[c_date], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S').fillna('')
-                                
-                        sobrescribir_archivo_gcs(df_to_upload, NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", data=df_to_upload)
-                        
-                        st.session_state.df_base = df_combined
-                        st.success("✅ ¡Actualización manual completada en la nube y pantalla recargada!")
-                        import time
-                        time.sleep(1)
-                        st.rerun()
-                except Exception as e_manual:
-                    st.error(f"❌ Error al intentar forzar la consulta manual: {e_manual}")
+            # NOTA: Esta app corre en Streamlit Cloud y NO tiene alcance de red hacia
+            # la API interna de Cepheus (IP privada 192.168.x.x). La sincronización con
+            # esa API la realiza sync_job.py, corriendo de forma continua en la máquina
+            # dedicada dentro de la red de la empresa, cada 5 minutos. Este botón solo
+            # fuerza traer esa última versión ya sincronizada, sin caché.
+            if conn is not None:
+                sincronizar_datos_nube(conn)
+            else:
+                st.error("Conexión no disponible.")
 
         elif btn_reprocesar:
             if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
