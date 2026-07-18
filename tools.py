@@ -147,20 +147,40 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                 
                 if response.status_code == 200:
                     tipo_archivo = response.headers.get('Content-Type', 'Desconocido')
+                    texto_resp = response.text.strip()
                     print(f"  -> [INFO] Cepheus respondió con un archivo tipo: {tipo_archivo}")
-                    print(f"  -> [INFO] Tamaño del archivo: {len(response.content)} bytes")
-                    
-                    # === PROTECCIÓN: Si la respuesta es un error en formato JSON, la saltamos ===
-                    if 'json' in tipo_archivo.lower() or response.text.strip().startswith('{'):
-                        print(f"  -> [!] Cepheus devolvió un error JSON para {query_user}. Pasando al siguiente usuario...")
-                        continue  # Salta al siguiente usuario de la lista sin romper el ciclo
-                    
+                    print(f"  -> [INFO] Tamaño de la respuesta: {len(response.content)} bytes")
+
+                    # === WEBSERVICE NUEVO (producción): la respuesta SIEMPRE es JSON con
+                    # la forma {"codigo":200, "mensaje":"...", "ordenes":[ {...}, ... ]}.
+                    # Un JSON no es sinónimo de error: hay que parsearlo y revisar "codigo".
+                    if 'json' in tipo_archivo.lower() or texto_resp.startswith('{'):
+                        try:
+                            data_json = response.json()
+                        except Exception as e_json:
+                            print(f"  -> [-] La respuesta decía ser JSON pero no se pudo parsear para {query_user}: {e_json}")
+                            continue
+
+                        codigo_resp = data_json.get('codigo')
+                        ordenes = data_json.get('ordenes', [])
+
+                        if codigo_resp != 200 or not ordenes:
+                            mensaje_resp = data_json.get('mensaje', 'Sin mensaje')
+                            print(f"  -> [!] Cepheus respondió sin órdenes para {query_user} (código {codigo_resp}): {mensaje_resp}. Probando siguiente usuario...")
+                            continue
+
+                        df_temp = pd.DataFrame(ordenes)
+                        df_temp.columns = df_temp.columns.astype(str).str.upper().str.strip()
+                        print(f"  -> [+] ¡{len(df_temp)} órdenes descargadas con éxito desde la cuenta {query_user}!")
+                        return df_temp
+
+                    # === Compatibilidad retro: por si algún día vuelve a responder un archivo binario ===
                     try:
                         df_temp = pd.read_excel(io.BytesIO(response.content))
                     except Exception as e_excel:
                         print(f"  -> [!] No es un Excel válido: {e_excel}. Intentando como CSV...")
                         try:
-                            df_temp = pd.read_csv(io.StringIO(response.text), sep=None, engine='python')
+                            df_temp = pd.read_csv(io.StringIO(texto_resp), sep=None, engine='python')
                         except Exception as e_csv:
                             print(f"  -> [-] Falla total al leer el archivo. Error: {e_csv}")
                             df_temp = pd.DataFrame() 
