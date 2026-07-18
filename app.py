@@ -14,6 +14,7 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente # Importación modular correcta al inicio [3]
 import unicodedata
+
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
@@ -745,25 +746,44 @@ def main():
             t = str(val).lower().strip()
             if not t:
                 return False
-            if "onustatus: down" in t or "status: offline" in t or "status_text: offline" in t or "statustext: offline" in t:
+            
+            # 1. Determinar el estado básico de conexión
+            is_down = "onustatus: down" in t or "status: offline" in t or "status_text: offline" in t or "statustext: offline" in t
+            if is_down:
                 return False
-            is_up = "onustatus: up" in t or "onustatus:up" in t or "statustext: online" in t or "status_text: online" in t or "statustext:online" in t
-            if is_up:
-                rx_val = None
-                rx_match = re.search(r'rx:\s*(-?\d+)', t)
-                if rx_match:
-                    try: rx_val = float(rx_match.group(1))
-                    except: pass
-                rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
-                if rxpower_match:
-                    try: rx_val = float(rxpower_match.group(1))
-                    except: pass
-                if rx_val is not None:
-                    # Umbral de potencia degradada en fibra óptica (-35 dBm a -30 dBm)
-                    if rx_val < -35000 or (-10000 < rx_val < -3500):
-                        return False
-                return True
-            return False
+                
+            is_up = "onustatus: up" in t or "statustext: online" in t or "status_text: online" in t or "status: 4" in t
+            if not is_up:
+                return False
+                
+            # 2. Extraer potencia óptica (rx o rxPower) para validar atenuaciones críticas
+            rx_val = None
+            rx_match = re.search(r'rx:\s*(-?\d+)', t)
+            rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
+            
+            if rx_match:
+                try: rx_val = float(rx_match.group(1))
+                except: pass
+            elif rxpower_match:
+                try: rx_val = float(rxpower_match.group(1))
+                except: pass
+                
+            if rx_val is not None:
+                # Normalización inteligente de escala óptica (ej: -16460 -> -16.46 | -1754 -> -17.54)
+                abs_val = abs(rx_val)
+                if abs_val > 10000:
+                    normalized_rx = rx_val / 1000.0
+                elif abs_val > 1000:
+                    normalized_rx = rx_val / 100.0
+                else:
+                    normalized_rx = rx_val
+                
+                # Umbral crítico: si es menor que -30.0 dBm (como el Caso 2 de -30.45 dBm), es caída/degradado
+                if normalized_rx < -30.0:
+                    return False # Retorna falso online (es decir, se queda como Offline/Caído)
+                return True # Retorna realmente online (se descarta de la métrica de caídas)
+                
+            return True # Si no hay datos de potencia pero reporta UP, se asume online
             
         mask_realmente_online = df_base[col_olt_info].apply(determinar_si_esta_online)
         df_base.loc[mask_realmente_online, 'ES_OFFLINE'] = False
