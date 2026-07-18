@@ -51,26 +51,9 @@ def ejecutar_sincronizacion_background():
         print("[-] Fallo de descarga: La API de Cepheus no devolvió registros.")
         return
         
-    # 3. Cruzar con el catálogo de dispositivos FTTX desde el respaldo en la nube
-    df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET, "fttx_activo.csv")
-    if df_fttx_cloud is None or df_fttx_cloud.empty:
-        print("[-] Fallo: No se pudo localizar el archivo de respaldo fttx_activo.csv en GCS.")
-        return
-        
-    df_depurado = depurar_api_con_dispositivos(df_api_raw, df_fttx_cloud)
-    df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
-    
-    # 4. Calcular campos técnicos básicos
-    ahora_ts = pd.Timestamp(ahora_local)
-    df_depurado['DIAS_RETRASO'] = (ahora_ts.normalize() - df_depurado['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
-    
-    if 'TECNICO' in df_depurado.columns:
-        mask_josue = df_depurado['TECNICO'].astype(str).str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA'
-        df_depurado.loc[mask_josue, 'DIAS_RETRASO'] = 0
-        
-    df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
-
-    # 5. CONEXIÓN DIRECTA A GOOGLE SHEETS (Base de datos principal)
+    # 3. CONEXIÓN DIRECTA A GOOGLE SHEETS (Base de datos principal)
+    # Se conecta primero porque también sirve de respaldo para el catálogo FTTX
+    # si GCS falla (timeouts, conexión reiniciada, etc.)
     try:
         # Extraer credenciales seguras de gsheets desde Streamlit Secrets
         creds_dict = st.secrets["connections"]["gsheets"]
@@ -88,6 +71,40 @@ def ejecutar_sincronizacion_background():
     except Exception as e_sheets:
         print(f"[-] Fallo al conectar o leer desde Google Sheets: {e_sheets}")
         return
+
+    # 4. Cruzar con el catálogo de dispositivos FTTX: primero intenta el espejo
+    # rápido en GCS, y si falla (timeout, conexión reiniciada, etc.) cae de
+    # respaldo a la pestaña "FTTX" de Google Sheets, que se sube manualmente
+    # y también queda guardada ahí.
+    df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET, "fttx_activo.csv")
+    if df_fttx_cloud is None or df_fttx_cloud.empty:
+        print("[!] No se pudo leer fttx_activo.csv desde GCS. Intentando respaldo desde Google Sheets (pestaña FTTX)...")
+        try:
+            worksheet_fttx = spreadsheet.worksheet("FTTX")
+            registros_fttx = worksheet_fttx.get_all_records()
+            df_fttx_cloud = pd.DataFrame(registros_fttx)
+        except Exception as e_fttx_sheets:
+            print(f"[-] Fallo: tampoco se pudo leer el catálogo FTTX desde Google Sheets: {e_fttx_sheets}")
+            df_fttx_cloud = pd.DataFrame()
+
+    if df_fttx_cloud is None or df_fttx_cloud.empty:
+        print("[-] Fallo: No se pudo localizar el catálogo FTTX ni en GCS ni en Google Sheets. Se aborta este ciclo.")
+        return
+    else:
+        print(f"  -> [+] Catálogo FTTX cargado con {len(df_fttx_cloud)} registros.")
+        
+    df_depurado = depurar_api_con_dispositivos(df_api_raw, df_fttx_cloud)
+    df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
+    
+    # 5. Calcular campos técnicos básicos
+    ahora_ts = pd.Timestamp(ahora_local)
+    df_depurado['DIAS_RETRASO'] = (ahora_ts.normalize() - df_depurado['FECHA_APE'].dt.normalize()).dt.days.fillna(0).astype(int)
+    
+    if 'TECNICO' in df_depurado.columns:
+        mask_josue = df_depurado['TECNICO'].astype(str).str.strip().str.upper() == 'JOSUE MIGUEL SAUCEDA'
+        df_depurado.loc[mask_josue, 'DIAS_RETRASO'] = 0
+        
+    df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
 
     # 6. CONSOLIDACIÓN DE DATOS (Filtros y uniones)
     if df_sheets_master is not None and not df_sheets_master.empty:
