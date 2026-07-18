@@ -1952,6 +1952,10 @@ def main():
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
                         
                         # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
+                        # Regla: la PRIMERA orden del día debe iniciar antes de las 9:00.
+                        # Si el técnico aún no ha abierto nada, o si abrió su primera
+                        # orden después de las 9:00, cuenta como apertura tardía.
+                        primera_orden_por_tec = {}
                         if ahora_local > limite_9am:
                             tecs_con_asignacion = df_monitor_filtrado[
                                 (df_monitor_filtrado['TECNICO'].notna()) & 
@@ -1971,8 +1975,17 @@ def main():
                                     (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
                                 ]
                                 if ordenes_iniciadas_hoy.empty:
+                                    # Aún no ha abierto ninguna orden hoy
                                     alertas_9am.append(tec)
+                                    primera_orden_por_tec[tec] = None
+                                else:
+                                    primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
+                                    if primera_ini_tec > limite_9am:
+                                        # Sí abrió, pero su primera orden fue después de las 9:00
+                                        alertas_9am.append(tec)
+                                        primera_orden_por_tec[tec] = primera_ini_tec
                                     
+
                         # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
                         df_jornada_hoy = df_monitor_filtrado[
                             ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
@@ -2180,13 +2193,8 @@ def main():
                                     atraso_min = 0
                                     detalle_apertura = "✅ A tiempo"
                                     if es_tardio:
-                                        df_tec_hoy_tabla = df_monitor_filtrado[
-                                            (df_monitor_filtrado['TECNICO'] == tec) &
-                                            (df_monitor_filtrado['HORA_INI'].notna()) &
-                                            (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
-                                        ]
-                                        if not df_tec_hoy_tabla.empty:
-                                            primera_ini = df_tec_hoy_tabla['HORA_INI'].min()
+                                        primera_ini = primera_orden_por_tec.get(tec)
+                                        if primera_ini is not None:
                                             atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
                                             detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
                                         else:
