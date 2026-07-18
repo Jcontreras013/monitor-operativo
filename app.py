@@ -2033,6 +2033,29 @@ def main():
                                     'COMENTARIO': 'Sin apertura de labores hoy.'
                                 }
                                 df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame([dummy_row])], ignore_index=True)
+
+                        # Inyectar bloques "TIEMPO MUERTO" en los huecos reales entre órdenes,
+                        # usando los gaps que ya calculó la sección de alertas (> 30 minutos).
+                        for alerta in alertas_tiempo_muerto:
+                            if alerta["tipo"] == "historico":
+                                inicio_hueco = pd.Timestamp(datetime.combine(hoy_date_valor, dt_time(0, 0))) + pd.Timedelta(hours=int(alerta["hora_fin"].split(":")[0]), minutes=int(alerta["hora_fin"].split(":")[1]))
+                                fin_hueco = inicio_hueco + pd.Timedelta(minutes=alerta["gap"])
+                            else:  # "vivo": el hueco llega hasta el momento actual
+                                inicio_hueco = pd.Timestamp(datetime.combine(hoy_date_valor, dt_time(0, 0))) + pd.Timedelta(hours=int(alerta["hora_fin"].split(":")[0]), minutes=int(alerta["hora_fin"].split(":")[1]))
+                                fin_hueco = ahora_local
+
+                            dummy_hueco = {
+                                'TECNICO': alerta["tecnico"],
+                                'ACTIVIDAD': 'TIEMPO MUERTO',
+                                'NUM': 'N/D',
+                                'COLONIA': 'N/D',
+                                'ESTADO': 'INACTIVO',
+                                'HORA_INI': inicio_hueco,
+                                'HORA_LIQ': fin_hueco,
+                                'TIEMPO_REAL': f"{alerta['gap']}m",
+                                'COMENTARIO': f"Sin actividad por {alerta['gap']} minutos."
+                            }
+                            df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame([dummy_hueco])], ignore_index=True)
                         
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
@@ -2089,7 +2112,7 @@ def main():
                                 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
                                 'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                                'TRASLADOINTFIBRACORP', 'TVADICIONAL', 'SIN INICIO'
+                                'TRASLADOINTFIBRACORP', 'TVADICIONAL', 'SIN INICIO', 'TIEMPO MUERTO'
                             ]
                             
                             df_para_gantt_final = df_para_gantt_final[
@@ -2122,7 +2145,8 @@ def main():
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
                                 "REVISION": "#0288d1",
-                                "SIN INICIO": "#4B5563"  # Bloque de advertencia gris para inicios tardíos
+                                "SIN INICIO": "#4B5563",  # Bloque de advertencia gris para inicios tardíos
+                                "TIEMPO MUERTO": "#EF4444"  # Bloque rojo para huecos de inactividad > 30 min
                             }
 
                             fig_gantt = px.timeline(
