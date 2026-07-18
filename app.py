@@ -9,11 +9,11 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
+from streamlit_js_eval import streamlit_js_eval  # === IMPORTACIÓN CORREGIDA ===
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente # Importación modular correcta al inicio [3]
 import unicodedata
-
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
