@@ -1947,7 +1947,25 @@ def main():
                                             tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
                             except Exception as e:
                                 pass
-                        
+
+                        # === VALIDACIÓN DE COMPATIBILIDAD DEL LISTADO DE PERSONAL ===
+                        # Si el archivo de personal (personal_tecnico.txt / gps.txt) no coincide
+                        # con NINGÚN técnico de las órdenes de hoy (por diferencias de formato,
+                        # apellidos, o un archivo desactualizado), aplicar el filtro dejaría a
+                        # TODOS los técnicos fuera de la evaluación y las tablas de alertas
+                        # aparecerían vacías aunque el Gantt muestre retrasos o huecos reales.
+                        # En ese caso se ignora el filtro para no ocultar alertas por error.
+                        if tecnicos_validos_alertas:
+                            tecs_hoy_norm_check = {
+                                normalizar_nombre_cruce(t) for t in df_monitor_filtrado[
+                                    (df_monitor_filtrado['TECNICO'].notna()) &
+                                    (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
+                                    (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                                ]['TECNICO'].unique()
+                            }
+                            if not (tecnicos_validos_alertas & tecs_hoy_norm_check):
+                                tecnicos_validos_alertas = set()
+
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
                         
