@@ -12,10 +12,17 @@ def get_cookie_manager():
         st.session_state['cookie_manager'] = stx.CookieManager(key="galletas_sesion")
     return st.session_state['cookie_manager']
 
-cookie_manager = get_cookie_manager()
+# 🚨 IMPORTANTE: NUNCA asignar get_cookie_manager() a una variable de módulo aquí.
+# login.py solo se importa UNA VEZ por proceso; una variable global quedaría
+# fija al session_state de la primera persona que abrió la app, y TODOS los
+# usuarios siguientes terminarían leyendo/escribiendo su cookie a través del
+# CookieManager de esa primera sesión ("falso usuario"). Por eso cada función
+# de abajo llama a get_cookie_manager() en su propio cuerpo, en cada ejecución.
 
 def verificar_autenticacion():
     """Verifica la sesión activa usando cookies y un temporizador de 30 minutos."""
+    cookie_manager = get_cookie_manager()
+
     # Inicializar variables de sesión si no existen
     if 'autenticado' not in st.session_state:
         st.session_state['autenticado'] = False
@@ -77,6 +84,7 @@ def mostrar_pantalla_login():
             btn_ingresar = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
             
             if btn_ingresar:
+                cookie_manager = get_cookie_manager()
                 user_clean = usuario.strip().lower()
                 
                 # Vamos a la caja fuerte (secrets) a revisar si el usuario existe y si la clave coincide
@@ -102,6 +110,7 @@ def mostrar_pantalla_login():
 
 def mostrar_boton_logout():
     """Agrega la etiqueta del usuario, su rol y el botón de salida al final del lateral."""
+    cookie_manager = get_cookie_manager()
     with st.sidebar:
         st.divider()
         rol_mostrar = st.session_state.get('rol_actual', '').upper()
