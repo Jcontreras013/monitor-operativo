@@ -353,6 +353,15 @@ def main():
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
+
+        st.markdown("### ☁️ Sincronización")
+        if st.button("☁️ ACTUALIZAR DESDE LA NUBE", use_container_width=True, key="btn_nube_sidebar"):
+            if conn is not None:
+                sincronizar_datos_nube(conn)
+            else:
+                st.error("Conexión no disponible.")
+
+        st.divider()
         st.markdown("### 📥 Carga de Archivos")
         
         if es_admin:
