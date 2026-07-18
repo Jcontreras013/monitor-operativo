@@ -1948,24 +1948,6 @@ def main():
                             except Exception as e:
                                 pass
 
-                        # === VALIDACIÓN DE COMPATIBILIDAD DEL LISTADO DE PERSONAL ===
-                        # Si el archivo de personal (personal_tecnico.txt / gps.txt) no coincide
-                        # con NINGÚN técnico de las órdenes de hoy (por diferencias de formato,
-                        # apellidos, o un archivo desactualizado), aplicar el filtro dejaría a
-                        # TODOS los técnicos fuera de la evaluación y las tablas de alertas
-                        # aparecerían vacías aunque el Gantt muestre retrasos o huecos reales.
-                        # En ese caso se ignora el filtro para no ocultar alertas por error.
-                        if tecnicos_validos_alertas:
-                            tecs_hoy_norm_check = {
-                                normalizar_nombre_cruce(t) for t in df_monitor_filtrado[
-                                    (df_monitor_filtrado['TECNICO'].notna()) &
-                                    (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
-                                    (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-                                ]['TECNICO'].unique()
-                            }
-                            if not (tecnicos_validos_alertas & tecs_hoy_norm_check):
-                                tecnicos_validos_alertas = set()
-
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
                         
@@ -2066,22 +2048,9 @@ def main():
                         
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
-                        # Inyectar filas "SIN INICIO" para técnicos que no han empezado labores (para que aparezcan en la gráfica)
-                        for tec in alertas_9am:
-                            if tec not in df_para_gantt_final['TECNICO'].unique():
-                                dummy_row = {
-                                    'TECNICO': tec,
-                                    'ACTIVIDAD': 'SIN INICIO',
-                                    'NUM': 'N/D',
-                                    'COLONIA': 'N/D',
-                                    'ESTADO': 'PENDIENTE',
-                                    'HORA_INI': datetime.combine(hoy_date_valor, dt_time(8, 0)),
-                                    'HORA_LIQ': datetime.combine(hoy_date_valor, dt_time(8, 5)),
-                                    'TIEMPO_REAL': '---',
-                                    'COMENTARIO': 'Sin apertura de labores hoy.'
-                                }
-                                df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame([dummy_row])], ignore_index=True)
-
+                        # NOTA: Ya no se inyectan filas "SIN INICIO" ni etiquetas de alerta en el
+                        # Gantt para mantenerlo limpio. Toda la información de apertura tardía y
+                        # tiempo muerto se muestra únicamente en las tablas de los expanders de abajo.
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
                             
@@ -2099,35 +2068,9 @@ def main():
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
-                            # === MAPEO DE ETIQUETAS Y ALERTAS DIRECTAMENTE EN EL EJE Y DE LA GRÁFICA ===
-                            tec_label_mapping = {}
-                            for tec in df_para_gantt_final['TECNICO'].unique():
-                                tec_norm = normalizar_nombre_cruce(tec)
-                                
-                                # Si hay listado de personal cargado y el técnico no es de ruta válido, se excluye de las alertas
-                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
-                                    tec_label_mapping[tec] = tec
-                                    continue
-                                    
-                                if tec in alertas_9am:
-                                    tec_label_mapping[tec] = f"⚠️ {tec} ⏰ (Sin Inicio)"
-                                    continue
-                                    
-                                tec_alerts = [a for a in alertas_tiempo_muerto if a["tecnico"] == tec]
-                                if tec_alerts:
-                                    live_alerts = [a for a in tec_alerts if a["tipo"] == "vivo"]
-                                    if live_alerts:
-                                        alert_info = live_alerts[0]
-                                        tec_label_mapping[tec] = f"🚨 {tec} 🛑 (Inactivo {alert_info['gap']}m)"
-                                    else:
-                                        hist_alert = tec_alerts[0]
-                                        tec_label_mapping[tec] = f"⚠️ {tec} ⏳ (Ocio {hist_alert['gap']}m)"
-                                    continue
-                                    
-                                tec_label_mapping[tec] = tec
-                                
-                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].map(tec_label_mapping)
-                            
+                            # === EJE Y DEL GRÁFICO: SOLO NOMBRE DEL TÉCNICO (SIN ALERTAS) ===
+                            # Las alertas de apertura tardía y tiempo muerto ya no se pintan aquí;
+                            # se consultan exclusivamente en las tablas de los expanders de abajo.
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
@@ -2137,7 +2080,7 @@ def main():
                                 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
                                 'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                                'TRASLADOINTFIBRACORP', 'TVADICIONAL', 'SIN INICIO'
+                                'TRASLADOINTFIBRACORP', 'TVADICIONAL'
                             ]
                             
                             df_para_gantt_final = df_para_gantt_final[
@@ -2169,8 +2112,7 @@ def main():
                                 "CEQUI": "#fbc02d",          
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
-                                "REVISION": "#0288d1",
-                                "SIN INICIO": "#4B5563"  # Bloque de advertencia gris para inicios tardíos
+                                "REVISION": "#0288d1"
                             }
 
                             fig_gantt = px.timeline(
