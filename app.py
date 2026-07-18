@@ -346,6 +346,10 @@ def main():
                 st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
                 nav_menu_diamante = "⚡ Monitor en Vivo"
 
+    with sidebar_top:
+        mostrar_boton_logout()
+        st.divider()
+
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
@@ -644,6 +648,23 @@ def main():
             if df_gcs_init is not None and not df_gcs_init.empty:
                 st.session_state.df_base = df_gcs_init
             else:
+                if os.path.exists("Logotipo monitor.png"):
+                    col1_img, col2_img, col3_img = st.columns([1, 2, 1])
+                    with col2_img:
+                        st.image("Logotipo monitor.png", use_container_width=True)
+                else:
+                    st.title("⚡ Monitor Operativo Maxcom PRO")
+
+                st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
+                st.markdown("<br><br>", unsafe_allow_html=True)
+
+                col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
+                with col_c2:
+                    if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_fallback_inicial"):
+                        if conn is not None:
+                            sincronizar_datos_nube(conn)
+                        else:
+                            st.error("Conexión no disponible.")
                 return
 
     df_base = st.session_state.df_base.copy()
