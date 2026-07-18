@@ -163,8 +163,8 @@ if __name__ == '__main__':
             print(f"[-] Falla crítica en el ciclo actual. Se reintentará en la siguiente ventana. Detalle: {e_critico}")
         
         print("="*60)
-        hora_prox = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M:%S")
-        print(f"⏳ Ciclo terminado. Esperando 30 minutos. Próxima ejecución a las: {hora_prox}")
+        hora_prox = (datetime.now() + timedelta(minutes=5)).strftime("%H:%M:%S")
+        print(f"⏳ Ciclo terminado. Esperando 5 minutos. Próxima ejecución a las: {hora_prox}")
         
-        # 1800 segundos = 30 minutos
-        time.sleep(1800)
+        # 300 segundos = 5 minutos
+        time.sleep(300)
