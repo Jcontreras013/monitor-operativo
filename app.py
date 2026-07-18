@@ -2175,9 +2175,12 @@ def main():
                         # TABLA 2: TIEMPO MUERTO TOTAL DE LA JORNADA (por técnico, desde su 1ra orden del día)
                         # ------------------------------------------------------------------------------
                         # Para cada técnico con actividad hoy:
-                        #   Tiempo Transcurrido = (última actividad u "ahora") - (inicio de su primera orden)
+                        #   Tiempo Transcurrido = (AHORA) - (inicio de su primera orden del día)
                         #   Tiempo Trabajado    = suma de la duración de cada orden (cerradas + la activa)
-                        #   Tiempo Muerto Bruto = Tiempo Transcurrido - Tiempo Trabajado  (todos los huecos, no solo >30m)
+                        #   Tiempo Muerto Bruto = Tiempo Transcurrido - Tiempo Trabajado
+                        # Se usa siempre "ahora" como referencia (y no la hora de su último cierre) para
+                        # que el tiempo muerto que sigue corriendo -por no haber abierto una orden nueva-
+                        # también se contabilice, igual que en el resto del tablero en vivo.
                         # ==============================================================================
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
                             filas_muerto = []
@@ -2197,21 +2200,16 @@ def main():
 
                                     primera_orden_ini = ordenes_ini_hoy['HORA_INI'].min()
 
-                                    tiene_orden_activa_tm = not group_sorted[
-                                        group_sorted['HORA_INI'].notnull() & group_sorted['HORA_LIQ'].isnull()
+                                    tiene_orden_activa_tm = not ordenes_ini_hoy[
+                                        ordenes_ini_hoy['HORA_INI'].notnull() & ordenes_ini_hoy['HORA_LIQ'].isnull()
                                     ].empty
 
-                                    cerradas_hoy_tec = group_sorted[
-                                        group_sorted['HORA_LIQ'].notnull() &
-                                        (group_sorted['HORA_LIQ'].dt.date == hoy_date_valor)
-                                    ]
+                                    cerradas_hoy_tec = ordenes_ini_hoy[ordenes_ini_hoy['HORA_LIQ'].notnull()]
+                                    ultima_actividad = cerradas_hoy_tec['HORA_LIQ'].max() if not cerradas_hoy_tec.empty else None
 
-                                    if tiene_orden_activa_tm:
-                                        referencia_fin = ahora_local
-                                    elif not cerradas_hoy_tec.empty:
-                                        referencia_fin = cerradas_hoy_tec['HORA_LIQ'].max()
-                                    else:
-                                        referencia_fin = ahora_local
+                                    # La referencia de cierre SIEMPRE es "ahora": si el técnico ya cerró su
+                                    # última orden y no ha abierto otra, ese tiempo sigue siendo tiempo muerto.
+                                    referencia_fin = ahora_local
 
                                     tiempo_transcurrido_min = max(0.0, (referencia_fin - primera_orden_ini).total_seconds() / 60)
 
@@ -2230,10 +2228,17 @@ def main():
                                     descuento_almuerzo = min(60, tiempo_muerto_bruto)
                                     tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
 
+                                    if tiene_orden_activa_tm:
+                                        estado_actual = "🔧 En orden activa"
+                                    elif ultima_actividad is not None:
+                                        estado_actual = f"💤 Libre desde {ultima_actividad.strftime('%H:%M')}"
+                                    else:
+                                        estado_actual = "💤 Libre (sin cierres hoy)"
+
                                     filas_muerto.append({
                                         "TÉCNICO": tec,
                                         "1RA ORDEN DEL DÍA": primera_orden_ini.strftime('%H:%M'),
-                                        "REFERENCIA (Última act. / Ahora)": referencia_fin.strftime('%H:%M') + (" (en curso)" if tiene_orden_activa_tm else ""),
+                                        "ESTADO ACTUAL": estado_actual,
                                         "TIEMPO MUERTO BRUTO": tiempo_muerto_bruto,
                                         "DESCUENTO ALMUERZO": descuento_almuerzo,
                                         "TIEMPO MUERTO NETO": tiempo_muerto_neto
