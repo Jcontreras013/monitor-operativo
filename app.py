@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import expediente # Importación modular correcta al inicio [3]
@@ -350,64 +349,46 @@ def main():
     with sidebar_bottom:
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
-        st.markdown("### ☁️ Sincronización")
-        if st.button("📥 ACTUALIZAR DESDE LA NUBE", help="Descargar última versión desde Google Cloud", use_container_width=True, key="btn_nube_sidebar"):
-            if conn is not None: sincronizar_datos_nube(conn)
-            else: st.error("La conexión a la nube no está disponible.")
-        st.markdown("<br>", unsafe_allow_html=True)
-        mostrar_boton_logout()
-
-        mostrar_cargador = False
-        if str(rol_usuario).strip().lower() != 'monitoreo' and not es_movil:
-            mostrar_cargador = True
-
-        file_act_ptr = None
-        file_disp_ptr = None
-        btn_reprocesar = False
-        btn_api_procesar = False
+        st.markdown("### 📥 Carga de Archivos")
         
-        if mostrar_cargador:
+        if es_admin:
+            st.markdown("#### ⚡ Sincronización por API (Cepheus)")
+            fecha_inicio_api = st.date_input("Fecha de Extracción API:", value=get_honduras_time().date() - timedelta(days=7), key="api_date_input_sidebar")
+            btn_api_procesar = st.button("🔌 DESCARGAR DE CEPHEUS API", use_container_width=True, type="primary")
+            
             st.divider()
-            st.markdown("### 📥 Carga de Archivos")
+            st.markdown("#### 🚙 Carga FTTX e Históricos")
+            st.caption("Subida tradicional manual de Dispositivos FTTX o rep_actividades en caso de contingencia.")
+            archivos_uploader_diamante = st.file_uploader("Sube rep_actividades y/o FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=True)
             
-            if es_admin:
-                st.markdown("#### ⚡ Sincronización por API (Cepheus)")
-                fecha_inicio_api = st.date_input("Fecha de Extracción API:", value=get_honduras_time().date() - timedelta(days=7), key="api_date_input_sidebar")
-                btn_api_procesar = st.button("🔌 DESCARGAR DE CEPHEUS API", use_container_width=True, type="primary")
-                
-                st.divider()
-                st.markdown("#### 🚙 Carga FTTX e Históricos")
-                st.caption("Subida tradicional manual de Dispositivos FTTX o rep_actividades en caso de contingencia.")
-                archivos_uploader_diamante = st.file_uploader("Sube rep_actividades y/o FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=True)
-                
-                if archivos_uploader_diamante:
-                    for file_item in archivos_uploader_diamante:
-                        f_name_lwr = file_item.name.lower()
-                        if "actividades" in f_name_lwr: 
-                            file_act_ptr = file_item
-                        elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
-                            file_disp_ptr = file_item
-                            try:
-                                with open("cache_fttx.tmp", "wb") as f: f.write(file_item.getvalue())
-                            except: pass
-                btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS SUBIDOS", use_container_width=True)
-            else:
-                st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
-                archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
-                if archivo_unico: file_act_ptr = archivo_unico
-                btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
+            if archivos_uploader_diamante:
+                for file_item in archivos_uploader_diamante:
+                    f_name_lwr = file_item.name.lower()
+                    if "actividades" in f_name_lwr: 
+                        file_act_ptr = file_item
+                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
+                        file_disp_ptr = file_item
+                        try:
+                            with open("cache_fttx.tmp", "wb") as f: f.write(file_item.getvalue())
+                        except: pass
+            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS SUBIDOS", use_container_width=True)
+        else:
+            st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
+            archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
+            if archivo_unico: file_act_ptr = archivo_unico
+            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
 
-            ahora_hx = get_honduras_time()
-            es_horario_tarde = ahora_hx.hour >= 17
-            es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
-            condicion_usar_cache = es_horario_tarde or es_fin_de_semana
-            
-            if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
-                if os.path.exists("cache_fttx.tmp"):
-                    try:
-                        with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
-                        st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
-                    except: pass
+        ahora_hx = get_honduras_time()
+        es_horario_tarde = ahora_hx.hour >= 17
+        es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
+        condicion_usar_cache = es_horario_tarde or es_fin_de_semana
+        
+        if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
+            if os.path.exists("cache_fttx.tmp"):
+                try:
+                    with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
+                    st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
+                except: pass
 
     # ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS CON API INTEGRADA)
@@ -748,6 +729,45 @@ def main():
         df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
+    
+    # === FILTRADO AVANZADO DE FALSOS OFFLINE USANDO TELEMETRÍA REAL FTTX ===
+    col_olt_info = None
+    for col in df_base.columns:
+        sample_vals = df_base[col].dropna().astype(str)
+        if sample_vals.str.contains("onustatus|statusText|adminState|rxPower", case=False, regex=True).any():
+            col_olt_info = col
+            break
+            
+    if col_olt_info:
+        def determinar_si_esta_online(val):
+            if pd.isnull(val):
+                return False
+            t = str(val).lower().strip()
+            if not t:
+                return False
+            if "onustatus: down" in t or "status: offline" in t or "status_text: offline" in t or "statustext: offline" in t:
+                return False
+            is_up = "onustatus: up" in t or "onustatus:up" in t or "statustext: online" in t or "status_text: online" in t or "statustext:online" in t
+            if is_up:
+                rx_val = None
+                rx_match = re.search(r'rx:\s*(-?\d+)', t)
+                if rx_match:
+                    try: rx_val = float(rx_match.group(1))
+                    except: pass
+                rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
+                if rxpower_match:
+                    try: rx_val = float(rxpower_match.group(1))
+                    except: pass
+                if rx_val is not None:
+                    # Umbral de potencia degradada en fibra óptica (-35 dBm a -30 dBm)
+                    if rx_val < -35000 or (-10000 < rx_val < -3500):
+                        return False
+                return True
+            return False
+            
+        mask_realmente_online = df_base[col_olt_info].apply(determinar_si_esta_online)
+        df_base.loc[mask_realmente_online, 'ES_OFFLINE'] = False
+
     if 'SUSCRIPTOR' in df_base.columns and 'NOMBRE' not in df_base.columns: df_base.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
     elif 'NOMBRE CLIENTE' in df_base.columns and 'NOMBRE' not in df_base.columns: df_base.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
 
@@ -967,7 +987,7 @@ def main():
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
-                def clasificiar_dispatch(row):
+                def clasificar_dispatch(row):
                     act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
                     if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
                     elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
@@ -1028,7 +1048,7 @@ def main():
                         df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
                         cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                         df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
-                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Dispatch_{hoy_date_valor}')
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Dispatch_Hoy')
                         st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                         if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary"):
                             with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
@@ -1243,13 +1263,13 @@ def main():
                     mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
                     df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
                     if not df_ins_cierre.empty:
-                        def clasificiar_ins_cierre(row):
+                        def clasificar_ins_cierre(row):
                             txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
                             if re.search('ADIC', txt): return 'Adición'
                             if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
                             if re.search('RECUP', txt): return 'Recuperado'
                             return 'Nueva'
-                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificiar_ins_cierre, axis=1)
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
                         df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
                         df_ins_grouped.columns = ['Instalaciones', 'Cant']
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
