@@ -2051,29 +2051,6 @@ def main():
                                 }
                                 df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame([dummy_row])], ignore_index=True)
 
-                        # Inyectar bloques "TIEMPO MUERTO" en los huecos reales entre órdenes,
-                        # usando los gaps que ya calculó la sección de alertas (> 30 minutos).
-                        for alerta in alertas_tiempo_muerto:
-                            if alerta["tipo"] == "historico":
-                                inicio_hueco = pd.Timestamp(datetime.combine(hoy_date_valor, dt_time(0, 0))) + pd.Timedelta(hours=int(alerta["hora_fin"].split(":")[0]), minutes=int(alerta["hora_fin"].split(":")[1]))
-                                fin_hueco = inicio_hueco + pd.Timedelta(minutes=alerta["gap"])
-                            else:  # "vivo": el hueco llega hasta el momento actual
-                                inicio_hueco = pd.Timestamp(datetime.combine(hoy_date_valor, dt_time(0, 0))) + pd.Timedelta(hours=int(alerta["hora_fin"].split(":")[0]), minutes=int(alerta["hora_fin"].split(":")[1]))
-                                fin_hueco = ahora_local
-
-                            dummy_hueco = {
-                                'TECNICO': alerta["tecnico"],
-                                'ACTIVIDAD': 'TIEMPO MUERTO',
-                                'NUM': 'N/D',
-                                'COLONIA': 'N/D',
-                                'ESTADO': 'INACTIVO',
-                                'HORA_INI': inicio_hueco,
-                                'HORA_LIQ': fin_hueco,
-                                'TIEMPO_REAL': f"{alerta['gap']}m",
-                                'COMENTARIO': f"Sin actividad por {alerta['gap']} minutos."
-                            }
-                            df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame([dummy_hueco])], ignore_index=True)
-                        
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
                             
@@ -2129,7 +2106,7 @@ def main():
                                 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
                                 'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                                'TRASLADOINTFIBRACORP', 'TVADICIONAL', 'SIN INICIO', 'TIEMPO MUERTO'
+                                'TRASLADOINTFIBRACORP', 'TVADICIONAL', 'SIN INICIO'
                             ]
                             
                             df_para_gantt_final = df_para_gantt_final[
@@ -2162,8 +2139,7 @@ def main():
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
                                 "REVISION": "#0288d1",
-                                "SIN INICIO": "#4B5563",  # Bloque de advertencia gris para inicios tardíos
-                                "TIEMPO MUERTO": "#EF4444"  # Bloque rojo para huecos de inactividad > 30 min
+                                "SIN INICIO": "#4B5563"  # Bloque de advertencia gris para inicios tardíos
                             }
 
                             fig_gantt = px.timeline(
@@ -2187,6 +2163,66 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
+
+                        # ==============================================================================
+                        # TABLA DE APERTURA TARDÍA Y TIEMPO MUERTO (separada del gráfico)
+                        # ==============================================================================
+                        tecnicos_con_alerta = set(alertas_9am) | {a["tecnico"] for a in alertas_tiempo_muerto}
+
+                        with st.expander("📋 Detalle de Apertura Tardía y Tiempo Muerto", expanded=False):
+                            if not tecnicos_con_alerta:
+                                st.success("🎉 Sin retrasos de apertura ni tiempo muerto registrado hoy.")
+                            else:
+                                filas_tabla = []
+                                for tec in tecnicos_con_alerta:
+                                    # --- Apertura tardía: minutos entre las 9:00am y el inicio de la primera orden ---
+                                    es_tardio = tec in alertas_9am
+                                    atraso_min = 0
+                                    detalle_apertura = "✅ A tiempo"
+                                    if es_tardio:
+                                        df_tec_hoy_tabla = df_monitor_filtrado[
+                                            (df_monitor_filtrado['TECNICO'] == tec) &
+                                            (df_monitor_filtrado['HORA_INI'].notna()) &
+                                            (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
+                                        ]
+                                        if not df_tec_hoy_tabla.empty:
+                                            primera_ini = df_tec_hoy_tabla['HORA_INI'].min()
+                                            atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
+                                            detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
+                                        else:
+                                            atraso_min = max(0, int((ahora_local - limite_9am).total_seconds() / 60))
+                                            detalle_apertura = f"🚨 Aún sin abrir ({atraso_min}m tarde)"
+
+                                    # --- Tiempo muerto: suma de huecos > 30 min, con 1 hora de almuerzo descontada ---
+                                    gaps_tec = [a["gap"] for a in alertas_tiempo_muerto if a["tecnico"] == tec]
+                                    tiempo_muerto_bruto = sum(gaps_tec)
+                                    descuento_almuerzo = 60 if tiempo_muerto_bruto > 0 else 0
+                                    tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
+
+                                    tiempo_perdido_total = atraso_min + tiempo_muerto_neto
+
+                                    filas_tabla.append({
+                                        "TÉCNICO": tec,
+                                        "APERTURA TARDÍA": detalle_apertura,
+                                        "TIEMPO MUERTO BRUTO": f"{tiempo_muerto_bruto} min" if tiempo_muerto_bruto else "—",
+                                        "DESCUENTO ALMUERZO": f"-{descuento_almuerzo} min" if descuento_almuerzo else "—",
+                                        "TIEMPO MUERTO NETO": f"{tiempo_muerto_neto} min" if tiempo_muerto_neto else "—",
+                                        "TIEMPO PERDIDO TOTAL": tiempo_perdido_total
+                                    })
+
+                                filas_tabla.sort(key=lambda f: f["TIEMPO PERDIDO TOTAL"], reverse=True)
+                                total_equipo = sum(f["TIEMPO PERDIDO TOTAL"] for f in filas_tabla)
+
+                                for f in filas_tabla:
+                                    minutos = f["TIEMPO PERDIDO TOTAL"]
+                                    horas, mins = divmod(minutos, 60)
+                                    f["TIEMPO PERDIDO TOTAL"] = f"⏱️ {horas}h {mins}m" if horas else f"⏱️ {mins} min"
+
+                                df_tabla_alertas = pd.DataFrame(filas_tabla)
+                                st.dataframe(df_tabla_alertas, use_container_width=True, hide_index=True)
+
+                                horas_t, mins_t = divmod(total_equipo, 60)
+                                st.metric("⏱️ Tiempo Perdido Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
 
             st.markdown("---")
             if st.session_state.get('config_ver_panel', True):
