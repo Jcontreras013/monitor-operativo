@@ -13,7 +13,7 @@ from streamlit_js_eval import streamlit_js_eval  # === IMPORTACIÓN CORREGIDA ==
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import unicodedata
-import ccalidad
+
 
 # ==============================================================================
 # CONFIGURACIÓN DE RUTAS DEL SISTEMA (¡VITAL: DEBE IR ANTES DE LOS MÓDULOS LOCALES!)
@@ -50,6 +50,11 @@ try:
     import biometrico
 except ImportError:
     st.error("⚠️ Falta el archivo 'biometrico.py'. Asegúrate de crearlo en la misma carpeta para ver el reporte Biométrico.")
+
+try:
+    import ccalidad
+except ImportError:
+    st.error("⚠️ Falta el archivo 'ccalidad.py'. Asegúrate de crearlo en la misma carpeta para ver el módulo de Control de Calidad.")
 
 
 try:
