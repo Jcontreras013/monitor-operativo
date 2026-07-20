@@ -6,7 +6,7 @@ from tools import guardar_registro_calidad, generar_url_whatsapp_QA, get_hondura
 
 def mostrar_modulo_calidad(conn, df_base):
     st.title("🏅 Control de Calidad y Auditoría de Servicios")
-    st.caption("Gestión unificada de auditorías post-servicio: Registro de llamadas en vivo y envíos de encuestas por WhatsApp.")
+    st.caption("Gestión unificada de auditorías: Ingrese un número de orden para auto-rellenar los datos del servicio.")
     
     # Filtrar órdenes cerradas (las evaluables)
     df_cerradas = df_base[df_base['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
@@ -15,16 +15,15 @@ def mostrar_modulo_calidad(conn, df_base):
         st.info("ℹ️ No hay órdenes cerradas en el sistema para evaluar en este momento.")
         return
 
-    # Generar lista de selección para las órdenes cerradas
-    df_cerradas['OPCION_SELECT'] = "ORD-" + df_cerradas['NUM'].astype(str) + " | " + df_cerradas['TECNICO'].astype(str) + " | " + df_cerradas['NOMBRE'].astype(str)
-    opciones = df_cerradas['OPCION_SELECT'].tolist()
+    # 1. BUSCADOR SIMPLE DE NÚMEROS DE ORDEN (Searchable por defecto)
+    lista_ordenes = sorted(df_cerradas['NUM'].dropna().astype(str).unique().tolist())
     
-    col_sel1, col_sel2 = st.columns([2, 1])
+    col_sel1, col_sel2 = st.columns([1, 2])
     with col_sel1:
-        opcion_seleccionada = st.selectbox("🔍 Seleccione la Orden a Evaluar:", opciones)
+        num_seleccionado = st.selectbox("🔍 Busque el Número de Orden (NUM):", lista_ordenes)
     
-    # Extraer fila correspondiente
-    row_sel = df_cerradas[df_cerradas['OPCION_SELECT'] == opcion_seleccionada].iloc[0]
+    # Extraer fila correspondiente a la orden seleccionada
+    row_sel = df_cerradas[df_cerradas['NUM'].astype(str) == num_seleccionado].iloc[0]
     
     # Cargar variables de la orden
     num_orden = row_sel.get('NUM', 'N/D')
@@ -35,7 +34,7 @@ def mostrar_modulo_calidad(conn, df_base):
     actividad = row_sel.get('ACTIVIDAD', 'N/D')
     comentario_cierre = row_sel.get('COMENTARIO', '')
     
-    # Extraer OLT / Telemetría
+    # Extraer OLT / Telemetría si existe
     olt_val = ""
     for col in df_cerradas.columns:
         if any(k in str(col).upper() for k in ['FTTX', 'DISPOSITIVO', 'OLT', 'INFO']):
@@ -43,20 +42,19 @@ def mostrar_modulo_calidad(conn, df_base):
             break
 
     st.markdown("---")
-    st.subheader("📋 Información de la Orden de Servicio")
     
-    col_inf1, col_inf2, col_inf3 = st.columns(3)
-    with col_inf1:
-        st.markdown(f"**Ticket:** ORD-{num_orden}")
-        st.markdown(f"**Técnico:** {tecnico}")
-    with col_inf2:
-        st.markdown(f"**ID Cliente:** {cliente_id}")
-        st.markdown(f"**Nombre:** {nombre_cliente}")
-    with col_inf3:
-        st.markdown(f"**Actividad:** {actividad}")
-        st.markdown(f"**Localidad:** {colonia}")
+    # 2. CAMPOS AUTO-RELLENADOS AUTOMÁTICAMENTE
+    st.subheader("📋 Datos del Servicio (Auto-rellenados)")
+    
+    col_auto1, col_auto2 = st.columns(2)
+    with col_auto1:
+        st.text_input("👤 Nombre del Cliente:", value=nombre_cliente, disabled=True)
+        st.text_input("👨‍🔧 Técnico Responsable:", value=tecnico, disabled=True)
+    with col_auto2:
+        st.text_input("🛠️ Actividad Realizada:", value=actividad, disabled=True)
+        st.text_input("📍 Localidad / Colonia:", value=colonia, disabled=True)
         
-    with st.expander("💬 Comentario de Cierre de Campo"):
+    with st.expander("💬 Ver Comentario de Cierre en Campo"):
         st.write(comentario_cierre if comentario_cierre else "Sin comentario registrado.")
         
     st.markdown("---")
@@ -69,7 +67,7 @@ def mostrar_modulo_calidad(conn, df_base):
     # --------------------------------------------------------------------------
     with tab_llamada:
         st.subheader("📞 Registro de Llamada Telefónica Post-Servicio")
-        st.caption("Utilice este formulario durante o inmediatamente después de realizar la llamada telefónica al cliente.")
+        st.caption("Complete este formulario durante o después de la llamada telefónica.")
         
         form_llamada = st.form(key="form_gestion_llamada")
         with form_llamada:
@@ -90,7 +88,6 @@ def mostrar_modulo_calidad(conn, df_base):
             submit_llamada = st.form_submit_button("💾 Guardar Gestión de Llamada")
             
         if submit_llamada:
-            # Si el cliente no contestó, guardamos un registro simplificado para dejar constancia de la gestión
             if contesto != "Sí, contestó":
                 datos_llamada = {
                     "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
@@ -109,7 +106,6 @@ def mostrar_modulo_calidad(conn, df_base):
                     "COMENTARIOS": f"Gestión telefónica fallida. Estado: {contesto}. Notas: {observaciones_llamada}"
                 }
             else:
-                # Registro completo de la llamada exitosa
                 datos_llamada = {
                     "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
                     "NUM_ORDEN": num_orden,
@@ -134,7 +130,7 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.error("❌ Error al guardar el registro en la base de datos.")
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: ENVÍO DE ENCUESTA DIGITAL POR WHATSAPP (A PARTE)
+    # PESTAÑA 2: ENVÍO DE ENCUESTA DIGITAL POR WHATSAPP
     # --------------------------------------------------------------------------
     with tab_whatsapp:
         st.subheader("💬 Envío de Encuesta Digital por WhatsApp")
@@ -148,7 +144,6 @@ def mostrar_modulo_calidad(conn, df_base):
         
         with col_wa1:
             if telefono_wa.strip():
-                # Se genera la URL de WhatsApp (CSAT por defecto en 5 ya que es para que el cliente lo evalúe al responder)
                 url_wa = generar_url_whatsapp_QA(telefono_wa, num_orden, nombre_cliente, tecnico, 5, "Por favor califique nuestro servicio")
                 st.link_button("💬 ENVIAR ENCUESTA POR WHATSAPP ↗", url_wa, type="primary", use_container_width=True)
             else:
