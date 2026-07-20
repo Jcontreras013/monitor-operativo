@@ -4173,10 +4173,117 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
 
 
 # ==============================================================================
-# INTEGRACIÓN OFICIAL CON LA API REST DE WATI (ccalidad.py)
+# MOTOR DE INVENTARIO Y CONTROL DE CALIDAD (ccalidad.py) - WATI, PDF Y ELIMINACIÓN
 # ==============================================================================
 import urllib.parse
 import requests
+
+def guardar_registro_calidad(conn, data_dict: dict) -> bool:
+    """
+    Guarda una evaluación de calidad tanto en Google Sheets como en un histórico CSV en GCS.
+    Detecta automáticamente si la pestaña 'Calidad' no existe en Google Sheets y la crea.
+    """
+    # Definir localmente el nombre del bucket de GCS de forma segura para evitar NameError
+    NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+    try:
+        df_new = pd.DataFrame([data_dict])
+        
+        # 1. Guardar copia de seguridad en Google Cloud Storage (GCS)
+        df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
+        if df_gcs is not None and not df_gcs.empty:
+            df_combined = pd.concat([df_gcs, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        sobrescribir_archivo_gcs(df_combined, NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
+        
+        # 2. Guardar en Google Sheets (Si la conexión está disponible)
+        if conn is not None:
+            try:
+                # Intentamos leer la pestaña "Calidad"
+                df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", ttl=0)
+                if df_sheets is not None and not df_sheets.empty:
+                    df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_combined)
+                else:
+                    # Si la pestaña está completamente vacía, guardamos los datos directamente
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_new)
+            except Exception:
+                # Si la pestaña "Calidad" no existe, forzamos a Google Sheets a CREAR la pestaña
+                try:
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_new)
+                except Exception as e_create:
+                    print(f"Error al crear y escribir la pestaña Calidad en Google Sheets: {e_create}")
+                    return False
+        return True
+    except Exception as e:
+        print(f"Error general en guardar_registro_calidad: {e}")
+        return False
+
+def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: str, csat: int, comentarios: str) -> str:
+    """
+    Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad de respaldo.
+    """
+    tel_clean = re.sub(r'\D', '', str(telefono))
+    if len(tel_clean) == 8:  # Prefijo automático de Honduras
+        tel_clean = "504" + tel_clean
+        
+    mensaje = (
+        f"🌟 *ENCUESTA DE CALIDAD MAXCOM* 🌟\n\n"
+        f"Hola estimado(a) *{cliente}*,\n"
+        f"Le saludamos de parte del departamento de Calidad de Maxcom. ⚡\n\n"
+        f"Nos gustaría validar la atención brindada por el técnico *{tecnico}* en su orden de servicio *ORD-{orden}*:\n\n"
+        f"1. Calificación CSAT: *{csat}/5 estrellas* ⭐\n"
+        f"2. Comentarios adicionales: {comentarios if comentarios else 'Ninguno'}\n\n"
+        f"¿Desea confirmarnos si la instalación física quedó de forma estética y si el técnico dejó limpio su hogar? Su opinión es de gran valor para nosotros. 🙏"
+    )
+    
+    texto_codificado = urllib.parse.quote(mensaje)
+    return f"https://api.whatsapp.com/send?phone={tel_clean}&text={texto_codificado}"
+
+def disparar_encuesta_wati(data_dict: dict) -> bool:
+    """
+    Envía una plantilla de mensaje oficial de WhatsApp directamente a través de la API REST de WATI.
+    """
+    wati_config = st.secrets.get("wati", {})
+    api_url = wati_config.get("api_url", None)
+    access_token = wati_config.get("access_token", None)
+    template_name = wati_config.get("template_name", None)
+    
+    if not api_url or not access_token or not template_name:
+        print("WATI API_URL, ACCESS_TOKEN o TEMPLATE_NAME no configurado en st.secrets['wati']")
+        return False
+        
+    try:
+        tel_clean = re.sub(r'\D', '', str(data_dict.get("TELEFONO", "")))
+        if len(tel_clean) == 8:
+            tel_clean = "504" + tel_clean
+            
+        endpoint = f"{api_url.rstrip('/')}/api/v1/sendTemplateMessageByPhone?whatsappNumber={tel_clean}"
+        
+        payload = {
+            "template_name": template_name,
+            "broadcast_name": f"QA_ORD_{data_dict.get('NUM_ORDEN')}",
+            "parameters": [
+                {"name": "cliente", "value": data_dict.get("NOMBRE_CLIENTE")},
+                {"name": "tecnico", "value": data_dict.get("TECNICO")},
+                {"name": "orden", "value": f"ORD-{data_dict.get('NUM_ORDEN')}"}
+            ]
+        }
+        
+        headers = {
+            "Authorization": access_token if access_token.startswith("Bearer ") else f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
+        return response.status_code in [200, 201, 202]
+    except Exception as e:
+        print(f"Error al disparar mensaje de WATI: {e}")
+        return False
 
 def eliminar_registro_calidad(conn, ticket: str, fecha_gestion: str) -> bool:
     """
@@ -4257,7 +4364,7 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
     pdf.cell(0, 6, safestr(f"Estatus de Aprobación: Aprobadas: {aprobadas} | Con Observaciones: {observadas} | Reclamos/Rechazadas: {rechazadas}"), ln=True)
     pdf.ln(5)
     
-    # Tabla detallada (190mm ancho)
+    # Tabla detallada (190mm de ancho total)
     pdf.seccion_titulo("2. LISTADO DETALLADO DE AUDITORÍAS")
     pdf.set_fill_color(230, 235, 245)
     pdf.set_text_color(0, 0, 0)
@@ -4304,70 +4411,3 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
         pdf.ln()
         
     return finalizar_pdf(pdf)
-        
-def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: str, csat: int, comentarios: str) -> str:
-    """
-    Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad de respaldo.
-    """
-    tel_clean = re.sub(r'\D', '', str(telefono))
-    if len(tel_clean) == 8:  # Prefijo automático de Honduras
-        tel_clean = "504" + tel_clean
-        
-    mensaje = (
-        f"🌟 *ENCUESTA DE CALIDAD MAXCOM* 🌟\n\n"
-        f"Hola estimado(a) *{cliente}*,\n"
-        f"Le saludamos de parte del departamento de Calidad de Maxcom. ⚡\n\n"
-        f"Nos gustaría validar la atención brindada por el técnico *{tecnico}* en su orden de servicio *ORD-{orden}*:\n\n"
-        f"1. Calificación CSAT: *{csat}/5 estrellas* ⭐\n"
-        f"2. Comentarios adicionales: {comentarios if comentarios else 'Ninguno'}\n\n"
-        f"¿Desea confirmarnos si la instalación física quedó de forma estética y si el técnico dejó limpio su hogar? Su opinión es de gran valor para nosotros. 🙏"
-    )
-    
-    texto_codificado = urllib.parse.quote(mensaje)
-    return f"https://api.whatsapp.com/send?phone={tel_clean}&text={texto_codificado}"
-
-def disparar_encuesta_wati(data_dict: dict) -> bool:
-    """
-    Envía una plantilla de mensaje oficial de WhatsApp directamente a través de la API REST de WATI.
-    """
-    # Obtener configuración desde los secretos de Streamlit
-    wati_config = st.secrets.get("wati", {})
-    api_url = wati_config.get("api_url", None)
-    access_token = wati_config.get("access_token", None)
-    template_name = wati_config.get("template_name", None)
-    
-    if not api_url or not access_token or not template_name:
-        print("WATI API_URL, ACCESS_TOKEN o TEMPLATE_NAME no configurado en st.secrets['wati']")
-        return False
-        
-    try:
-        # Limpiar teléfono y formatear con código de área de Honduras (504)
-        tel_clean = re.sub(r'\D', '', str(data_dict.get("TELEFONO", "")))
-        if len(tel_clean) == 8:
-            tel_clean = "504" + tel_clean
-            
-        # Construir endpoint exacto de WATI para envío por teléfono
-        # Ej: https://live-server-xxxxx.wati.io/api/v1/sendTemplateMessageByPhone?whatsappNumber=504xxxx
-        endpoint = f"{api_url.rstrip('/')}/api/v1/sendTemplateMessageByPhone?whatsappNumber={tel_clean}"
-        
-        # Parámetros personalizados para rellenar las variables dinámicas de su plantilla de WhatsApp
-        payload = {
-            "template_name": template_name,
-            "broadcast_name": f"QA_ORD_{data_dict.get('NUM_ORDEN')}",
-            "parameters": [
-                {"name": "cliente", "value": data_dict.get("NOMBRE_CLIENTE")},
-                {"name": "tecnico", "value": data_dict.get("TECNICO")},
-                {"name": "orden", "value": f"ORD-{data_dict.get('NUM_ORDEN')}"}
-            ]
-        }
-        
-        headers = {
-            "Authorization": access_token if access_token.startswith("Bearer ") else f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
-        return response.status_code in [200, 201, 202]
-    except Exception as e:
-        print(f"Error al disparar mensaje de WATI: {e}")
-        return False
