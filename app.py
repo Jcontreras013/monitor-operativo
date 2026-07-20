@@ -86,8 +86,8 @@ from tools import (
         generar_pdf_materiales_mensual,
         normalizar_nombre_cruce  # <=== AGREGADO AQUÍ EN APP.PY
     )
-except ImportError as e:
-    st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
+    except ImportError as e:
+        st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
     
 # ==============================================================================
 # FUNCIONES AUXILIARES DE SOPORTE GLOBAL
