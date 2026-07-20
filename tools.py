@@ -4323,6 +4323,7 @@ def eliminar_registro_calidad(conn, ticket: str, fecha_gestion: str) -> bool:
 def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
     """
     Genera un reporte PDF gerencial detallado de las auditorías de calidad filtradas.
+    Evita KeyErrors utilizando búsquedas seguras y fallbacks automáticos.
     """
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
@@ -4345,33 +4346,61 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
         pdf.cell(0, 10, "No se encontraron registros de calidad en el rango seleccionado.", ln=True, align="C")
         return finalizar_pdf(pdf)
         
-    # Calcular métricas básicas
+    # Calcular métricas básicas con tolerancia a columnas ausentes
     total_evaluaciones = len(df_filtered)
-    df_filtered['CSAT_NUM'] = pd.to_numeric(df_filtered['CSAT'], errors='coerce')
+    
+    # Mapeo inteligente de CSAT / Satisfacción General
+    if 'CSAT' in df_filtered.columns:
+        df_filtered['CSAT_NUM'] = pd.to_numeric(df_filtered['CSAT'], errors='coerce')
+    elif 'SATISFACCION_GENERAL' in df_filtered.columns:
+        # Traducimos las respuestas de texto de la nueva encuesta a escala numérica para calcular promedio
+        satisfaccion_map = {
+            "MUY SATISFECHO": 5.0,
+            "SATISFECHO": 4.0,
+            "POCO SATISFECHO": 2.5,
+            "INSATISFECHO": 1.0,
+            "N/A": np.nan,
+            "PENDIENTE": np.nan
+        }
+        df_filtered['CSAT_NUM'] = df_filtered['SATISFACCION_GENERAL'].astype(str).str.upper().str.strip().map(satisfaccion_map)
+    else:
+        df_filtered['CSAT_NUM'] = np.nan
+        
     promedio_csat = df_filtered['CSAT_NUM'].mean()
-    promedio_csat_str = f"{promedio_csat:.2f} / 5.0" if pd.notnull(promedio_csat) else "N/A"
+    promedio_csat_str = f"{promedio_csat:.2f} / 5.0" if pd.notnull(promedio_csat) and not pd.isna(promedio_csat) else "N/A"
     
-    conteo_aprobacion = df_filtered['APROBACION_INTERNA'].value_counts()
-    aprobadas = conteo_aprobacion.get("Servicio aprobado", 0)
-    observadas = conteo_aprobacion.get("Servicio con observaciones", 0)
-    rechazadas = conteo_aprobacion.get("Servicio no aprobado – requiere seguimiento", 0)
+    # Conteo de estados de aprobación
+    aprobadas = 0
+    observadas = 0
+    rechazadas = 0
     
-    pdf.seccion_titulo("1. RESUMEN DE INDICADORES CLAVE")
+    if 'APROBACION_INTERNA' in df_filtered.columns:
+        conteo_aprobacion = df_filtered['APROBACION_INTERNA'].value_counts()
+        aprobadas = conteo_aprobacion.get("Servicio aprobado", 0)
+        observadas = conteo_aprobacion.get("Servicio con observaciones", 0)
+        rechazadas = conteo_aprobacion.get("Servicio no aprobado – requiere seguimiento", 0)
+    
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 6, safestr("1. RESUMEN DE INDICADORES CLAVE"), ln=True)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(50, 50, 50)
     pdf.cell(0, 6, safestr(f"Total Auditorías Realizadas: {total_evaluaciones}"), ln=True)
-    pdf.cell(0, 6, safestr(f"Índice de Satisfacción Promedio (CSAT): {promedio_csat_str}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Índice de Satisfacción Promedio (CSAT Equivalente): {promedio_csat_str}"), ln=True)
     pdf.cell(0, 6, safestr(f"Estatus de Aprobación: Aprobadas: {aprobadas} | Con Observaciones: {observadas} | Reclamos/Rechazadas: {rechazadas}"), ln=True)
     pdf.ln(5)
     
     # Tabla detallada (190mm de ancho total)
-    pdf.seccion_titulo("2. LISTADO DETALLADO DE AUDITORÍAS")
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 6, safestr("2. LISTADO DETALLADO DE AUDITORÍAS"), ln=True)
+    
     pdf.set_fill_color(230, 235, 245)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 7)
     
     w = [25, 45, 50, 15, 30, 25]
-    headers = ["TICKET", "TÉCNICO", "CLIENTE", "CSAT", "ESTÉTICA", "APROBACIÓN"]
+    headers = ["TICKET", "TÉCNICO", "CLIENTE", "SATISF.", "ESTÉTICA", "APROBACIÓN"]
     
     for i in range(len(headers)):
         pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
@@ -4391,7 +4420,17 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
         ticket = str(row.get('TICKET', 'N/D'))
         tec = str(row.get('TECNICO', 'N/D'))[:22]
         cli = str(row.get('NOMBRE_CLIENTE', 'N/D'))[:24]
-        csat_val = str(row.get('CSAT', 'N/D'))
+        
+        # Obtener nivel de satisfacción de forma segura
+        satisf_val = str(row.get('CSAT', ''))
+        if not satisf_val or satisf_val.upper() in ["NAN", "NONE", "N/D", "", "PENDIENTE"]:
+            satisf_val = str(row.get('SATISFACCION_GENERAL', 'N/D'))
+            # Abreviar los textos largos del nuevo CSAT para que quepan en la columna de ancho 15
+            if "muy satisfecho" in satisf_val.lower(): satisf_val = "Muy Sat."
+            elif "insatisfecho" in satisf_val.lower(): satisf_val = "Insat."
+            elif "poco satisfecho" in satisf_val.lower(): satisf_val = "Poco Sat."
+            elif "satisfecho" in satisf_val.lower(): satisf_val = "Sat."
+            
         estetica = str(row.get('ESTETICA', 'N/D'))[:15]
         aprob = str(row.get('APROBACION_INTERNA', 'N/D'))
         
@@ -4405,7 +4444,7 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
         pdf.cell(w[0], 6, safestr(ticket), border=1, align="C")
         pdf.cell(w[1], 6, safestr(tec), border=1, align="L")
         pdf.cell(w[2], 6, safestr(cli), border=1, align="L")
-        pdf.cell(w[3], 6, safestr(csat_val), border=1, align="C")
+        pdf.cell(w[3], 6, safestr(satisf_val), border=1, align="C")
         pdf.cell(w[4], 6, safestr(estetica), border=1, align="C")
         pdf.cell(w[5], 6, safestr(aprob_str), border=1, align="C")
         pdf.ln()
