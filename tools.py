@@ -4178,52 +4178,132 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
 import urllib.parse
 import requests
 
-def guardar_registro_calidad(conn, data_dict: dict) -> bool:
+def eliminar_registro_calidad(conn, ticket: str, fecha_gestion: str) -> bool:
     """
-    Guarda una evaluación de calidad tanto en Google Sheets como en un histórico CSV en GCS.
-    Detecta automáticamente si la pestaña 'Calidad' no existe en Google Sheets y la crea.
+    Elimina un registro específico del histórico de calidad (GCS y Google Sheets)
+    basado en el Ticket y la Fecha de Gestión exacta.
     """
+    NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
     try:
-        # Definir localmente el nombre del bucket de GCS de forma segura
-        NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
-        
-        df_new = pd.DataFrame([data_dict])
-        
-        # 1. Guardar copia de seguridad en Google Cloud Storage (GCS)
+        # 1. Leer GCS y filtrar fila a eliminar
         df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
         if df_gcs is not None and not df_gcs.empty:
-            df_combined = pd.concat([df_gcs, df_new], ignore_index=True)
-        else:
-            df_combined = df_new
-        sobrescribir_archivo_gcs(df_combined, NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
-        
-        # 2. Guardar en Google Sheets (Si la conexión está disponible)
+            mask_eliminar_gcs = (df_gcs['TICKET'].astype(str) == str(ticket)) & (df_gcs['FECHA_GESTION'].astype(str) == str(fecha_gestion))
+            df_gcs_filtered = df_gcs[~mask_eliminar_gcs].copy()
+            sobrescribir_archivo_gcs(df_gcs_filtered, NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
+            
+        # 2. Leer e intentar actualizar Google Sheets
         if conn is not None:
             try:
-                # Intentamos leer la pestaña "Calidad"
                 df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", ttl=0)
-                if df_sheets is not None and not df_sheets.empty:
+                if df_sheets is not None:
                     df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
-                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
-                    df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
-                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_combined)
-                else:
-                    # Si la pestaña está completamente vacía, guardamos los datos directamente
-                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
-                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_new)
-            except Exception:
-                # Si la pestaña "Calidad" no existe, la API de gsheets lanzará un error al leer.
-                # Capturamos el error y forzamos a Google Sheets a CREAR la pestaña escribiendo el primer registro.
-                try:
-                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
-                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_new)
-                except Exception as e_create:
-                    print(f"Error al crear y escribir la pestaña Calidad en Google Sheets: {e_create}")
-                    return False
+                    mask_eliminar_sheets = (df_sheets['TICKET'].astype(str) == str(ticket)) & (df_sheets['FECHA_GESTION'].astype(str) == str(fecha_gestion))
+                    df_sheets_filtered = df_sheets[~mask_eliminar_sheets].copy()
+                    
+                    # Si quedó vacío tras eliminar, guardamos un DataFrame con las mismas columnas
+                    if df_sheets_filtered.empty:
+                        df_sheets_filtered = pd.DataFrame(columns=df_sheets.columns)
+                        
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_filtered)
+            except Exception as e_sheet:
+                print(f"Error al eliminar en Google Sheets: {e_sheet}")
         return True
     except Exception as e:
-        print(f"Error general en guardar_registro_calidad: {e}")
+        print(f"Error general al eliminar registro de calidad: {e}")
         return False
+
+def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
+    """
+    Genera un reporte PDF gerencial detallado de las auditorías de calidad filtradas.
+    """
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE GERENCIAL: AUDITORÍAS DE CALIDAD"), ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+    pdf.cell(0, 6, safestr(f"Rango de Fechas: {inicio_str} al {fin_str}"), ln=True, align="C")
+    pdf.ln(5)
+    
+    if df_filtered.empty:
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.cell(0, 10, "No se encontraron registros de calidad en el rango seleccionado.", ln=True, align="C")
+        return finalizar_pdf(pdf)
+        
+    # Calcular métricas básicas
+    total_evaluaciones = len(df_filtered)
+    df_filtered['CSAT_NUM'] = pd.to_numeric(df_filtered['CSAT'], errors='coerce')
+    promedio_csat = df_filtered['CSAT_NUM'].mean()
+    promedio_csat_str = f"{promedio_csat:.2f} / 5.0" if pd.notnull(promedio_csat) else "N/A"
+    
+    conteo_aprobacion = df_filtered['APROBACION_INTERNA'].value_counts()
+    aprobadas = conteo_aprobacion.get("Servicio aprobado", 0)
+    observadas = conteo_aprobacion.get("Servicio con observaciones", 0)
+    rechazadas = conteo_aprobacion.get("Servicio no aprobado – requiere seguimiento", 0)
+    
+    pdf.seccion_titulo("1. RESUMEN DE INDICADORES CLAVE")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(50, 50, 50)
+    pdf.cell(0, 6, safestr(f"Total Auditorías Realizadas: {total_evaluaciones}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Índice de Satisfacción Promedio (CSAT): {promedio_csat_str}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Estatus de Aprobación: Aprobadas: {aprobadas} | Con Observaciones: {observadas} | Reclamos/Rechazadas: {rechazadas}"), ln=True)
+    pdf.ln(5)
+    
+    # Tabla detallada (190mm ancho)
+    pdf.seccion_titulo("2. LISTADO DETALLADO DE AUDITORÍAS")
+    pdf.set_fill_color(230, 235, 245)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 7)
+    
+    w = [25, 45, 50, 15, 30, 25]
+    headers = ["TICKET", "TÉCNICO", "CLIENTE", "CSAT", "ESTÉTICA", "APROBACIÓN"]
+    
+    for i in range(len(headers)):
+        pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+    pdf.ln()
+    
+    pdf.set_font("Helvetica", "", 7)
+    for _, row in df_filtered.iterrows():
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            pdf.set_fill_color(230, 235, 245)
+            pdf.set_font("Helvetica", "B", 7)
+            for i in range(len(headers)):
+                pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+            pdf.ln()
+            pdf.set_font("Helvetica", "", 7)
+            
+        ticket = str(row.get('TICKET', 'N/D'))
+        tec = str(row.get('TECNICO', 'N/D'))[:22]
+        cli = str(row.get('NOMBRE_CLIENTE', 'N/D'))[:24]
+        csat_val = str(row.get('CSAT', 'N/D'))
+        estetica = str(row.get('ESTETICA', 'N/D'))[:15]
+        aprob = str(row.get('APROBACION_INTERNA', 'N/D'))
+        
+        if "aprobado" in aprob.lower() and "no" not in aprob.lower() and "con" not in aprob.lower():
+            aprob_str = "Aprobado"
+        elif "observaciones" in aprob.lower():
+            aprob_str = "Con Obs."
+        else:
+            aprob_str = "Rechazado"
+            
+        pdf.cell(w[0], 6, safestr(ticket), border=1, align="C")
+        pdf.cell(w[1], 6, safestr(tec), border=1, align="L")
+        pdf.cell(w[2], 6, safestr(cli), border=1, align="L")
+        pdf.cell(w[3], 6, safestr(csat_val), border=1, align="C")
+        pdf.cell(w[4], 6, safestr(estetica), border=1, align="C")
+        pdf.cell(w[5], 6, safestr(aprob_str), border=1, align="C")
+        pdf.ln()
+        
+    return finalizar_pdf(pdf)
         
 def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: str, csat: int, comentarios: str) -> str:
     """
