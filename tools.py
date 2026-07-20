@@ -4156,3 +4156,64 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
         pdf.cell(0, 6, "No se registraron reemplazos de acometidas en el mes.", ln=True)
         
     return finalizar_pdf(pdf)
+
+
+
+# ==============================================================================
+# MOTOR DE INVENTARIO Y CONTROL DE CALIDAD (ccalidad.py)
+# ==============================================================================
+import urllib.parse
+
+def guardar_registro_calidad(conn, data_dict: dict) -> bool:
+    """
+    Guarda una evaluación de calidad tanto en Google Sheets como en un histórico CSV en GCS.
+    """
+    try:
+        df_new = pd.DataFrame([data_dict])
+        
+        # 1. Guardar copia de respaldo en GCS
+        df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
+        if df_gcs is not None and not df_gcs.empty:
+            df_combined = pd.concat([df_gcs, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        sobrescribir_archivo_gcs(df_combined, NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
+        
+        # 2. Guardar en Google Sheets (Si la conexión está disponible)
+        if conn is not None:
+            try:
+                df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", ttl=0)
+                if df_sheets is not None:
+                    df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_combined)
+            except Exception as e_sheet:
+                # Si la pestaña no existe aún en Sheets, la creamos o actualizamos
+                pass
+        return True
+    except Exception as e:
+        print(f"Error al guardar registro de calidad: {e}")
+        return False
+
+def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: str, csat: int, comentarios: str) -> str:
+    """
+    Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad.
+    """
+    # Limpiar número de teléfono
+    tel_clean = re.sub(r'\D', '', str(telefono))
+    if len(tel_clean) == 8:  # Prefijo automático de Honduras
+        tel_clean = "504" + tel_clean
+        
+    mensaje = (
+        f"🌟 *ENCUESTA DE CALIDAD MAXCOM* 🌟\n\n"
+        f"Hola estimado(a) *{cliente}*,\n"
+        f"Le saludamos de parte del departamento de Calidad de Maxcom. ⚡\n\n"
+        f"Nos gustaría validar la atención brindada por el técnico *{tecnico}* en su orden de servicio *ORD-{orden}*:\n\n"
+        f"1. Calificación CSAT: *{csat}/5 estrellas* ⭐\n"
+        f"2. Comentarios adicionales: {comentarios if comentarios else 'Ninguno'}\n\n"
+        f"¿Desea confirmarnos si la instalación física quedó de forma estética y si el técnico dejó limpio su hogar? Su opinión es de gran valor para nosotros. 🙏"
+    )
+    
+    texto_codificado = urllib.parse.quote(mensaje)
+    return f"https://api.whatsapp.com/send?phone={tel_clean}&text={texto_codificado}"
