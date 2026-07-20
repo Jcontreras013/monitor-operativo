@@ -4172,11 +4172,11 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
     return finalizar_pdf(pdf)
 
 
-
 # ==============================================================================
-# MOTOR DE INVENTARIO Y CONTROL DE CALIDAD (ccalidad.py)
+# MOTOR DE INVENTARIO Y CONTROL DE CALIDAD (ccalidad.py) - OPCIÓN C (CHATBOT)
 # ==============================================================================
 import urllib.parse
+import requests
 
 def guardar_registro_calidad(conn, data_dict: dict) -> bool:
     """
@@ -4202,8 +4202,8 @@ def guardar_registro_calidad(conn, data_dict: dict) -> bool:
                     df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
                     df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_combined)
-            except Exception as e_sheet:
-                # Si la pestaña no existe aún en Sheets, la creamos o actualizamos
+            except Exception:
+                # Si la pestaña no existe aún o falla la conexión, la copia de seguridad de GCS ya quedó guardada
                 pass
         return True
     except Exception as e:
@@ -4214,7 +4214,6 @@ def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: st
     """
     Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad.
     """
-    # Limpiar número de teléfono
     tel_clean = re.sub(r'\D', '', str(telefono))
     if len(tel_clean) == 8:  # Prefijo automático de Honduras
         tel_clean = "504" + tel_clean
@@ -4231,3 +4230,42 @@ def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: st
     
     texto_codificado = urllib.parse.quote(mensaje)
     return f"https://api.whatsapp.com/send?phone={tel_clean}&text={texto_codificado}"
+
+def disparar_webhook_calidad_360(data_dict: dict) -> bool:
+    """
+    Envía un Webhook (POST JSON) hacia ManyChat, Zapier o Make para iniciar
+    de forma automática el flujo interactivo del chatbot con el cliente.
+    """
+    # Intentamos obtener la URL de los secretos de Streamlit
+    webhook_url = st.secrets.get("ccalidad", {}).get("webhook_url", None)
+    
+    # Si no está configurada, retornamos False amigablemente sin que la app falle
+    if not webhook_url:
+        print("Webhook URL no configurada en st.secrets['ccalidad']['webhook_url']")
+        return False
+        
+    try:
+        # Asegurar formato internacional del teléfono (agregar 504 si es de 8 dígitos)
+        tel_clean = re.sub(r'\D', '', str(data_dict.get("TELEFONO", "")))
+        if len(tel_clean) == 8:
+            tel_clean = "504" + tel_clean
+            
+        payload = {
+            "fecha": data_dict.get("FECHA_AUDITORIA"),
+            "num_orden": data_dict.get("NUM_ORDEN"),
+            "cliente_id": data_dict.get("CLIENTE"),
+            "nombre_cliente": data_dict.get("NOMBRE_CLIENTE"),
+            "telefono_whatsapp": tel_clean,
+            "tecnico": data_dict.get("TECNICO"),
+            "actividad": data_dict.get("ACTIVIDAD"),
+            "colonia": data_dict.get("COLONIA"),
+            "tipo_auditoria": data_dict.get("TIPO_AUDITORIA"),
+            "comentarios_internos": data_dict.get("COMENTARIOS", "")
+        }
+        
+        # Enviar la solicitud POST con el formato JSON esperado por los Chatbots
+        response = requests.post(webhook_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+        return response.status_code in [200, 201, 202]
+    except Exception as e:
+        print(f"Error al disparar el webhook de calidad: {e}")
+        return False
