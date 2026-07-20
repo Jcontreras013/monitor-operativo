@@ -4181,11 +4181,15 @@ import requests
 def guardar_registro_calidad(conn, data_dict: dict) -> bool:
     """
     Guarda una evaluación de calidad tanto en Google Sheets como en un histórico CSV en GCS.
+    Detecta automáticamente si la pestaña 'Calidad' no existe en Google Sheets y la crea.
     """
     try:
+        # Definir localmente el nombre del bucket de GCS de forma segura
+        NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+        
         df_new = pd.DataFrame([data_dict])
         
-        # 1. Guardar copia de respaldo en GCS
+        # 1. Guardar copia de seguridad en Google Cloud Storage (GCS)
         df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "calidad_maestro.csv")
         if df_gcs is not None and not df_gcs.empty:
             df_combined = pd.concat([df_gcs, df_new], ignore_index=True)
@@ -4196,20 +4200,31 @@ def guardar_registro_calidad(conn, data_dict: dict) -> bool:
         # 2. Guardar en Google Sheets (Si la conexión está disponible)
         if conn is not None:
             try:
+                # Intentamos leer la pestaña "Calidad"
                 df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", ttl=0)
-                if df_sheets is not None:
+                if df_sheets is not None and not df_sheets.empty:
                     df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
                     df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
                     df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_combined)
+                else:
+                    # Si la pestaña está completamente vacía, guardamos los datos directamente
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_new)
             except Exception:
-                # Si la pestaña no existe aún, la copia de seguridad de GCS ya quedó guardada
-                pass
+                # Si la pestaña "Calidad" no existe, la API de gsheets lanzará un error al leer.
+                # Capturamos el error y forzamos a Google Sheets a CREAR la pestaña escribiendo el primer registro.
+                try:
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_new)
+                except Exception as e_create:
+                    print(f"Error al crear y escribir la pestaña Calidad en Google Sheets: {e_create}")
+                    return False
         return True
     except Exception as e:
-        print(f"Error al guardar registro de calidad: {e}")
+        print(f"Error general en guardar_registro_calidad: {e}")
         return False
-
+        
 def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: str, csat: int, comentarios: str) -> str:
     """
     Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad de respaldo.
