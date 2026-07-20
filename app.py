@@ -445,11 +445,14 @@ def main():
 
         elif btn_reprocesar:
             if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
-                with st.spinner("⏳ Descargando base de Vehículos/Dispositivos desde GCS..."):
+                with st.spinner("⏳ Descargando base de Vehículos/Dispositivos..."):
                     try:
-                        df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                        # NOTA: sobrescribir_archivo_gcs() atrapa su propio error interno, así
+                        # que la escritura a GCS del archivo FTTX falla de forma silenciosa.
+                        # La pestaña "FTTX" de Sheets es la fuente confiable, se lee primero.
+                        df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
                         if df_fttx_cloud is None or df_fttx_cloud.empty:
-                            df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
+                            df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
                         
                         if df_fttx_cloud is not None and not df_fttx_cloud.empty:
                             b_io = io.BytesIO()
