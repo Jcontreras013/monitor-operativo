@@ -6,7 +6,7 @@ from tools import guardar_registro_calidad, generar_url_whatsapp_QA, get_hondura
 
 def mostrar_modulo_calidad(conn, df_base):
     st.title("🏅 Control de Calidad y Auditoría de Servicios")
-    st.caption("Módulo de encuestas, satisfacción de clientes (CSAT) y auditoría técnica de órdenes cerradas.")
+    st.caption("Gestión unificada de auditorías post-servicio: Registro de llamadas en vivo y envíos de encuestas por WhatsApp.")
     
     # Filtrar órdenes cerradas (las evaluables)
     df_cerradas = df_base[df_base['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
@@ -60,13 +60,22 @@ def mostrar_modulo_calidad(conn, df_base):
         st.write(comentario_cierre if comentario_cierre else "Sin comentario registrado.")
         
     st.markdown("---")
-    st.subheader("🏅 Formulario de Auditoría y Satisfacción (CSAT)")
-    
-    form_calidad = st.form(key="form_eval_calidad")
-    with form_calidad:
-        col_f1, col_f2 = st.columns(2)
+
+    # === SEPARACIÓN DE FLUJOS MEDIANTE PESTAÑAS ===
+    tab_llamada, tab_whatsapp = st.tabs(["📞 Registrar Gestión de Llamada", "💬 Enviar Encuesta WhatsApp"])
+
+    # --------------------------------------------------------------------------
+    # PESTAÑA 1: REGISTRO DE LLAMADA TELEFÓNICA (CONTESTADA O FALLIDA)
+    # --------------------------------------------------------------------------
+    with tab_llamada:
+        st.subheader("📞 Registro de Llamada Telefónica Post-Servicio")
+        st.caption("Utilice este formulario durante o inmediatamente después de realizar la llamada telefónica al cliente.")
         
-        with col_f1:
+        form_llamada = st.form(key="form_gestion_llamada")
+        with form_llamada:
+            contesto = st.radio("🚦 ¿El cliente contestó la llamada?", ["Sí, contestó", "No contestó / Buzón de voz", "Número apagado o fuera de servicio"], horizontal=True)
+            
+            st.markdown("#### 📊 Datos de la Encuesta (Solo si contestó)")
             csat_rating = st.slider("⭐ Satisfacción del Cliente (CSAT) - 1 a 5 Estrellas:", min_value=1, max_value=5, value=5)
             nps_rating = st.slider("📈 Probabilidad de Recomendación (NPS) - 0 a 10:", min_value=0, max_value=10, value=10)
             estetica_instalacion = st.selectbox(
@@ -74,50 +83,100 @@ def mostrar_modulo_calidad(conn, df_base):
                 ["Excelente (Cables ordenados, grapado impecable)", "Aceptable (Pequeños detalles)", "Deficiente (Requiere corrección de campo)"]
             )
             limpieza_hogar = st.radio("🧹 ¿El técnico dejó limpio el hogar/área de trabajo?", ["Sí", "No"], horizontal=True)
-
-        with col_f2:
             sen_optica = st.text_input("🔌 Potencia Óptica Final Reportada (dBm):", value="-18.5" if "UP" in olt_val else "")
-            telefono_qa = st.text_input("📞 Teléfono del Cliente (WhatsApp):", value="", placeholder="Ej: 99887766")
-            clasificacion_eval = st.selectbox("🚦 Tipo de Auditoría:", ["Llamada Post-Servicio", "Inspección Física de Campo", "Auditoría por Foto"])
-            comentarios_qa = st.text_area("✍️ Observaciones de Calidad:", placeholder="Escriba los comentarios o detalles adicionales de la auditoría...")
-
-        submit_eval = st.form_submit_button("💾 Guardar Evaluación y Registro de Calidad")
-        
-    if submit_eval:
-        datos_eval = {
-            "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
-            "NUM_ORDEN": num_orden,
-            "CLIENTE": cliente_id,
-            "NOMBRE_CLIENTE": nombre_cliente,
-            "TECNICO": tecnico,
-            "ACTIVIDAD": actividad,
-            "CSAT": csat_rating,
-            "NPS": nps_rating,
-            "ESTETICA": estetica_instalacion,
-            "LIMPIEZA": limpieza_hogar,
-            "POTENCIA_DBM": sen_optica,
-            "TELEFONO": telefono_qa,
-            "TIPO_AUDITORIA": clasificacion_eval,
-            "COMENTARIOS": comentarios_qa
-        }
-        
-        exito = guardar_registro_calidad(conn, datos_eval)
-        if exito:
-            st.success(f"✅ ¡Evaluación de Calidad para la ORD-{num_orden} guardada correctamente en el sistema!")
-        else:
-            st.error("❌ Ocurrió un error al guardar la evaluación. Por favor verifique el log de conexiones.")
+            telefono_cliente = st.text_input("📞 Teléfono de Contacto del Cliente:", value="", placeholder="Ej: 99887766")
+            observaciones_llamada = st.text_area("✍️ Observaciones de la Llamada / Gestión:")
             
-    # WhatsApp click-to-chat generator
-    st.markdown("### 💬 Canal de Comunicación WhatsApp")
-    st.caption("Genere el mensaje de satisfacción automatizado pre-poblado y envíelo directamente al cliente por chat.")
-    
-    col_wa1, col_wa2 = st.columns([2, 1])
-    with col_wa1:
-        tel_input = st.text_input("📞 Confirme Teléfono para WhatsApp:", value=telefono_qa if telefono_qa else "", key="tel_wa_QA")
-    with col_wa2:
+            submit_llamada = st.form_submit_button("💾 Guardar Gestión de Llamada")
+            
+        if submit_llamada:
+            # Si el cliente no contestó, guardamos un registro simplificado para dejar constancia de la gestión
+            if contesto != "Sí, contestó":
+                datos_llamada = {
+                    "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    "NUM_ORDEN": num_orden,
+                    "CLIENTE": cliente_id,
+                    "NOMBRE_CLIENTE": nombre_cliente,
+                    "TECNICO": tecnico,
+                    "ACTIVIDAD": actividad,
+                    "CSAT": "N/A",
+                    "NPS": "N/A",
+                    "ESTETICA": "N/A",
+                    "LIMPIEZA": "N/A",
+                    "POTENCIA_DBM": "N/A",
+                    "TELEFONO": telefono_cliente if telefono_cliente.strip() else "N/A",
+                    "TIPO_AUDITORIA": f"Llamada - {contesto}",
+                    "COMENTARIOS": f"Gestión telefónica fallida. Estado: {contesto}. Notas: {observaciones_llamada}"
+                }
+            else:
+                # Registro completo de la llamada exitosa
+                datos_llamada = {
+                    "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    "NUM_ORDEN": num_orden,
+                    "CLIENTE": cliente_id,
+                    "NOMBRE_CLIENTE": nombre_cliente,
+                    "TECNICO": tecnico,
+                    "ACTIVIDAD": actividad,
+                    "CSAT": csat_rating,
+                    "NPS": nps_rating,
+                    "ESTETICA": estetica_instalacion,
+                    "LIMPIEZA": limpieza_hogar,
+                    "POTENCIA_DBM": sen_optica,
+                    "TELEFONO": telefono_cliente,
+                    "TIPO_AUDITORIA": "Llamada Telefónica Exitosa",
+                    "COMENTARIOS": observaciones_llamada
+                }
+                
+            exito = guardar_registro_calidad(conn, datos_llamada)
+            if exito:
+                st.success(f"✅ ¡Gestión de llamada registrada correctamente para la ORD-{num_orden}!")
+            else:
+                st.error("❌ Error al guardar el registro en la base de datos.")
+
+    # --------------------------------------------------------------------------
+    # PESTAÑA 2: ENVÍO DE ENCUESTA DIGITAL POR WHATSAPP (A PARTE)
+    # --------------------------------------------------------------------------
+    with tab_whatsapp:
+        st.subheader("💬 Envío de Encuesta Digital por WhatsApp")
+        st.caption("Genere el mensaje interactivo pre-poblado para enviarlo directamente al cliente.")
+        
+        telefono_wa = st.text_input("📞 Ingrese el número de WhatsApp del Cliente:", value=telefono_cliente if 'telefono_cliente' in locals() and telefono_cliente else "", placeholder="Ej: 99887766", key="tel_wa_QA_input")
+        comentarios_envio = st.text_area("📝 Comentarios o Notas de Envío (Opcional):", placeholder="Notas internas sobre el envío del WhatsApp...")
+        
         st.markdown("<br>", unsafe_allow_html=True)
-        if tel_input.strip():
-            url_wa = generar_url_whatsapp_QA(tel_input, num_orden, nombre_cliente, tecnico, csat_rating, comentarios_qa)
-            st.link_button("💬 ENVIAR ENCUESTA POR WHATSAPP", url_wa, type="primary", use_container_width=True)
-        else:
-            st.info("Ingrese un teléfono para habilitar el envío.")
+        col_wa1, col_wa2 = st.columns(2)
+        
+        with col_wa1:
+            if telefono_wa.strip():
+                # Se genera la URL de WhatsApp (CSAT por defecto en 5 ya que es para que el cliente lo evalúe al responder)
+                url_wa = generar_url_whatsapp_QA(telefono_wa, num_orden, nombre_cliente, tecnico, 5, "Por favor califique nuestro servicio")
+                st.link_button("💬 ENVIAR ENCUESTA POR WHATSAPP ↗", url_wa, type="primary", use_container_width=True)
+            else:
+                st.warning("⚠️ Ingrese un número de teléfono válido para habilitar el botón de envío.")
+                
+        with col_wa2:
+            if st.button("💾 REGISTRAR ENVÍO DE WHATSAPP", use_container_width=True):
+                if not telefono_wa.strip():
+                    st.error("❌ Ingrese el número de teléfono para registrar el envío.")
+                else:
+                    datos_envio = {
+                        "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                        "NUM_ORDEN": num_orden,
+                        "CLIENTE": cliente_id,
+                        "NOMBRE_CLIENTE": nombre_cliente,
+                        "TECNICO": tecnico,
+                        "ACTIVIDAD": actividad,
+                        "CSAT": "Pendiente",
+                        "NPS": "Pendiente",
+                        "ESTETICA": "Pendiente",
+                        "LIMPIEZA": "Pendiente",
+                        "POTENCIA_DBM": "N/D",
+                        "TELEFONO": telefono_wa,
+                        "TIPO_AUDITORIA": "Encuesta Digital Enviada (WhatsApp)",
+                        "COMENTARIOS": f"Se envió la encuesta por WhatsApp. Notas internas: {comentarios_envio}"
+                    }
+                    exito = guardar_registro_calidad(conn, datos_envio)
+                    if exito:
+                        st.success(f"✅ ¡Envío de WhatsApp registrado en el historial de la ORD-{num_orden}!")
+                    else:
+                        st.error("❌ Error al guardar el registro en la base de datos.")
