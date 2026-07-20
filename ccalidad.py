@@ -7,12 +7,12 @@ from tools import (
     generar_url_whatsapp_QA, 
     get_honduras_time, 
     normalizar_nombre_cruce,
-    disparar_webhook_calidad_360
+    disparar_encuesta_wati
 )
 
 def mostrar_modulo_calidad(conn, df_base):
     st.title("🏅 Control de Calidad y Auditoría de Servicios")
-    st.caption("Gestión unificada de auditorías: Busque una orden para auto-rellenar los datos del servicio.")
+    st.caption("Gestión unificada de auditorías: Ingrese un número de orden para auto-rellenar los datos del servicio.")
     
     # Filtrar órdenes cerradas (las evaluables)
     df_cerradas = df_base[df_base['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
@@ -138,11 +138,11 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.error("❌ Error al guardar el registro en la base de datos.")
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: ENVÍO AUTOMÁTICO DE ENCUESTA DIGITAL POR WHATSAPP (CHATBOT)
+    # PESTAÑA 2: ENVÍO AUTOMÁTICO DE ENCUESTA DIGITAL POR WHATSAPP (A PARTE CON WATI)
     # --------------------------------------------------------------------------
     with tab_whatsapp:
-        st.subheader("💬 Envío Automático mediante Chatbot (ManyChat / Zapier / Make)")
-        st.caption("Esta pestaña guarda el registro de control y dispara de forma automática el flujo interactivo de su Chatbot al celular del cliente.")
+        st.subheader("💬 Envío Automático mediante WATI (WhatsApp Business API)")
+        st.caption("Esta pestaña registra el envío en el historial del sistema y dispara de forma automatizada la plantilla de encuesta oficial de WATI.")
         
         telefono_wa = st.text_input("📞 Ingrese el número de WhatsApp del Cliente:", value=telefono_cliente if 'telefono_cliente' in locals() and telefono_cliente else "", placeholder="Ej: 99887766", key="tel_wa_QA_input")
         comentarios_envio = st.text_area("📝 Comentarios o Notas de Envío (Opcional):", placeholder="Notas internas sobre el envío del WhatsApp...")
@@ -151,7 +151,7 @@ def mostrar_modulo_calidad(conn, df_base):
         col_wa1, col_wa2 = st.columns(2)
         
         with col_wa1:
-            btn_disparar_bot = st.button("🚀 DISPARAR ENCUESTA AL CHATBOT", use_container_width=True, type="primary")
+            btn_disparar_bot = st.button("🚀 ENVIAR ENCUESTA OFICIAL POR WATI", use_container_width=True, type="primary")
             
         if btn_disparar_bot:
             if not telefono_wa.strip():
@@ -171,29 +171,29 @@ def mostrar_modulo_calidad(conn, df_base):
                     "LIMPIEZA": "Pendiente",
                     "POTENCIA_DBM": "N/D",
                     "TELEFONO": telefono_wa,
-                    "TIPO_AUDITORIA": "Encuesta Digital Enviada (WhatsApp)",
-                    "COMENTARIOS": f"Se envió la encuesta por WhatsApp. Notas internas: {comentarios_envio}"
+                    "TIPO_AUDITORIA": "Encuesta Digital Enviada (WATI)",
+                    "COMENTARIOS": f"Se envió la encuesta por WhatsApp de forma automática usando WATI. Notas internas: {comentarios_envio}"
                 }
                 
                 # 1. Guardar en base de datos (GSheets / GCS)
                 saved = guardar_registro_calidad(conn, datos_envio)
                 
-                # 2. Disparar señal al Chatbot vía Webhook (Zapier/ManyChat)
-                with st.spinner("🚀 Conectando con su plataforma de Chatbot..."):
-                    webhook_ok = disparar_webhook_calidad_360(datos_envio)
+                # 2. Disparar señal a WATI vía API REST
+                with st.spinner("🚀 Conectando con los servidores de WATI..."):
+                    wati_ok = disparar_encuesta_wati(datos_envio)
                 
                 if saved:
                     st.success(f"💾 Registro de envío guardado correctamente en la base de datos de Calidad.")
                     
-                if webhook_ok:
-                    st.success(f"🚀 ¡Flujo iniciado! La señal fue enviada a su Chatbot y la encuesta se disparará de forma automática al {telefono_wa}.")
+                if wati_ok:
+                    st.success(f"🚀 ¡Envío Exitoso! La plantilla oficial fue autorizada por WATI y se enviará automáticamente al {telefono_wa}.")
                 else:
-                    st.info("ℹ️ Señal automática no enviada (Webhook no configurado en st.secrets).")
+                    st.info("ℹ️ Señal automática no enviada (Las credenciales de WATI o el nombre de la plantilla no están configuradas en st.secrets).")
                     
         # Backup manual generator
         st.markdown("---")
         st.markdown("#### 🔗 Respaldo: Envío Manual (WhatsApp Web)")
-        st.caption("Utilice esta alternativa si el Chatbot está desconectado o prefiere enviar la plantilla de texto de forma manual.")
+        st.caption("Utilice esta alternativa si la cuenta de WATI está desconectada o prefiere enviar el texto de forma manual.")
         if telefono_wa.strip():
             url_wa = generar_url_whatsapp_QA(telefono_wa, num_orden, nombre_cliente, tecnico, 5, "Por favor califique nuestro servicio")
             st.link_button("💬 ENVIAR RESPALDO MANUAL POR WHATSAPP ↗", url_wa, use_container_width=True)
