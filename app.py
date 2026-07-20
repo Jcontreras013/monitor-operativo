@@ -297,7 +297,7 @@ def main():
         mostrar_boton_logout() 
         st.stop() 
 
-    sidebar_top = st.sidebar.container()
+sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
 
     if es_movil and option_menu is not None:
@@ -334,10 +334,11 @@ def main():
             else: 
                 nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["🏅 Control Calidad", "📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"])    
         else:
+            # === MENÚ MÓVIL PARA ROL MONITOREO (Solo Monitor y Calidad) ===
             selected_nav = option_menu(
                 menu_title=None,
-                options=["Monitor"],
-                icons=["lightning"],
+                options=["Monitor", "Calidad"],
+                icons=["lightning", "award"],
                 default_index=0,
                 orientation="horizontal",
                 styles={
@@ -347,17 +348,21 @@ def main():
                     "nav-link-selected": {"background-color": "transparent", "color": "#3B82F6", "font-weight": "bold"},
                 }
             )
-            nav_menu_diamante = "⚡ Monitor en Vivo"
+            if selected_nav == "Monitor": 
+                nav_menu_diamante = "⚡ Monitor en Vivo"
+            else: 
+                nav_menu_diamante = "🏅 Control Calidad"
             
         st.markdown('</div>', unsafe_allow_html=True)
         if nav_menu_diamante != "⚡ Monitor en Vivo": st.divider()
     else:
         with sidebar_top:
-            if rol_usuario in ['admin', 'jefe']: nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
+            if rol_usuario in ['admin', 'jefe']: 
+                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
             else:
+                # === MENÚ DE ESCRITORIO PARA ROL MONITOREO (Solo Monitor y Calidad) ===
                 st.markdown("### 🖥️ Menú de Control")
-                st.info("🔒 Tienes acceso exclusivo al Monitor en Vivo.")
-                nav_menu_diamante = "⚡ Monitor en Vivo"    
+                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])    
 
     with sidebar_top:
         mostrar_boton_logout()
