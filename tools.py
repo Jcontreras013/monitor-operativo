@@ -4173,7 +4173,7 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
 
 
 # ==============================================================================
-# MOTOR DE INVENTARIO Y CONTROL DE CALIDAD (ccalidad.py) - OPCIÓN C (CHATBOT)
+# INTEGRACIÓN OFICIAL CON LA API REST DE WATI (ccalidad.py)
 # ==============================================================================
 import urllib.parse
 import requests
@@ -4203,7 +4203,7 @@ def guardar_registro_calidad(conn, data_dict: dict) -> bool:
                     df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
                     conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", data=df_sheets_combined)
             except Exception:
-                # Si la pestaña no existe aún o falla la conexión, la copia de seguridad de GCS ya quedó guardada
+                # Si la pestaña no existe aún, la copia de seguridad de GCS ya quedó guardada
                 pass
         return True
     except Exception as e:
@@ -4212,7 +4212,7 @@ def guardar_registro_calidad(conn, data_dict: dict) -> bool:
 
 def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: str, csat: int, comentarios: str) -> str:
     """
-    Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad.
+    Genera un enlace de WhatsApp Web / API con plantilla precargada para encuestas de calidad de respaldo.
     """
     tel_clean = re.sub(r'\D', '', str(telefono))
     if len(tel_clean) == 8:  # Prefijo automático de Honduras
@@ -4231,41 +4231,48 @@ def generar_url_whatsapp_QA(telefono: str, orden: str, cliente: str, tecnico: st
     texto_codificado = urllib.parse.quote(mensaje)
     return f"https://api.whatsapp.com/send?phone={tel_clean}&text={texto_codificado}"
 
-def disparar_webhook_calidad_360(data_dict: dict) -> bool:
+def disparar_encuesta_wati(data_dict: dict) -> bool:
     """
-    Envía un Webhook (POST JSON) hacia ManyChat, Zapier o Make para iniciar
-    de forma automática el flujo interactivo del chatbot con el cliente.
+    Envía una plantilla de mensaje oficial de WhatsApp directamente a través de la API REST de WATI.
     """
-    # Intentamos obtener la URL de los secretos de Streamlit
-    webhook_url = st.secrets.get("ccalidad", {}).get("webhook_url", None)
+    # Obtener configuración desde los secretos de Streamlit
+    wati_config = st.secrets.get("wati", {})
+    api_url = wati_config.get("api_url", None)
+    access_token = wati_config.get("access_token", None)
+    template_name = wati_config.get("template_name", None)
     
-    # Si no está configurada, retornamos False amigablemente sin que la app falle
-    if not webhook_url:
-        print("Webhook URL no configurada en st.secrets['ccalidad']['webhook_url']")
+    if not api_url or not access_token or not template_name:
+        print("WATI API_URL, ACCESS_TOKEN o TEMPLATE_NAME no configurado en st.secrets['wati']")
         return False
         
     try:
-        # Asegurar formato internacional del teléfono (agregar 504 si es de 8 dígitos)
+        # Limpiar teléfono y formatear con código de área de Honduras (504)
         tel_clean = re.sub(r'\D', '', str(data_dict.get("TELEFONO", "")))
         if len(tel_clean) == 8:
             tel_clean = "504" + tel_clean
             
+        # Construir endpoint exacto de WATI para envío por teléfono
+        # Ej: https://live-server-xxxxx.wati.io/api/v1/sendTemplateMessageByPhone?whatsappNumber=504xxxx
+        endpoint = f"{api_url.rstrip('/')}/api/v1/sendTemplateMessageByPhone?whatsappNumber={tel_clean}"
+        
+        # Parámetros personalizados para rellenar las variables dinámicas de su plantilla de WhatsApp
         payload = {
-            "fecha": data_dict.get("FECHA_AUDITORIA"),
-            "num_orden": data_dict.get("NUM_ORDEN"),
-            "cliente_id": data_dict.get("CLIENTE"),
-            "nombre_cliente": data_dict.get("NOMBRE_CLIENTE"),
-            "telefono_whatsapp": tel_clean,
-            "tecnico": data_dict.get("TECNICO"),
-            "actividad": data_dict.get("ACTIVIDAD"),
-            "colonia": data_dict.get("COLONIA"),
-            "tipo_auditoria": data_dict.get("TIPO_AUDITORIA"),
-            "comentarios_internos": data_dict.get("COMENTARIOS", "")
+            "template_name": template_name,
+            "broadcast_name": f"QA_ORD_{data_dict.get('NUM_ORDEN')}",
+            "parameters": [
+                {"name": "cliente", "value": data_dict.get("NOMBRE_CLIENTE")},
+                {"name": "tecnico", "value": data_dict.get("TECNICO")},
+                {"name": "orden", "value": f"ORD-{data_dict.get('NUM_ORDEN')}"}
+            ]
         }
         
-        # Enviar la solicitud POST con el formato JSON esperado por los Chatbots
-        response = requests.post(webhook_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+        headers = {
+            "Authorization": access_token if access_token.startswith("Bearer ") else f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
         return response.status_code in [200, 201, 202]
     except Exception as e:
-        print(f"Error al disparar el webhook de calidad: {e}")
+        print(f"Error al disparar mensaje de WATI: {e}")
         return False
