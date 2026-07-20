@@ -79,7 +79,11 @@ try:
         sobrescribir_archivo_gcs,
         leer_espejo_gcs,
         clasificar_materiales,               
-        generar_pdf_materiales_mensual
+        generar_pdf_materiales_mensual,
+        guardar_registro_calidad, 
+        generar_url_whatsapp_QA, 
+        get_honduras_time, 
+        normalizar_nombre_cruce
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
