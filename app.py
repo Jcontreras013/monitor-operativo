@@ -1863,14 +1863,11 @@ def main():
                                             tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
                             except Exception as e:
                                 pass
-
+                        
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
                         
                         # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
-                        # Regla: la PRIMERA orden del día debe iniciar antes de las 9:00.
-                        # Si el técnico aún no ha abierto nada, o si abrió su primera
-                        # orden después de las 9:00, cuenta como apertura tardía.
                         primera_orden_por_tec = {}
                         if ahora_local > limite_9am:
                             tecs_con_asignacion = df_monitor_filtrado[
@@ -1881,7 +1878,6 @@ def main():
                             
                             for tec in tecs_con_asignacion:
                                 tec_norm = normalizar_nombre_cruce(tec)
-                                # Filtrar para evaluar únicamente técnicos del personal activo autorizado
                                 if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
                                     continue
                                     
@@ -1891,15 +1887,15 @@ def main():
                                     (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
                                 ]
                                 if ordenes_iniciadas_hoy.empty:
-                                    # Aún no ha abierto ninguna orden hoy
                                     alertas_9am.append(tec)
                                     primera_orden_por_tec[tec] = None
                                 else:
                                     primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
-                                    if primera_ini_tec > limite_9am:
-                                        # Sí abrió, pero su primera orden fue después de las 9:00
+                                    # Limpieza preventiva de zona horaria (tz-naive)
+                                    primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
+                                    if primera_ini_tec_naive > limite_9am:
                                         alertas_9am.append(tec)
-                                        primera_orden_por_tec[tec] = primera_ini_tec
+                                        primera_orden_por_tec[tec] = primera_ini_tec_naive
                                     
 
                         # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
@@ -1913,7 +1909,6 @@ def main():
                         if not df_jornada_hoy.empty:
                             for tec, group in df_jornada_hoy.groupby('TECNICO'):
                                 tec_norm = normalizar_nombre_cruce(tec)
-                                # Filtrar para evaluar únicamente técnicos del personal activo autorizado
                                 if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
                                     continue
                                     
@@ -1928,7 +1923,11 @@ def main():
                                     ini_siguiente = task_siguiente.get('HORA_INI')
                                     
                                     if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
-                                        gap_mins = (ini_siguiente - liq_actual).total_seconds() / 60
+                                        # Limpieza de zona horaria para resta segura
+                                        liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
+                                        ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
+                                        
+                                        gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
                                         if gap_mins > 30:
                                             alertas_tiempo_muerto.append({
                                                 "tipo": "historico",
@@ -1936,7 +1935,7 @@ def main():
                                                 "gap": int(gap_mins),
                                                 "orden_prev": task_actual.get('NUM', 'N/D'),
                                                 "orden_next": task_siguiente.get('NUM', 'N/D'),
-                                                "hora_fin": liq_actual.strftime('%H:%M')
+                                                "hora_fin": liq_actual_naive.strftime('%H:%M')
                                             })
                                 
                                 # Brechas en vivo (tiempo de inactividad actual desde el último cierre)
@@ -1946,14 +1945,17 @@ def main():
                                     if not ordenes_cerradas.empty:
                                         ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
                                         liq_last = ultima_cerrada.get('HORA_LIQ')
-                                        gap_vivo_mins = (ahora_local - liq_last).total_seconds() / 60
+                                        # Limpieza preventiva de zona horaria para resta segura contra ahora_local
+                                        liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
+                                        
+                                        gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
                                         if gap_vivo_mins > 30:
                                             alertas_tiempo_muerto.append({
                                                 "tipo": "vivo",
                                                 "tecnico": tec,
                                                 "gap": int(gap_vivo_mins),
                                                 "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
-                                                "hora_fin": liq_last.strftime('%H:%M')
+                                                "hora_fin": liq_last_naive.strftime('%H:%M')
                                             })
 
                         # ==============================================================================
@@ -1964,9 +1966,6 @@ def main():
                         
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
-                        # NOTA: Ya no se inyectan filas "SIN INICIO" ni etiquetas de alerta en el
-                        # Gantt para mantenerlo limpio. Toda la información de apertura tardía y
-                        # tiempo muerto se muestra únicamente en las tablas de los expanders de abajo.
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
                             
@@ -1984,9 +1983,6 @@ def main():
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
-                            # === EJE Y DEL GRÁFICO: SOLO NOMBRE DEL TÉCNICO (SIN ALERTAS) ===
-                            # Las alertas de apertura tardía y tiempo muerto ya no se pintan aquí;
-                            # se consultan exclusivamente en las tablas de los expanders de abajo.
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
@@ -2064,6 +2060,7 @@ def main():
                                 for tec in alertas_9am:
                                     primera_ini = primera_orden_por_tec.get(tec)
                                     if primera_ini is not None:
+                                        # Ambos son naive, resta segura
                                         atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
                                         detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
                                     else:
@@ -2089,14 +2086,6 @@ def main():
 
                         # ==============================================================================
                         # TABLA 2: TIEMPO MUERTO TOTAL DE LA JORNADA (por técnico, desde su 1ra orden del día)
-                        # ------------------------------------------------------------------------------
-                        # Para cada técnico con actividad hoy:
-                        #   Tiempo Transcurrido = (AHORA) - (inicio de su primera orden del día)
-                        #   Tiempo Trabajado    = suma de la duración de cada orden (cerradas + la activa)
-                        #   Tiempo Muerto Bruto = Tiempo Transcurrido - Tiempo Trabajado
-                        # Se usa siempre "ahora" como referencia (y no la hora de su último cierre) para
-                        # que el tiempo muerto que sigue corriendo -por no haber abierto una orden nueva-
-                        # también se contabilice, igual que en el resto del tablero en vivo.
                         # ==============================================================================
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
                             filas_muerto = []
@@ -2115,6 +2104,7 @@ def main():
                                         continue
 
                                     primera_orden_ini = ordenes_ini_hoy['HORA_INI'].min()
+                                    primera_orden_ini_naive = primera_orden_ini.replace(tzinfo=None) if hasattr(primera_orden_ini, 'tzinfo') and primera_orden_ini.tzinfo is not None else primera_orden_ini
 
                                     tiene_orden_activa_tm = not ordenes_ini_hoy[
                                         ordenes_ini_hoy['HORA_INI'].notnull() & ordenes_ini_hoy['HORA_LIQ'].isnull()
@@ -2123,11 +2113,8 @@ def main():
                                     cerradas_hoy_tec = ordenes_ini_hoy[ordenes_ini_hoy['HORA_LIQ'].notnull()]
                                     ultima_actividad = cerradas_hoy_tec['HORA_LIQ'].max() if not cerradas_hoy_tec.empty else None
 
-                                    # La referencia de cierre SIEMPRE es "ahora": si el técnico ya cerró su
-                                    # última orden y no ha abierto otra, ese tiempo sigue siendo tiempo muerto.
                                     referencia_fin = ahora_local
-
-                                    tiempo_transcurrido_min = max(0.0, (referencia_fin - primera_orden_ini).total_seconds() / 60)
+                                    tiempo_transcurrido_min = max(0.0, (referencia_fin - primera_orden_ini_naive).total_seconds() / 60)
 
                                     tiempo_trabajado_min = 0.0
                                     for _, r_ord in ordenes_ini_hoy.iterrows():
@@ -2135,10 +2122,15 @@ def main():
                                         liq_r = r_ord.get('HORA_LIQ')
                                         if pd.isnull(ini_r):
                                             continue
+                                        
+                                        # Limpieza de zona horaria individual para suma de tiempos
+                                        ini_r_naive = ini_r.replace(tzinfo=None) if hasattr(ini_r, 'tzinfo') and ini_r.tzinfo is not None else ini_r
+                                        
                                         if pd.notnull(liq_r):
-                                            tiempo_trabajado_min += max(0.0, (liq_r - ini_r).total_seconds() / 60)
+                                            liq_r_naive = liq_r.replace(tzinfo=None) if hasattr(liq_r, 'tzinfo') and liq_r.tzinfo is not None else liq_r
+                                            tiempo_trabajado_min += max(0.0, (liq_r_naive - ini_r_naive).total_seconds() / 60)
                                         else:
-                                            tiempo_trabajado_min += max(0.0, (ahora_local - ini_r).total_seconds() / 60)
+                                            tiempo_trabajado_min += max(0.0, (ahora_local - ini_r_naive).total_seconds() / 60)
 
                                     tiempo_muerto_bruto = int(round(max(0.0, tiempo_transcurrido_min - tiempo_trabajado_min)))
                                     descuento_almuerzo = min(60, tiempo_muerto_bruto)
@@ -2147,13 +2139,14 @@ def main():
                                     if tiene_orden_activa_tm:
                                         estado_actual = "🔧 En orden activa"
                                     elif ultima_actividad is not None:
-                                        estado_actual = f"💤 Libre desde {ultima_actividad.strftime('%H:%M')}"
+                                        ultima_act_naive = ultima_actividad.replace(tzinfo=None) if hasattr(ultima_actividad, 'tzinfo') and ultima_actividad.tzinfo is not None else ultima_actividad
+                                        estado_actual = f"💤 Libre desde {ultima_act_naive.strftime('%H:%M')}"
                                     else:
                                         estado_actual = "💤 Libre (sin cierres hoy)"
 
                                     filas_muerto.append({
                                         "TÉCNICO": tec,
-                                        "1RA ORDEN DEL DÍA": primera_orden_ini.strftime('%H:%M'),
+                                        "1RA ORDEN DEL DÍA": primera_orden_ini_naive.strftime('%H:%M'),
                                         "ESTADO ACTUAL": estado_actual,
                                         "TIEMPO MUERTO BRUTO": tiempo_muerto_bruto,
                                         "DESCUENTO ALMUERZO": descuento_almuerzo,
