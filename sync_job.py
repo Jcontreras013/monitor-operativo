@@ -9,6 +9,19 @@ import pandas as pd
 import streamlit as st
 import time
 
+# ==============================================================================
+# Forzar UTF-8 en la salida estándar. En Windows, cuando este script corre vía
+# un .bat con la salida redirigida a un archivo (>> log_sync.txt), la consola
+# usa por defecto una codificación vieja (cp1252) que no soporta emojis (🚀,
+# ✅, etc.) y el script se cae con UnicodeEncodeError. Esto lo evita sin
+# depender de configuraciones externas (chcp, variables de entorno, etc.)
+# ==============================================================================
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 # Importar gspread y credenciales nativas de Google
 try:
     import gspread
