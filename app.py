@@ -12,11 +12,17 @@ import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval  # === IMPORTACIÓN CORREGIDA ===
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
-import expediente # Importación modular correcta al inicio [3]
 import unicodedata
+
+# ==============================================================================
+# CONFIGURACIÓN DE RUTAS DEL SISTEMA (¡VITAL: DEBE IR ANTES DE LOS MÓDULOS LOCALES!)
+# ==============================================================================
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
+import expediente # Importación modular correcta al inicio [3]
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
     aplicar_estilos_nativos, 
@@ -50,9 +56,6 @@ except ImportError:
     st.error("⚠️ Falta el archivo 'ccalidad.py'. Asegúrate de crearlo en la misma carpeta para ver el módulo de Control de Calidad.")
 
 try:
-    import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
         COLUMNS_MAPPING, 
         es_offline_preciso, 
@@ -83,7 +86,7 @@ try:
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
-
+    
 # ==============================================================================
 # FUNCIONES AUXILIARES DE SOPORTE GLOBAL
 # ==============================================================================
