@@ -85,23 +85,24 @@ def ejecutar_sincronizacion_background():
         print(f"[-] Fallo al conectar o leer desde Google Sheets: {e_sheets}")
         return
 
-    # 4. Cruzar con el catálogo de dispositivos FTTX: primero intenta el espejo
-    # rápido en GCS, y si falla (timeout, conexión reiniciada, etc.) cae de
-    # respaldo a la pestaña "FTTX" de Google Sheets, que se sube manualmente
-    # y también queda guardada ahí.
-    df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET, "fttx_activo.csv")
-    if df_fttx_cloud is None or df_fttx_cloud.empty:
-        print("[!] No se pudo leer fttx_activo.csv desde GCS. Intentando respaldo desde Google Sheets (pestaña FTTX)...")
-        try:
-            worksheet_fttx = spreadsheet.worksheet("FTTX")
-            registros_fttx = worksheet_fttx.get_all_records()
-            df_fttx_cloud = pd.DataFrame(registros_fttx)
-        except Exception as e_fttx_sheets:
-            print(f"[-] Fallo: tampoco se pudo leer el catálogo FTTX desde Google Sheets: {e_fttx_sheets}")
-            df_fttx_cloud = pd.DataFrame()
+    # 4. Cruzar con el catálogo de dispositivos FTTX: la escritura a GCS del
+    # archivo FTTX viene fallando de forma silenciosa desde app.py, así que
+    # Google Sheets (pestaña "FTTX") es la fuente confiable y se intenta
+    # primero. GCS queda como respaldo secundario por si algún día se
+    # resuelve la escritura ahí (o hay timeout/caída puntual en Sheets).
+    df_fttx_cloud = pd.DataFrame()
+    try:
+        worksheet_fttx = spreadsheet.worksheet("FTTX")
+        registros_fttx = worksheet_fttx.get_all_records()
+        df_fttx_cloud = pd.DataFrame(registros_fttx)
+    except Exception as e_fttx_sheets:
+        print(f"[!] No se pudo leer el catálogo FTTX desde Google Sheets: {e_fttx_sheets}. Intentando respaldo en GCS...")
 
     if df_fttx_cloud is None or df_fttx_cloud.empty:
-        print("[-] Fallo: No se pudo localizar el catálogo FTTX ni en GCS ni en Google Sheets. Se aborta este ciclo.")
+        df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET, "fttx_activo.csv")
+
+    if df_fttx_cloud is None or df_fttx_cloud.empty:
+        print("[-] Fallo: No se pudo localizar el catálogo FTTX ni en Google Sheets ni en GCS. Se aborta este ciclo.")
         return
     else:
         print(f"  -> [+] Catálogo FTTX cargado con {len(df_fttx_cloud)} registros.")
