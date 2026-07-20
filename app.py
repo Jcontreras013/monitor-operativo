@@ -57,8 +57,7 @@ except ImportError:
     st.error("⚠️ Falta el archivo 'ccalidad.py'. Asegúrate de crearlo en la misma carpeta para ver el módulo de Control de Calidad.")
 
 
-try:
-    from tools import (
+from tools import (
         COLUMNS_MAPPING, 
         es_offline_preciso, 
         procesar_dataframe_base, 
@@ -85,10 +84,7 @@ try:
         leer_espejo_gcs,
         clasificar_materiales,               
         generar_pdf_materiales_mensual,
-        guardar_registro_calidad, 
-        generar_url_whatsapp_QA, 
-        get_honduras_time, 
-        normalizar_nombre_cruce
+        normalizar_nombre_cruce  # <=== AGREGADO AQUÍ EN APP.PY
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
