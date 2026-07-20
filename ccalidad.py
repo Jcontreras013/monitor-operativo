@@ -2,11 +2,17 @@ import streamlit as st
 import pandas as pd
 import re
 import os
-from tools import guardar_registro_calidad, generar_url_whatsapp_QA, get_honduras_time, normalizar_nombre_cruce
+from tools import (
+    guardar_registro_calidad, 
+    generar_url_whatsapp_QA, 
+    get_honduras_time, 
+    normalizar_nombre_cruce,
+    disparar_webhook_calidad_360
+)
 
 def mostrar_modulo_calidad(conn, df_base):
     st.title("🏅 Control de Calidad y Auditoría de Servicios")
-    st.caption("Gestión unificada de auditorías: Ingrese un número de orden para auto-rellenar los datos del servicio.")
+    st.caption("Gestión unificada de auditorías: Busque una orden para auto-rellenar los datos del servicio.")
     
     # Filtrar órdenes cerradas (las evaluables)
     df_cerradas = df_base[df_base['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
@@ -96,6 +102,7 @@ def mostrar_modulo_calidad(conn, df_base):
                     "NOMBRE_CLIENTE": nombre_cliente,
                     "TECNICO": tecnico,
                     "ACTIVIDAD": actividad,
+                    "COLONIA": colonia,
                     "CSAT": "N/A",
                     "NPS": "N/A",
                     "ESTETICA": "N/A",
@@ -113,6 +120,7 @@ def mostrar_modulo_calidad(conn, df_base):
                     "NOMBRE_CLIENTE": nombre_cliente,
                     "TECNICO": tecnico,
                     "ACTIVIDAD": actividad,
+                    "COLONIA": colonia,
                     "CSAT": csat_rating,
                     "NPS": nps_rating,
                     "ESTETICA": estetica_instalacion,
@@ -130,11 +138,11 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.error("❌ Error al guardar el registro en la base de datos.")
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: ENVÍO DE ENCUESTA DIGITAL POR WHATSAPP
+    # PESTAÑA 2: ENVÍO AUTOMÁTICO DE ENCUESTA DIGITAL POR WHATSAPP (CHATBOT)
     # --------------------------------------------------------------------------
     with tab_whatsapp:
-        st.subheader("💬 Envío de Encuesta Digital por WhatsApp")
-        st.caption("Genere el mensaje interactivo pre-poblado para enviarlo directamente al cliente.")
+        st.subheader("💬 Envío Automático mediante Chatbot (ManyChat / Zapier / Make)")
+        st.caption("Esta pestaña guarda el registro de control y dispara de forma automática el flujo interactivo de su Chatbot al celular del cliente.")
         
         telefono_wa = st.text_input("📞 Ingrese el número de WhatsApp del Cliente:", value=telefono_cliente if 'telefono_cliente' in locals() and telefono_cliente else "", placeholder="Ej: 99887766", key="tel_wa_QA_input")
         comentarios_envio = st.text_area("📝 Comentarios o Notas de Envío (Opcional):", placeholder="Notas internas sobre el envío del WhatsApp...")
@@ -143,35 +151,51 @@ def mostrar_modulo_calidad(conn, df_base):
         col_wa1, col_wa2 = st.columns(2)
         
         with col_wa1:
-            if telefono_wa.strip():
-                url_wa = generar_url_whatsapp_QA(telefono_wa, num_orden, nombre_cliente, tecnico, 5, "Por favor califique nuestro servicio")
-                st.link_button("💬 ENVIAR ENCUESTA POR WHATSAPP ↗", url_wa, type="primary", use_container_width=True)
+            btn_disparar_bot = st.button("🚀 DISPARAR ENCUESTA AL CHATBOT", use_container_width=True, type="primary")
+            
+        if btn_disparar_bot:
+            if not telefono_wa.strip():
+                st.error("❌ Ingrese el número de teléfono para disparar la encuesta.")
             else:
-                st.warning("⚠️ Ingrese un número de teléfono válido para habilitar el botón de envío.")
+                datos_envio = {
+                    "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    "NUM_ORDEN": num_orden,
+                    "CLIENTE": cliente_id,
+                    "NOMBRE_CLIENTE": nombre_cliente,
+                    "TECNICO": tecnico,
+                    "ACTIVIDAD": actividad,
+                    "COLONIA": colonia,
+                    "CSAT": "Pendiente",
+                    "NPS": "Pendiente",
+                    "ESTETICA": "Pendiente",
+                    "LIMPIEZA": "Pendiente",
+                    "POTENCIA_DBM": "N/D",
+                    "TELEFONO": telefono_wa,
+                    "TIPO_AUDITORIA": "Encuesta Digital Enviada (WhatsApp)",
+                    "COMENTARIOS": f"Se envió la encuesta por WhatsApp. Notas internas: {comentarios_envio}"
+                }
                 
-        with col_wa2:
-            if st.button("💾 REGISTRAR ENVÍO DE WHATSAPP", use_container_width=True):
-                if not telefono_wa.strip():
-                    st.error("❌ Ingrese el número de teléfono para registrar el envío.")
+                # 1. Guardar en base de datos (GSheets / GCS)
+                saved = guardar_registro_calidad(conn, datos_envio)
+                
+                # 2. Disparar señal al Chatbot vía Webhook (Zapier/ManyChat)
+                with st.spinner("🚀 Conectando con su plataforma de Chatbot..."):
+                    webhook_ok = disparar_webhook_calidad_360(datos_envio)
+                
+                if saved:
+                    st.success(f"💾 Registro de envío guardado correctamente en la base de datos de Calidad.")
+                    
+                if webhook_ok:
+                    st.success(f"🚀 ¡Flujo iniciado! La señal fue enviada a su Chatbot y la encuesta se disparará de forma automática al {telefono_wa}.")
                 else:
-                    datos_envio = {
-                        "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
-                        "NUM_ORDEN": num_orden,
-                        "CLIENTE": cliente_id,
-                        "NOMBRE_CLIENTE": nombre_cliente,
-                        "TECNICO": tecnico,
-                        "ACTIVIDAD": actividad,
-                        "CSAT": "Pendiente",
-                        "NPS": "Pendiente",
-                        "ESTETICA": "Pendiente",
-                        "LIMPIEZA": "Pendiente",
-                        "POTENCIA_DBM": "N/D",
-                        "TELEFONO": telefono_wa,
-                        "TIPO_AUDITORIA": "Encuesta Digital Enviada (WhatsApp)",
-                        "COMENTARIOS": f"Se envió la encuesta por WhatsApp. Notas internas: {comentarios_envio}"
-                    }
-                    exito = guardar_registro_calidad(conn, datos_envio)
-                    if exito:
-                        st.success(f"✅ ¡Envío de WhatsApp registrado en el historial de la ORD-{num_orden}!")
-                    else:
-                        st.error("❌ Error al guardar el registro en la base de datos.")
+                    st.info("ℹ️ Señal automática no enviada (Webhook no configurado en st.secrets).")
+                    
+        # Backup manual generator
+        st.markdown("---")
+        st.markdown("#### 🔗 Respaldo: Envío Manual (WhatsApp Web)")
+        st.caption("Utilice esta alternativa si el Chatbot está desconectado o prefiere enviar la plantilla de texto de forma manual.")
+        if telefono_wa.strip():
+            url_wa = generar_url_whatsapp_QA(telefono_wa, num_orden, nombre_cliente, tecnico, 5, "Por favor califique nuestro servicio")
+            st.link_button("💬 ENVIAR RESPALDO MANUAL POR WHATSAPP ↗", url_wa, use_container_width=True)
+        else:
+            st.warning("Ingrese un teléfono para habilitar la plantilla manual.")
