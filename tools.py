@@ -34,6 +34,20 @@ def get_honduras_time() -> datetime:
 # Alias para mantener compatibilidad con las funciones de auditoría
 get_hn_time = get_honduras_time
 
+# === AGREGAR ESTA FUNCIÓN AQUÍ EN TOOLS.PY ===
+def normalizar_nombre_cruce(texto):
+    """
+    Normaliza texto eliminando acentos, caracteres invisibles (como el Zero-Width Non-Joiner)
+    y espacios extra para asegurar un cruce de nombres óptimo.
+    """
+    if pd.isnull(texto): 
+        return ""
+    t = str(texto).upper().strip()
+    # Limpieza de caracteres invisibles típicos en archivos txt/copias de portales
+    t = t.replace('\u200c', '').replace('\u200b', '')
+    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+    return ' '.join(t.split())
+
 def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
     """Motor blindado de conversión de fechas a partir de múltiples formatos entrantes."""
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
