@@ -297,7 +297,7 @@ def main():
         mostrar_boton_logout() 
         st.stop() 
 
-sidebar_top = st.sidebar.container()
+    sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
 
     if es_movil and option_menu is not None:
