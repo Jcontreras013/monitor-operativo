@@ -1,4 +1,4 @@
-import pandas as pd
+    import pandas as pd
 import re
 from fpdf import FPDF
 from datetime import datetime, timedelta, time as dt_time
@@ -8,6 +8,7 @@ import os
 import numpy as np
 import streamlit as st
 import io
+import json
 from typing import Any, List, Optional, Tuple, Union, Dict
 from google.cloud import storage
 from google.oauth2 import service_account
@@ -2451,41 +2452,41 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
 
 # ==============================================================================
 # REGISTRO MANUAL DE HORA DE ALMUERZO POR TÉCNICO (variable día a día)
+# Se guarda en un caché local (JSON), igual patrón que cache_fttx.tmp: no
+# depende de Google Sheets, vive mientras el contenedor/app siga corriendo.
 # ==============================================================================
+_CACHE_ALMUERZOS_PATH = "cache_almuerzos.json"
+
 def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin: str, registrado_por: str = "") -> bool:
     """
     Guarda o actualiza el horario de almuerzo de un técnico para una fecha
-    específica en la pestaña 'Almuerzos' de Google Sheets. Si ya existía un
+    específica en un caché local (cache_almuerzos.json). Si ya existía un
     registro para ese mismo técnico+fecha, lo reemplaza (no se duplica).
+    El parámetro 'conn' se mantiene por compatibilidad pero no se usa.
     """
-    if conn is None:
-        return False
     try:
         tec_norm = str(tecnico).strip().upper()
         fecha_str = str(fecha)
-        nuevo = {
+
+        registros = []
+        if os.path.exists(_CACHE_ALMUERZOS_PATH):
+            try:
+                with open(_CACHE_ALMUERZOS_PATH, "r", encoding="utf-8") as f:
+                    registros = json.load(f)
+            except Exception:
+                registros = []
+
+        registros = [r for r in registros if not (str(r.get("TECNICO", "")).upper() == tec_norm and str(r.get("FECHA", "")) == fecha_str)]
+        registros.append({
             "TECNICO": tec_norm,
             "FECHA": fecha_str,
             "HORA_INICIO": str(hora_inicio),
             "HORA_FIN": str(hora_fin),
             "REGISTRADO_POR": str(registrado_por),
-        }
-        df_new = pd.DataFrame([nuevo])
+        })
 
-        try:
-            df_existente = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzos", ttl=0)
-        except Exception:
-            df_existente = pd.DataFrame()
-
-        if df_existente is not None and not df_existente.empty:
-            df_existente.columns = df_existente.columns.astype(str).str.upper().str.strip()
-            mask_mismo = (df_existente['TECNICO'].astype(str).str.upper() == tec_norm) & (df_existente['FECHA'].astype(str) == fecha_str)
-            df_existente = df_existente[~mask_mismo].copy()
-            df_final = pd.concat([df_existente, df_new], ignore_index=True)
-        else:
-            df_final = df_new
-
-        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzos", data=df_final)
+        with open(_CACHE_ALMUERZOS_PATH, "w", encoding="utf-8") as f:
+            json.dump(registros, f, ensure_ascii=False)
         return True
     except Exception as e:
         print(f"Error en guardar_almuerzo: {e}")
@@ -2494,17 +2495,19 @@ def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin:
 
 def cargar_almuerzos(conn, fecha: str = None) -> pd.DataFrame:
     """
-    Carga los registros de almuerzo desde la pestaña 'Almuerzos' de Google Sheets.
+    Carga los registros de almuerzo desde el caché local (cache_almuerzos.json).
     Si se especifica 'fecha' (formato 'YYYY-MM-DD'), filtra solo esa fecha.
-    Devuelve un DataFrame vacío si la pestaña no existe todavía o está vacía.
+    Devuelve un DataFrame vacío si el caché no existe todavía o está vacío.
+    El parámetro 'conn' se mantiene por compatibilidad pero no se usa.
     """
-    if conn is None:
-        return pd.DataFrame()
     try:
-        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzos", ttl=60)
-        if df is None or df.empty:
+        if not os.path.exists(_CACHE_ALMUERZOS_PATH):
             return pd.DataFrame()
-        df.columns = df.columns.astype(str).str.upper().str.strip()
+        with open(_CACHE_ALMUERZOS_PATH, "r", encoding="utf-8") as f:
+            registros = json.load(f)
+        if not registros:
+            return pd.DataFrame()
+        df = pd.DataFrame(registros)
         if fecha:
             df = df[df['FECHA'].astype(str) == str(fecha)].copy()
         return df
