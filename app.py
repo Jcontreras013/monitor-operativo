@@ -387,22 +387,21 @@ def main():
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
                 try:
-                    df_base_for_tecs = st.session_state.get('df_base')
+                    # Misma fuente que usan los filtros de técnicos del Gantt/monitor:
+                    # personal_tecnico.txt, filtrando Técnico Principal + Activo.
+                    # No depende de st.session_state['df_base'], que aún puede no
+                    # existir en este punto del render (se inicializa más abajo),
+                    # lo cual causaba que la lista quedara vacía y se mostrara
+                    # el campo de texto libre en su lugar.
                     df_cat_tecs_almuerzo = cargar_catalogo_tecnicos()
-                    if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
-                        if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty:
-                            df_principales_alm = df_cat_tecs_almuerzo[
-                                (df_cat_tecs_almuerzo['Clasificación'] == "TÉCNICO PRINCIPAL") &
-                                (df_cat_tecs_almuerzo['Estatus'] == "ACTIVO")
-                            ]
-                            tecs_validos_set_alm = {normalizar_nombre_cruce(n) for n in df_principales_alm['Nombre'].dropna()}
-                            tecs_en_base_alm = df_base_for_tecs['TECNICO'].dropna().unique().tolist()
-                            lista_tecs_almuerzo = sorted([t for t in tecs_en_base_alm if normalizar_nombre_cruce(t) in tecs_validos_set_alm])
-                        else:
-                            lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
+                    if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty:
+                        df_principales_alm = df_cat_tecs_almuerzo[
+                            (df_cat_tecs_almuerzo['Clasificación'] == "TÉCNICO PRINCIPAL") &
+                            (df_cat_tecs_almuerzo['Estatus'] == "ACTIVO")
+                        ]
+                        lista_tecs_almuerzo = sorted(df_principales_alm['Nombre'].dropna().unique().tolist())
                     else:
-                        # Aún no hay datos cargados en esta sesión: se usa el catálogo completo como respaldo
-                        lista_tecs_almuerzo = sorted(df_cat_tecs_almuerzo['Nombre'].dropna().unique().tolist()) if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty else []
+                        lista_tecs_almuerzo = []
                 except Exception:
                     lista_tecs_almuerzo = []
 
