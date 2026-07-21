@@ -2517,17 +2517,23 @@ def cargar_almuerzos(conn, fecha: str = None) -> pd.DataFrame:
 
 
 def cargar_catalogo_tecnicos():
-    """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
+    """
+    Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom.
+    Garantiza que solo se clasifique como TÉCNICO PRINCIPAL a quienes tengan
+    la frase exacta escrita en su línea de registro.
+    """
     path = "personal_tecnico.txt"
     datos = []
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
             for linea in f:
-                linea = linea.strip()
-                if not linea: continue
+                linea_raw = linea.strip()
+                if not linea_raw: continue
                 
-                # Separar por coma
-                partes = linea.split(',')
+                linea_upper = linea_raw.upper()
+                
+                # Separar por comas para extraer el nombre
+                partes = linea_raw.split(',')
                 
                 # El nombre está en la primera parte, reemplazamos tabs por espacios y limpiamos dobles espacios
                 nombre_bruto = partes[0].replace('\t', ' ')
@@ -2539,16 +2545,17 @@ def cargar_catalogo_tecnicos():
                     cargo_area = "N/D"
                     
                 estatus = "ACTIVO"
-                if len(partes) > 2 and "VACACIONES" in partes[2].upper():
+                if "VACACIONES" in linea_upper:
                     estatus = "VACACIONES"
                 
-                # Regla del usuario: Clasificación de Técnico Principal
-                # Ahora acepta "TECNICO PRINCIPAL", "TECNICO" y los formatos estándar de áreas
-                if cargo_area in ['PLEX', 'HFC', 'FTTH', 'TECNICO PRINCIPAL', 'TECNICO', 'TECNICO_PRINCIPAL']:
+                # === REGLA REFINADA ULTRA-PRECISA DE TÉCNICO PRINCIPAL ===
+                # Un empleado es clasificado como Técnico Principal si y solo si la frase
+                # "TECNICO PRINCIPAL" o "TECNICO_PRINCIPAL" aparece explícitamente en su línea.
+                if "TECNICO PRINCIPAL" in linea_upper or "TECNICO_PRINCIPAL" in linea_upper:
                     clasificacion = "TÉCNICO PRINCIPAL"
-                elif 'AYUDANTE' in cargo_area:
+                elif 'AYUDANTE' in linea_upper:
                     clasificacion = "AYUDANTE"
-                elif 'SUPERVISOR' in cargo_area:
+                elif 'SUPERVISOR' in linea_upper:
                     clasificacion = "SUPERVISOR"
                 else:
                     clasificacion = "OTRAS ÁREAS / SOPORTE"
