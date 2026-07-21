@@ -467,7 +467,7 @@ def main():
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
-            st.caption("El demonio interno (sync_job.py) sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
+           # st.caption("El demonio interno (sync_job.py) sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
             btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
             
             st.divider()
