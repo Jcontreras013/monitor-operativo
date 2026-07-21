@@ -4450,3 +4450,179 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
         pdf.ln()
         
     return finalizar_pdf(pdf)
+
+# ==============================================================================
+# AUDITORÍA DE CAMPO: GESTIÓN DE OPERACIONES E INSTALACIONES (ccalidad.py)
+# ==============================================================================
+
+def guardar_auditoria_campo(conn, data_dict: dict, tipo: str) -> bool:
+    """
+    Guarda registros de auditoría de campo (operaciones o instalaciones)
+    en Google Sheets y realiza una copia de respaldo en GCS de forma segura.
+    """
+    NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+    worksheet_name = "Operaciones" if tipo == "operaciones" else "Instalaciones"
+    filename_gcs = "operaciones_maestro.csv" if tipo == "operaciones" else "instalaciones_maestro.csv"
+    
+    try:
+        df_new = pd.DataFrame([data_dict])
+        
+        # 1. Respaldo en GCS
+        df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, filename_gcs)
+        if df_gcs is not None and not df_gcs.empty:
+            df_combined = pd.concat([df_gcs, df_new], ignore_index=True)
+        else:
+            df_combined = df_new
+        sobrescribir_archivo_gcs(df_combined, NOMBRE_BUCKET_SISTEMA, filename_gcs)
+        
+        # 2. Google Sheets
+        if conn is not None:
+            try:
+                df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_name, ttl=0)
+                if df_sheets is not None and not df_sheets.empty:
+                    df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    df_sheets_combined = pd.concat([df_sheets, df_new], ignore_index=True)
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_name, data=df_sheets_combined)
+                else:
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_name, data=df_new)
+            except Exception:
+                try:
+                    df_new.columns = df_new.columns.astype(str).str.upper().str.strip()
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_name, data=df_new)
+                except Exception as e_create:
+                    print(f"Error al crear pestaña {worksheet_name} en Google Sheets: {e_create}")
+                    return False
+        return True
+    except Exception as e:
+        print(f"Error en guardar_auditoria_campo ({tipo}): {e}")
+        return False
+
+def eliminar_registro_campo(conn, ticket: str, fecha_gestion: str, tipo: str) -> bool:
+    """
+    Elimina un registro específico de auditoría de campo (operaciones o instalaciones)
+    en Google Sheets y realiza la copia de respaldo en GCS.
+    """
+    NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+    worksheet_name = "Operaciones" if tipo == "operaciones" else "Instalaciones"
+    filename_gcs = "operaciones_maestro.csv" if tipo == "operaciones" else "instalaciones_maestro.csv"
+    
+    try:
+        # 1. Leer GCS y filtrar fila a eliminar
+        df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, filename_gcs)
+        if df_gcs is not None and not df_gcs.empty:
+            mask_eliminar_gcs = (df_gcs['ORDEN_NUM'].astype(str) == str(ticket)) & (df_gcs['FECHA_AUDITORIA'].astype(str) == str(fecha_gestion))
+            df_gcs_filtered = df_gcs[~mask_eliminar_gcs].copy()
+            sobrescribir_archivo_gcs(df_gcs_filtered, NOMBRE_BUCKET_SISTEMA, filename_gcs)
+            
+        # 2. Leer e intentar actualizar Google Sheets
+        if conn is not None:
+            try:
+                df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_name, ttl=0)
+                if df_sheets is not None:
+                    df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
+                    mask_eliminar_sheets = (df_sheets['ORDEN_NUM'].astype(str) == str(ticket)) & (df_sheets['FECHA_AUDITORIA'].astype(str) == str(fecha_gestion))
+                    df_sheets_filtered = df_sheets[~mask_eliminar_sheets].copy()
+                    
+                    if df_sheets_filtered.empty:
+                        df_sheets_filtered = pd.DataFrame(columns=df_sheets.columns)
+                        
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=worksheet_name, data=df_sheets_filtered)
+            except Exception as e_sheet:
+                print(f"Error al eliminar en Google Sheets: {e_sheet}")
+        return True
+    except Exception as e:
+        print(f"Error al eliminar registro de campo: {e}")
+        return False
+
+def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
+    """
+    Genera un reporte PDF gerencial detallado de las auditorías de campo filtradas (Operaciones o Instalaciones).
+    """
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    titulo_rep = "REPORTE GERENCIAL: AUDITORÍA DE OPERACIONES" if tipo == "operaciones" else "REPORTE GERENCIAL: AUDITORÍA DE INSTALACIONES (INSFIBRA)"
+    pdf.cell(0, 10, safestr(titulo_rep), ln=True, align="C")
+    
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+    pdf.cell(0, 6, safestr(f"Rango de Fechas: {inicio_str} al {fin_str}"), ln=True, align="C")
+    pdf.ln(5)
+    
+    if df_filtered.empty:
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.cell(0, 10, "No se encontraron registros de auditoría en el rango seleccionado.", ln=True, align="C")
+        return finalizar_pdf(pdf)
+        
+    pdf.seccion_titulo("1. RESUMEN DE COMPROBACIONES TÉCNICAS")
+    total_auditorias = len(df_filtered)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(50, 50, 50)
+    pdf.cell(0, 6, safestr(f"Total Auditorías de Campo Realizadas: {total_auditorias}"), ln=True)
+    pdf.ln(5)
+    
+    pdf.seccion_titulo("2. LISTADO DETALLADO DE COMPROBACIONES")
+    pdf.set_fill_color(230, 235, 245)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 7)
+    
+    if tipo == "operaciones":
+        w = [25, 25, 45, 25, 25, 45]
+        headers = ["ORDEN", "CLIENTE", "SERVICIO", "VIÑETA", "MUFA", "ESTÉTICA"]
+        for i in range(len(headers)):
+            pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 7)
+        for _, row in df_filtered.iterrows():
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                pdf.set_fill_color(230, 235, 245)
+                pdf.set_font("Helvetica", "B", 7)
+                for i in range(len(headers)):
+                    pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+                pdf.ln()
+                pdf.set_font("Helvetica", "", 7)
+                
+            pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
+            pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
+            pdf.cell(w[2], 6, safestr(str(row.get('CODIGO_SERVICIO', '')))[:24], border=1, align="L")
+            pdf.cell(w[3], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
+            pdf.cell(w[4], 6, safestr(str(row.get('MUFA', ''))), border=1, align="C")
+            pdf.cell(w[5], 6, safestr(str(row.get('ESTETICA', ''))), border=1, align="C")
+            pdf.ln()
+    else:
+        w = [20, 20, 45, 30, 25, 25, 25]
+        headers = ["ORDEN", "CLIENTE", "TECNICO", "TIPO FO", "METROS", "VIÑETA", "MUFA"]
+        for i in range(len(headers)):
+            pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+        pdf.ln()
+        
+        pdf.set_font("Helvetica", "", 7)
+        for _, row in df_filtered.iterrows():
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                pdf.set_fill_color(230, 235, 245)
+                pdf.set_font("Helvetica", "B", 7)
+                for i in range(len(headers)):
+                    pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+                pdf.ln()
+                pdf.set_font("Helvetica", "", 7)
+                
+            pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
+            pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
+            pdf.cell(w[2], 6, safestr(str(row.get('TECNICO', '')))[:24], border=1, align="L")
+            pdf.cell(w[3], 6, safestr(str(row.get('TIPO_FO', ''))), border=1, align="C")
+            pdf.cell(w[4], 6, safestr(str(row.get('METROS_FO', ''))), border=1, align="C")
+            pdf.cell(w[5], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
+            pdf.cell(w[6], 6, safestr(str(row.get('MUFA', ''))), border=1, align="C")
+            pdf.ln()
+            
+    return finalizar_pdf(pdf)
