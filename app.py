@@ -391,32 +391,36 @@ def main():
         if es_admin_o_supervisor:
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
-                try:
-                    # Misma fuente que usan los filtros de técnicos del Gantt/monitor:
-                    # personal_tecnico.txt, filtrando Técnico Principal + Activo.
-                    # Con respaldos en cascada para garantizar que el selectbox
-                    # SIEMPRE tenga opciones, en vez de caer al texto libre:
-                    #   1) Catálogo filtrado (Técnico Principal + Activo)
-                    #   2) Catálogo completo sin filtrar (por si el filtro estricto
-                    #      no encuentra coincidencias exactas)
-                    #   3) Técnicos que ya aparecen en las órdenes de esta sesión
-                    df_cat_tecs_almuerzo = cargar_catalogo_tecnicos()
-                    lista_tecs_almuerzo = []
-                    if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty:
-                        df_principales_alm = df_cat_tecs_almuerzo[
-                            (df_cat_tecs_almuerzo['Clasificación'] == "TÉCNICO PRINCIPAL") &
-                            (df_cat_tecs_almuerzo['Estatus'] == "ACTIVO")
-                        ]
-                        lista_tecs_almuerzo = sorted(df_principales_alm['Nombre'].dropna().unique().tolist())
-                        if not lista_tecs_almuerzo:
-                            lista_tecs_almuerzo = sorted(df_cat_tecs_almuerzo['Nombre'].dropna().unique().tolist())
-                    if not lista_tecs_almuerzo:
-                        df_base_for_tecs = st.session_state.get('df_base')
-                        if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
-                            lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
-                except Exception:
-                    lista_tecs_almuerzo = []
+                # Obtener listado de técnicos de forma secuencial y segura
+                lista_tecs_almuerzo = []
+                df_base_for_tecs = st.session_state.get('df_base')
+                
+                # 1. Intentar cargar desde los técnicos activos en la base del monitor
+                if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
+                    lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
+                
+                # 2. Fallback: Cargar desde el archivo personal_tecnico.txt si la base del monitor está vacía
+                if not lista_tecs_almuerzo:
+                    try:
+                        df_cat_tecs = cargar_catalogo_tecnicos()
+                        if df_cat_tecs is not None and not df_cat_tecs.empty:
+                            lista_tecs_almuerzo = sorted(df_cat_tecs['Nombre'].dropna().unique().tolist())
+                    except Exception:
+                        pass
+                
+                # 3. Fallback de seguridad: Cargar directamente desde gps.txt
+                if not lista_tecs_almuerzo and os.path.exists("gps.txt"):
+                    try:
+                        with open("gps.txt", "r", encoding="utf-8") as f:
+                            for line in f:
+                                parts = line.strip().split(",")
+                                if len(parts) >= 3:
+                                    lista_tecs_almuerzo.append(parts[2].strip().rstrip("."))
+                        lista_tecs_almuerzo = sorted(list(set(lista_tecs_almuerzo)))
+                    except Exception:
+                        pass
 
+                # Mostrar Selector (Dropdown) o Campo de texto según disponibilidad de datos
                 if lista_tecs_almuerzo:
                     tec_almuerzo_sel = st.selectbox("Técnico", options=lista_tecs_almuerzo, key="sel_tec_almuerzo")
                 else:
