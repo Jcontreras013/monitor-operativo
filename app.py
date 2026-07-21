@@ -88,7 +88,10 @@ try:
         leer_espejo_gcs,
         clasificar_materiales,               
         generar_pdf_materiales_mensual,
-        normalizar_nombre_cruce
+        normalizar_nombre_cruce,
+        guardar_almuerzo,
+        cargar_almuerzos,
+        cargar_catalogo_tecnicos
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -276,6 +279,7 @@ def main():
 
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
+    es_admin_o_supervisor = str(rol_usuario).strip().lower() in ['admin', 'jefe']
     
     ancho_pantalla = streamlit_js_eval(js_expressions='window.screen.width', key='WIDTH_CHECK', want_output=True)
     es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
@@ -379,6 +383,48 @@ def main():
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
         st.divider()
 
+        if es_admin_o_supervisor:
+            st.markdown("### 🍽️ Registrar Almuerzo")
+            with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
+                try:
+                    df_cat_tecs_almuerzo = cargar_catalogo_tecnicos()
+                    lista_tecs_almuerzo = sorted(df_cat_tecs_almuerzo['Nombre'].dropna().unique().tolist()) if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty else []
+                except Exception:
+                    lista_tecs_almuerzo = []
+
+                if lista_tecs_almuerzo:
+                    tec_almuerzo_sel = st.selectbox("Técnico", options=lista_tecs_almuerzo, key="sel_tec_almuerzo")
+                else:
+                    tec_almuerzo_sel = st.text_input("Técnico (nombre exacto)", key="input_tec_almuerzo")
+
+                fecha_almuerzo_sel = st.date_input("Fecha", value=get_honduras_time().date(), key="fecha_almuerzo_sel")
+                col_hi, col_hf = st.columns(2)
+                with col_hi:
+                    hora_ini_almuerzo = st.time_input("Hora inicio", value=dt_time(12, 0), key="hora_ini_almuerzo")
+                with col_hf:
+                    hora_fin_almuerzo = st.time_input("Hora fin", value=dt_time(13, 0), key="hora_fin_almuerzo")
+
+                if st.button("💾 Guardar Almuerzo", use_container_width=True, key="btn_guardar_almuerzo"):
+                    if not tec_almuerzo_sel:
+                        st.warning("Selecciona o escribe un técnico.")
+                    elif conn is None:
+                        st.error("Conexión no disponible.")
+                    else:
+                        ok_almuerzo = guardar_almuerzo(
+                            conn,
+                            tecnico=tec_almuerzo_sel,
+                            fecha=fecha_almuerzo_sel.strftime('%Y-%m-%d'),
+                            hora_inicio=hora_ini_almuerzo.strftime('%H:%M'),
+                            hora_fin=hora_fin_almuerzo.strftime('%H:%M'),
+                            registrado_por=st.session_state.get('usuario_actual', rol_usuario)
+                        )
+                        if ok_almuerzo:
+                            st.success(f"✅ Almuerzo de {tec_almuerzo_sel} guardado para el {fecha_almuerzo_sel.strftime('%d/%m/%Y')}.")
+                        else:
+                            st.error("No se pudo guardar el almuerzo. Revisa la conexión con Sheets.")
+
+        st.divider()
+
         st.markdown("### ☁️ Sincronización")
         if st.button("☁️ ACTUALIZAR DESDE LA NUBE", use_container_width=True, key="btn_nube_sidebar"):
             if conn is not None:
@@ -391,30 +437,32 @@ def main():
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
-            st.caption("El demon sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
+            st.caption("El demonio interno (sync_job.py) sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
             btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
             
             st.divider()
-            st.markdown("#### 🚙 Carga FTTX e Históricos")
-            st.caption("Subida tradicional manual de Dispositivos FTTX o rep_actividades en caso de contingencia.")
-            archivos_uploader_diamante = st.file_uploader("Sube rep_actividades y/o FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=True)
-            
-            if archivos_uploader_diamante:
-                for file_item in archivos_uploader_diamante:
-                    f_name_lwr = file_item.name.lower()
-                    if "actividades" in f_name_lwr: 
-                        file_act_ptr = file_item
-                    elif "device" in f_name_lwr or "dispositivos" in f_name_lwr: 
-                        file_disp_ptr = file_item
-                        try:
-                            with open("cache_fttx.tmp", "wb") as f: f.write(file_item.getvalue())
-                        except: pass
-            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVOS SUBIDOS", use_container_width=True)
+            st.markdown("#### 📄 Actividades (rep_actividades)")
+            st.caption("Solo necesitas subir las actividades. El catálogo FTTX se toma automáticamente de la nube (pestaña FTTX / GCS).")
+            archivo_actividades = st.file_uploader("Sube rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_actividades_admin")
+            if archivo_actividades: file_act_ptr = archivo_actividades
+            btn_reprocesar = st.button("🔄 PROCESAR ACTIVIDADES", use_container_width=True)
+
+            st.divider()
+            st.markdown("#### 🚙 Catálogo FTTX")
+            st.caption("Sube esto SOLO cuando necesites actualizar el catálogo de dispositivos en la nube. No requiere subir actividades a la vez.")
+            archivo_fttx = st.file_uploader("Sube FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_fttx_admin")
+            btn_actualizar_fttx = st.button("🔄 ACTUALIZAR SOLO CATÁLOGO FTTX", use_container_width=True)
+
+            if archivo_fttx:
+                try:
+                    with open("cache_fttx.tmp", "wb") as f: f.write(archivo_fttx.getvalue())
+                except: pass
         else:
             st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
             archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
             if archivo_unico: file_act_ptr = archivo_unico
             btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
+            btn_actualizar_fttx = False
 
         ahora_hx = get_honduras_time()
         es_horario_tarde = ahora_hx.hour >= 17
@@ -444,7 +492,7 @@ def main():
                 st.error("Conexión no disponible.")
 
         elif btn_reprocesar:
-            if not es_admin and file_act_ptr is not None and file_disp_ptr is None:
+            if file_act_ptr is not None and file_disp_ptr is None:
                 with st.spinner("⏳ Descargando base de Vehículos/Dispositivos..."):
                     try:
                         # NOTA: sobrescribir_archivo_gcs() atrapa su propio error interno, así
@@ -1149,6 +1197,37 @@ def main():
                         df_para_gantt_diario = df_para_gantt_diario[
                             df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                         ]
+
+                        # Agregar barras de ALMUERZO registradas manualmente para la fecha seleccionada
+                        try:
+                            df_almuerzos_hist = cargar_almuerzos(conn, fecha=fecha_cal_sel.strftime('%Y-%m-%d'))
+                        except Exception:
+                            df_almuerzos_hist = pd.DataFrame()
+
+                        if df_almuerzos_hist is not None and not df_almuerzos_hist.empty:
+                            filas_almuerzo_h = []
+                            for _, fila_alm_h in df_almuerzos_hist.iterrows():
+                                try:
+                                    tec_alm_h = str(fila_alm_h['TECNICO']).strip().upper()
+                                    hi_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_INICIO']), '%H:%M').time())
+                                    hf_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_FIN']), '%H:%M').time())
+                                    filas_almuerzo_h.append({
+                                        'TECNICO': tec_alm_h,
+                                        'ACTIVIDAD': 'ALMUERZO',
+                                        'NUM': '-',
+                                        'COLONIA': '-',
+                                        'ESTADO': 'ALMUERZO',
+                                        'GANTT_START': hi_alm_h,
+                                        'GANTT_END': hf_alm_h,
+                                        'Inicio': hi_alm_h.strftime('%H:%M'),
+                                        'Cierre': hf_alm_h.strftime('%H:%M'),
+                                        'TIEMPO_REAL': '-'
+                                    })
+                                except Exception:
+                                    continue
+                            if filas_almuerzo_h:
+                                df_para_gantt_diario = pd.concat([df_para_gantt_diario, pd.DataFrame(filas_almuerzo_h)], ignore_index=True)
+                                df_para_gantt_diario = df_para_gantt_diario.sort_values(by=['TECNICO', 'GANTT_START'])
                         
                         df_para_gantt_diario['INFO_HOVER'] = (
                             "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
@@ -1169,7 +1248,8 @@ def main():
                             "PLEXISCA": "#e65100",         
                             "TRASLADOEXTFIBRA": "#8e24aa",  
                             "SOPRECONHFC": "#c2185b",       
-                            "TVADICIONAL": "#00897b"        
+                            "TVADICIONAL": "#00897b",
+                            "ALMUERZO": "#78909c"
                         }
 
                         fig_gantt_d = px.timeline(
@@ -1842,6 +1922,27 @@ def main():
                         mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
                         
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+
+                        # Almuerzos registrados manualmente para el día que se está viendo
+                        try:
+                            df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
+                        except Exception:
+                            df_almuerzos_hoy = pd.DataFrame()
+
+                        def _obtener_almuerzo_tec(tec_nombre):
+                            """Devuelve (inicio_dt, fin_dt) del almuerzo registrado de un técnico hoy, o (None, None)."""
+                            if df_almuerzos_hoy is None or df_almuerzos_hoy.empty:
+                                return None, None
+                            tec_norm_b = str(tec_nombre).strip().upper()
+                            fila = df_almuerzos_hoy[df_almuerzos_hoy['TECNICO'].astype(str).str.upper() == tec_norm_b]
+                            if fila.empty:
+                                return None, None
+                            try:
+                                hi = datetime.combine(hoy_date_valor, datetime.strptime(str(fila.iloc[0]['HORA_INICIO']), '%H:%M').time())
+                                hf = datetime.combine(hoy_date_valor, datetime.strptime(str(fila.iloc[0]['HORA_FIN']), '%H:%M').time())
+                                return hi, hf
+                            except Exception:
+                                return None, None
                         
                         # ==============================================================================
                         # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
@@ -1931,6 +2032,17 @@ def main():
                                         ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
                                         
                                         gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
+
+                                        # Descontar el solape con el almuerzo registrado manualmente,
+                                        # para no marcar como "tiempo muerto" una pausa de almuerzo real.
+                                        alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
+                                        if alm_ini is not None and alm_fin is not None:
+                                            solape_ini = max(liq_actual_naive, alm_ini)
+                                            solape_fin = min(ini_siguiente_naive, alm_fin)
+                                            if solape_fin > solape_ini:
+                                                solape_mins = (solape_fin - solape_ini).total_seconds() / 60
+                                                gap_mins = max(0, gap_mins - solape_mins)
+
                                         if gap_mins > 30:
                                             alertas_tiempo_muerto.append({
                                                 "tipo": "historico",
@@ -1952,6 +2064,15 @@ def main():
                                         liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
                                         
                                         gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
+
+                                        alm_ini_v, alm_fin_v = _obtener_almuerzo_tec(tec)
+                                        if alm_ini_v is not None and alm_fin_v is not None:
+                                            solape_ini_v = max(liq_last_naive, alm_ini_v)
+                                            solape_fin_v = min(ahora_local, alm_fin_v)
+                                            if solape_fin_v > solape_ini_v:
+                                                solape_mins_v = (solape_fin_v - solape_ini_v).total_seconds() / 60
+                                                gap_vivo_mins = max(0, gap_vivo_mins - solape_mins_v)
+
                                         if gap_vivo_mins > 30:
                                             alertas_tiempo_muerto.append({
                                                 "tipo": "vivo",
@@ -2001,6 +2122,32 @@ def main():
                             df_para_gantt_final = df_para_gantt_final[
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                             ]
+
+                            # Agregar barras de ALMUERZO registradas manualmente para el día
+                            if df_almuerzos_hoy is not None and not df_almuerzos_hoy.empty:
+                                filas_almuerzo = []
+                                for _, fila_alm in df_almuerzos_hoy.iterrows():
+                                    try:
+                                        tec_alm = str(fila_alm['TECNICO']).strip().upper()
+                                        hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
+                                        hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
+                                        filas_almuerzo.append({
+                                            'TECNICO': tec_alm,
+                                            'ACTIVIDAD': 'ALMUERZO',
+                                            'NUM': '-',
+                                            'COLONIA': '-',
+                                            'ESTADO': 'ALMUERZO',
+                                            'GANTT_START': hi_alm,
+                                            'GANTT_END': hf_alm,
+                                            'Inicio': hi_alm.strftime('%H:%M'),
+                                            'Cierre': hf_alm.strftime('%H:%M'),
+                                            'TIEMPO_REAL': '-'
+                                        })
+                                    except Exception:
+                                        continue
+                                if filas_almuerzo:
+                                    df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame(filas_almuerzo)], ignore_index=True)
+                                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
@@ -2027,7 +2174,8 @@ def main():
                                 "CEQUI": "#fbc02d",          
                                 "CAMBIO": "#fbc02d",
                                 "MANTENIMIENTO": "#512da8",
-                                "REVISION": "#0288d1"
+                                "REVISION": "#0288d1",
+                                "ALMUERZO": "#78909c"
                             }
 
                             fig_gantt = px.timeline(
