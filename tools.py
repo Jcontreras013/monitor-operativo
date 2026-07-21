@@ -177,9 +177,16 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
 
                         codigo_resp = data_json.get('codigo')
                         ordenes = data_json.get('ordenes', [])
+                        mensaje_resp = data_json.get('mensaje', 'Sin mensaje')
+
+                        # Límite de 5 consultas/hora impuesto por IT (código 102). Insistir con
+                        # las demás cuentas de la lista solo consumiría más cupo del límite
+                        # compartido, así que se corta de inmediato y se espera al próximo ciclo.
+                        if codigo_resp == 102:
+                            print(f"  -> [!] Límite de consultas de Cepheus alcanzado (código 102): {mensaje_resp}. Se reintentará en el próximo ciclo, sin insistir con otras cuentas.")
+                            return pd.DataFrame()
 
                         if codigo_resp != 200 or not ordenes:
-                            mensaje_resp = data_json.get('mensaje', 'Sin mensaje')
                             print(f"  -> [!] Cepheus respondió sin órdenes para {query_user} (código {codigo_resp}): {mensaje_resp}. Probando siguiente usuario...")
                             continue
 
