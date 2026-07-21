@@ -1992,8 +1992,7 @@ def main():
                                     else:
                                         name = parts[-1].strip().rstrip(".")
                                     tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
-                            except Exception as e:
-                                pass
+                            except Exception as e:pass
                         
                 ahora_local = get_honduras_time()
                 limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
