@@ -15,22 +15,22 @@ def mostrar_modulo_calidad(conn, df_base):
     st.title("🏅 Control de Calidad y Auditoría de Servicios")
     st.caption("Módulo de encuestas, auditorías en campo (Operaciones / Instalaciones) y control de calidad en Google Sheets.")
     
-    # Filtrar órdenes cerradas (las evaluables)
-    df_cerradas = df_base[df_base['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
+    # === SOLUCIÓN: Buscar órdenes tanto pendientes como cerradas (excluyendo anuladas) ===
+    df_evaluables = df_base[~df_base['ESTADO'].astype(str).str.upper().str.contains('ANULADA', na=False)].copy()
     
-    if df_cerradas.empty:
-        st.info("ℹ️ No hay órdenes cerradas en el sistema para evaluar en este momento.")
+    if df_evaluables.empty:
+        st.info("ℹ️ No hay órdenes registradas en el sistema para evaluar en este momento.")
         return
 
     # 1. BUSCADOR SIMPLE DE NÚMEROS DE ORDEN (Searchable por defecto)
-    lista_ordenes = sorted(df_cerradas['NUM'].dropna().astype(str).unique().tolist())
+    lista_ordenes = sorted(df_evaluables['NUM'].dropna().astype(str).unique().tolist())
     
     col_sel1, col_sel2 = st.columns([1, 2])
     with col_sel1:
         num_seleccionado = st.selectbox("🔍 Busque el Número de Orden (NUM):", lista_ordenes)
     
     # Extraer fila correspondiente a la orden seleccionada
-    row_sel = df_cerradas[df_cerradas['NUM'].astype(str) == num_seleccionado].iloc[0]
+    row_sel = df_evaluables[df_evaluables['NUM'].astype(str) == num_seleccionado].iloc[0]
     
     # Cargar variables de la orden
     num_orden = row_sel.get('NUM', 'N/D')
@@ -43,7 +43,7 @@ def mostrar_modulo_calidad(conn, df_base):
     
     # Extraer OLT / Telemetría si existe
     olt_val = ""
-    for col in df_cerradas.columns:
+    for col in df_evaluables.columns:
         if any(k in str(col).upper() for k in ['FTTX', 'DISPOSITIVO', 'OLT', 'INFO']):
             olt_val = str(row_sel.get(col, ''))
             break
@@ -93,11 +93,11 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.markdown("### 1️⃣ Datos Generales del Servicio")
                 col_gen1, col_gen2 = st.columns(2)
                 with col_gen1:
-                    st.text_input("Nombre del Cliente (Auto-rellenado):", value=nombre_cliente, disabled=True)
-                    st.text_input("Número de Orden / Servicio:", value=f"ORD-{num_orden}", disabled=True)
+                    st.text_input("Nombre del Cliente (Auto-rellenado):", value=nombre_cliente, disabled=True, key="call_cli_dis")
+                    st.text_input("Número de Orden / Servicio:", value=f"ORD-{num_orden}", disabled=True, key="call_ord_dis")
                 with col_gen2:
                     fecha_visita_input = st.text_input("Fecha de la Visita (DD/MM/AAAA):", value=fecha_visita_str, key="fv_input")
-                    st.text_input("Nombre del Técnico (Auto-rellenado):", value=tecnico, disabled=True)
+                    st.text_input("Nombre del Técnico (Auto-rellenado):", value=tecnico, disabled=True, key="call_tec_dis")
                 
                 st.divider()
                 
@@ -334,11 +334,21 @@ def mostrar_modulo_calidad(conn, df_base):
         with subtab_insfibra:
             st.markdown("### 🔌 Formulario de Auditoría para Instalaciones (INSFIBRA)")
             
-            # Cálculo del tiempo invertido cronológico real si existen horas de campo
+            # === CÁLCULO DE TIEMPO EN CURSO DE LA ORDEN (CON EXTRACCIÓN SEGURA DE ZONA HORARIA) ===
             tiempo_invent_str = "---"
-            if pd.notnull(row_sel.get('HORA_INI')) and pd.notnull(row_sel.get('HORA_LIQ')):
-                mins_inv = int((row_sel['HORA_LIQ'] - row_sel['HORA_INI']).total_seconds() / 60)
-                tiempo_invent_str = f"{mins_inv} minutos"
+            if pd.notnull(row_sel.get('HORA_INI')):
+                # Limpieza preventiva de zona horaria (offset-naive)
+                ini_naive = row_sel['HORA_INI'].replace(tzinfo=None) if hasattr(row_sel['HORA_INI'], 'tzinfo') and row_sel['HORA_INI'].tzinfo is not None else row_sel['HORA_INI']
+                
+                if pd.notnull(row_sel.get('HORA_LIQ')):
+                    liq_naive = row_sel['HORA_LIQ'].replace(tzinfo=None) if hasattr(row_sel['HORA_LIQ'], 'tzinfo') and row_sel['HORA_LIQ'].tzinfo is not None else row_sel['HORA_LIQ']
+                    mins_inv = int((liq_naive - ini_naive).total_seconds() / 60)
+                    tiempo_invent_str = f"{mins_inv} minutos"
+                else:
+                    # Si aún está en curso en el campo, calculamos el transcurrido respecto a la hora de Honduras
+                    ahora_naive = get_honduras_time().replace(tzinfo=None)
+                    mins_trans = int((ahora_naive - ini_naive).total_seconds() / 60)
+                    tiempo_invent_str = f"En curso ({mins_trans} min transcurridos)"
             elif row_sel.get('TIEMPO_REAL') != "---":
                 tiempo_invent_str = str(row_sel.get('TIEMPO_REAL'))
                 
@@ -346,9 +356,9 @@ def mostrar_modulo_calidad(conn, df_base):
             with form_insfibra:
                 col_i1, col_i2 = st.columns(2)
                 with col_i1:
-                    st.text_input("TECNICO:", value=tecnico, disabled=True, key="tec_ins_disabled")
+                    st.text_input("TÉCNICO:", value=tecnico, disabled=True, key="tec_ins_disabled")
                     st.text_input("# ORDEN:", value=num_orden, disabled=True, key="ord_ins_disabled")
-                    st.text_input("CODIGO (Cliente ID):", value=cliente_id, disabled=True, key="cod_ins_disabled")
+                    st.text_input("CÓDIGO (Cliente ID):", value=cliente_id, disabled=True, key="cod_ins_disabled")
                     st.text_input("CS (Actividad):", value=actividad, disabled=True, key="cs_ins_disabled")
                     st.text_input("TIEMPO INVERTIDO:", value=tiempo_invent_str, disabled=True, key="time_ins_disabled")
                 with col_i2:
