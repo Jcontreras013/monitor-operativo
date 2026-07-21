@@ -14,6 +14,7 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import unicodedata
 
+
 # ==============================================================================
 # CONFIGURACIÓN DE RUTAS DEL SISTEMA (¡VITAL: DEBE IR ANTES DE LOS MÓDULOS LOCALES!)
 # ==============================================================================
@@ -54,6 +55,7 @@ try:
     import ccalidad
 except ImportError:
     st.error("⚠️ Falta el archivo 'ccalidad.py'. Asegúrate de crearlo en la misma carpeta para ver el módulo de Control de Calidad.")
+
 
 try:
     import sys
@@ -115,10 +117,15 @@ def normalizar_nombre_cruce(texto):
         "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
         "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
         "JEREMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+        "JERMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+        "JEREMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+        "JERNY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+        "JERNY MODESTO PADILLA": "JERMI MODESTO PADILLA",
         "ELIAS MIZAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
         "ELIAS MISAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
         "ELIAS MISAEL ALONZO": "ELIAS MISAEL ALONZO SABILLON",
-        "DANIEL EZEQUIEL PONCE GUZMAN": "DANIEL EZEQUIEL GUZMAN PONCE"
+        "DANIEL EZEQUIEL PONCE GUZMAN": "DANIEL EZEQUIEL GUZMAN PONCE",
+        "NELAON RAMON FERRUFINO LEON": "NELSON RAMON FERRUFINO LEON"
     }
     
     if t in alias_map:
@@ -364,14 +371,16 @@ def main():
             else:
                 # === MENÚ DE ESCRITORIO PARA ROL MONITOREO (Solo Monitor y Calidad) ===
                 st.markdown("### 🖥️ Menú de Control")
-                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])
+                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])    
 
     with sidebar_top:
         mostrar_boton_logout()
         st.divider()
 
     with sidebar_bottom:
-        # Inicialización por defecto para evitar UnboundLocalError en no-admins
+        # Inicialización por defecto: sin esto, un usuario no-admin provoca
+        # UnboundLocalError porque btn_api_procesar nunca se asignaba fuera
+        # de la rama "if es_admin:".
         btn_api_procesar = False
         file_act_ptr = None
         file_disp_ptr = None
@@ -382,23 +391,32 @@ def main():
         if es_admin_o_supervisor:
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
-                # Obtener listado de técnicos del catálogo filtrando por TÉCNICO PRINCIPAL
+                # Obtener listado de técnicos de forma secuencial y segura
                 lista_tecs_almuerzo = []
-                try:
-                    df_cat_tecs = cargar_catalogo_tecnicos()
-                    if df_cat_tecs is not None and not df_cat_tecs.empty:
-                        # Filtrar estrictamente por la clasificación TÉCNICO PRINCIPAL
-                        df_principales_alm = df_cat_tecs[df_cat_tecs['Clasificación'] == "TÉCNICO PRINCIPAL"]
-                        lista_tecs_almuerzo = sorted(df_principales_alm['Nombre'].dropna().unique().tolist())
-                except Exception:
-                    pass
+                df_base_for_tecs = st.session_state.get('df_base')
                 
-                # Fallback de seguridad: si falla el archivo, cargar los del monitor activo
+                # 1. Intentar cargar desde los técnicos activos en la base del monitor
+                if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
+                    lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
+                
+                # 2. Fallback: Cargar desde el archivo personal_tecnico.txt si la base del monitor está vacía
                 if not lista_tecs_almuerzo:
                     try:
-                        df_base_for_tecs = st.session_state.get('df_base')
-                        if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
-                            lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
+                        df_cat_tecs = cargar_catalogo_tecnicos()
+                        if df_cat_tecs is not None and not df_cat_tecs.empty:
+                            lista_tecs_almuerzo = sorted(df_cat_tecs['Nombre'].dropna().unique().tolist())
+                    except Exception:
+                        pass
+                
+                # 3. Fallback de seguridad: Cargar directamente desde gps.txt
+                if not lista_tecs_almuerzo and os.path.exists("gps.txt"):
+                    try:
+                        with open("gps.txt", "r", encoding="utf-8") as f:
+                            for line in f:
+                                parts = line.strip().split(",")
+                                if len(parts) >= 3:
+                                    lista_tecs_almuerzo.append(parts[2].strip().rstrip("."))
+                        lista_tecs_almuerzo = sorted(list(set(lista_tecs_almuerzo)))
                     except Exception:
                         pass
 
@@ -435,7 +453,6 @@ def main():
                             st.success(f"✅ Almuerzo de {tec_almuerzo_sel} guardado para el {fecha_almuerzo_sel.strftime('%d/%m/%Y')}.")
                         else:
                             st.error("No se pudo guardar el almuerzo. Revisa la conexión con Sheets.")
-
         st.divider()
 
         st.markdown("### ☁️ Sincronización")
@@ -1195,7 +1212,7 @@ def main():
                             lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                         )
                         
-                        df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
+                        df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].apply(normalizar_nombre_cruce)
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
                         actividades_permitidas = [
@@ -1215,34 +1232,26 @@ def main():
                         try:
                             df_almuerzos_hist = cargar_almuerzos(conn, fecha=fecha_cal_sel.strftime('%Y-%m-%d'))
                         except Exception:
-                            df_almuerzos_hoy = pd.DataFrame()
+                            df_almuerzos_hist = pd.DataFrame()
 
                         if df_almuerzos_hist is not None and not df_almuerzos_hist.empty:
                             filas_almuerzo_h = []
                             for _, fila_alm_h in df_almuerzos_hist.iterrows():
                                 try:
-                                    tec_alm_h = str(fila_alm_h['TECNICO']).strip().upper()
+                                    tec_alm_h = normalizar_nombre_cruce(fila_alm_h['TECNICO'])
                                     hi_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_INICIO']), '%H:%M').time())
                                     hf_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_FIN']), '%H:%M').time())
-                                    
-                                    # Calcular la duración exacta del almuerzo para la tarjeta flotante
-                                    diff_alm_h = hf_alm_h - hi_alm_h
-                                    total_mins_h = int(diff_alm_h.total_seconds() / 60)
-                                    hrs_h, rem_mins_h = divmod(total_mins_h, 60)
-                                    tiempo_real_alm_h = f"{int(hrs_h)}h {int(rem_mins_h)}m" if hrs_h > 0 else f"{int(rem_mins_h)}m"
-                                    
                                     filas_almuerzo_h.append({
                                         'TECNICO': tec_alm_h,
                                         'ACTIVIDAD': 'ALMUERZO',
                                         'NUM': '-',
-                                        'CLIENTE': '-',
                                         'COLONIA': '-',
                                         'ESTADO': 'ALMUERZO',
                                         'GANTT_START': hi_alm_h,
                                         'GANTT_END': hf_alm_h,
                                         'Inicio': hi_alm_h.strftime('%H:%M'),
                                         'Cierre': hf_alm_h.strftime('%H:%M'),
-                                        'TIEMPO_REAL': tiempo_real_alm_h
+                                        'TIEMPO_REAL': '-'
                                     })
                                 except Exception:
                                     continue
@@ -1250,23 +1259,15 @@ def main():
                                 df_para_gantt_diario = pd.concat([df_para_gantt_diario, pd.DataFrame(filas_almuerzo_h)], ignore_index=True)
                                 df_para_gantt_diario = df_para_gantt_diario.sort_values(by=['TECNICO', 'GANTT_START'])
                         
-                        # Generador dinámico e inteligente de tarjetas flotantes (Gantt Histórico)
-                        def generar_info_hover_diario(row):
-                            act = str(row.get('ACTIVIDAD', ''))
-                            num = str(row.get('NUM', 'N/D'))
-                            colonia = str(row.get('COLONIA', 'N/D'))
-                            estado = str(row.get('ESTADO', 'N/D'))
-                            inicio = str(row.get('Inicio', 'N/D'))
-                            cierre = str(row.get('Cierre', 'N/D'))
-                            tiempo_real = str(row.get('TIEMPO_REAL', '---'))
-                            cliente = str(row.get('CLIENTE', 'N/D'))
-                            
-                            if act == "ALMUERZO":
-                                return f"<b>🥪 {act}</b><br>Inicio: {inicio}<br>Fin: {cierre}<br>Tiempo Total: <b>{tiempo_real}</b>"
-                            else:
-                                return f"<b>🛠️ {act}</b><br>Orden: {num}<br>Cliente ID: <b>{cliente}</b><br>Colonia: {colonia}<br>Estado: {estado}<br>Inicio: {inicio}<br>Cierre: {cierre}<br>Tiempo Total: {tiempo_real}"
-                                
-                        df_para_gantt_diario['INFO_HOVER'] = df_para_gantt_diario.apply(generar_info_hover_diario, axis=1)
+                        df_para_gantt_diario['INFO_HOVER'] = (
+                            "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
+                            "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
+                            "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
+                            "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
+                            "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
+                            "Cierre=" + df_para_gantt_diario['Cierre'].astype(str) + "<br>" +
+                            "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
+                        )
 
                         colores_solidos = {
                             "SOPFIBRA": "#d32f2f",         
@@ -1656,7 +1657,7 @@ def main():
                         df_view_table.columns = ['Orden', 'Cliente', 'Técnico', 'Comentario de Cierre', 'Fecha']
                     st.dataframe(df_view_table, use_container_width=True, hide_index=True)
             else:
-                st.warning("⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
+                st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
 
     # ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO 
@@ -1942,179 +1943,175 @@ def main():
 
                 st.markdown("---")
         
-        if st.session_state.get('config_ver_gantt', True):
-            with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
-                
-                mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
-                
-                df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+        if st.session_state.get('config_mostrar_panel', True):
+            if not es_movil:
+                if st.session_state.get('config_ver_gantt', True):
+                    with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                        
+                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
+                        mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
+                        
+                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
 
-                # Almuerzos registrados manualmente para el día que se está viendo
-                try:
-                    df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
-                except Exception:
-                    df_almuerzos_hoy = pd.DataFrame()
+                        # Almuerzos registrados manualmente para el día que se está viendo
+                        try:
+                            df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
+                        except Exception:
+                            df_almuerzos_hoy = pd.DataFrame()
 
-                def _obtener_almuerzo_tec(tec_nombre):
-                    """Devuelve (inicio_dt, fin_dt) del almuerzo registrado de un técnico hoy, o (None, None)."""
-                    if df_almuerzos_hoy is None or df_almuerzos_hoy.empty:
-                        return None, None
-                    tec_norm_b = str(tec_nombre).strip().upper()
-                    fila = df_almuerzos_hoy[df_almuerzos_hoy['TECNICO'].astype(str).str.upper() == tec_norm_b]
-                    if fila.empty:
-                        return None, None
-                    try:
-                        hi = datetime.combine(hoy_date_valor, datetime.strptime(str(fila.iloc[0]['HORA_INICIO']), '%H:%M').time())
-                        hf = datetime.combine(hoy_date_valor, datetime.strptime(str(fila.iloc[0]['HORA_FIN']), '%H:%M').time())
-                        return hi, hf
-                    except Exception:
-                        return None, None
+                        def _obtener_almuerzo_tec(tec_nombre):
+                            """Devuelve (inicio_dt, fin_dt) del almuerzo registrado de un técnico hoy, o (None, None)."""
+                            if df_almuerzos_hoy is None or df_almuerzos_hoy.empty:
+                                return None, None
+                            tec_norm_b = str(tec_nombre).strip().upper()
+                            fila = df_almuerzos_hoy[df_almuerzos_hoy['TECNICO'].astype(str).str.upper() == tec_norm_b]
+                            if fila.empty:
+                                return None, None
+                            try:
+                                hi = datetime.combine(hoy_date_valor, datetime.strptime(str(fila.iloc[0]['HORA_INICIO']), '%H:%M').time())
+                                hf = datetime.combine(hoy_date_valor, datetime.strptime(str(fila.iloc[0]['HORA_FIN']), '%H:%M').time())
+                                return hi, hf
+                            except Exception:
+                                return None, None
                         
-# ==============================================================================
-                # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
-                # ==============================================================================
-                alertas_9am = []
-                alertas_tiempo_muerto = []
-                
-                # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
-                tecnicos_validos_alertas = set()
-                file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
-                
-                if file_to_load:
-                    try:
-                        with open(file_to_load, "r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if line:
-                                    parts = line.split(",")
-                                    if len(parts) >= 3:
-                                        name = parts[2].strip().rstrip(".")
-                                    else:
-                                        name = parts[-1].strip().rstrip(".")
-                                    tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
-                    except Exception as e:
-                        pass
+                        # ==============================================================================
+                        # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
+                        # ==============================================================================
+                        alertas_9am = []
+                        alertas_tiempo_muerto = []
                         
-                ahora_local = get_honduras_time()
-                limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
-                
-                # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
-                # Regla: la PRIMERA orden del día debe iniciar antes de las 9:00.
-                # Si el técnico aún no ha abierto nada, o si abrió su primera
-                # orden después de las 9:00, cuenta como apertura tardía.
-                primera_orden_por_tec = {}
-                if ahora_local > limite_9am:
-                    tecs_con_asignacion = df_monitor_filtrado[
-                        (df_monitor_filtrado['TECNICO'].notna()) & 
-                        (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
-                        (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
-                    ]['TECNICO'].unique()
-                    
-                    for tec in tecs_con_asignacion:
-                        tec_norm = normalizar_nombre_cruce(tec)
-                        # Filtrar para evaluar únicamente técnicos del personal activo autorizado
-                        if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
-                            continue
+                        # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
+                        tecnicos_validos_alertas = set()
+                        file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
+                        if file_to_load:
+                            try:
+                                with open(file_to_load, "r", encoding="utf-8") as f:
+                                    for line in f:
+                                        line = line.strip()
+                                        if line:
+                                            parts = line.split(",")
+                                            if len(parts) >= 3:
+                                                name = parts[2].strip().rstrip(".")
+                                            else:
+                                                name = parts[-1].strip().rstrip(".")
+                                            tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
+                            except Exception as e:
+                                pass
+                        
+                        ahora_local = get_honduras_time()
+                        limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
+                        
+                        # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
+                        primera_orden_por_tec = {}
+                        if ahora_local > limite_9am:
+                            tecs_con_asignacion = df_monitor_filtrado[
+                                (df_monitor_filtrado['TECNICO'].notna()) & 
+                                (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
+                                (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                            ]['TECNICO'].unique()
                             
-                        df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
-                        ordenes_iniciadas_hoy = df_tec_hoy[
-                            df_tec_hoy['HORA_INI'].notna() & 
-                            (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
-                        ]
-                        
-                        if ordenes_iniciadas_hoy.empty:
-                            # Aún no ha abierto ninguna orden hoy
-                            alertas_9am.append(tec)
-                            primera_orden_por_tec[tec] = None
-                        else:
-                            primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
-                            # Limpieza preventiva de zona horaria (tz-naive)
-                            primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
-                            
-                            if primera_ini_tec_naive > limite_9am:
-                                alertas_9am.append(tec)
-                                primera_orden_por_tec[tec] = primera_ini_tec_naive
+                            for tec in tecs_con_asignacion:
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    continue
                                     
-                # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
-                df_jornada_hoy = df_monitor_filtrado[
-                    ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
-                     (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
-                    (df_monitor_filtrado['TECNICO'].notna()) &
-                    (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
-                ].copy()
-                
-                if not df_jornada_hoy.empty:
-                    for tec, group in df_jornada_hoy.groupby('TECNICO'):
-                        tec_norm = normalizar_nombre_cruce(tec)
-                        if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
-                            continue
-                            
-                        group_sorted = group.sort_values(by='HORA_INI')
+                                df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
+                                ordenes_iniciadas_hoy = df_tec_hoy[
+                                    df_tec_hoy['HORA_INI'].notna() & 
+                                    (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
+                                ]
+                                if ordenes_iniciadas_hoy.empty:
+                                    alertas_9am.append(tec)
+                                    primera_orden_por_tec[tec] = None
+                                else:
+                                    primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
+                                    # Limpieza preventiva de zona horaria (tz-naive)
+                                    primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
+                                    if primera_ini_tec_naive > limite_9am:
+                                        alertas_9am.append(tec)
+                                        primera_orden_por_tec[tec] = primera_ini_tec_naive
+                                    
+
+                        # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
+                        df_jornada_hoy = df_monitor_filtrado[
+                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
+                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
+                            (df_monitor_filtrado['TECNICO'].notna()) &
+                            (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
+                        ].copy()
                         
-                        # Brechas históricas entre tareas finalizadas e iniciadas
-                        for i in range(len(group_sorted) - 1):
-                            task_actual = group_sorted.iloc[i]
-                            task_siguiente = group_sorted.iloc[i+1]
-                            
-                            liq_actual = task_actual.get('HORA_LIQ')
-                            ini_siguiente = task_siguiente.get('HORA_INI')
-                            
-                            if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
-                                # Limpieza de zona horaria para resta segura
-                                liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
-                                ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
+                        if not df_jornada_hoy.empty:
+                            for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    continue
+                                    
+                                group_sorted = group.sort_values(by='HORA_INI')
                                 
-                                gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
+                                # Brechas históricas entre tareas finalizadas e iniciadas
+                                for i in range(len(group_sorted) - 1):
+                                    task_actual = group_sorted.iloc[i]
+                                    task_siguiente = group_sorted.iloc[i+1]
+                                    
+                                    liq_actual = task_actual.get('HORA_LIQ')
+                                    ini_siguiente = task_siguiente.get('HORA_INI')
+                                    
+                                    if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
+                                        # Limpieza de zona horaria para resta segura
+                                        liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
+                                        ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
+                                        
+                                        gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
 
-                                # Descontar el solape con el almuerzo registrado manualmente,
-                                # para no marcar como "tiempo muerto" una pausa de almuerzo real.
-                                alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
-                                if alm_ini is not None and alm_fin is not None:
-                                    solape_ini = max(liq_actual_naive, alm_ini)
-                                    solape_fin = min(ini_siguiente_naive, alm_fin)
-                                    if solape_fin > solape_ini:
-                                        solape_mins = (solape_fin - solape_ini).total_seconds() / 60
-                                        gap_mins = max(0, gap_mins - solape_mins)
+                                        # Descontar el solape con el almuerzo registrado manualmente,
+                                        # para no marcar como "tiempo muerto" una pausa de almuerzo real.
+                                        alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
+                                        if alm_ini is not None and alm_fin is not None:
+                                            solape_ini = max(liq_actual_naive, alm_ini)
+                                            solape_fin = min(ini_siguiente_naive, alm_fin)
+                                            if solape_fin > solape_ini:
+                                                solape_mins = (solape_fin - solape_ini).total_seconds() / 60
+                                                gap_mins = max(0, gap_mins - solape_mins)
 
-                                if gap_mins > 30:
-                                    alertas_tiempo_muerto.append({
-                                        "tipo": "historico",
-                                        "tecnico": tec,
-                                        "gap": int(gap_mins),
-                                        "orden_prev": task_actual.get('NUM', 'N/D'),
-                                        "orden_next": task_siguiente.get('NUM', 'N/D'),
-                                        "hora_fin": liq_actual_naive.strftime('%H:%M')
-                                    })
-                        
-                        # Brechas en vivo (tiempo de inactividad actual desde el último cierre)
-                        tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
-                        if not tiene_orden_activa:
-                            ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
-                            if not ordenes_cerradas.empty:
-                                ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
-                                liq_last = ultima_cerrada.get('HORA_LIQ')
-                                # Limpieza preventiva de zona horaria para resta segura contra ahora_local
-                                liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
+                                        if gap_mins > 30:
+                                            alertas_tiempo_muerto.append({
+                                                "tipo": "historico",
+                                                "tecnico": tec,
+                                                "gap": int(gap_mins),
+                                                "orden_prev": task_actual.get('NUM', 'N/D'),
+                                                "orden_next": task_siguiente.get('NUM', 'N/D'),
+                                                "hora_fin": liq_actual_naive.strftime('%H:%M')
+                                            })
                                 
-                                gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
+                                # Brechas en vivo (tiempo de inactividad actual desde el último cierre)
+                                tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
+                                if not tiene_orden_activa:
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
+                                    if not ordenes_cerradas.empty:
+                                        ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
+                                        liq_last = ultima_cerrada.get('HORA_LIQ')
+                                        # Limpieza preventiva de zona horaria para resta segura contra ahora_local
+                                        liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
+                                        
+                                        gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
 
-                                alm_ini_v, alm_fin_v = _obtener_almuerzo_tec(tec)
-                                if alm_ini_v is not None and alm_fin_v is not None:
-                                    solape_ini_v = max(liq_last_naive, alm_ini_v)
-                                    solape_fin_v = min(ahora_local, alm_fin_v)
-                                    if solape_fin_v > solape_ini_v:
-                                        solape_mins_v = (solape_fin_v - solape_ini_v).total_seconds() / 60
-                                        gap_vivo_mins = max(0, gap_vivo_mins - solape_mins_v)
+                                        alm_ini_v, alm_fin_v = _obtener_almuerzo_tec(tec)
+                                        if alm_ini_v is not None and alm_fin_v is not None:
+                                            solape_ini_v = max(liq_last_naive, alm_ini_v)
+                                            solape_fin_v = min(ahora_local, alm_fin_v)
+                                            if solape_fin_v > solape_ini_v:
+                                                solape_mins_v = (solape_fin_v - solape_ini_v).total_seconds() / 60
+                                                gap_vivo_mins = max(0, gap_vivo_mins - solape_mins_v)
 
-                                if gap_vivo_mins > 30:
-                                    alertas_tiempo_muerto.append({
-                                        "tipo": "vivo",
-                                        "tecnico": tec,
-                                        "gap": int(gap_vivo_mins),
-                                        "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
-                                        "hora_fin": liq_last_naive.strftime('%H:%M')
-                                    })
+                                        if gap_vivo_mins > 30:
+                                            alertas_tiempo_muerto.append({
+                                                "tipo": "vivo",
+                                                "tecnico": tec,
+                                                "gap": int(gap_vivo_mins),
+                                                "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
+                                                "hora_fin": liq_last_naive.strftime('%H:%M')
+                                            })
+
                         # ==============================================================================
                         # CONTINUACIÓN: PROCESAMIENTO Y DIBUJADO DEL GANTT
                         # ==============================================================================
@@ -2140,7 +2137,7 @@ def main():
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
-                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
+                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
                             actividades_permitidas = [
@@ -2161,28 +2158,20 @@ def main():
                                 filas_almuerzo = []
                                 for _, fila_alm in df_almuerzos_hoy.iterrows():
                                     try:
-                                        tec_alm = str(fila_alm['TECNICO']).strip().upper()
+                                        tec_alm = normalizar_nombre_cruce(fila_alm['TECNICO'])
                                         hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
                                         hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
-                                        
-                                        # Calcular la duración exacta del almuerzo para la tarjeta flotante
-                                        diff_alm = hf_alm - hi_alm
-                                        total_mins = int(diff_alm.total_seconds() / 60)
-                                        hrs, rem_mins = divmod(total_mins, 60)
-                                        tiempo_real_alm = f"{int(hrs)}h {int(rem_mins)}m" if hrs > 0 else f"{int(rem_mins)}m"
-                                        
                                         filas_almuerzo.append({
                                             'TECNICO': tec_alm,
                                             'ACTIVIDAD': 'ALMUERZO',
                                             'NUM': '-',
-                                            'CLIENTE': '-',
                                             'COLONIA': '-',
                                             'ESTADO': 'ALMUERZO',
                                             'GANTT_START': hi_alm,
                                             'GANTT_END': hf_alm,
                                             'Inicio': hi_alm.strftime('%H:%M'),
                                             'Cierre': hf_alm.strftime('%H:%M'),
-                                            'TIEMPO_REAL': tiempo_real_alm
+                                            'TIEMPO_REAL': '-'
                                         })
                                     except Exception:
                                         continue
@@ -2190,24 +2179,18 @@ def main():
                                     df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame(filas_almuerzo)], ignore_index=True)
                                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             
-                            # Generador dinámico e inteligente de tarjetas flotantes (Gantt en Vivo)
-                            def generar_info_hover_final(row):
-                                act = str(row.get('ACTIVIDAD', ''))
-                                num = str(row.get('NUM', 'N/D'))
-                                colonia = str(row.get('COLONIA', 'N/D'))
-                                estado = str(row.get('ESTADO', 'N/D'))
-                                inicio = str(row.get('Inicio', 'N/D'))
-                                cierre = str(row.get('Cierre', 'N/D'))
-                                tiempo_real = str(row.get('TIEMPO_REAL', '---'))
-                                cliente = str(row.get('CLIENTE', 'N/D'))
-                                
-                                if act == "ALMUERZO":
-                                    return f"<b>🥪 {act}</b><br>Inicio: {inicio}<br>Fin: {cierre}<br>Tiempo Total: <b>{tiempo_real}</b>"
-                                else:
-                                    return f"<b>🛠️ {act}</b><br>Orden: {num}<br>Cliente ID: <b>{cliente}</b><br>Colonia: {colonia}<br>Estado: {estado}<br>Inicio: {inicio}<br>Cierre: {cierre}<br>Tiempo Total: {tiempo_real}"
-                                    
-                            df_para_gantt_final['INFO_HOVER'] = df_para_gantt_final.apply(generar_info_hover_final, axis=1)
+                            df_para_gantt_final['INFO_HOVER'] = (
+                                "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
+                                "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
+                                "COLONIA=" + df_para_gantt_final['COLONIA'].astype(str) + "<br>" +
+                                "ESTADO=" + df_para_gantt_final['ESTADO'].astype(str) + "<br>" +
+                                "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
+                                "Cierre=" + df_para_gantt_final['Cierre'].astype(str) + "<br>" +
+                                "Tiempo Total=" + df_para_gantt_final['TIEMPO_REAL'].astype(str)
+                            )
 
+                            st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
+                            
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",         
                                 "SOP": "#d32f2f",                
@@ -2372,199 +2355,199 @@ def main():
                                 horas_t, mins_t = divmod(total_equipo_muerto, 60)
                                 st.metric("⏱️ Tiempo Muerto Neto Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
 
-        st.markdown("---")
-        if st.session_state.get('config_ver_panel', True):
-            with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
-                if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
-                    st.session_state.st_btn_v_active = "PENDIENTE"
-                    
-                if es_movil:
-                    st.write("Filtros:")
-                    if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
-                        st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                    col_m1, col_m2 = st.columns(2)
-                    if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                    if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
-                else:
-                    col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
-                    if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
-                        st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                    if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                    if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
-                        st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
-
-            status_final_btn = st.session_state.st_btn_v_active
-
-            if check_ordenes_totales:
-                df_v_tabla_monitor = df_todas_pendientes_monitor 
-            else:
-                if status_final_btn == "PENDIENTE": 
-                    if check_criticos_diamante:
-                        df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+            st.markdown("---")
+            if st.session_state.get('config_ver_panel', True):
+                with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
+                    if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
+                        st.session_state.st_btn_v_active = "PENDIENTE"
+                        
+                    if es_movil:
+                        st.write("Filtros:")
+                        if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+                            st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
+                        col_m1, col_m2 = st.columns(2)
+                        if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
+                        if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
                     else:
-                        df_v_tabla_monitor = df_solo_asignadas_monitor
-                elif status_final_btn == "C_HOY": 
-                    df_v_tabla_monitor = df_cerradas_hoy_monitor
-                else: 
-                    df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
-                    
+                        col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
+                        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+                            st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
+                        if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
+                        if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
+                            st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
 
-        t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
-        
-        with t_panel_v:
-            if not df_v_tabla_monitor.empty:
-                if es_movil:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    for idx, row in df_v_tabla_monitor.iterrows():
-                        color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
-                        estado_txt = str(row.get('ESTADO', 'N/D')).upper()
-                        bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
-                        
-                        # Identificar si la orden está aperturada en móvil
-                        raw_hi = row.get('HORA_INI')
-                        hi_str = str(raw_hi).strip().upper() if pd.notnull(raw_hi) else ""
-                        is_hi_val = pd.notnull(raw_hi) and hi_str not in ['', '---', 'NAT', 'NONE', 'NAN']
-                        is_est_act = str(row.get('ESTADO', '')).upper().strip() in ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
-                        
-                        show_gps_mobile = (is_hi_val or is_est_act) and row.get('GPS')
-                        gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_blank" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
-                        
-                        st.markdown(f"""
-                        <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <span style="color: white; font-weight: bold; font-size: 16px;">ORD-{row.get('NUM', 'N/D')}</span>
-                                <span style="background: {bg_estado}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">{estado_txt}</span>
-                            </div>
-                            <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
-                                👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
-                                📍 {str(row.get('COLONIA', 'N/D'))[:30]}
-                                {gps_link_html}
-                            </div>
-                            <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
-                                🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
-                                👨‍🔧 {str(row.get('TECNICO', ''))[:20]}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        if st.button(f"👁️ Ver Detalle de Orden {row.get('NUM')}", key=f"btn_mobile_{row.get('NUM')}_{idx}", use_container_width=True):
-                            mostrar_comentario_cierre(row)
-                        st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
+                status_final_btn = st.session_state.st_btn_v_active
+
+                if check_ordenes_totales:
+                    df_v_tabla_monitor = df_todas_pendientes_monitor 
                 else:
-                    df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
-                    
-                    # === CONTROL DE COLUMNA GPS Y CONDICIONES DE APERTURA ===
-                    if "GPS" in df_v_tabla_monitor.columns:
-                        raw_hora_ini = df_v_tabla_monitor['HORA_INI']
-                        hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
-                        is_hora_ini_valid = raw_hora_ini.notna() & (~hora_ini_str.isin(['', '---', 'NAT', 'NONE', 'NAN']))
+                    if status_final_btn == "PENDIENTE": 
+                        if check_criticos_diamante:
+                            df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+                        else:
+                            df_v_tabla_monitor = df_solo_asignadas_monitor
+                    elif status_final_btn == "C_HOY": 
+                        df_v_tabla_monitor = df_cerradas_hoy_monitor
+                    else: 
+                        df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
                         
-                        is_estado_active = df_v_tabla_monitor['ESTADO'].astype(str).str.upper().str.strip().isin(
-                            ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
+
+            t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
+            
+            with t_panel_v:
+                if not df_v_tabla_monitor.empty:
+                    if es_movil:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        for idx, row in df_v_tabla_monitor.iterrows():
+                            color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
+                            estado_txt = str(row.get('ESTADO', 'N/D')).upper()
+                            bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
+                            
+                            # Identificar si la orden está aperturada en móvil
+                            raw_hi = row.get('HORA_INI')
+                            hi_str = str(raw_hi).strip().upper() if pd.notnull(raw_hi) else ""
+                            is_hi_val = pd.notnull(raw_hi) and hi_str not in ['', '---', 'NAT', 'NONE', 'NAN']
+                            is_est_act = str(row.get('ESTADO', '')).upper().strip() in ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
+                            
+                            show_gps_mobile = (is_hi_val or is_est_act) and row.get('GPS')
+                            gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_blank" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
+                            
+                            st.markdown(f"""
+                            <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <span style="color: white; font-weight: bold; font-size: 16px;">ORD-{row.get('NUM', 'N/D')}</span>
+                                    <span style="background: {bg_estado}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">{estado_txt}</span>
+                                </div>
+                                <div style="color: #94A3B8; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
+                                    👤 <b>{str(row.get('NOMBRE', 'N/D'))[:25]}</b> <br>
+                                    📍 {str(row.get('COLONIA', 'N/D'))[:30]}
+                                    {gps_link_html}
+                                </div>
+                                <div style="color: #E2E8F0; font-size: 12px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin-bottom: 8px;">
+                                    🛠️ {str(row.get('ACTIVIDAD', ''))} <br>
+                                    👨‍🔧 {str(row.get('TECNICO', ''))[:20]}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            if st.button(f"👁️ Ver Detalle de Orden {row.get('NUM')}", key=f"btn_mobile_{row.get('NUM')}_{idx}", use_container_width=True):
+                                mostrar_comentario_cierre(row)
+                            st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
+                    else:
+                        df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
+                        
+                        # === CONTROL DE COLUMNA GPS Y CONDICIONES DE APERTURA ===
+                        if "GPS" in df_v_tabla_monitor.columns:
+                            raw_hora_ini = df_v_tabla_monitor['HORA_INI']
+                            hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
+                            is_hora_ini_valid = raw_hora_ini.notna() & (~hora_ini_str.isin(['', '---', 'NAT', 'NONE', 'NAN']))
+                            
+                            is_estado_active = df_v_tabla_monitor['ESTADO'].astype(str).str.upper().str.strip().isin(
+                                ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
+                            )
+                            
+                            mask_aperturada = is_hora_ini_valid | is_estado_active
+                            
+                            gps_filtrado = np.where(mask_aperturada, df_v_tabla_monitor["GPS"].fillna(""), "")
+                            df_estilo_v["GPS"] = gps_filtrado
+                            
+                            cols = list(df_estilo_v.columns)
+                            if "GPS" in cols:
+                                cols.remove("GPS")
+                            if "COLONIA" in cols:
+                                idx_colonia = cols.index("COLONIA")
+                                cols.insert(idx_colonia, "GPS")
+                            else:
+                                cols.append("GPS")
+                            df_estilo_v = df_estilo_v[cols]
+                        
+                        evento_monitor_diam = st.dataframe(
+                            df_estilo_v.style.apply(row_styler, axis=1),
+                            column_config={
+                                "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
+                                "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
+                                "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
+                                "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
+                                "ES_OFFLINE": None,
+                                "MINUTOS_CALC": None
+                            }, 
+                            use_container_width=True, 
+                            height=600, 
+                            hide_index=True, 
+                            on_select="rerun", 
+                            selection_mode="single-row"
                         )
                         
-                        mask_aperturada = is_hora_ini_valid | is_estado_active
-                        
-                        gps_filtrado = np.where(mask_aperturada, df_v_tabla_monitor["GPS"].fillna(""), "")
-                        df_estilo_v["GPS"] = gps_filtrado
-                        
-                        cols = list(df_estilo_v.columns)
-                        if "GPS" in cols:
-                            cols.remove("GPS")
-                        if "COLONIA" in cols:
-                            idx_colonia = cols.index("COLONIA")
-                            cols.insert(idx_colonia, "GPS")
-                        else:
-                            cols.append("GPS")
-                        df_estilo_v = df_estilo_v[cols]
-                    
-                    evento_monitor_diam = st.dataframe(
-                        df_estilo_v.style.apply(row_styler, axis=1),
-                        column_config={
-                            "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
-                            "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
-                            "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
-                            "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                            "ES_OFFLINE": None,
-                            "MINUTOS_CALC": None
-                        }, 
-                        use_container_width=True, 
-                        height=600, 
-                        hide_index=True, 
-                        on_select="rerun", 
-                        selection_mode="single-row"
-                    )
-                    
-                    if evento_monitor_diam.selection.rows:
-                        mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
-            else:
-                st.warning("No hay registros disponibles para mostrar.")
-
-        with t_graphs_v:
-            st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
-        
-            df_graficas = df_base.copy()
-            df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
-        
-            df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
-        
-            if not df_productividad_v.empty:
-                df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
-                conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
-                
-                conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
-                
-                fig_barras_v = px.bar(
-                    conteo_horario_v, x='Hora_Format', y='Ord', 
-                    labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
-                    template="plotly_dark", height=300
-                )
-                st.plotly_chart(fig_barras_v, use_container_width=True)
-            else:
-                st.info("Sin datos de cierres para generar gráfico horario.")
-
-        with t_analitica_v:
-            st.markdown("### 📈 Análisis de Rendimiento Operativo")
-            
-            if df_v_tabla_monitor.empty:
-                st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
-            else:
-                plt.style.use('dark_background')
-                
-                segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
-                motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
-                
-                if es_movil:
-                    if not segmentos_conteo.empty:
-                        fig, ax = plt.subplots(figsize=(6, 4))
-                        segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
-                        ax.set_title("Órdenes por Segmento")
-                        st.pyplot(fig)
-                    else:
-                        st.caption("Sin datos de segmentos.")
+                        if evento_monitor_diam.selection.rows:
+                            mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
                 else:
-                    col_an1, col_an2 = st.columns(2)
-                    with col_an1:
+                    st.warning("No hay registros disponibles para mostrar.")
+
+            with t_graphs_v:
+                st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+            
+                df_graficas = df_base.copy()
+                df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+            
+                df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
+            
+                if not df_productividad_v.empty:
+                    df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
+                    conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
+                    
+                    conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
+                    
+                    fig_barras_v = px.bar(
+                        conteo_horario_v, x='Hora_Format', y='Ord', 
+                        labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
+                        template="plotly_dark", height=300
+                    )
+                    st.plotly_chart(fig_barras_v, use_container_width=True)
+                else:
+                    st.info("Sin datos de cierres para generar gráfico horario.")
+
+            with t_analitica_v:
+                st.markdown("### 📈 Análisis de Rendimiento Operativo")
+                
+                if df_v_tabla_monitor.empty:
+                    st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
+                else:
+                    plt.style.use('dark_background')
+                    
+                    segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
+                    motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
+                    
+                    if es_movil:
                         if not segmentos_conteo.empty:
                             fig, ax = plt.subplots(figsize=(6, 4))
                             segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
                             ax.set_title("Órdenes por Segmento")
                             st.pyplot(fig)
                         else:
-                            st.caption("Sin datos de segmentos para graficar.")
-                            
-                    with col_an2:
-                        if not motivos_conteo.empty:
-                            fig, ax = plt.subplots(figsize=(6, 4))
-                            motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
-                            ax.set_ylabel('')
-                            ax.set_title("Motivo / Diagnóstico")
-                            st.pyplot(fig)
-                        else:
-                            st.caption("Sin datos de diagnósticos para graficar.")
+                            st.caption("Sin datos de segmentos.")
+                    else:
+                        col_an1, col_an2 = st.columns(2)
+                        with col_an1:
+                            if not segmentos_conteo.empty:
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                segmentos_conteo.plot(kind='bar', ax=ax, color=['#3B82F6', '#10B981'])
+                                ax.set_title("Órdenes por Segmento")
+                                st.pyplot(fig)
+                            else:
+                                st.caption("Sin datos de segmentos para graficar.")
+                                
+                        with col_an2:
+                            if not motivos_conteo.empty:
+                                fig, ax = plt.subplots(figsize=(6, 4))
+                                motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
+                                ax.set_ylabel('')
+                                ax.set_title("Motivo / Diagnóstico")
+                                st.pyplot(fig)
+                            else:
+                                st.caption("Sin datos de diagnósticos para graficar.")
 
 if __name__ == '__main__':
     if verificar_autenticacion():
