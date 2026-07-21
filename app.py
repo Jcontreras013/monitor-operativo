@@ -453,7 +453,6 @@ def main():
                             st.success(f"✅ Almuerzo de {tec_almuerzo_sel} guardado para el {fecha_almuerzo_sel.strftime('%d/%m/%Y')}.")
                         else:
                             st.error("No se pudo guardar el almuerzo. Revisa la conexión con Sheets.")
-
         st.divider()
 
         st.markdown("### ☁️ Sincronización")
