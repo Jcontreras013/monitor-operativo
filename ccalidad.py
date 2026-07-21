@@ -7,12 +7,13 @@ from tools import (
     guardar_registro_calidad, 
     get_honduras_time, 
     normalizar_nombre_cruce,
-    leer_espejo_gcs
+    leer_espejo_gcs,
+    guardar_auditoria_campo
 )
 
 def mostrar_modulo_calidad(conn, df_base):
     st.title("🏅 Control de Calidad y Auditoría de Servicios")
-    st.caption("Módulo de encuestas, satisfacción de clientes (CSAT) y auditoría técnica de órdenes cerradas.")
+    st.caption("Módulo de encuestas, auditorías en campo (Operaciones / Instalaciones) y control de calidad en Google Sheets.")
     
     # Filtrar órdenes cerradas (las evaluables)
     df_cerradas = df_base[df_base['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
@@ -47,6 +48,10 @@ def mostrar_modulo_calidad(conn, df_base):
             olt_val = str(row_sel.get(col, ''))
             break
 
+    # Intentar obtener fecha de visita limpia
+    fecha_liq_dt = pd.to_datetime(row_sel.get('HORA_LIQ', pd.NaT))
+    fecha_visita_str = fecha_liq_dt.strftime('%d/%m/%Y') if pd.notnull(fecha_liq_dt) else get_honduras_time().strftime('%d/%m/%Y')
+
     st.markdown("---")
     
     # 2. CAMPOS AUTO-RELLENADOS AUTOMÁTICAMENTE
@@ -65,10 +70,11 @@ def mostrar_modulo_calidad(conn, df_base):
         
     st.markdown("---")
 
-    # === SEPARACIÓN DE FLUJOS MEDIANTE PESTAÑAS ===
-    tab_llamada, tab_whatsapp, tab_historico = st.tabs([
+    # === SEPARACIÓN DE FLUJOS MEDIANTE CUATRO PESTAÑAS ===
+    tab_llamada, tab_whatsapp, tab_campo, tab_historico = st.tabs([
         "📞 Registrar Gestión de Llamada", 
         "💬 Enviar Encuesta WhatsApp", 
+        "🚙 Auditoría de Campo (Operaciones)",
         "📋 Histórico y Reportes"
     ])
 
@@ -87,11 +93,11 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.markdown("### 1️⃣ Datos Generales del Servicio")
                 col_gen1, col_gen2 = st.columns(2)
                 with col_gen1:
-                    st.text_input("Nombre del Cliente:", value=nombre_cliente, disabled=True)
+                    st.text_input("Nombre del Cliente (Auto-rellenado):", value=nombre_cliente, disabled=True)
                     st.text_input("Número de Orden / Servicio:", value=f"ORD-{num_orden}", disabled=True)
                 with col_gen2:
-                    fecha_visita_input = st.text_input("Fecha de la Visita (DD/MM/AAAA):", value=row_sel.get('HORA_LIQ', get_honduras_time()).strftime('%d/%m/%Y') if pd.notnull(row_sel.get('HORA_LIQ')) else get_honduras_time().strftime('%d/%m/%Y'))
-                    st.text_input("Nombre del Técnico:", value=tecnico, disabled=True)
+                    fecha_visita_input = st.text_input("Fecha de la Visita (DD/MM/AAAA):", value=fecha_visita_str, key="fv_input")
+                    st.text_input("Nombre del Técnico (Auto-rellenado):", value=tecnico, disabled=True)
                 
                 st.divider()
                 
@@ -127,14 +133,14 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.divider()
                 
                 st.markdown("### 7️⃣ Observaciones del Cliente (Opcional)")
-                observaciones_cliente = st.text_area("Comentarios u observaciones adicionales del cliente:")
+                observaciones_cliente = st.text_area("Comentarios u observaciones adicionales del cliente:", key="obs_cliente_call")
                 
                 st.divider()
                 
                 st.markdown("### 8️⃣ Visto Bueno y Cierre del Servicio")
                 p11_visto_bueno = st.radio("11. ¿Autoriza usted que el técnico continúe con su siguiente instalación o visita, confirmando que el servicio quedó conforme?", ["Sí, otorgo mi visto bueno", "No"], horizontal=True)
-                nombre_firma = st.text_input("Nombre de la persona que brinda la aceptación digital (Cliente o Responsable):", value=nombre_cliente)
-                hora_cierre = st.text_input("Hora de cierre del servicio:", value=get_honduras_time().strftime('%I:%M %p'))
+                nombre_firma = st.text_input("Nombre de la persona que brinda la aceptación digital (Cliente o Responsable):", value=nombre_cliente, key="firma_call_input")
+                hora_cierre = st.text_input("Hora de cierre del servicio:", value=get_honduras_time().strftime('%I:%M %p'), key="hora_c_call_input")
                 
                 st.divider()
                 
@@ -277,26 +283,133 @@ def mostrar_modulo_calidad(conn, df_base):
                     st.info("ℹ️ Señal automática no enviada (Las credenciales de WATI o el nombre de la plantilla no están configuradas en st.secrets).")
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 3: HISTORIAL, REPORTE EN PDF Y ELIMINACIÓN DE REGISTROS
+    # PESTAÑA 3: AUDITORÍA TÉCNICA DE CAMPO (OPERACIONES E INSTALACIONES)
+    # --------------------------------------------------------------------------
+    with tab_campo:
+        st.subheader("🚙 Auditoría Técnica en Campo (Supervisión Presencial)")
+        st.caption("Formularios técnicos de control de calidad para ser completados por supervisores en el sitio de trabajo.")
+        
+        # Sub-pestañas para diferenciar Órdenes Varias de INSFIBRA
+        subtab_varias, subtab_insfibra = st.tabs(["📋 Auditoría de Órdenes Varias", "🔌 Auditoría de Instalaciones (INSFIBRA)"])
+        
+        with subtab_varias:
+            st.markdown("### 📋 Formulario para Órdenes Varias (Soporte, Mantenimiento, etc.)")
+            form_varias = st.form(key="form_auditoria_varias")
+            with form_varias:
+                col_v1, col_v2 = st.columns(2)
+                with col_v1:
+                    st.text_input("Orden #:", value=num_orden, disabled=True, key="ord_varias_disabled")
+                    st.text_input("Código (Cliente ID):", value=cliente_id, disabled=True, key="cod_varias_disabled")
+                    st.text_input("Código Servicio (Actividad):", value=actividad, disabled=True, key="cs_varias_disabled")
+                    vineta_v = st.text_input("Viñeta:", placeholder="Ej: V-12345", key="vineta_varias")
+                with col_v2:
+                    mufa_v = st.text_input("Mufa:", placeholder="Ej: MUFA-A", key="mufa_varias")
+                    metraje_v = st.number_input("Metraje (Meters):", min_value=0.0, value=0.0, step=1.0, key="metraje_varias")
+                    estetica_v = st.selectbox("Estética:", ["Excelente", "Aceptable", "Deficiente"], key="estetica_varias")
+                    ruta_v = st.text_input("Ruta de acometida:", placeholder="Ej: Poste 3 a Fachada", key="ruta_varias")
+                
+                comentario_auditor_v = st.text_area("Comentario del auditor:", key="comentario_varias")
+                submit_varias = st.form_submit_button("💾 Guardar Auditoría (Órdenes Varias)")
+                
+            if submit_varias:
+                datos_varias = {
+                    "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    "ORDEN_NUM": num_orden,
+                    "CODIGO_CLIENTE": cliente_id,
+                    "CODIGO_SERVICIO": actividad,
+                    "VINETA": vineta_v,
+                    "MUFA": mufa_v,
+                    "METRAJE": metraje_v,
+                    "ESTETICA": estetica_v,
+                    "RUTA_ACOMETIDA": ruta_v,
+                    "COMENTARIO_AUDITOR": comentario_auditor_v,
+                    "SUPERVISOR": st.session_state.get('username', 'N/D')
+                }
+                exito_v = guardar_auditoria_campo(conn, datos_varias, "operaciones")
+                if exito_v:
+                    st.success("✅ ¡Auditoría de Órdenes Varias guardada con éxito en la pestaña 'Operaciones' de Google Sheets!")
+                else:
+                    st.error("❌ Error al guardar en Google Sheets. Por favor, asegúrese de crear la pestaña 'Operaciones'.")
+                    
+        with subtab_insfibra:
+            st.markdown("### 🔌 Formulario de Auditoría para Instalaciones (INSFIBRA)")
+            
+            # Cálculo del tiempo invertido cronológico real si existen horas de campo
+            tiempo_invent_str = "---"
+            if pd.notnull(row_sel.get('HORA_INI')) and pd.notnull(row_sel.get('HORA_LIQ')):
+                mins_inv = int((row_sel['HORA_LIQ'] - row_sel['HORA_INI']).total_seconds() / 60)
+                tiempo_invent_str = f"{mins_inv} minutos"
+            elif row_sel.get('TIEMPO_REAL') != "---":
+                tiempo_invent_str = str(row_sel.get('TIEMPO_REAL'))
+                
+            form_insfibra = st.form(key="form_auditoria_insfibra")
+            with form_insfibra:
+                col_i1, col_i2 = st.columns(2)
+                with col_i1:
+                    st.text_input("TECNICO:", value=tecnico, disabled=True, key="tec_ins_disabled")
+                    st.text_input("# ORDEN:", value=num_orden, disabled=True, key="ord_ins_disabled")
+                    st.text_input("CODIGO (Cliente ID):", value=cliente_id, disabled=True, key="cod_ins_disabled")
+                    st.text_input("CS (Actividad):", value=actividad, disabled=True, key="cs_ins_disabled")
+                    st.text_input("TIEMPO INVERTIDO:", value=tiempo_invent_str, disabled=True, key="time_ins_disabled")
+                with col_i2:
+                    tipo_fo = st.selectbox("TIPO F.O.:", ["Drop Flat 1 Hilo", "Drop Fig 8", "ADSS 6 Hilos", "ADSS 12 Hilos"], key="tipo_fo_ins")
+                    metros_fo = st.number_input("METROS F.O.:", min_value=0.0, value=0.0, step=1.0, key="metros_fo_ins")
+                    vineta_ins = st.text_input("VIÑETA:", placeholder="Ej: V-INS-99", key="vineta_ins_input")
+                    ruta_ins = st.text_input("RUTA ACOMETIDA:", placeholder="Ej: Caja de Distribución a ONT", key="ruta_ins_input")
+                    mufa_ins = st.text_input("MUFA:", placeholder="Ej: MUFA-INS", key="mufa_ins_input")
+                    
+                comentario_auditor_ins = st.text_area("COMENTARIO DEL AUDITOR:", key="comentario_ins_input")
+                submit_ins = st.form_submit_button("💾 Guardar Auditoría de Instalación (INSFIBRA)")
+                
+            if submit_ins:
+                datos_ins = {
+                    "FECHA_AUDITORIA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    "TECNICO": tecnico,
+                    "ORDEN_NUM": num_orden,
+                    "CODIGO_CLIENTE": cliente_id,
+                    "CODIGO_SERVICIO": actividad,
+                    "TIEMPO_INVERTIDO": tiempo_invent_str,
+                    "TIPO_FO": tipo_fo,
+                    "METROS_FO": metros_fo,
+                    "VINETA": vineta_ins,
+                    "RUTA_ACOMETIDA": ruta_ins,
+                    "MUFA": mufa_ins,
+                    "COMENTARIO_AUDITOR": comentario_auditor_ins,
+                    "SUPERVISOR": st.session_state.get('username', 'N/D')
+                }
+                exito_i = guardar_auditoria_campo(conn, datos_ins, "instalaciones")
+                if exito_i:
+                    st.success("✅ ¡Auditoría de Instalación guardada con éxito en la pestaña 'Instalaciones' de Google Sheets!")
+                else:
+                    st.error("❌ Error al guardar en Google Sheets. Por favor, asegúrese de crear la pestaña 'Instalaciones'.")
+
+    # --------------------------------------------------------------------------
+    # PESTAÑA 4: HISTORIAL, REPORTE EN PDF Y ELIMINACIÓN DE REGISTROS
     # --------------------------------------------------------------------------
     with tab_historico:
-        st.subheader("📋 Histórico de Auditorías de Calidad y Satisfacción")
-        st.caption("Consulte todas las encuestas y gestiones guardadas en su base de datos.")
+        st.subheader("📋 Histórico de Auditorías y Control de Calidad")
         
-        # Intentar leer desde Google Sheets (Worksheet='Calidad')
+        tipo_consulta = st.selectbox(
+            "📋 Seleccione la Base de Datos a Consultar:", 
+            ["Satisfacción de Clientes (Llamadas / QA)", "Auditoría de Campo (Operaciones)", "Auditoría de Instalaciones (INSFIBRA)"]
+        )
+        
+        # Mapeo dinámico de hojas de cálculo según selección
+        hoja_target = "Calidad" if tipo_consulta == "Satisfacción de Clientes (Llamadas / QA)" else ("Operaciones" if "Campo" in tipo_consulta else "Instalaciones")
+        archivo_respaldo = "calidad_maestro.csv" if hoja_target == "Calidad" else ("operaciones_maestro.csv" if hoja_target == "Operaciones" else "instalaciones_maestro.csv")
+        
         try:
-            df_qa = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Calidad", ttl=0)
+            df_qa = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=hoja_target, ttl=0)
         except Exception:
             df_qa = None
             
         if df_qa is None or df_qa.empty:
-            # Fallback en caso de que esté vacía la pestaña o falle la conexión, intentar leer de GCS
-            df_qa = leer_espejo_gcs("jovial-trilogy-306216.appspot.com", "calidad_maestro.csv")
+            df_qa = leer_espejo_gcs("jovial-trilogy-306216.appspot.com", archivo_respaldo)
             
         if df_qa is None or df_qa.empty:
-            st.info("ℹ️ Aún no se han registrado encuestas de calidad o gestiones telefónicas en el sistema.")
+            st.info(f"ℹ️ Aún no se han registrado auditorías en la pestaña '{hoja_target}' de Google Sheets.")
         else:
-            # Normalizar columnas a mayúsculas
+            # Normalizar columnas
             df_qa.columns = df_qa.columns.astype(str).str.upper().str.strip()
             
             # 1. FILTRADO POR RANGO DE FECHAS
@@ -307,7 +420,8 @@ def mostrar_modulo_calidad(conn, df_base):
                 rango_sel = st.date_input("Seleccione el periodo a consultar:", value=(hoy_hx - timedelta(days=7), hoy_hx), key="rango_calidad_picker")
             
             # Convertir fechas de forma segura para realizar el filtro
-            df_qa['FECHA_DT'] = pd.to_datetime(df_qa['FECHA_GESTION'], errors='coerce')
+            col_fecha_cruce = 'FECHA_GESTION' if 'FECHA_GESTION' in df_qa.columns else 'FECHA_AUDITORIA'
+            df_qa['FECHA_DT'] = pd.to_datetime(df_qa[col_fecha_cruce], errors='coerce')
             df_qa = df_qa.dropna(subset=['FECHA_DT'])
             
             if len(rango_sel) == 2:
@@ -318,9 +432,9 @@ def mostrar_modulo_calidad(conn, df_base):
                 df_filtered = df_qa[df_qa['FECHA_DT'].dt.date == ini_d].copy()
                 
             if df_filtered.empty:
-                st.warning("⚠️ No se encontraron registros de calidad para el rango de fechas seleccionado.")
+                st.warning(f"⚠️ No se encontraron auditorías en la pestaña '{hoja_target}' para el rango de fechas seleccionado.")
             else:
-                # Mostrar el DataFrame de forma ejecutiva omitiendo la columna datetime interna
+                # Mostrar DataFrame filtrado
                 cols_mostrar = [c for c in df_filtered.columns if c not in ['FECHA_DT']]
                 st.dataframe(df_filtered[cols_mostrar], use_container_width=True, hide_index=True)
                 
@@ -330,58 +444,71 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.markdown("#### 📥 Exportación de Reporte en PDF")
                 col_pdf1, col_pdf2 = st.columns([1, 2])
                 with col_pdf1:
-                    if st.button("📄 GENERAR REPORTE PDF DE CALIDAD", use_container_width=True, type="primary"):
+                    if st.button("📄 GENERAR REPORTE PDF DE CALIDAD", use_container_width=True, type="primary", key="btn_pdf_calidad_action"):
                         with st.spinner("Preparando archivo de reporte..."):
-                            from tools import generar_pdf_reporte_calidad
-                            # Generar los bytes del PDF invocando la lógica en tools.py
-                            st.session_state['pdf_calidad_data'] = generar_pdf_reporte_calidad(
-                                df_filtered, 
-                                ini_d, 
-                                fin_d if 'fin_d' in locals() else ini_d
-                            )
-                            
-                    if 'pdf_calidad_data' in st.session_state and st.session_state['pdf_calidad_data'] is not None:
+                            from tools import generar_pdf_reporte_calidad, generar_pdf_reporte_campo
+                            if hoja_target == "Calidad":
+                                st.session_state['pdf_calidad_data_final'] = generar_pdf_reporte_calidad(
+                                    df_filtered, 
+                                    ini_d, 
+                                    fin_d if 'fin_d' in locals() else ini_d
+                                )
+                            else:
+                                st.session_state['pdf_calidad_data_final'] = generar_pdf_reporte_campo(
+                                    df_filtered, 
+                                    ini_d, 
+                                    fin_d if 'fin_d' in locals() else ini_d,
+                                    tipo="operaciones" if hoja_target == "Operaciones" else "instalaciones"
+                                )
+                                
+                    if 'pdf_calidad_data_final' in st.session_state and st.session_state['pdf_calidad_data_final'] is not None:
                         st.download_button(
                             label="📥 DESCARGAR REPORTE EN PDF",
-                            data=st.session_state['pdf_calidad_data'],
-                            file_name=f"Reporte_Calidad_{ini_d}.pdf",
+                            data=st.session_state['pdf_calidad_data_final'],
+                            file_name=f"Reporte_{hoja_target}_{ini_d}.pdf",
                             mime="application/pdf",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="btn_download_calidad_actual"
                         )
                         
                 st.markdown("---")
                 
                 # 3. SECCIÓN DE ELIMINACIÓN DE REGISTROS (Poder eliminarlos)
                 st.markdown("#### 🗑️ Eliminación de Registros (Uso exclusivo Gerencia)")
-                st.caption("Seleccione un registro del histórico para eliminarlo de forma permanente tanto de Google Sheets como de GCS.")
+                st.caption(f"Seleccione un registro del histórico para eliminarlo permanentemente de Google Sheets y GCS de la pestaña '{hoja_target}'.")
                 
-                # Crear columna descriptiva para que el usuario elija con precisión
-                df_filtered['OPCION_ELIMINAR'] = df_filtered['TICKET'].astype(str) + " - " + df_filtered['NOMBRE_CLIENTE'].astype(str) + " (" + df_filtered['FECHA_GESTION'].astype(str) + ")"
+                # Crear columna descriptiva según la base de datos
+                col_ticket_ref = 'TICKET' if 'TICKET' in df_filtered.columns else 'ORDEN_NUM'
+                col_nombre_ref = 'NOMBRE_CLIENTE' if 'NOMBRE_CLIENTE' in df_filtered.columns else 'TECNICO'
+                
+                df_filtered['OPCION_ELIMINAR'] = df_filtered[col_ticket_ref].astype(str) + " - " + df_filtered[col_nombre_ref].astype(str) + " (" + df_filtered[col_fecha_cruce].astype(str) + ")"
                 lista_eliminar_ops = ["---"] + df_filtered['OPCION_ELIMINAR'].tolist()
                 
-                registro_a_borrar = st.selectbox("Seleccione el registro que desea eliminar permanentemente:", lista_eliminar_ops)
+                registro_a_borrar = st.selectbox("Seleccione el registro que desea eliminar permanentemente:", lista_eliminar_ops, key="box_eliminar_QA_general")
                 
                 if registro_a_borrar != "---":
                     row_eliminar = df_filtered[df_filtered['OPCION_ELIMINAR'] == registro_a_borrar].iloc[0]
-                    ticket_del = row_eliminar['TICKET']
-                    fecha_del = row_eliminar['FECHA_GESTION']
+                    ticket_del = row_eliminar[col_ticket_ref]
+                    fecha_del = row_eliminar[col_fecha_cruce]
                     
                     col_del1, col_del2 = st.columns([1, 2])
                     with col_del1:
-                        confirmar_del = st.button("🚨 ELIMINAR REGISTRO SELECCIONADO", use_container_width=True, type="primary")
+                        confirmar_del = st.button("🚨 ELIMINAR REGISTRO SELECCIONADO", use_container_width=True, type="primary", key="btn_eliminar_QA_confirm")
                         
                     if confirmar_del:
-                        from tools import eliminar_registro_calidad
+                        from tools import eliminar_registro_calidad, eliminar_registro_campo
                         with st.spinner("Eliminando el registro de las bases de datos..."):
-                            exito_del = eliminar_registro_calidad(conn, ticket_del, fecha_del)
+                            if hoja_target == "Calidad":
+                                exito_del = eliminar_registro_calidad(conn, ticket_del, fecha_del)
+                            else:
+                                exito_del = eliminar_registro_campo(conn, ticket_del, fecha_del, tipo="operaciones" if hoja_target == "Operaciones" else "instalaciones")
                             
                         if exito_del:
-                            st.success(f"✅ ¡El registro correspondiente a la {ticket_del} ha sido eliminado con éxito de Google Sheets y GCS!")
-                            # Limpiar estados de descarga y recargar
-                            if 'pdf_calidad_data' in st.session_state:
-                                del st.session_state['pdf_calidad_data']
+                            st.success(f"✅ ¡El registro correspondiente a la {ticket_del} ha sido eliminado con éxito de la pestaña '{hoja_target}'!")
+                            if 'pdf_calidad_data_final' in st.session_state:
+                                del st.session_state['pdf_calidad_data_final']
                             import time
                             time.sleep(1.5)
                             st.rerun()
                         else:
-                            st.error("❌ Error al intentar eliminar el registro.")
+                            st.error("❌ Error al intentar eliminar el registro de campo.")
