@@ -1971,7 +1971,7 @@ def main():
                     except Exception:
                         return None, None
                         
-                # ==============================================================================
+# ==============================================================================
                 # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
                 # ==============================================================================
                 alertas_9am = []
@@ -1980,6 +1980,7 @@ def main():
                 # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
                 tecnicos_validos_alertas = set()
                 file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
+                
                 if file_to_load:
                     try:
                         with open(file_to_load, "r", encoding="utf-8") as f:
@@ -1992,7 +1993,8 @@ def main():
                                     else:
                                         name = parts[-1].strip().rstrip(".")
                                     tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
-                            except Exception as e:pass
+                    except Exception as e:
+                        pass
                         
                 ahora_local = get_honduras_time()
                 limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
@@ -2020,6 +2022,7 @@ def main():
                             df_tec_hoy['HORA_INI'].notna() & 
                             (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
                         ]
+                        
                         if ordenes_iniciadas_hoy.empty:
                             # Aún no ha abierto ninguna orden hoy
                             alertas_9am.append(tec)
@@ -2028,11 +2031,11 @@ def main():
                             primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
                             # Limpieza preventiva de zona horaria (tz-naive)
                             primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
+                            
                             if primera_ini_tec_naive > limite_9am:
                                 alertas_9am.append(tec)
                                 primera_orden_por_tec[tec] = primera_ini_tec_naive
                                     
-
                 # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
                 df_jornada_hoy = df_monitor_filtrado[
                     ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
@@ -2112,7 +2115,6 @@ def main():
                                         "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
                                         "hora_fin": liq_last_naive.strftime('%H:%M')
                                     })
-
                         # ==============================================================================
                         # CONTINUACIÓN: PROCESAMIENTO Y DIBUJADO DEL GANTT
                         # ==============================================================================
