@@ -387,8 +387,22 @@ def main():
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
                 try:
+                    df_base_for_tecs = st.session_state.get('df_base')
                     df_cat_tecs_almuerzo = cargar_catalogo_tecnicos()
-                    lista_tecs_almuerzo = sorted(df_cat_tecs_almuerzo['Nombre'].dropna().unique().tolist()) if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty else []
+                    if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
+                        if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty:
+                            df_principales_alm = df_cat_tecs_almuerzo[
+                                (df_cat_tecs_almuerzo['Clasificación'] == "TÉCNICO PRINCIPAL") &
+                                (df_cat_tecs_almuerzo['Estatus'] == "ACTIVO")
+                            ]
+                            tecs_validos_set_alm = {normalizar_nombre_cruce(n) for n in df_principales_alm['Nombre'].dropna()}
+                            tecs_en_base_alm = df_base_for_tecs['TECNICO'].dropna().unique().tolist()
+                            lista_tecs_almuerzo = sorted([t for t in tecs_en_base_alm if normalizar_nombre_cruce(t) in tecs_validos_set_alm])
+                        else:
+                            lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
+                    else:
+                        # Aún no hay datos cargados en esta sesión: se usa el catálogo completo como respaldo
+                        lista_tecs_almuerzo = sorted(df_cat_tecs_almuerzo['Nombre'].dropna().unique().tolist()) if df_cat_tecs_almuerzo is not None and not df_cat_tecs_almuerzo.empty else []
                 except Exception:
                     lista_tecs_almuerzo = []
 
@@ -400,22 +414,24 @@ def main():
                 fecha_almuerzo_sel = st.date_input("Fecha", value=get_honduras_time().date(), key="fecha_almuerzo_sel")
                 col_hi, col_hf = st.columns(2)
                 with col_hi:
-                    hora_ini_almuerzo = st.time_input("Hora inicio", value=dt_time(12, 0), key="hora_ini_almuerzo")
+                    hora_ini_almuerzo_txt = st.text_input("Hora inicio (HH:MM)", value="12:00", key="hora_ini_almuerzo", max_chars=5)
                 with col_hf:
-                    hora_fin_almuerzo = st.time_input("Hora fin", value=dt_time(13, 0), key="hora_fin_almuerzo")
+                    hora_fin_almuerzo_txt = st.text_input("Hora fin (HH:MM)", value="13:00", key="hora_fin_almuerzo", max_chars=5)
 
                 if st.button("💾 Guardar Almuerzo", use_container_width=True, key="btn_guardar_almuerzo"):
+                    hora_ini_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_ini_almuerzo_txt.strip())
+                    hora_fin_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_fin_almuerzo_txt.strip())
                     if not tec_almuerzo_sel:
                         st.warning("Selecciona o escribe un técnico.")
-                    elif conn is None:
-                        st.error("Conexión no disponible.")
+                    elif not hora_ini_valida or not hora_fin_valida:
+                        st.warning("La hora debe tener formato HH:MM en 24 horas (ej. 12:00, 13:30).")
                     else:
                         ok_almuerzo = guardar_almuerzo(
                             conn,
                             tecnico=tec_almuerzo_sel,
                             fecha=fecha_almuerzo_sel.strftime('%Y-%m-%d'),
-                            hora_inicio=hora_ini_almuerzo.strftime('%H:%M'),
-                            hora_fin=hora_fin_almuerzo.strftime('%H:%M'),
+                            hora_inicio=hora_ini_almuerzo_txt.strip(),
+                            hora_fin=hora_fin_almuerzo_txt.strip(),
                             registrado_por=st.session_state.get('usuario_actual', rol_usuario)
                         )
                         if ok_almuerzo:
