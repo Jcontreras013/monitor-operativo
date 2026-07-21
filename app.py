@@ -117,6 +117,10 @@ def normalizar_nombre_cruce(texto):
         "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
         "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
         "JEREMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+        "JERMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+        "JEREMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+        "JERNY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+        "JERNY MODESTO PADILLA": "JERMI MODESTO PADILLA",
         "ELIAS MIZAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
         "ELIAS MISAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
         "ELIAS MISAEL ALONZO": "ELIAS MISAEL ALONZO SABILLON",
@@ -1197,7 +1201,7 @@ def main():
                             lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                         )
                         
-                        df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].astype(str).str.strip().str.upper()
+                        df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].apply(normalizar_nombre_cruce)
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
                         actividades_permitidas = [
@@ -1223,7 +1227,7 @@ def main():
                             filas_almuerzo_h = []
                             for _, fila_alm_h in df_almuerzos_hist.iterrows():
                                 try:
-                                    tec_alm_h = str(fila_alm_h['TECNICO']).strip().upper()
+                                    tec_alm_h = normalizar_nombre_cruce(fila_alm_h['TECNICO'])
                                     hi_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_INICIO']), '%H:%M').time())
                                     hf_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_FIN']), '%H:%M').time())
                                     filas_almuerzo_h.append({
@@ -2122,7 +2126,7 @@ def main():
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
                             
-                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].astype(str).str.strip().str.upper()
+                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
                             actividades_permitidas = [
@@ -2143,7 +2147,7 @@ def main():
                                 filas_almuerzo = []
                                 for _, fila_alm in df_almuerzos_hoy.iterrows():
                                     try:
-                                        tec_alm = str(fila_alm['TECNICO']).strip().upper()
+                                        tec_alm = normalizar_nombre_cruce(fila_alm['TECNICO'])
                                         hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
                                         hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
                                         filas_almuerzo.append({
