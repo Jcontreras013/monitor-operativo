@@ -2449,6 +2449,70 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
         
     return finalizar_pdf(pdf)
 
+# ==============================================================================
+# REGISTRO MANUAL DE HORA DE ALMUERZO POR TÉCNICO (variable día a día)
+# ==============================================================================
+def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin: str, registrado_por: str = "") -> bool:
+    """
+    Guarda o actualiza el horario de almuerzo de un técnico para una fecha
+    específica en la pestaña 'Almuerzos' de Google Sheets. Si ya existía un
+    registro para ese mismo técnico+fecha, lo reemplaza (no se duplica).
+    """
+    if conn is None:
+        return False
+    try:
+        tec_norm = str(tecnico).strip().upper()
+        fecha_str = str(fecha)
+        nuevo = {
+            "TECNICO": tec_norm,
+            "FECHA": fecha_str,
+            "HORA_INICIO": str(hora_inicio),
+            "HORA_FIN": str(hora_fin),
+            "REGISTRADO_POR": str(registrado_por),
+        }
+        df_new = pd.DataFrame([nuevo])
+
+        try:
+            df_existente = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzos", ttl=0)
+        except Exception:
+            df_existente = pd.DataFrame()
+
+        if df_existente is not None and not df_existente.empty:
+            df_existente.columns = df_existente.columns.astype(str).str.upper().str.strip()
+            mask_mismo = (df_existente['TECNICO'].astype(str).str.upper() == tec_norm) & (df_existente['FECHA'].astype(str) == fecha_str)
+            df_existente = df_existente[~mask_mismo].copy()
+            df_final = pd.concat([df_existente, df_new], ignore_index=True)
+        else:
+            df_final = df_new
+
+        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzos", data=df_final)
+        return True
+    except Exception as e:
+        print(f"Error en guardar_almuerzo: {e}")
+        return False
+
+
+def cargar_almuerzos(conn, fecha: str = None) -> pd.DataFrame:
+    """
+    Carga los registros de almuerzo desde la pestaña 'Almuerzos' de Google Sheets.
+    Si se especifica 'fecha' (formato 'YYYY-MM-DD'), filtra solo esa fecha.
+    Devuelve un DataFrame vacío si la pestaña no existe todavía o está vacía.
+    """
+    if conn is None:
+        return pd.DataFrame()
+    try:
+        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzos", ttl=60)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df.columns = df.columns.astype(str).str.upper().str.strip()
+        if fecha:
+            df = df[df['FECHA'].astype(str) == str(fecha)].copy()
+        return df
+    except Exception as e:
+        print(f"Error en cargar_almuerzos: {e}")
+        return pd.DataFrame()
+
+
 def cargar_catalogo_tecnicos():
     """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
     path = "personal_tecnico.txt"
