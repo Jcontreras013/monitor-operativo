@@ -188,7 +188,7 @@ def mostrar_modulo_calidad(conn, df_base):
                     
         else:
             # Flujo de llamada fallida (No contestó)
-            form_falla = st.form(key="form_llamada_fallida")
+            form_falla = st.form(key="form_falla_llamada_erronea")
             with form_falla:
                 st.markdown("### ⚠️ Registro de Intento de Llamada Fallida")
                 st.info(f"Se registrará una constancia de llamada fallida para la orden ORD-{num_orden} asignada a {tecnico}.")
@@ -266,10 +266,8 @@ def mostrar_modulo_calidad(conn, df_base):
                     "COMENTARIOS": f"Se envió la encuesta por WhatsApp de forma automática usando WATI. Notas internas: {comentarios_envio}"
                 }
                 
-                # 1. Guardar en base de datos (GSheets / GCS)
                 saved = guardar_registro_calidad(conn, datos_envio)
                 
-                # 2. Disparar señal a WATI vía API REST
                 with st.spinner("🚀 Conectando con los servidores de WATI..."):
                     from tools import disparar_encuesta_wati
                     wati_ok = disparar_encuesta_wati(datos_envio)
@@ -294,21 +292,22 @@ def mostrar_modulo_calidad(conn, df_base):
         
         with subtab_varias:
             st.markdown("### 📋 Formulario para Órdenes Varias (Soporte, Mantenimiento, etc.)")
-            form_varias = st.form(key="form_auditoria_varias")
+            # Vinculamos la llave del formulario al ID de la orden seleccionada para reiniciar el estado
+            form_varias = st.form(key=f"form_auditoria_varias_{num_orden}")
             with form_varias:
                 col_v1, col_v2 = st.columns(2)
                 with col_v1:
-                    st.text_input("Orden #:", value=num_orden, disabled=True, key="ord_varias_disabled")
-                    st.text_input("Código (Cliente ID):", value=cliente_id, disabled=True, key="cod_varias_disabled")
-                    st.text_input("Código Servicio (Actividad):", value=actividad, disabled=True, key="cs_varias_disabled")
-                    vineta_v = st.text_input("Viñeta:", placeholder="Ej: V-12345", key="vineta_varias")
+                    st.text_input("Orden #:", value=num_orden, disabled=True, key=f"ord_varias_disabled_{num_orden}")
+                    st.text_input("Código (Cliente ID):", value=cliente_id, disabled=True, key=f"cod_varias_disabled_{num_orden}")
+                    st.text_input("Código Servicio (Actividad):", value=actividad, disabled=True, key=f"cs_varias_disabled_{num_orden}")
+                    vineta_v = st.text_input("Viñeta:", placeholder="Ej: V-12345", key=f"vineta_varias_{num_orden}")
                 with col_v2:
-                    mufa_v = st.text_input("Mufa:", placeholder="Ej: MUFA-A", key="mufa_varias")
-                    metraje_v = st.number_input("Metraje (Meters):", min_value=0.0, value=0.0, step=1.0, key="metraje_varias")
-                    estetica_v = st.selectbox("Estética:", ["Excelente", "Aceptable", "Deficiente"], key="estetica_varias")
-                    ruta_v = st.text_input("Ruta de acometida:", placeholder="Ej: Poste 3 a Fachada", key="ruta_varias")
+                    mufa_v = st.text_input("Mufa:", placeholder="Ej: MUFA-A", key=f"mufa_varias_{num_orden}")
+                    metraje_v = st.number_input("Metraje (Meters):", min_value=0.0, value=0.0, step=1.0, key=f"metraje_varias_{num_orden}")
+                    estetica_v = st.selectbox("Estética:", ["Excelente", "Aceptable", "Deficiente"], key=f"estetica_varias_{num_orden}")
+                    ruta_v = st.text_input("Ruta de acometida:", placeholder="Ej: Poste 3 a Fachada", key=f"ruta_varias_{num_orden}")
                 
-                comentario_auditor_v = st.text_area("Comentario del auditor:", key="comentario_varias")
+                comentario_auditor_v = st.text_area("Comentario del auditor:", key=f"comentario_varias_{num_orden}")
                 submit_varias = st.form_submit_button("💾 Guardar Auditoría (Órdenes Varias)")
                 
             if submit_varias:
@@ -337,7 +336,6 @@ def mostrar_modulo_calidad(conn, df_base):
             # === CÁLCULO DE TIEMPO EN CURSO DE LA ORDEN (CON EXTRACCIÓN SEGURA DE ZONA HORARIA) ===
             tiempo_invent_str = "---"
             if pd.notnull(row_sel.get('HORA_INI')):
-                # Limpieza preventiva de zona horaria (offset-naive)
                 ini_naive = row_sel['HORA_INI'].replace(tzinfo=None) if hasattr(row_sel['HORA_INI'], 'tzinfo') and row_sel['HORA_INI'].tzinfo is not None else row_sel['HORA_INI']
                 
                 if pd.notnull(row_sel.get('HORA_LIQ')):
@@ -345,30 +343,30 @@ def mostrar_modulo_calidad(conn, df_base):
                     mins_inv = int((liq_naive - ini_naive).total_seconds() / 60)
                     tiempo_invent_str = f"{mins_inv} minutos"
                 else:
-                    # Si aún está en curso en el campo, calculamos el transcurrido respecto a la hora de Honduras
                     ahora_naive = get_honduras_time().replace(tzinfo=None)
                     mins_trans = int((ahora_naive - ini_naive).total_seconds() / 60)
                     tiempo_invent_str = f"En curso ({mins_trans} min transcurridos)"
             elif row_sel.get('TIEMPO_REAL') != "---":
                 tiempo_invent_str = str(row_sel.get('TIEMPO_REAL'))
                 
-            form_insfibra = st.form(key="form_auditoria_insfibra")
+            # Vinculamos la llave del formulario al ID de la orden seleccionada para reiniciar el estado
+            form_insfibra = st.form(key=f"form_auditoria_insfibra_{num_orden}")
             with form_insfibra:
                 col_i1, col_i2 = st.columns(2)
                 with col_i1:
-                    st.text_input("TÉCNICO:", value=tecnico, disabled=True, key="tec_ins_disabled")
-                    st.text_input("# ORDEN:", value=num_orden, disabled=True, key="ord_ins_disabled")
-                    st.text_input("CÓDIGO (Cliente ID):", value=cliente_id, disabled=True, key="cod_ins_disabled")
-                    st.text_input("CS (Actividad):", value=actividad, disabled=True, key="cs_ins_disabled")
-                    st.text_input("TIEMPO INVERTIDO:", value=tiempo_invent_str, disabled=True, key="time_ins_disabled")
+                    st.text_input("TÉCNICO:", value=tecnico, disabled=True, key=f"tec_ins_disabled_{num_orden}")
+                    st.text_input("# ORDEN:", value=num_orden, disabled=True, key=f"ord_ins_disabled_{num_orden}")
+                    st.text_input("CÓDIGO (Cliente ID):", value=cliente_id, disabled=True, key=f"cod_ins_disabled_{num_orden}")
+                    st.text_input("CS (Actividad):", value=actividad, disabled=True, key=f"cs_ins_disabled_{num_orden}")
+                    st.text_input("TIEMPO INVERTIDO:", value=tiempo_invent_str, disabled=True, key=f"time_ins_disabled_{num_orden}")
                 with col_i2:
-                    tipo_fo = st.selectbox("TIPO F.O.:", ["Drop Flat 1 Hilo", "Drop Fig 8", "ADSS 6 Hilos", "ADSS 12 Hilos"], key="tipo_fo_ins")
-                    metros_fo = st.number_input("METROS F.O.:", min_value=0.0, value=0.0, step=1.0, key="metros_fo_ins")
-                    vineta_ins = st.text_input("VIÑETA:", placeholder="Ej: V-INS-99", key="vineta_ins_input")
-                    ruta_ins = st.text_input("RUTA ACOMETIDA:", placeholder="Ej: Caja de Distribución a ONT", key="ruta_ins_input")
-                    mufa_ins = st.text_input("MUFA:", placeholder="Ej: MUFA-INS", key="mufa_ins_input")
+                    tipo_fo = st.selectbox("TIPO F.O.:", ["Drop Flat 1 Hilo", "Drop Fig 8", "ADSS 6 Hilos", "ADSS 12 Hilos"], key=f"tipo_fo_ins_{num_orden}")
+                    metros_fo = st.number_input("METROS F.O.:", min_value=0.0, value=0.0, step=1.0, key=f"metros_fo_ins_{num_orden}")
+                    vineta_ins = st.text_input("VIÑETA:", placeholder="Ej: V-INS-99", key=f"vineta_ins_input_{num_orden}")
+                    ruta_ins = st.text_input("RUTA ACOMETIDA:", placeholder="Ej: Caja de Distribución a ONT", key=f"ruta_ins_input_{num_orden}")
+                    mufa_ins = st.text_input("MUFA:", placeholder="Ej: MUFA-INS", key=f"mufa_ins_input_{num_orden}")
                     
-                comentario_auditor_ins = st.text_area("COMENTARIO DEL AUDITOR:", key="comentario_ins_input")
+                comentario_auditor_ins = st.text_area("COMENTARIO DEL AUDITOR:", key=f"comentario_ins_input_{num_orden}")
                 submit_ins = st.form_submit_button("💾 Guardar Auditoría de Instalación (INSFIBRA)")
                 
             if submit_ins:
@@ -404,7 +402,6 @@ def mostrar_modulo_calidad(conn, df_base):
             ["Satisfacción de Clientes (Llamadas / QA)", "Auditoría de Campo (Operaciones)", "Auditoría de Instalaciones (INSFIBRA)"]
         )
         
-        # Mapeo dinámico de hojas de cálculo según selección
         hoja_target = "Calidad" if tipo_consulta == "Satisfacción de Clientes (Llamadas / QA)" else ("Operaciones" if "Campo" in tipo_consulta else "Instalaciones")
         archivo_respaldo = "calidad_maestro.csv" if hoja_target == "Calidad" else ("operaciones_maestro.csv" if hoja_target == "Operaciones" else "instalaciones_maestro.csv")
         
@@ -419,17 +416,14 @@ def mostrar_modulo_calidad(conn, df_base):
         if df_qa is None or df_qa.empty:
             st.info(f"ℹ️ Aún no se han registrado auditorías en la pestaña '{hoja_target}' de Google Sheets.")
         else:
-            # Normalizar columnas
             df_qa.columns = df_qa.columns.astype(str).str.upper().str.strip()
             
-            # 1. FILTRADO POR RANGO DE FECHAS
             st.markdown("#### 📅 Filtrar por Rango de Fechas")
             col_f1, col_f2 = st.columns(2)
             with col_f1:
                 hoy_hx = get_honduras_time().date()
                 rango_sel = st.date_input("Seleccione el periodo a consultar:", value=(hoy_hx - timedelta(days=7), hoy_hx), key="rango_calidad_picker")
             
-            # Convertir fechas de forma segura para realizar el filtro
             col_fecha_cruce = 'FECHA_GESTION' if 'FECHA_GESTION' in df_qa.columns else 'FECHA_AUDITORIA'
             df_qa['FECHA_DT'] = pd.to_datetime(df_qa[col_fecha_cruce], errors='coerce')
             df_qa = df_qa.dropna(subset=['FECHA_DT'])
@@ -444,13 +438,11 @@ def mostrar_modulo_calidad(conn, df_base):
             if df_filtered.empty:
                 st.warning(f"⚠️ No se encontraron auditorías en la pestaña '{hoja_target}' para el rango de fechas seleccionado.")
             else:
-                # Mostrar DataFrame filtrado
                 cols_mostrar = [c for c in df_filtered.columns if c not in ['FECHA_DT']]
                 st.dataframe(df_filtered[cols_mostrar], use_container_width=True, hide_index=True)
                 
                 st.markdown("---")
                 
-                # 2. GENERACIÓN DE REPORTE EN FORMATO PDF
                 st.markdown("#### 📥 Exportación de Reporte en PDF")
                 col_pdf1, col_pdf2 = st.columns([1, 2])
                 with col_pdf1:
@@ -483,11 +475,9 @@ def mostrar_modulo_calidad(conn, df_base):
                         
                 st.markdown("---")
                 
-                # 3. SECCIÓN DE ELIMINACIÓN DE REGISTROS (Poder eliminarlos)
                 st.markdown("#### 🗑️ Eliminación de Registros (Uso exclusivo Gerencia)")
                 st.caption(f"Seleccione un registro del histórico para eliminarlo permanentemente de Google Sheets y GCS de la pestaña '{hoja_target}'.")
                 
-                # Crear columna descriptiva según la base de datos
                 col_ticket_ref = 'TICKET' if 'TICKET' in df_filtered.columns else 'ORDEN_NUM'
                 col_nombre_ref = 'NOMBRE_CLIENTE' if 'NOMBRE_CLIENTE' in df_filtered.columns else 'TECNICO'
                 
