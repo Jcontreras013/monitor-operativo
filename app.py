@@ -9,21 +9,20 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval  # === IMPORTACIÓN CORREGIDA ===
+from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import unicodedata
 
-
 # ==============================================================================
-# CONFIGURACIÓN DE RUTAS DEL SISTEMA (¡VITAL: DEBE IR ANTES DE LOS MÓDULOS LOCALES!)
+# CONFIGURACIÓN DE RUTAS DEL SISTEMA (VITAL)
 # ==============================================================================
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
-import expediente # Importación modular correcta al inicio [3]
+import expediente
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
     aplicar_estilos_nativos, 
@@ -107,12 +106,10 @@ def normalizar_nombre_cruce(texto):
     if pd.isnull(texto): 
         return ""
     t = str(texto).upper().strip()
-    # Limpieza de caracteres invisibles típicos en archivos txt/copias de portales
     t = t.replace('\u200c', '').replace('\u200b', '')
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
     t = ' '.join(t.split())
     
-    # === TABLA DE HOMOLOGACIÓN / ALIAS PARA DISCREPANCIAS ORTOGRÁFICAS ===
     alias_map = {
         "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
         "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
@@ -590,7 +587,7 @@ def main():
                                         df_cloud = df_cloud[~mask_basura_cloud].copy()
                                     
                                     if 'EMPRESA' in df_cloud.columns:
-                                        # Filtrar estrictamente por la empresa ISCA
+                                        # Filtrar únicamente por la empresa ISCA
                                         mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                         df_cloud = df_cloud[mask_isca_cloud].copy()
 
@@ -1368,33 +1365,6 @@ def main():
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
 
             st.markdown("---")
-            
-            st.markdown("### ⚖️ Resumen Consolidado: Efectividad de Mora")
-            m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
-            p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
-            c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
-            resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
-            resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
-            
-            if not resumen_global_rep.empty:
-                resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
-                resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
-                resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
-                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
-                resumen_global_rep = resumen_global_rep[['TIPO', 'INICIO (MORA)', 'PENDIENTES', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
-                tot_m = resumen_global_rep['INICIO (MORA)'].sum()
-                tot_p = resumen_global_rep['PENDIENTES'].sum()
-                tot_c = resumen_global_rep['CERRADAS'].sum()
-                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'INICIO (MORA)': tot_m, 'PENDIENTES': tot_p, 'CERRADAS': tot_c}])
-                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
-                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
-            else: st.info("No hay datos de mora consolidada para esta fecha.")
-
-            st.markdown("### ⏱️ Tiempos de Atencion Promedio")
-            if not df_cerradas_espejo.empty:
-                df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
-                st.dataframe(df_pivot_diario, use_container_width=True)
-
             st.markdown("### 🌅 Primera Orden del Día por Técnico")
             df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
             if 'HORA_INI' in df_universo_diario.columns:
@@ -2201,10 +2171,6 @@ def main():
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONHFC": "#c2185b",       
                                 "TVADICIONAL": "#00897b",
-                                "CEQUI": "#fbc02d",          
-                                "CAMBIO": "#fbc02d",
-                                "MANTENIMIENTO": "#512da8",
-                                "REVISION": "#0288d1",
                                 "ALMUERZO": "#78909c"
                             }
 
