@@ -9,20 +9,21 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval
+from streamlit_js_eval import streamlit_js_eval  # === IMPORTACIÓN CORREGIDA ===
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import unicodedata
 
+
 # ==============================================================================
-# CONFIGURACIÓN DE RUTAS DEL SISTEMA (VITAL)
+# CONFIGURACIÓN DE RUTAS DEL SISTEMA (¡VITAL: DEBE IR ANTES DE LOS MÓDULOS LOCALES!)
 # ==============================================================================
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # ==============================================================================
 # IMPORTACIÓN DE MÓDULOS Y HERRAMIENTAS
 # ==============================================================================
-import expediente
+import expediente # Importación modular correcta al inicio [3]
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
     aplicar_estilos_nativos, 
@@ -106,10 +107,12 @@ def normalizar_nombre_cruce(texto):
     if pd.isnull(texto): 
         return ""
     t = str(texto).upper().strip()
+    # Limpieza de caracteres invisibles típicos en archivos txt/copias de portales
     t = t.replace('\u200c', '').replace('\u200b', '')
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
     t = ' '.join(t.split())
     
+    # === TABLA DE HOMOLOGACIÓN / ALIAS PARA DISCREPANCIAS ORTOGRÁFICAS ===
     alias_map = {
         "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
         "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
@@ -177,6 +180,7 @@ def sincronizar_datos_nube(conn):
                     df_nube = df_nube[~mask_basura_sync].copy()
 
             if 'EMPRESA' in df_nube.columns:
+                # Filtrar únicamente por la empresa ISCA
                 mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                 df_nube = df_nube[mask_empresas_sync].copy()
 
@@ -204,6 +208,9 @@ def sincronizar_datos_nube(conn):
                     if 'ES_OFFLINE' in df_nube.columns:
                         df_nube.loc[mask_falsos, 'ES_OFFLINE'] = False
                         df_nube.loc[~mask_solo_sop, 'ES_OFFLINE'] = False
+                    if 'ALERTA_TIEMPO' in df_nube.columns:
+                        df_nube.loc[mask_falsos, 'ALERTA_TIEMPO'] = False
+                        df_nube.loc[~mask_solo_sop, 'ALERTA_TIEMPO'] = False
                 
                 for col_txt in ['NUM', 'CLIENTE']:
                     if col_txt in df_nube.columns:
@@ -212,12 +219,17 @@ def sincronizar_datos_nube(conn):
                         
                 if 'NUM' in df_nube.columns:
                     df_nube['NUM'] = df_nube['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                    
+                    # Convertir fechas de forma segura para ordenar cronológicamente
                     df_nube['SORT_DATE'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.to_datetime(df_nube['FECHA_APE'], errors='coerce'))
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                     
+                    # Priorizar estados finales (Cerrada, Anulada) sobre estados activos
                     PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                     df_nube['ES_VIVA'] = df_nube['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+                    
+                    # Ordenar: las activas (True) van primero y las cerradas (False) al final para conservarlas con keep='last'
                     df_nube = df_nube.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                     
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -233,6 +245,7 @@ def sincronizar_datos_nube(conn):
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
                 ahora_momento_ts = pd.Timestamp(get_honduras_time())
+                # Forzar formato naive si los datetimes son naive
                 if df_nube['HORA_LIQ'].dt.tz is None:
                     ahora_naive = ahora_momento_ts.tz_localize(None)
                 else:
@@ -249,6 +262,7 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
+                
                 st.success(f"✅ Sincronización Exitosa. Se cargaron {len(df_nube)} órdenes de la nube.")
                 import time
                 time.sleep(1.5)
@@ -329,6 +343,7 @@ def main():
             else: 
                 nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["🏅 Control Calidad", "📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"])    
         else:
+            # === MENÚ MÓVIL PARA ROL MONITOREO (Solo Monitor y Calidad) ===
             selected_nav = option_menu(
                 menu_title=None,
                 options=["Monitor", "Calidad"],
@@ -354,6 +369,7 @@ def main():
             if rol_usuario in ['admin', 'jefe']: 
                 nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
             else:
+                # === MENÚ DE ESCRITORIO PARA ROL MONITOREO (Solo Monitor y Calidad) ===
                 st.markdown("### 🖥️ Menú de Control")
                 nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])    
 
@@ -362,6 +378,9 @@ def main():
         st.divider()
 
     with sidebar_bottom:
+        # Inicialización por defecto: sin esto, un usuario no-admin provoca
+        # UnboundLocalError porque btn_api_procesar nunca se asignaba fuera
+        # de la rama "if es_admin:".
         btn_api_procesar = False
         file_act_ptr = None
         file_disp_ptr = None
@@ -372,12 +391,15 @@ def main():
         if es_admin_o_supervisor:
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
+                # Obtener listado de técnicos de forma secuencial y segura
                 lista_tecs_almuerzo = []
                 df_base_for_tecs = st.session_state.get('df_base')
                 
+                # 1. Intentar cargar desde los técnicos activos en la base del monitor
                 if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
                     lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
                 
+                # 2. Fallback: Cargar desde el archivo personal_tecnico.txt si la base del monitor está vacía
                 if not lista_tecs_almuerzo:
                     try:
                         df_cat_tecs = cargar_catalogo_tecnicos()
@@ -386,6 +408,7 @@ def main():
                     except Exception:
                         pass
                 
+                # 3. Fallback de seguridad: Cargar directamente desde gps.txt
                 if not lista_tecs_almuerzo and os.path.exists("gps.txt"):
                     try:
                         with open("gps.txt", "r", encoding="utf-8") as f:
@@ -397,6 +420,7 @@ def main():
                     except Exception:
                         pass
 
+                # Mostrar Selector (Dropdown) o Campo de texto según disponibilidad de datos
                 if lista_tecs_almuerzo:
                     tec_almuerzo_sel = st.selectbox("Técnico", options=lista_tecs_almuerzo, key="sel_tec_almuerzo")
                 else:
@@ -443,6 +467,7 @@ def main():
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
+           # st.caption("El demonio interno (sync_job.py) sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
             btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
             
             st.divider()
@@ -486,6 +511,11 @@ def main():
     # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar or btn_api_procesar:
         if btn_api_procesar:
+            # NOTA: Esta app corre en Streamlit Cloud y NO tiene alcance de red hacia
+            # la API interna de Cepheus (IP privada 192.168.x.x). La sincronización con
+            # esa API la realiza sync_job.py, corriendo de forma continua en la máquina
+            # dedicada dentro de la red de la empresa, cada 5 minutos. Este botón solo
+            # fuerza traer esa última versión ya sincronizada, sin caché.
             if conn is not None:
                 sincronizar_datos_nube(conn)
             else:
@@ -495,6 +525,9 @@ def main():
             if file_act_ptr is not None and file_disp_ptr is None:
                 with st.spinner("⏳ Descargando base de Vehículos/Dispositivos..."):
                     try:
+                        # NOTA: sobrescribir_archivo_gcs() atrapa su propio error interno, así
+                        # que la escritura a GCS del archivo FTTX falla de forma silenciosa.
+                        # La pestaña "FTTX" de Sheets es la fuente confiable, se lee primero.
                         df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
                         if df_fttx_cloud is None or df_fttx_cloud.empty:
                             df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
@@ -557,6 +590,7 @@ def main():
                                         df_cloud = df_cloud[~mask_basura_cloud].copy()
                                     
                                     if 'EMPRESA' in df_cloud.columns:
+                                        # Filtrar estrictamente por la empresa ISCA
                                         mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                                         df_cloud = df_cloud[mask_isca_cloud].copy()
 
@@ -568,12 +602,14 @@ def main():
                                     
                                 if 'NUM' in df_combined.columns:
                                     df_combined['NUM'] = df_combined['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                    
                                     df_combined['SORT_DATE'] = pd.to_datetime(df_combined['HORA_LIQ'], errors='coerce')
                                     df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.to_datetime(df_combined['FECHA_APE'], errors='coerce'))
                                     df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                                     
                                     PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                                     df_combined['ES_VIVA'] = df_combined['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+                                    
                                     df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                                     
                                     df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -666,16 +702,22 @@ def main():
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
             valores_invalidos_tec = ['NONE', 'NAN', 'N/D', 'NULL', '', '0']
             df_base = df_base[~df_base['TECNICO'].isin(valores_invalidos_tec) & df_base['TECNICO'].notna()]
+            
+            # Asignar la columna GPS dinámicamente mediante cruce de nombres normalizados
             df_base['TECNICO_NORM'] = df_base['TECNICO'].apply(normalizar_nombre_cruce)
             
+            # === BUSCADOR INTELIGENTE CON TOLERANCIA A NOMBRES INCOMPLETOS ===
             def buscar_enlace_gps(tecnico_norm):
                 if not tecnico_norm:
                     return ""
+                # 1. Coincidencia exacta post-normalización
                 if tecnico_norm in gps_map:
                     return gps_map[tecnico_norm]
+                # 2. Coincidencia parcial por sub-palabras (ej: "Nelson Ferrufino" dentro de "Nelson Ramon Ferrufino Leon")
                 for gps_name, url in gps_map.items():
                     words_gps = set(gps_name.split())
                     words_tec = set(tecnico_norm.split())
+                    # Si el nombre de gps.txt está completamente contenido en el de la base de datos
                     if words_gps.issubset(words_tec) and len(words_gps) >= 2:
                         return url
                     if words_tec.issubset(words_gps) and len(words_tec) >= 2:
@@ -702,12 +744,14 @@ def main():
 
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        
         df_base['SORT_DATE'] = pd.to_datetime(df_base['HORA_LIQ'], errors='coerce')
         df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.to_datetime(df_base['FECHA_APE'], errors='coerce'))
         df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
         
         PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
         df_base['ES_VIVA'] = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
+        
         df_base = df_base.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
         
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -736,17 +780,26 @@ def main():
             is_up = "onustatus: up" in t or "onustatus:up" in t or "statustext: online" in t or "status_text: online" in t or "statustext:online" in t
             if is_up:
                 dbm_real = None
+
+                # Formato "rx:" (ej. vendorId CDKT / equipos ONU residenciales)
+                # El valor crudo viene en CENTÉSIMAS de dBm → dividir entre 100.
+                # Ej: rx: -3045  ==  -30.45 dBm reales
                 rx_match = re.search(r'\brx:\s*(-?\d+\.?\d*)', t)
                 if rx_match:
                     try: dbm_real = float(rx_match.group(1)) / 100.0
                     except: pass
 
+                # Formato "rxPower:" (ej. type GPNC14C / tarjetas OLT)
+                # El valor crudo viene en MILÉSIMAS de dBm → dividir entre 1000.
+                # Ej: rxPower: -16460.000  ==  -16.46 dBm reales
                 rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
                 if rxpower_match:
                     try: dbm_real = float(rxpower_match.group(1)) / 1000.0
                     except: pass
 
                 if dbm_real is not None:
+                    # Umbral real de potencia óptica degradada: -30 dBm o peor
+                    # (ya convertido a dBm real, ambos formatos quedan en la misma escala)
                     if dbm_real <= -30:
                         return False
                 return True
@@ -916,15 +969,20 @@ def main():
                     st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
             
             try:
+                # === IMPORTACIÓN INTERNA DIRECTA ===
                 from tools import cargar_catalogo_tecnicos
+                
                 df_cat_tecs = cargar_catalogo_tecnicos()
                 if not df_cat_tecs.empty:
+                    # === FILTRACIÓN ESTRICTA: Debe ser Técnico Principal y estar ACTIVO ===
                     df_principales = df_cat_tecs[
                         (df_cat_tecs['Clasificación'] == "TÉCNICO PRINCIPAL") & 
                         (df_cat_tecs['Estatus'] == "ACTIVO")
                     ]
                     tecs_validos_set = {normalizar_nombre_cruce(n) for n in df_principales['Nombre'].dropna()}
+                    
                     tecs_en_base = df_base_activa['TECNICO'].dropna().unique().tolist()
+                    # Filtramos la lista de la pantalla quedándonos únicamente con los activos autorizados
                     tecs_filtrados = [t for t in tecs_en_base if normalizar_nombre_cruce(t) in tecs_validos_set]
                     lista_tecs_monitor = ["Todos"] + sorted(tecs_filtrados)
                 else:
@@ -1140,8 +1198,10 @@ def main():
                     
                     if not df_para_gantt_diario.empty:
                         ahora_hx_d = get_honduras_time()
+                        
                         df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
                         hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
+                        
                         df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
                         
                         mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
@@ -1151,6 +1211,7 @@ def main():
                         df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
                             lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                         )
+                        
                         df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].apply(normalizar_nombre_cruce)
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
@@ -1162,10 +1223,12 @@ def main():
                             'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
                             'TRASLADOINTFIBRACORP', 'TVADICIONAL'
                         ]
+                        
                         df_para_gantt_diario = df_para_gantt_diario[
                             df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                         ]
 
+                        # Agregar barras de ALMUERZO registradas manualmente para la fecha seleccionada
                         try:
                             df_almuerzos_hist = cargar_almuerzos(conn, fecha=fecha_cal_sel.strftime('%Y-%m-%d'))
                         except Exception:
@@ -1230,6 +1293,7 @@ def main():
                             color_discrete_map=colores_solidos,
                             height=max(400, len(df_para_gantt_diario['TECNICO'].unique()) * 45)
                         )
+                        
                         fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
                         hora_inicio_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                         hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
@@ -1237,6 +1301,7 @@ def main():
                         fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
                         fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9, hovertemplate="%{customdata[0]}<extra></extra>")
                         fig_gantt_d.update_layout(showlegend=True, legend_title_text='Identificador', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
+                        
                         st.plotly_chart(fig_gantt_d, use_container_width=True)
 
                         col_bpdf1, col_bpdf2 = st.columns([1, 2])
@@ -1303,6 +1368,62 @@ def main():
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
 
             st.markdown("---")
+            
+            st.markdown("### ⚖️ Resumen Consolidado: Efectividad de Mora")
+            m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
+            p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
+            c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
+            resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            
+            if not resumen_global_rep.empty:
+                resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
+                resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
+                resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
+                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
+                resumen_global_rep = resumen_global_rep[['TIPO', 'INICIO (MORA)', 'PENDIENTES', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
+                tot_m = resumen_global_rep['INICIO (MORA)'].sum()
+                tot_p = resumen_global_rep['PENDIENTES'].sum()
+                tot_c = resumen_global_rep['CERRADAS'].sum()
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'INICIO (MORA)': tot_m, 'PENDIENTES': tot_p, 'CERRADAS': tot_c}])
+                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
+                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
+            else: st.info("No hay datos de mora consolidada para esta fecha.")
+
+            st.markdown("### ⏱️ Tiempos de Atencion Promedio")
+            if not df_cerradas_espejo.empty:
+                df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
+                st.dataframe(df_pivot_diario, use_container_width=True)
+
+            st.markdown("### 🌅 Primera Orden del Día por Técnico")
+            df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
+            if 'HORA_INI' in df_universo_diario.columns:
+                df_universo_diario['HORA_INI_DT'] = pd.to_datetime(df_universo_diario['HORA_INI'], errors='coerce')
+                df_universo_diario = df_universo_diario.dropna(subset=['HORA_INI_DT'])
+                mask_fecha_ini = df_universo_diario['HORA_INI_DT'].dt.date == pd.to_datetime(fecha_cal_sel).date()
+                df_primera = df_universo_diario[mask_fecha_ini].sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO'], keep='first')
+                
+                if not df_primera.empty:
+                    df_primera_mostrar = df_primera[['TECNICO', 'HORA_INI_DT', 'COLONIA', 'NUM']].copy()
+                    df_primera_mostrar = df_primera_mostrar.sort_values(by='HORA_INI_DT')
+                    df_primera_mostrar['HORA_INI'] = df_primera_mostrar['HORA_INI_DT'].dt.strftime('%H:%M:%S')
+                    df_primera_mostrar = df_primera_mostrar.drop(columns=['HORA_INI_DT'])
+                    df_primera_mostrar = df_primera_mostrar[['TECNICO', 'HORA_INI', 'COLONIA', 'NUM']]
+                    st.dataframe(df_primera_mostrar, use_container_width=True, hide_index=True)
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if es_movil: col_btn1, col_btn2 = st.columns(2)
+                    else: col_btn1, col_btn2 = st.columns([1, 2])
+                    with col_btn1:
+                        if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
+                            try:
+                                with st.spinner("Generando PDF..."): st.session_state['pdf_primera'] = generar_pdf_primera_orden(df_base, fecha_cal_sel)
+                            except Exception as e: st.error(f"Error generando PDF: {e}")
+                        if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                else: st.info("No hay registros de inicio de órdenes para esta fecha.")
+            else: st.info("No hay registros de inicio de órdenes para esta fecha.")
+
+            st.markdown("---")
             st.markdown("### 📅 Promedio Semanal: Primera Orden del Día")
             st.caption("Calcula el promedio de la hora en la que cada técnico inicia su primera orden dentro del rango seleccionado.")
             
@@ -1327,6 +1448,7 @@ def main():
                         if not df_rango.empty:
                             df_rango['Fecha_Sola'] = df_rango['HORA_INI_DT'].dt.date
                             primeras_ordenes_rango = df_rango.sort_values(by='HORA_INI_DT').drop_duplicates(subset=['TECNICO', 'Fecha_Sola'], keep='first')
+                            
                             primeras_ordenes_rango['Segundos_Inicio'] = primeras_ordenes_rango['HORA_INI_DT'].dt.hour * 3600 + \
                                                                         primeras_ordenes_rango['HORA_INI_DT'].dt.minute * 60 + \
                                                                         primeras_ordenes_rango['HORA_INI_DT'].dt.second
@@ -1347,6 +1469,7 @@ def main():
                             
                             mask_tecnicos_validos = (promedios_inicio['TECNICO'].notna()) & (promedios_inicio['TECNICO'].str.strip() != '')
                             promedios_inicio = promedios_inicio[mask_tecnicos_validos]
+
                             st.session_state['df_promedios_inicio'] = promedios_inicio
                         else:
                             st.session_state['df_promedios_inicio'] = pd.DataFrame()
@@ -1354,6 +1477,7 @@ def main():
                             
             if 'df_promedios_inicio' in st.session_state and not st.session_state['df_promedios_inicio'].empty:
                 promedios_mostrar = st.session_state['df_promedios_inicio']
+                
                 st.dataframe(
                     promedios_mostrar[['TECNICO', 'Dias_Computados', 'Hora_Promedio_Inicio']], 
                     use_container_width=True, 
@@ -1427,6 +1551,7 @@ def main():
                         st.session_state['df_materiales_master'] = df_base.copy()
 
             df_m = st.session_state.get('df_materiales_master', df_base).copy()
+
             df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], dayfirst=True, errors='coerce')
             df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], dayfirst=True, errors='coerce'))
             df_m = df_m[df_m['FECHA_REPORTE'].notna()]
@@ -1447,6 +1572,7 @@ def main():
             
             if not df_m_filtrado.empty:
                 df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
+                
                 df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
                 df_acometidas = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_ACOMETIDA']
                 
@@ -1503,6 +1629,7 @@ def main():
                 )
                 
                 st.markdown("### 📥 Descargar Reporte en Formato PDF")
+                
                 if st.button(f"📄 GENERAR REPORTE PDF ({mes_seleccionado} {anio_seleccionado})", use_container_width=True, type="primary"):
                     with st.spinner("Dibujando celdas y empaquetando reporte..."):
                         st.session_state['pdf_materiales_cargado'] = generar_pdf_materiales_mensual(
@@ -1536,9 +1663,12 @@ def main():
     # 6. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================        
     if nav_menu_diamante == "⚡ Monitor en Vivo":
+        
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
+
         df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
         if 'TECNICO' in df_todas_pendientes_monitor.columns:
@@ -1546,6 +1676,7 @@ def main():
             df_todas_pendientes_monitor.loc[mask_josue_kpi, 'DIAS_RETRASO'] = 0
             
         df_todas_pendientes_monitor.loc[df_todas_pendientes_monitor['DIAS_RETRASO'] < 0, 'DIAS_RETRASO'] = 0
+
         df_todas_pendientes_monitor['CatD'] = df_todas_pendientes_monitor['DIAS_RETRASO'].apply(
             lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
         )
@@ -1563,7 +1694,6 @@ def main():
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
 
         vivas_count_asignadas = len(df_solo_asignadas_monitor)
-        vivas_count_totales = len(df_todas_pendientes_monitor)
         cerradas_hoy = len(df_cerradas_hoy_monitor)
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
@@ -1572,23 +1702,19 @@ def main():
             st.markdown(f"""
             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #3B82F6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">TOTAL DE ORDENES</div>
-                    <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{vivas_count_totales}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #8B5CF6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">PENDIENTES ASIGNADAS</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">ASIGNADAS</div>
                     <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{vivas_count_asignadas}</div>
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #10B981; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">CERRADAS</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CERRADAS</div>
                     <div style="color: #10B981; font-size: 1.8rem; font-weight: bold;">{cerradas_hoy}</div>
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #F59E0B; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">EN RUTA</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">EN RUTA</div>
                     <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{tecs_activos}</div>
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #EF4444; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">CAÍDAS</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CAÍDAS</div>
                     <div style="color: #EF4444; font-size: 1.8rem; font-weight: bold;">{offline_criticos_asignadas}</div>
                 </div>
             </div>
@@ -1597,10 +1723,6 @@ def main():
             html_kpis = f"""
             <div style="display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px;">
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
-                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TOTAL DE ORDENES</div>
-                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{vivas_count_totales}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #8B5CF6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">PENDIENTES ASIGNADAS</div>
                     <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{vivas_count_asignadas}</div>
                 </div>
@@ -1736,6 +1858,7 @@ def main():
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
+                
                 df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
                 
                 def calcular_metricas(segmento):
@@ -1817,22 +1940,27 @@ def main():
                     renderizar_metrica(col1, stats_resi, "🏠 Residencial", "#EF4444", "resi")
                     renderizar_metrica(col2, stats_plex, "🏢 PLEX", "#F59E0B", "plex")
                     renderizar_metrica(col3, stats_global, "🌍 Global", "#10B981", "glob")
+
                 st.markdown("---")
         
         if st.session_state.get('config_mostrar_panel', True):
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
+                        
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
                         mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
+                        
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
 
+                        # Almuerzos registrados manualmente para el día que se está viendo
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
                         except Exception:
                             df_almuerzos_hoy = pd.DataFrame()
 
                         def _obtener_almuerzo_tec(tec_nombre):
+                            """Devuelve (inicio_dt, fin_dt) del almuerzo registrado de un técnico hoy, o (None, None)."""
                             if df_almuerzos_hoy is None or df_almuerzos_hoy.empty:
                                 return None, None
                             tec_norm_b = str(tec_nombre).strip().upper()
@@ -1846,8 +1974,13 @@ def main():
                             except Exception:
                                 return None, None
                         
+                        # ==============================================================================
+                        # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
+                        # ==============================================================================
                         alertas_9am = []
                         alertas_tiempo_muerto = []
+                        
+                        # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
                         tecnicos_validos_alertas = set()
                         file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
                         if file_to_load:
@@ -1867,8 +2000,9 @@ def main():
                         
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
-                        primera_orden_por_tec = {}
                         
+                        # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
+                        primera_orden_por_tec = {}
                         if ahora_local > limite_9am:
                             tecs_con_asignacion = df_monitor_filtrado[
                                 (df_monitor_filtrado['TECNICO'].notna()) & 
@@ -1891,11 +2025,14 @@ def main():
                                     primera_orden_por_tec[tec] = None
                                 else:
                                     primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
+                                    # Limpieza preventiva de zona horaria (tz-naive)
                                     primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
                                     if primera_ini_tec_naive > limite_9am:
                                         alertas_9am.append(tec)
                                         primera_orden_por_tec[tec] = primera_ini_tec_naive
+                                    
 
+                        # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
                         df_jornada_hoy = df_monitor_filtrado[
                             ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
                              (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
@@ -1910,17 +2047,24 @@ def main():
                                     continue
                                     
                                 group_sorted = group.sort_values(by='HORA_INI')
+                                
+                                # Brechas históricas entre tareas finalizadas e iniciadas
                                 for i in range(len(group_sorted) - 1):
                                     task_actual = group_sorted.iloc[i]
                                     task_siguiente = group_sorted.iloc[i+1]
+                                    
                                     liq_actual = task_actual.get('HORA_LIQ')
                                     ini_siguiente = task_siguiente.get('HORA_INI')
                                     
                                     if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
+                                        # Limpieza de zona horaria para resta segura
                                         liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
                                         ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
+                                        
                                         gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
 
+                                        # Descontar el solape con el almuerzo registrado manualmente,
+                                        # para no marcar como "tiempo muerto" una pausa de almuerzo real.
                                         alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
                                         if alm_ini is not None and alm_fin is not None:
                                             solape_ini = max(liq_actual_naive, alm_ini)
@@ -1939,13 +2083,16 @@ def main():
                                                 "hora_fin": liq_actual_naive.strftime('%H:%M')
                                             })
                                 
+                                # Brechas en vivo (tiempo de inactividad actual desde el último cierre)
                                 tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
                                 if not tiene_orden_activa:
-                                    order_closed = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
-                                    if not order_closed.empty:
-                                        last_closed = order_closed.sort_values(by='HORA_LIQ').iloc[-1]
-                                        liq_last = last_closed.get('HORA_LIQ')
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
+                                    if not ordenes_cerradas.empty:
+                                        ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
+                                        liq_last = ultima_cerrada.get('HORA_LIQ')
+                                        # Limpieza preventiva de zona horaria para resta segura contra ahora_local
                                         liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
+                                        
                                         gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
 
                                         alm_ini_v, alm_fin_v = _obtener_almuerzo_tec(tec)
@@ -1961,16 +2108,21 @@ def main():
                                                 "tipo": "vivo",
                                                 "tecnico": tec,
                                                 "gap": int(gap_vivo_mins),
-                                                "orden_prev": last_closed.get('NUM', 'N/D'),
+                                                "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
                                                 "hora_fin": liq_last_naive.strftime('%H:%M')
                                             })
 
+                        # ==============================================================================
+                        # CONTINUACIÓN: PROCESAMIENTO Y DIBUJADO DEL GANTT
+                        # ==============================================================================
                         mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
+                        
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
                         
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
+                            
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
                             
@@ -1984,6 +2136,7 @@ def main():
                             df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
                                 lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
                             )
+                            
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
@@ -1995,10 +2148,12 @@ def main():
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
                                 'TRASLADOINTFIBRACORP', 'TVADICIONAL'
                             ]
+                            
                             df_para_gantt_final = df_para_gantt_final[
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                             ]
 
+                            # Agregar barras de ALMUERZO registradas manualmente para el día
                             if df_almuerzos_hoy is not None and not df_almuerzos_hoy.empty:
                                 filas_almuerzo = []
                                 for _, fila_alm in df_almuerzos_hoy.iterrows():
@@ -2035,6 +2190,7 @@ def main():
                             )
 
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
+                            
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",         
                                 "SOP": "#d32f2f",                
@@ -2063,6 +2219,7 @@ def main():
                                 color_discrete_map=colores_solidos,
                                 height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
                             )
+                            
                             fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
                             hora_inicio_pantalla = datetime.combine(hoy_date_valor, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
                             hora_fin_pantalla = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
@@ -2070,8 +2227,12 @@ def main():
                             fig_gantt.update_xaxes(range=[hora_inicio_pantalla, hora_fin_pantalla], tickformat="%H:%M", title_text="Cronograma de Actividades")
                             fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=0.9, hovertemplate="%{customdata[0]}<extra></extra>")
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
+                            
                             st.plotly_chart(fig_gantt, use_container_width=True)
 
+                        # ==============================================================================
+                        # TABLA 1: APERTURA TARDÍA (separada del gráfico)
+                        # ==============================================================================
                         with st.expander("📋 Detalle de Apertura Tardía", expanded=False):
                             if not alertas_9am:
                                 st.success("🎉 Sin retrasos de apertura registrados hoy.")
@@ -2080,6 +2241,7 @@ def main():
                                 for tec in alertas_9am:
                                     primera_ini = primera_orden_por_tec.get(tec)
                                     if primera_ini is not None:
+                                        # Ambos son naive, resta segura
                                         atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
                                         detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
                                     else:
@@ -2103,6 +2265,9 @@ def main():
                                     }
                                 )
 
+                        # ==============================================================================
+                        # TABLA 2: TIEMPO MUERTO TOTAL DE LA JORNADA (por técnico, desde su 1ra orden del día)
+                        # ==============================================================================
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
                             filas_muerto = []
                             if not df_jornada_hoy.empty:
@@ -2121,6 +2286,7 @@ def main():
 
                                     primera_orden_ini = ordenes_ini_hoy['HORA_INI'].min()
                                     primera_orden_ini_naive = primera_orden_ini.replace(tzinfo=None) if hasattr(primera_orden_ini, 'tzinfo') and primera_orden_ini.tzinfo is not None else primera_orden_ini
+
                                     tiene_orden_activa_tm = not ordenes_ini_hoy[
                                         ordenes_ini_hoy['HORA_INI'].notnull() & ordenes_ini_hoy['HORA_LIQ'].isnull()
                                     ].empty
@@ -2130,13 +2296,15 @@ def main():
 
                                     referencia_fin = ahora_local
                                     tiempo_transcurrido_min = max(0.0, (referencia_fin - primera_orden_ini_naive).total_seconds() / 60)
+
                                     tiempo_trabajado_min = 0.0
-                                    
                                     for _, r_ord in ordenes_ini_hoy.iterrows():
                                         ini_r = r_ord.get('HORA_INI')
                                         liq_r = r_ord.get('HORA_LIQ')
                                         if pd.isnull(ini_r):
                                             continue
+                                        
+                                        # Limpieza de zona horaria individual para suma de tiempos
                                         ini_r_naive = ini_r.replace(tzinfo=None) if hasattr(ini_r, 'tzinfo') and ini_r.tzinfo is not None else ini_r
                                         
                                         if pd.notnull(liq_r):
@@ -2171,6 +2339,7 @@ def main():
                             else:
                                 filas_muerto.sort(key=lambda f: f["TIEMPO MUERTO NETO"], reverse=True)
                                 total_equipo_muerto = sum(f["TIEMPO MUERTO NETO"] for f in filas_muerto)
+
                                 df_tabla_muerto = pd.DataFrame(filas_muerto)
                                 st.dataframe(
                                     df_tabla_muerto,
@@ -2182,6 +2351,7 @@ def main():
                                         "TIEMPO MUERTO NETO": st.column_config.NumberColumn("🕳️ Muerto Neto (min)", format="%d"),
                                     }
                                 )
+
                                 horas_t, mins_t = divmod(total_equipo_muerto, 60)
                                 st.metric("⏱️ Tiempo Muerto Neto Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
 
@@ -2210,6 +2380,7 @@ def main():
                             st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
 
                 status_final_btn = st.session_state.st_btn_v_active
+
                 if check_ordenes_totales:
                     df_v_tabla_monitor = df_todas_pendientes_monitor 
                 else:
@@ -2222,6 +2393,7 @@ def main():
                         df_v_tabla_monitor = df_cerradas_hoy_monitor
                     else: 
                         df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                        
 
             t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
@@ -2234,6 +2406,7 @@ def main():
                             estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                             bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
+                            # Identificar si la orden está aperturada en móvil
                             raw_hi = row.get('HORA_INI')
                             hi_str = str(raw_hi).strip().upper() if pd.notnull(raw_hi) else ""
                             is_hi_val = pd.notnull(raw_hi) and hi_str not in ['', '---', 'NAT', 'NONE', 'NAN']
@@ -2265,14 +2438,19 @@ def main():
                             st.markdown("<hr style='margin-top: 5px; margin-bottom: 15px; border-color: #2D2F39;'>", unsafe_allow_html=True)
                     else:
                         df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
+                        
+                        # === CONTROL DE COLUMNA GPS Y CONDICIONES DE APERTURA ===
                         if "GPS" in df_v_tabla_monitor.columns:
                             raw_hora_ini = df_v_tabla_monitor['HORA_INI']
                             hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
                             is_hora_ini_valid = raw_hora_ini.notna() & (~hora_ini_str.isin(['', '---', 'NAT', 'NONE', 'NAN']))
+                            
                             is_estado_active = df_v_tabla_monitor['ESTADO'].astype(str).str.upper().str.strip().isin(
                                 ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
                             )
+                            
                             mask_aperturada = is_hora_ini_valid | is_estado_active
+                            
                             gps_filtrado = np.where(mask_aperturada, df_v_tabla_monitor["GPS"].fillna(""), "")
                             df_estilo_v["GPS"] = gps_filtrado
                             
@@ -2293,7 +2471,7 @@ def main():
                                 "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                 "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
                                 "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
+                                "ES_OFFLINE": None,
                                 "MINUTOS_CALC": None
                             }, 
                             use_container_width=True, 
@@ -2302,6 +2480,7 @@ def main():
                             on_select="rerun", 
                             selection_mode="single-row"
                         )
+                        
                         if evento_monitor_diam.selection.rows:
                             mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
                 else:
@@ -2309,14 +2488,18 @@ def main():
 
             with t_graphs_v:
                 st.subheader("📈 Órdenes Cerradas por Hora (Hoy)")
+            
                 df_graficas = df_base.copy()
                 df_graficas['HORA_LIQ_LOCAL'] = df_graficas['HORA_LIQ'] - pd.Timedelta(hours=6)
+            
                 df_productividad_v = df_graficas[df_graficas['HORA_LIQ_LOCAL'].dt.date == hoy_date_valor].copy()
             
                 if not df_productividad_v.empty:
                     df_productividad_v['Hr_C'] = df_productividad_v['HORA_LIQ_LOCAL'].dt.hour
                     conteo_horario_v = df_productividad_v.groupby('Hr_C').size().reset_index(name='Ord')
+                    
                     conteo_horario_v['Hora_Format'] = conteo_horario_v['Hr_C'].apply(lambda x: f"{int(x):02d}:00")
+                    
                     fig_barras_v = px.bar(
                         conteo_horario_v, x='Hora_Format', y='Ord', 
                         labels={'Hora_Format':'Hora del Día (Honduras)','Ord':'Cant. Cerradas'}, 
@@ -2328,10 +2511,12 @@ def main():
 
             with t_analitica_v:
                 st.markdown("### 📈 Análisis de Rendimiento Operativo")
+                
                 if df_v_tabla_monitor.empty:
                     st.info("ℹ️ No hay datos disponibles para mostrar el análisis gráfico en este momento.")
                 else:
                     plt.style.use('dark_background')
+                    
                     segmentos_conteo = df_v_tabla_monitor['SEGMENTO'].value_counts()
                     motivos_conteo = df_v_tabla_monitor['MOTIVO'].value_counts() if 'MOTIVO' in df_v_tabla_monitor.columns else pd.Series()
                     
