@@ -90,8 +90,7 @@ try:
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
-        cargar_catalogo_tecnicos,
-        mascara_tecnico_asignado
+        cargar_catalogo_tecnicos
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -697,6 +696,14 @@ def main():
                         g_url = parts[0].strip()
                         g_name = parts[2].strip().rstrip(".")
                         gps_map[normalizar_nombre_cruce(g_name)] = g_url
+    def mascara_tecnico_asignado(serie_tecnicos):
+    """
+    Retorna una serie booleana con True para técnicos asignados válidos
+    y False para técnicos nulos, vacíos o no asignados.
+    """
+    s = serie_tecnicos.fillna('').astype(str).str.strip().str.upper()
+    valores_invalidos = {'', 'NONE', 'NAN', 'N/D', 'NULL', '0'}
+    return ~s.isin(valores_invalidos)
         except Exception as e:
             pass
     
