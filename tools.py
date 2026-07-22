@@ -158,7 +158,7 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
             
             try:
                 # verify=False porque es un servidor interno
-                response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=240)
+                response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=60)
                 
                 if response.status_code == 200:
                     tipo_archivo = response.headers.get('Content-Type', 'Desconocido')
@@ -1603,41 +1603,6 @@ def generar_pdf_infracciones(df_res):
 # ==============================================================================
 # 5. UTILIDADES Y PROCESAMIENTO GENERAL
 # ==============================================================================
-def calcular_offline_y_alertas(df_act: pd.DataFrame) -> pd.DataFrame:
-    """
-    Calcula las columnas ES_OFFLINE y ALERTA_TIEMPO sobre un DataFrame de
-    órdenes ya normalizado (columnas ACTIVIDAD, ESTADO, TECNICO, COMENTARIO,
-    HORA_INI, HORA_LIQ presentes). Se extrajo como función compartida para
-    que tanto la carga manual (cargar_y_limpiar_crudos_diamante_monitor) como
-    el flujo automático (sync_job.py) apliquen exactamente la misma lógica
-    de detección de equipos caídos (offline) y demoras de atención SOP.
-    """
-    df_act = df_act.copy()
-    ahora_momento_ts = pd.Timestamp(get_honduras_time())
-
-    act_upper = df_act['ACTIVIDAD'].fillna('').astype(str).str.upper()
-    est_upper = df_act['ESTADO'].fillna('').astype(str).str.upper().str.strip()
-    tec_upper = df_act['TECNICO'].fillna('').astype(str).str.upper().str.strip()
-    com_upper = df_act['COMENTARIO'].fillna('').astype(str).str.upper()
-
-    mins_diff = (ahora_momento_ts - df_act['HORA_INI']).dt.total_seconds() / 60
-    mask_sop = act_upper.str.contains('SOPFIBRA', regex=True)
-    mask_falsos = act_upper.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
-
-    df_act['ALERTA_TIEMPO'] = (
-        (df_act['HORA_INI'].notnull()) & (df_act['HORA_LIQ'].isnull()) &
-        (mins_diff > 120) & (est_upper != 'CERRADA') & mask_sop & ~mask_falsos
-    )
-
-    mask_tec_valido = tec_upper != 'JOSUE MIGUEL SAUCEDA'
-    mask_est_abierto = est_upper != 'CERRADA'
-    mask_com_off = com_upper.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
-    mask_precisa = com_upper.apply(es_offline_preciso)
-
-    df_act['ES_OFFLINE'] = (mask_tec_valido & mask_est_abierto & mask_sop & ~mask_falsos & (mask_com_off | mask_precisa))
-    return df_act
-
-
 def es_offline_preciso(comentario):
     txt = str(comentario).upper().strip()
     if not txt or txt == 'NAN': return False
@@ -2487,41 +2452,54 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
 
 # ==============================================================================
 # REGISTRO MANUAL DE HORA DE ALMUERZO POR TÉCNICO (variable día a día)
-# Se guarda en un caché local (JSON), igual patrón que cache_fttx.tmp: no
-# depende de Google Sheets, vive mientras el contenedor/app siga corriendo.
+# Se guarda en la hoja "Almuerzo" del mismo Google Sheets que usa el resto del
+# sistema (st.secrets["url_base_datos"]), para que todas las instancias de la
+# app y del proceso de sincronización vean siempre el mismo dato.
 # ==============================================================================
-_CACHE_ALMUERZOS_PATH = "cache_almuerzos.json"
+_ALMUERZO_COLUMNAS = ["TECNICO", "FECHA", "HORA_INICIO", "HORA_FIN", "REGISTRADO_POR"]
 
 def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin: str, registrado_por: str = "") -> bool:
     """
     Guarda o actualiza el horario de almuerzo de un técnico para una fecha
-    específica en un caché local (cache_almuerzos.json). Si ya existía un
+    específica en la hoja "Almuerzo" de Google Sheets. Si ya existía un
     registro para ese mismo técnico+fecha, lo reemplaza (no se duplica).
-    El parámetro 'conn' se mantiene por compatibilidad pero no se usa.
     """
     try:
         tec_norm = str(tecnico).strip().upper()
         fecha_str = str(fecha)
 
-        registros = []
-        if os.path.exists(_CACHE_ALMUERZOS_PATH):
-            try:
-                with open(_CACHE_ALMUERZOS_PATH, "r", encoding="utf-8") as f:
-                    registros = json.load(f)
-            except Exception:
-                registros = []
+        try:
+            df_existente = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzo", ttl=0)
+        except Exception:
+            df_existente = pd.DataFrame()
 
-        registros = [r for r in registros if not (str(r.get("TECNICO", "")).upper() == tec_norm and str(r.get("FECHA", "")) == fecha_str)]
-        registros.append({
+        if df_existente is None or df_existente.empty:
+            df_existente = pd.DataFrame(columns=_ALMUERZO_COLUMNAS)
+        else:
+            df_existente = df_existente.dropna(how="all").copy()
+            df_existente.columns = [str(c).strip().upper() for c in df_existente.columns]
+
+        if "TECNICO" in df_existente.columns and "FECHA" in df_existente.columns:
+            mask_mismo = (df_existente["TECNICO"].astype(str).str.strip().str.upper() == tec_norm) & \
+                         (df_existente["FECHA"].astype(str).str.strip() == fecha_str)
+            df_existente = df_existente[~mask_mismo]
+
+        nuevo_registro = pd.DataFrame([{
             "TECNICO": tec_norm,
             "FECHA": fecha_str,
             "HORA_INICIO": str(hora_inicio),
             "HORA_FIN": str(hora_fin),
             "REGISTRADO_POR": str(registrado_por),
-        })
+        }])
 
-        with open(_CACHE_ALMUERZOS_PATH, "w", encoding="utf-8") as f:
-            json.dump(registros, f, ensure_ascii=False)
+        df_final = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+        # Asegura que las columnas esperadas siempre estén presentes, en orden
+        for col in _ALMUERZO_COLUMNAS:
+            if col not in df_final.columns:
+                df_final[col] = ""
+        df_final = df_final[_ALMUERZO_COLUMNAS].fillna("")
+
+        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzo", data=df_final)
         return True
     except Exception as e:
         print(f"Error en guardar_almuerzo: {e}")
@@ -2530,21 +2508,18 @@ def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin:
 
 def cargar_almuerzos(conn, fecha: str = None) -> pd.DataFrame:
     """
-    Carga los registros de almuerzo desde el caché local (cache_almuerzos.json).
+    Carga los registros de almuerzo desde la hoja "Almuerzo" de Google Sheets.
     Si se especifica 'fecha' (formato 'YYYY-MM-DD'), filtra solo esa fecha.
-    Devuelve un DataFrame vacío si el caché no existe todavía o está vacío.
-    El parámetro 'conn' se mantiene por compatibilidad pero no se usa.
+    Devuelve un DataFrame vacío si la hoja no existe todavía o está vacía.
     """
     try:
-        if not os.path.exists(_CACHE_ALMUERZOS_PATH):
+        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Almuerzo", ttl=0)
+        if df is None or df.empty:
             return pd.DataFrame()
-        with open(_CACHE_ALMUERZOS_PATH, "r", encoding="utf-8") as f:
-            registros = json.load(f)
-        if not registros:
-            return pd.DataFrame()
-        df = pd.DataFrame(registros)
-        if fecha:
-            df = df[df['FECHA'].astype(str) == str(fecha)].copy()
+        df = df.dropna(how="all").copy()
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        if fecha and "FECHA" in df.columns:
+            df = df[df["FECHA"].astype(str).str.strip() == str(fecha)].copy()
         return df
     except Exception as e:
         print(f"Error en cargar_almuerzos: {e}")
@@ -2552,17 +2527,23 @@ def cargar_almuerzos(conn, fecha: str = None) -> pd.DataFrame:
 
 
 def cargar_catalogo_tecnicos():
-    """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
+    """
+    Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom.
+    Garantiza que solo se clasifique como TÉCNICO PRINCIPAL a quienes tengan
+    la frase exacta escrita en su línea de registro.
+    """
     path = "personal_tecnico.txt"
     datos = []
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
             for linea in f:
-                linea = linea.strip()
-                if not linea: continue
+                linea_raw = linea.strip()
+                if not linea_raw: continue
                 
-                # Separar por coma
-                partes = linea.split(',')
+                linea_upper = linea_raw.upper()
+                
+                # Separar por comas para extraer el nombre
+                partes = linea_raw.split(',')
                 
                 # El nombre está en la primera parte, reemplazamos tabs por espacios y limpiamos dobles espacios
                 nombre_bruto = partes[0].replace('\t', ' ')
@@ -2574,16 +2555,17 @@ def cargar_catalogo_tecnicos():
                     cargo_area = "N/D"
                     
                 estatus = "ACTIVO"
-                if len(partes) > 2 and "VACACIONES" in partes[2].upper():
+                if "VACACIONES" in linea_upper:
                     estatus = "VACACIONES"
                 
-                # Regla del usuario: Clasificación de Técnico Principal
-                # Ahora acepta "TECNICO PRINCIPAL", "TECNICO" y los formatos estándar de áreas
-                if cargo_area in ['PLEX', 'HFC', 'FTTH', 'TECNICO PRINCIPAL', 'TECNICO', 'TECNICO_PRINCIPAL']:
+                # === REGLA REFINADA ULTRA-PRECISA DE TÉCNICO PRINCIPAL ===
+                # Un empleado es clasificado como Técnico Principal si y solo si la frase
+                # "TECNICO PRINCIPAL" o "TECNICO_PRINCIPAL" aparece explícitamente en su línea.
+                if "TECNICO PRINCIPAL" in linea_upper or "TECNICO_PRINCIPAL" in linea_upper:
                     clasificacion = "TÉCNICO PRINCIPAL"
-                elif 'AYUDANTE' in cargo_area:
+                elif 'AYUDANTE' in linea_upper:
                     clasificacion = "AYUDANTE"
-                elif 'SUPERVISOR' in cargo_area:
+                elif 'SUPERVISOR' in linea_upper:
                     clasificacion = "SUPERVISOR"
                 else:
                     clasificacion = "OTRAS ÁREAS / SOPORTE"
