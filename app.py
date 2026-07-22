@@ -1659,7 +1659,7 @@ def main():
             else:
                 st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
 
-    # ==============================================================================
+# ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO 
     # ==============================================================================        
     if nav_menu_diamante == "⚡ Monitor en Vivo":
