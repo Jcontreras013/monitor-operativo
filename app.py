@@ -90,7 +90,8 @@ try:
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
-        cargar_catalogo_tecnicos
+        cargar_catalogo_tecnicos,
+        mascara_tecnico_asignado
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -177,9 +178,6 @@ def sincronizar_datos_nube(conn):
                     df_nube = df_nube[~mask_basura_sync].copy()
 
             if 'EMPRESA' in df_nube.columns:
-                # Descartar solo si el campo indica explícitamente OTRA empresa
-                # (no se descarta si está vacío/nulo: órdenes recién creadas o
-                # sin técnico asignado a menudo aún no tienen este campo lleno).
                 empresa_upper_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper()
                 mask_otra_empresa_sync = (empresa_upper_sync != '') & (empresa_upper_sync != 'NAN') & (empresa_upper_sync != 'NONE') & (~empresa_upper_sync.str.contains('ISCA', na=False))
                 df_nube = df_nube[~mask_otra_empresa_sync].copy()
@@ -220,16 +218,12 @@ def sincronizar_datos_nube(conn):
                 if 'NUM' in df_nube.columns:
                     df_nube['NUM'] = df_nube['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                     
-                    # Convertir fechas de forma segura para ordenar cronológicamente
                     df_nube['SORT_DATE'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.to_datetime(df_nube['FECHA_APE'], errors='coerce'))
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                     
-                    # Priorizar estados finales (Cerrada, Anulada) sobre estados activos
                     PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                     df_nube['ES_VIVA'] = df_nube['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
-                    
-                    # Ordenar: las activas (True) van primero y las cerradas (False) al final para conservarlas con keep='last'
                     df_nube = df_nube.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                     
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -245,7 +239,6 @@ def sincronizar_datos_nube(conn):
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
                 ahora_momento_ts = pd.Timestamp(get_honduras_time())
-                # Forzar formato naive si los datetimes son naive
                 if df_nube['HORA_LIQ'].dt.tz is None:
                     ahora_naive = ahora_momento_ts.tz_localize(None)
                 else:
@@ -343,7 +336,6 @@ def main():
             else: 
                 nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["🏅 Control Calidad", "📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"])    
         else:
-            # === MENÚ MÓVIL PARA ROL MONITOREO (Solo Monitor y Calidad) ===
             selected_nav = option_menu(
                 menu_title=None,
                 options=["Monitor", "Calidad"],
@@ -369,7 +361,6 @@ def main():
             if rol_usuario in ['admin', 'jefe']: 
                 nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
             else:
-                # === MENÚ DE ESCRITORIO PARA ROL MONITOREO (Solo Monitor y Calidad) ===
                 st.markdown("### 🖥️ Menú de Control")
                 nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])    
 
@@ -378,9 +369,6 @@ def main():
         st.divider()
 
     with sidebar_bottom:
-        # Inicialización por defecto: sin esto, un usuario no-admin provoca
-        # UnboundLocalError porque btn_api_procesar nunca se asignaba fuera
-        # de la rama "if es_admin:".
         btn_api_procesar = False
         file_act_ptr = None
         file_disp_ptr = None
@@ -391,15 +379,12 @@ def main():
         if es_admin_o_supervisor:
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
-                # Obtener listado de técnicos de forma secuencial y segura
                 lista_tecs_almuerzo = []
                 df_base_for_tecs = st.session_state.get('df_base')
                 
-                # 1. Intentar cargar desde los técnicos activos en la base del monitor
                 if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
                     lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
                 
-                # 2. Fallback: Cargar desde el archivo personal_tecnico.txt si la base del monitor está vacía
                 if not lista_tecs_almuerzo:
                     try:
                         df_cat_tecs = cargar_catalogo_tecnicos()
@@ -408,7 +393,6 @@ def main():
                     except Exception:
                         pass
                 
-                # 3. Fallback de seguridad: Cargar directamente desde gps.txt
                 if not lista_tecs_almuerzo and os.path.exists("gps.txt"):
                     try:
                         with open("gps.txt", "r", encoding="utf-8") as f:
@@ -420,7 +404,6 @@ def main():
                     except Exception:
                         pass
 
-                # Mostrar Selector (Dropdown) o Campo de texto según disponibilidad de datos
                 if lista_tecs_almuerzo:
                     tec_almuerzo_sel = st.selectbox("Técnico", options=lista_tecs_almuerzo, key="sel_tec_almuerzo")
                 else:
@@ -467,7 +450,6 @@ def main():
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
-           # st.caption("El demonio interno (sync_job.py) sincroniza con Cepheus cada 5 min. Este botón fuerza traer esa última versión ahora mismo, sin esperar.")
             btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
             
             st.divider()
@@ -505,12 +487,10 @@ def main():
                             if df_fttx_subir is None or df_fttx_subir.empty:
                                 st.error("El archivo se leyó pero está vacío.")
                             else:
-                                # Sheets es la fuente confiable (la escritura a GCS falla de
-                                # forma silenciosa), se sobrescribe la pestaña FTTX completa.
+                                # Sheets es la fuente confiable, se sobrescribe la pestaña FTTX completa.
                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_subir)
                                 st.success(f"✅ Catálogo FTTX actualizado en la nube ({len(df_fttx_subir)} registros).")
 
-                                # Intento de respaldo en GCS (puede fallar silenciosamente, no es bloqueante)
                                 try:
                                     sobrescribir_archivo_gcs(df_fttx_subir, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
                                 except Exception:
@@ -541,11 +521,6 @@ def main():
     # ==============================================================================
     if 'df_base' not in st.session_state or btn_reprocesar or btn_api_procesar:
         if btn_api_procesar:
-            # NOTA: Esta app corre en Streamlit Cloud y NO tiene alcance de red hacia
-            # la API interna de Cepheus (IP privada 192.168.x.x). La sincronización con
-            # esa API la realiza sync_job.py, corriendo de forma continua en la máquina
-            # dedicada dentro de la red de la empresa, cada 5 minutos. Este botón solo
-            # fuerza traer esa última versión ya sincronizada, sin caché.
             if conn is not None:
                 sincronizar_datos_nube(conn)
             else:
@@ -555,9 +530,6 @@ def main():
             if file_act_ptr is not None and file_disp_ptr is None:
                 with st.spinner("⏳ Descargando base de Vehículos/Dispositivos..."):
                     try:
-                        # NOTA: sobrescribir_archivo_gcs() atrapa su propio error interno, así
-                        # que la escritura a GCS del archivo FTTX falla de forma silenciosa.
-                        # La pestaña "FTTX" de Sheets es la fuente confiable, se lee primero.
                         df_fttx_cloud = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", ttl=600)
                         if df_fttx_cloud is None or df_fttx_cloud.empty:
                             df_fttx_cloud = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
@@ -643,9 +615,9 @@ def main():
                                     
                                     df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                                     
-                                    df_valid_num = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
+                                    df_validos = df_combined[df_combined['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
                                     df_nd = df_combined[df_combined['NUM'] == 'N/D']
-                                    df_combined = pd.concat([df_valid_num, df_nd]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
+                                    df_combined = pd.concat([df_validos, df_nd]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
                                 df_to_upload = df_combined.copy()
                                 for c_date in ['HORA_INI', 'HORA_LIQ', 'FECHA_APE']:
@@ -731,8 +703,6 @@ def main():
     if not df_base.empty:
         if 'TECNICO' in df_base.columns:
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
-            valores_invalidos_tec = ['NONE', 'NAN', 'N/D', 'NULL', '', '0']
-            df_base = df_base[~df_base['TECNICO'].isin(valores_invalidos_tec) & df_base['TECNICO'].notna()]
             
             # Asignar la columna GPS dinámicamente mediante cruce de nombres normalizados
             df_base['TECNICO_NORM'] = df_base['TECNICO'].apply(normalizar_nombre_cruce)
@@ -890,6 +860,26 @@ def main():
     hoy_date_valor = ahora_local.date()
     df_base_activa = df_base.copy()
 
+    # === CORRECCIÓN DE ESPACIOS EN SOP FIBRA PARA ES_OFFLINE (RESUELVE CAÍDAS 0) ===
+    if 'ACTIVIDAD' in df_base_activa.columns and 'COMENTARIO' in df_base_activa.columns:
+        act_upper_c = df_base_activa['ACTIVIDAD'].fillna('').astype(str).str.upper().str.strip()
+        est_upper_c = df_base_activa['ESTADO'].fillna('').astype(str).str.upper().str.strip()
+        com_upper_c = df_base_activa['COMENTARIO'].fillna('').astype(str).str.upper().str.strip()
+        
+        # Mapea SOP FIBRA con espacio, sin espacio u otros formatos típicos de red
+        mask_sop_c = act_upper_c.str.contains(r'SOP\s*FIBRA|SOP_FIBRA', regex=True)
+        mask_falsos_c = act_upper_c.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
+        mask_est_abierto_c = est_upper_c != 'CERRADA'
+        mask_com_off_c = com_upper_c.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
+        mask_precisa_c = com_upper_c.apply(es_offline_preciso)
+        
+        # Sobrescribe el campo de caídas garantizando la lectura del espacio
+        df_base_activa['ES_OFFLINE'] = (mask_est_abierto_c & mask_sop_c & ~mask_falsos_c & (mask_com_off_c | mask_precisa_c))
+        
+        if 'TECNICO' in df_base_activa.columns:
+            mask_josue_c = df_base_activa['TECNICO'].astype(str).str.upper().str.contains("JOSUE MIGUEL SAUCEDA", na=False)
+            df_base_activa.loc[mask_josue_c, 'ES_OFFLINE'] = False
+
     # ==============================================================================
     # 3. RENDERIZADO DE PANTALLAS Y CONFIGURACIÓN
     # ==============================================================================
@@ -982,7 +972,7 @@ def main():
             
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
             
-            mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            mascara_no_asignadas = ~mascara_tecnico_asignado(df_base_activa['TECNICO'])
             total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
             
             check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
@@ -1029,11 +1019,11 @@ def main():
         if len(filtro_motivo) > 0 and 'MOTIVO' in df_monitor_filtrado.columns: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['MOTIVO'].isin(filtro_motivo)]
         if check_criticos_diamante:
             mask_critica = df_monitor_filtrado['ES_OFFLINE'] | df_monitor_filtrado.get('ALERTA_TIEMPO', False)
-            mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOPFIBRA', na=False)
+            mask_sop_fibra = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('SOP', na=False)
             mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
             df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
         if check_no_asignadas:
-            mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+            mask_no_asignadas_filtro = ~mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
             df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
         if tec_filtro_monitor != "Todos": 
             df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
@@ -1058,7 +1048,7 @@ def main():
             st.subheader("📋 Resumen de Pendientes Generales")
             df_todas_vivas = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
             if not df_todas_vivas.empty:
-                mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                mask_sin_tec = ~mascara_tecnico_asignado(df_todas_vivas['TECNICO'])
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
@@ -1690,7 +1680,7 @@ def main():
         else:
             st.title("⚡ Monitor Operativo Maxcom")
 
-        mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+        mask_tec_valido_mon = mascara_tecnico_asignado(df_todas_pendientes_monitor['TECNICO'])
         
         if check_no_asignadas:
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy()
@@ -1701,7 +1691,6 @@ def main():
         cerradas_hoy = len(df_cerradas_hoy_monitor)
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
-        total_pendientes_general = len(df_todas_pendientes_monitor)
 
         if es_movil:
             st.markdown(f"""
@@ -1721,10 +1710,6 @@ def main():
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #EF4444; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
                     <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CAÍDAS</div>
                     <div style="color: #EF4444; font-size: 1.8rem; font-weight: bold;">{offline_criticos_asignadas}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #A855F7; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">TOTAL</div>
-                    <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{total_pendientes_general}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1746,10 +1731,6 @@ def main():
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #EF4444; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
                     <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
-                </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #A855F7; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
-                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TOTAL (ASIGNADAS + NO ASIGNADAS)</div>
-                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{total_pendientes_general}</div>
                 </div>
             </div>
             """
@@ -1775,7 +1756,7 @@ def main():
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
-                    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+                    col_t1, col_t2 = st.columns([1, 2])
                     with col_t1:
                         st.caption("📅 Resumen de Retraso")
                         res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
@@ -1790,8 +1771,8 @@ def main():
                             elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
-                        st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True, height=178)
-                        st.write(f"**Total: {sum_total_asignadas_v}**")
+                        st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
+                        st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
 
                 g_tab_list = []
                 sub_tab_list = []
@@ -1843,11 +1824,12 @@ def main():
                         df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
                         res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
                         res_sop.columns = ['SOP', 'Cant']
-                        st.dataframe(res_sop, hide_index=True, use_container_width=True, height=140)
-                        st.write(f"**Total: {df_sop.shape[0]}**")
-                        st.metric("Exceden 2h ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
+                        st.dataframe(res_sop, hide_index=True, use_container_width=True)
+                        st.write(f"**Total General SOP: {df_sop.shape[0]}**")
+                        st.metric("Exceden 2 Horas ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
 
-                    with col_t3:
+                    with col_t1:
+                        st.markdown("<br><br>", unsafe_allow_html=True)
                         st.caption("📦 Instalaciones")
                         df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
                         res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
@@ -1856,16 +1838,16 @@ def main():
                         for c in cats_ins:
                             if c not in res_ins['Instalaciones'].values: 
                                 res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
-                        st.dataframe(res_ins, hide_index=True, use_container_width=True, height=178)
-                        st.write(f"**Total: {df_ins.shape[0]}**")
+                        st.dataframe(res_ins, hide_index=True, use_container_width=True)
+                        st.write(f"**Total General INS: {df_ins.shape[0]}**")
 
-                    with col_t4:
+                    with col_t2:
                         st.caption("⚙️ Otros")
                         df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
                         res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
                         res_otr.columns = ['Otros', 'Cant']
-                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True, height=178)
-                        st.write(f"**Total: {df_otros.shape[0]}**")
+                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
+                        st.write(f"**Total Otros: {df_otros.shape[0]}**")
 
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
@@ -2017,9 +1999,7 @@ def main():
                         primera_orden_por_tec = {}
                         if ahora_local > limite_9am:
                             tecs_con_asignacion = df_monitor_filtrado[
-                                (df_monitor_filtrado['TECNICO'].notna()) & 
-                                (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
-                                (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
+                                mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
                             ]['TECNICO'].unique()
                             
                             for tec in tecs_con_asignacion:
