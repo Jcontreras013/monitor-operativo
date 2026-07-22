@@ -2412,15 +2412,18 @@ def main():
                                     mime="application/pdf", 
                                     type="primary", 
                                     use_container_width=True
-                                )
+                               )
                         st.markdown("---")
                     else:
                         st.info("No hay actividades registradas en esta fecha para generar el Gantt.")
 
             if not df_cerradas_espejo.empty:
                 st.markdown("### 📊 Desglose de Producción")
-                if es_movil: cs_col, ci_col = st.columns(2)
-                else: cs_col, ci_col, cp_col, co_col = st.columns(4)
+                
+                if es_movil: 
+                    cs_col, ci_col = st.columns(2)
+                else: 
+                    cs_col, ci_col, cp_col, co_col = st.columns(4)
                 
                 with cs_col:
                     st.write("**SOP**")
