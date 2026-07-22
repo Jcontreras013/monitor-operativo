@@ -90,8 +90,7 @@ try:
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
-        cargar_catalogo_tecnicos,
-        mascara_tecnico_asignado
+        cargar_catalogo_tecnicos
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -979,7 +978,7 @@ def main():
             
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
             
-            mascara_no_asignadas = ~mascara_tecnico_asignado(df_base_activa['TECNICO'])
+            mascara_no_asignadas = (df_base_activa['TECNICO'].isna()) | (df_base_activa['TECNICO'].astype(str).str.strip() == '') | (df_base_activa['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
             total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
             
             check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
@@ -1030,7 +1029,7 @@ def main():
             mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
             df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
         if check_no_asignadas:
-            mask_no_asignadas_filtro = ~mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
+            mask_no_asignadas_filtro = (df_monitor_filtrado['TECNICO'].isna()) | (df_monitor_filtrado['TECNICO'].astype(str).str.strip() == '') | (df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
             df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
         if tec_filtro_monitor != "Todos": 
             df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
@@ -1055,7 +1054,7 @@ def main():
             st.subheader("📋 Resumen de Pendientes Generales")
             df_todas_vivas = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
             if not df_todas_vivas.empty:
-                mask_sin_tec = ~mascara_tecnico_asignado(df_todas_vivas['TECNICO'])
+                mask_sin_tec = (df_todas_vivas['TECNICO'].isna()) | (df_todas_vivas['TECNICO'].astype(str).str.strip() == '') | (df_todas_vivas['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
                 df_asig = df_todas_vivas[~mask_sin_tec].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
@@ -1269,20 +1268,17 @@ def main():
                                     tec_alm_h = normalizar_nombre_cruce(fila_alm_h['TECNICO'])
                                     hi_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_INICIO']), '%H:%M').time())
                                     hf_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_FIN']), '%H:%M').time())
-                                    dur_alm_h = hf_alm_h - hi_alm_h
-                                    tiempo_total_alm_h = f"{int(dur_alm_h.total_seconds() // 3600)}h {int((dur_alm_h.total_seconds() % 3600) // 60)}m"
                                     filas_almuerzo_h.append({
                                         'TECNICO': tec_alm_h,
                                         'ACTIVIDAD': 'ALMUERZO',
                                         'NUM': '-',
-                                        'CLIENTE': '-',
                                         'COLONIA': '-',
                                         'ESTADO': 'ALMUERZO',
                                         'GANTT_START': hi_alm_h,
                                         'GANTT_END': hf_alm_h,
                                         'Inicio': hi_alm_h.strftime('%H:%M'),
                                         'Cierre': hf_alm_h.strftime('%H:%M'),
-                                        'TIEMPO_REAL': tiempo_total_alm_h
+                                        'TIEMPO_REAL': '-'
                                     })
                                 except Exception:
                                     continue
@@ -1293,7 +1289,6 @@ def main():
                         df_para_gantt_diario['INFO_HOVER'] = (
                             "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
                             "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
-                            "CLIENTE=" + df_para_gantt_diario['CLIENTE'].astype(str) + "<br>" +
                             "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
                             "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
                             "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
@@ -1691,7 +1686,7 @@ def main():
         else:
             st.title("⚡ Monitor Operativo Maxcom")
 
-        mask_tec_valido_mon = mascara_tecnico_asignado(df_todas_pendientes_monitor['TECNICO'])
+        mask_tec_valido_mon = df_todas_pendientes_monitor['TECNICO'].notna() & (df_todas_pendientes_monitor['TECNICO'].astype(str).str.strip() != '') & (~df_todas_pendientes_monitor['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
         
         if check_no_asignadas:
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy()
@@ -2018,7 +2013,9 @@ def main():
                         primera_orden_por_tec = {}
                         if ahora_local > limite_9am:
                             tecs_con_asignacion = df_monitor_filtrado[
-                                mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
+                                (df_monitor_filtrado['TECNICO'].notna()) & 
+                                (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '') &
+                                (~df_monitor_filtrado['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
                             ]['TECNICO'].unique()
                             
                             for tec in tecs_con_asignacion:
@@ -2172,20 +2169,17 @@ def main():
                                         tec_alm = normalizar_nombre_cruce(fila_alm['TECNICO'])
                                         hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
                                         hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
-                                        dur_alm = hf_alm - hi_alm
-                                        tiempo_total_alm = f"{int(dur_alm.total_seconds() // 3600)}h {int((dur_alm.total_seconds() % 3600) // 60)}m"
                                         filas_almuerzo.append({
                                             'TECNICO': tec_alm,
                                             'ACTIVIDAD': 'ALMUERZO',
                                             'NUM': '-',
-                                            'CLIENTE': '-',
                                             'COLONIA': '-',
                                             'ESTADO': 'ALMUERZO',
                                             'GANTT_START': hi_alm,
                                             'GANTT_END': hf_alm,
                                             'Inicio': hi_alm.strftime('%H:%M'),
                                             'Cierre': hf_alm.strftime('%H:%M'),
-                                            'TIEMPO_REAL': tiempo_total_alm
+                                            'TIEMPO_REAL': '-'
                                         })
                                     except Exception:
                                         continue
@@ -2196,7 +2190,6 @@ def main():
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
                                 "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
-                                "CLIENTE=" + df_para_gantt_final['CLIENTE'].astype(str) + "<br>" +
                                 "COLONIA=" + df_para_gantt_final['COLONIA'].astype(str) + "<br>" +
                                 "ESTADO=" + df_para_gantt_final['ESTADO'].astype(str) + "<br>" +
                                 "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
