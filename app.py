@@ -1692,11 +1692,15 @@ def main():
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy()
         else:
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
-
-        vivas_count_asignadas = len(df_solo_asignadas_monitor)
+        vivas_count_asignadas = len(df_todas_pendientes_monitor[mask_tec_valido_mon])
+        
+        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
+        df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
+    
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
-        offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
+        offline_criticos_asignadas = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
+        total_pendientes_general = len(df_todas_pendientes_monitor)
 
         if es_movil:
             st.markdown(f"""
@@ -1737,6 +1741,10 @@ def main():
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #EF4444; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
                     <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
+                </div>
+                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #A855F7; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TOTAL (ASIGNADAS + NO ASIGNADAS)</div>
+                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{total_pendientes_general}</div>
                 </div>
             </div>
             """
@@ -2465,7 +2473,7 @@ def main():
                                 "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                 "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
                                 "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                "ES_OFFLINE": None,
+                                "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"), # <--- CAMBIADO AQUÍ
                                 "MINUTOS_CALC": None
                             }, 
                             use_container_width=True, 
