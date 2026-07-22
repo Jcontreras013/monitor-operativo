@@ -177,7 +177,6 @@ def sincronizar_datos_nube(conn):
                     df_nube = df_nube[~mask_basura_sync].copy()
 
             if 'EMPRESA' in df_nube.columns:
-                # Filtrar únicamente por la empresa ISCA
                 mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
                 df_nube = df_nube[mask_empresas_sync].copy()
 
@@ -217,16 +216,12 @@ def sincronizar_datos_nube(conn):
                 if 'NUM' in df_nube.columns:
                     df_nube['NUM'] = df_nube['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                     
-                    # Convertir fechas de forma segura para ordenar cronológicamente
                     df_nube['SORT_DATE'] = pd.to_datetime(df_nube['HORA_LIQ'], errors='coerce')
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.to_datetime(df_nube['FECHA_APE'], errors='coerce'))
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                     
-                    # Priorizar estados finales (Cerrada, Anulada) sobre estados activos
                     PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                     df_nube['ES_VIVA'] = df_nube['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
-                    
-                    # Ordenar: las activas (True) van primero y las cerradas (False) al final para conservarlas con keep='last'
                     df_nube = df_nube.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                     
                     df_validos = df_nube[df_nube['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
@@ -242,7 +237,6 @@ def sincronizar_datos_nube(conn):
                     if 'ES_OFFLINE' in df_nube.columns: df_nube.loc[mask_josue, 'ES_OFFLINE'] = False
 
                 ahora_momento_ts = pd.Timestamp(get_honduras_time())
-                # Forzar formato naive si los datetimes son naive
                 if df_nube['HORA_LIQ'].dt.tz is None:
                     ahora_naive = ahora_momento_ts.tz_localize(None)
                 else:
@@ -697,10 +691,7 @@ def main():
     if not df_base.empty:
         if 'TECNICO' in df_base.columns:
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
-            valores_invalidos_tec = ['NONE', 'NAN', 'N/D', 'NULL', '', '0']
-            df_base = df_base[~df_base['TECNICO'].isin(valores_invalidos_tec) & df_base['TECNICO'].notna()]
-            
-            # Asignar la columna GPS dinámicamente mediante cruce de nombres normalizados
+            # SE ELIMINÓ EL FILTRO DESTRUCCION DE ORDENES SIN TECNICO
             df_base['TECNICO_NORM'] = df_base['TECNICO'].apply(normalizar_nombre_cruce)
             
             # === BUSCADOR INTELIGENTE CON TOLERANCIA A NOMBRES INCOMPLETOS ===
@@ -1336,13 +1327,13 @@ def main():
                     mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
                     df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
                     if not df_ins_cierre.empty:
-                        def clasificar_ins_cierre(row):
+                        def clasificadores_ins_cierre(row):
                             txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
                             if re.search('ADIC', txt): return 'Adición'
                             if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
                             if re.search('RECUP', txt): return 'Recuperado'
                             return 'Nueva'
-                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificadores_ins_cierre, axis=1)
                         df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
                         df_ins_grouped.columns = ['Instalaciones', 'Cant']
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
@@ -1365,6 +1356,32 @@ def main():
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
 
             st.markdown("---")
+            st.markdown("### ⚖️ Resumen Consolidado: Efectividad de Mora")
+            m_rep = df_inicio_mora_rep.groupby('ACTIVIDAD').size().reset_index(name='INICIO (MORA)')
+            p_rep = df_mora_pend_rep.groupby('ACTIVIDAD').size().reset_index(name='PENDIENTES')
+            c_rep = df_mora_cerr_rep.groupby('ACTIVIDAD').size().reset_index(name='CERRADAS')
+            resumen_global_rep = pd.merge(m_rep, p_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            resumen_global_rep = pd.merge(resumen_global_rep, c_rep, on='ACTIVIDAD', how='outer').fillna(0)
+            
+            if not resumen_global_rep.empty:
+                resumen_global_rep['INICIO (MORA)'] = resumen_global_rep['INICIO (MORA)'].astype(int)
+                resumen_global_rep['PENDIENTES'] = resumen_global_rep['PENDIENTES'].astype(int)
+                resumen_global_rep['CERRADAS'] = resumen_global_rep['CERRADAS'].astype(int)
+                resumen_global_rep.rename(columns={'ACTIVIDAD': 'TIPO'}, inplace=True)
+                resumen_global_rep = resumen_global_rep[['TIPO', 'INICIO (MORA)', 'PENDIENTES', 'CERRADAS']].sort_values(by='TIPO').reset_index(drop=True)
+                tot_m = resumen_global_rep['INICIO (MORA)'].sum()
+                tot_p = resumen_global_rep['PENDIENTES'].sum()
+                tot_c = resumen_global_rep['CERRADAS'].sum()
+                fila_tot = pd.DataFrame([{'TIPO': 'TOTAL GENERAL', 'INICIO (MORA)': tot_m, 'PENDIENTES': tot_p, 'CERRADAS': tot_c}])
+                resumen_global_rep = pd.concat([resumen_global_rep, fila_tot], ignore_index=True)
+                st.dataframe(resumen_global_rep, use_container_width=True, hide_index=True)
+            else: st.info("No hay datos de mora consolidada para esta fecha.")
+
+            st.markdown("### ⏱️ Tiempos de Atencion Promedio")
+            if not df_cerradas_espejo.empty:
+                df_pivot_diario = df_cerradas_espejo.groupby(['TECNICO', 'ACTIVIDAD']).agg(Órdenes=('NUM', 'count'), Prom_Duracion_Min=('MINUTOS_CALC', 'mean')).round(1)
+                st.dataframe(df_pivot_diario, use_container_width=True)
+
             st.markdown("### 🌅 Primera Orden del Día por Técnico")
             df_universo_diario = pd.concat([df_asignadas_espejo, df_cerradas_espejo]).drop_duplicates(subset=['NUM'])
             if 'HORA_INI' in df_universo_diario.columns:
@@ -1664,28 +1681,38 @@ def main():
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
 
         vivas_count_asignadas = len(df_solo_asignadas_monitor)
+        
+        # NUEVA VARIABLE: Conteo total de pendientes asignadas y no asignadas
+        vivas_count_totales = len(df_todas_pendientes_monitor)
+        
         cerradas_hoy = len(df_cerradas_hoy_monitor)
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
-        offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
+        
+        # Conteo unificado de caídas (Offline) pendientes en todo el flujo unificado
+        offline_criticos_totales = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
 
         if es_movil:
             st.markdown(f"""
             <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; margin-top: 10px;">
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #3B82F6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">ASIGNADAS</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">TOTAL DE ORDENES</div>
+                    <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{vivas_count_totales}</div>
+                </div>
+                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #8B5CF6; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">PENDIENTES ASIGNADAS</div>
                     <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{vivas_count_asignadas}</div>
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #10B981; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CERRADAS</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">CERRADAS</div>
                     <div style="color: #10B981; font-size: 1.8rem; font-weight: bold;">{cerradas_hoy}</div>
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #F59E0B; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">EN RUTA</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">EN RUTA</div>
                     <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{tecs_activos}</div>
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #EF4444; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CAÍDAS</div>
-                    <div style="color: #EF4444; font-size: 1.8rem; font-weight: bold;">{offline_criticos_asignadas}</div>
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">CAÍDAS</div>
+                    <div style="color: #EF4444; font-size: 1.8rem; font-weight: bold;">{offline_criticos_totales}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1693,6 +1720,10 @@ def main():
             html_kpis = f"""
             <div style="display: flex; justify-content: space-between; gap: 15px; margin-bottom: 20px; margin-top: 10px;">
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TOTAL DE ORDENES</div>
+                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{vivas_count_totales}</div>
+                </div>
+                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #8B5CF6; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">PENDIENTES ASIGNADAS</div>
                     <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{vivas_count_asignadas}</div>
                 </div>
@@ -1706,7 +1737,7 @@ def main():
                 </div>
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #EF4444; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
-                    <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
+                    <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_totales}</div>
                 </div>
             </div>
             """
@@ -2171,6 +2202,10 @@ def main():
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONHFC": "#c2185b",       
                                 "TVADICIONAL": "#00897b",
+                                "CEQUI": "#fbc02d",          
+                                "CAMBIO": "#fbc02d",
+                                "MANTENIMIENTO": "#512da8",
+                                "REVISION": "#0288d1",
                                 "ALMUERZO": "#78909c"
                             }
 
@@ -2437,7 +2472,7 @@ def main():
                                 "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                 "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
                                 "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                "ES_OFFLINE": None,
+                                "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
                                 "MINUTOS_CALC": None
                             }, 
                             use_container_width=True, 
