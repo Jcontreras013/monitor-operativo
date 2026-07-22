@@ -128,7 +128,14 @@ def normalizar_nombre_cruce(texto):
     if t in alias_map:
         return alias_map[t]
     return t
-
+def mascara_tecnico_asignado(serie_tecnicos):
+    """
+    Retorna una serie booleana con True para técnicos asignados válidos
+    y False para técnicos nulos, vacíos o no asignados.
+    """
+    s = serie_tecnicos.fillna('').astype(str).str.strip().str.upper()
+    valores_invalidos = {'', 'NONE', 'NAN', 'N/D', 'NULL', '0'}
+    return ~s.isin(valores_invalidos)
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
 # ==============================================================================
@@ -696,14 +703,6 @@ def main():
                         g_url = parts[0].strip()
                         g_name = parts[2].strip().rstrip(".")
                         gps_map[normalizar_nombre_cruce(g_name)] = g_url
-    def mascara_tecnico_asignado(serie_tecnicos):
-    """
-    Retorna una serie booleana con True para técnicos asignados válidos
-    y False para técnicos nulos, vacíos o no asignados.
-    """
-    s = serie_tecnicos.fillna('').astype(str).str.strip().str.upper()
-    valores_invalidos = {'', 'NONE', 'NAN', 'N/D', 'NULL', '0'}
-    return ~s.isin(valores_invalidos)
         except Exception as e:
             pass
     
