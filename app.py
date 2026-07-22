@@ -484,6 +484,36 @@ def main():
                 try:
                     with open("cache_fttx.tmp", "wb") as f: f.write(archivo_fttx.getvalue())
                 except: pass
+
+            if btn_actualizar_fttx:
+                if archivo_fttx is None:
+                    st.warning("Primero selecciona un archivo FttxActiveDevice para subir.")
+                elif conn is None:
+                    st.error("Conexión no disponible.")
+                else:
+                    with st.spinner("⏳ Subiendo catálogo FTTX a la nube..."):
+                        try:
+                            archivo_fttx.seek(0)
+                            if archivo_fttx.name.lower().endswith('.csv'):
+                                df_fttx_subir = pd.read_csv(archivo_fttx, sep=None, engine='python')
+                            else:
+                                df_fttx_subir = pd.read_excel(archivo_fttx, engine='openpyxl')
+
+                            if df_fttx_subir is None or df_fttx_subir.empty:
+                                st.error("El archivo se leyó pero está vacío.")
+                            else:
+                                # Sheets es la fuente confiable (la escritura a GCS falla de
+                                # forma silenciosa), se sobrescribe la pestaña FTTX completa.
+                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_subir)
+                                st.success(f"✅ Catálogo FTTX actualizado en la nube ({len(df_fttx_subir)} registros).")
+
+                                # Intento de respaldo en GCS (puede fallar silenciosamente, no es bloqueante)
+                                try:
+                                    sobrescribir_archivo_gcs(df_fttx_subir, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                                except Exception:
+                                    pass
+                        except Exception as e_fttx_up:
+                            st.error(f"No se pudo procesar/subir el archivo FTTX: {e_fttx_up}")
         else:
             st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
             archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
@@ -1667,6 +1697,7 @@ def main():
         cerradas_hoy = len(df_cerradas_hoy_monitor)
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_solo_asignadas_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_solo_asignadas_monitor))) == True).sum())
+        total_pendientes_general = len(df_todas_pendientes_monitor)
 
         if es_movil:
             st.markdown(f"""
@@ -1686,6 +1717,10 @@ def main():
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #EF4444; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
                     <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">CAÍDAS</div>
                     <div style="color: #EF4444; font-size: 1.8rem; font-weight: bold;">{offline_criticos_asignadas}</div>
+                </div>
+                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 15px; border-radius: 12px; border-left: 4px solid #A855F7; flex: 1 1 45%; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                    <div style="color: #94A3B8; font-size: 0.7rem; font-weight: bold;">TOTAL</div>
+                    <div style="color: #FFFFFF; font-size: 1.8rem; font-weight: bold;">{total_pendientes_general}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -1707,6 +1742,10 @@ def main():
                 <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #EF4444; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
                     <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
+                </div>
+                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #A855F7; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                    <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TOTAL (ASIGNADAS + NO ASIGNADAS)</div>
+                    <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{total_pendientes_general}</div>
                 </div>
             </div>
             """
@@ -1732,7 +1771,7 @@ def main():
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
-                    col_t1, col_t2 = st.columns([1, 2])
+                    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
                     with col_t1:
                         st.caption("📅 Resumen de Retraso")
                         res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
@@ -1747,8 +1786,8 @@ def main():
                             elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
-                        st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                        st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
+                        st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {sum_total_asignadas_v}**")
 
                 g_tab_list = []
                 sub_tab_list = []
@@ -1800,12 +1839,11 @@ def main():
                         df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
                         res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
                         res_sop.columns = ['SOP', 'Cant']
-                        st.dataframe(res_sop, hide_index=True, use_container_width=True)
-                        st.write(f"**Total General SOP: {df_sop.shape[0]}**")
-                        st.metric("Exceden 2 Horas ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
+                        st.dataframe(res_sop, hide_index=True, use_container_width=True, height=140)
+                        st.write(f"**Total: {df_sop.shape[0]}**")
+                        st.metric("Exceden 2h ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
 
-                    with col_t1:
-                        st.markdown("<br><br>", unsafe_allow_html=True)
+                    with col_t3:
                         st.caption("📦 Instalaciones")
                         df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
                         res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
@@ -1814,16 +1852,16 @@ def main():
                         for c in cats_ins:
                             if c not in res_ins['Instalaciones'].values: 
                                 res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
-                        st.dataframe(res_ins, hide_index=True, use_container_width=True)
-                        st.write(f"**Total General INS: {df_ins.shape[0]}**")
+                        st.dataframe(res_ins, hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {df_ins.shape[0]}**")
 
-                    with col_t2:
+                    with col_t4:
                         st.caption("⚙️ Otros")
                         df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
                         res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
                         res_otr.columns = ['Otros', 'Cant']
-                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
-                        st.write(f"**Total Otros: {df_otros.shape[0]}**")
+                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {df_otros.shape[0]}**")
 
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
