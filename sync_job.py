@@ -141,8 +141,10 @@ def ejecutar_sincronizacion_background():
             df_sheets_master = df_sheets_master[~mask_basura].copy()
             
         if 'EMPRESA' in df_sheets_master.columns:
-            mask_isca = df_sheets_master['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
-            df_sheets_master = df_sheets_master[mask_isca].copy()
+            # Descartar solo si indica explícitamente otra empresa (no vacía)
+            empresa_upper_master = df_sheets_master['EMPRESA'].astype(str).str.strip().str.upper()
+            mask_otra_empresa_master = (empresa_upper_master != '') & (empresa_upper_master != 'NAN') & (empresa_upper_master != 'NONE') & (~empresa_upper_master.str.contains('ISCA', na=False))
+            df_sheets_master = df_sheets_master[~mask_otra_empresa_master].copy()
             
         # Unir historial cerrado con la nueva extracción
         mask_vivas_nube = df_sheets_master['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
