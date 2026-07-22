@@ -509,13 +509,35 @@ def main():
     # ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS CON API INTEGRADA)
     # ==============================================================================
+  # === MANEJADOR PARA EL BOTÓN ACTUALIZAR SOLO CATÁLOGO FTTX ===
+if es_admin and btn_actualizar_fttx:
+    if archivo_fttx is not None:
+        with st.spinner("⏳ Procesando y subiendo catálogo FTTX..."):
+            try:
+                # Leer archivo según su extensión
+                if archivo_fttx.name.lower().endswith('.csv'):
+                    df_fttx_up = pd.read_csv(archivo_fttx, sep=None, engine='python')
+                else:
+                    df_fttx_up = pd.read_excel(archivo_fttx, engine='openpyxl')
+                
+                # 1. Actualizar Google Sheets en la pestaña FTTX
+                if conn is not None:
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_up)
+                
+                # 2. Respaldar en Google Cloud Storage (GCS)
+                bytes_fttx = archivo_fttx.getvalue()
+                sobrescribir_archivo_gcs(bytes_fttx, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                
+                st.success("✅ Catálogo FTTX actualizado en Google Sheets y en GCS con éxito.")
+                import time
+                time.sleep(1.5)
+                st.rerun()
+            except Exception as e_fttx_up:
+                st.error(f"❌ Error al procesar o subir el catálogo FTTX: {e_fttx_up}")
+    else:
+        st.warning("⚠️ Selecciona un archivo en la sección 'Catálogo FTTX' antes de presionar el botón de actualizar.")
     if 'df_base' not in st.session_state or btn_reprocesar or btn_api_procesar:
         if btn_api_procesar:
-            # NOTA: Esta app corre en Streamlit Cloud y NO tiene alcance de red hacia
-            # la API interna de Cepheus (IP privada 192.168.x.x). La sincronización con
-            # esa API la realiza sync_job.py, corriendo de forma continua en la máquina
-            # dedicada dentro de la red de la empresa, cada 5 minutos. Este botón solo
-            # fuerza traer esa última versión ya sincronizada, sin caché.
             if conn is not None:
                 sincronizar_datos_nube(conn)
             else:
