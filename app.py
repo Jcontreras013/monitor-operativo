@@ -1770,7 +1770,8 @@ def main():
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
-                    col_t1, col_t2 = st.columns([1, 2])
+                    # Creamos 4 columnas simétricas en una sola fila para la versión de Escritorio
+                    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
                     with col_t1:
                         st.caption("📅 Resumen de Retraso")
                         res_retraso_v = df_todas_pendientes_monitor['CatD'].value_counts().reindex([">= 7 Dia","= 4 a 6 Dias","= 1 a 3 Dias","= 0 Dia"], fill_value=0).reset_index()
@@ -1785,8 +1786,9 @@ def main():
                             elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
-                        st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
-                        st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
+                        # Reducimos la altura a 178 para homogeneizar el calce de la fila
+                        st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {sum_total_asignadas_v}**")
 
                 g_tab_list = []
                 sub_tab_list = []
@@ -1838,12 +1840,12 @@ def main():
                         df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
                         res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
                         res_sop.columns = ['SOP', 'Cant']
-                        st.dataframe(res_sop, hide_index=True, use_container_width=True)
-                        st.write(f"**Total General SOP: {df_sop.shape[0]}**")
-                        st.metric("Exceden 2 Horas ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
+                        # Se homogeneiza la altura a 140 para ajustarse de forma compacta
+                        st.dataframe(res_sop, hide_index=True, use_container_width=True, height=140)
+                        st.write(f"**Total: {df_sop.shape[0]}**")
+                        st.metric("Exceden 2h ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
 
-                    with col_t1:
-                        st.markdown("<br><br>", unsafe_allow_html=True)
+                    with col_t3:
                         st.caption("📦 Instalaciones")
                         df_ins = df_tablero[df_tablero['G_TAB'] == 'INS']
                         res_ins = df_ins['SUB_TAB'].value_counts().reset_index()
@@ -1852,17 +1854,19 @@ def main():
                         for c in cats_ins:
                             if c not in res_ins['Instalaciones'].values: 
                                 res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
-                        st.dataframe(res_ins, hide_index=True, use_container_width=True)
-                        st.write(f"**Total General INS: {df_ins.shape[0]}**")
+                        # Se homogeneiza la altura a 178 para ajustarse de forma compacta
+                        st.dataframe(res_ins, hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {df_ins.shape[0]}**")
 
-                    with col_t2:
+                    with col_t4:
                         st.caption("⚙️ Otros")
                         df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
                         res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
                         res_otr.columns = ['Otros', 'Cant']
-                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True)
-                        st.write(f"**Total Otros: {df_otros.shape[0]}**")
-
+                        # Se homogeneiza la altura a 178 para ajustarse de forma compacta
+                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {df_otros.shape[0]}**")
+                        
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
