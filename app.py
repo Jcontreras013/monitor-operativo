@@ -1724,7 +1724,6 @@ def main():
             </div>
             """
             st.markdown(html_kpis, unsafe_allow_html=True)
-
         if st.session_state.get('config_ver_tablero', True):
             with st.expander("📊 TABLERO DE CARGA ACTUAL (TODAS LAS PENDIENTES)", expanded=not es_movil):
                 if es_movil:
