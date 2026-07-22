@@ -158,7 +158,7 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
             
             try:
                 # verify=False porque es un servidor interno
-                response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=60)
+                response = session.get(url_exacta, headers=headers, auth=auth, verify=False, timeout=240)
                 
                 if response.status_code == 200:
                     tipo_archivo = response.headers.get('Content-Type', 'Desconocido')
