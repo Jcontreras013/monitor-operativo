@@ -49,6 +49,31 @@ def normalizar_nombre_cruce(texto):
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
     return ' '.join(t.split())
 
+def mascara_tecnico_asignado(serie_tecnico: pd.Series) -> pd.Series:
+    """
+    Máscara ÚNICA Y CENTRALIZADA para saber si una orden tiene técnico asignado.
+
+    Por qué existe: el resto del sistema (normalizar_nombre_cruce) ya sabe que
+    Sheets/API/Excel a veces entregan "vacíos" que en realidad traen caracteres
+    invisibles (Zero-Width Space \\u200b, Zero-Width Non-Joiner \\u200c, NBSP \\xa0)
+    o espacios extra. Si una celda de TECNICO llega así, un simple
+    `.str.strip() == ''` NO la detecta como vacía, y esa orden desaparece del
+    filtro "NO Asignadas" aunque en la práctica no tenga técnico real.
+
+    Devuelve True donde el técnico SÍ está asignado (nombre real).
+    Para obtener "no asignadas" simplemente negar: ~mascara_tecnico_asignado(...)
+    """
+    limpio = (
+        serie_tecnico.astype(str)
+        .str.replace('\u200b', '', regex=False)
+        .str.replace('\u200c', '', regex=False)
+        .str.replace('\xa0', ' ', regex=False)
+        .str.strip()
+        .str.upper()
+    )
+    placeholders_vacios = ['', 'NONE', 'NAN', 'N/D', 'NULL', 'NAT', '0']
+    return serie_tecnico.notna() & (~limpio.isin(placeholders_vacios))
+
 def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
     """Motor blindado de conversión de fechas a partir de múltiples formatos entrantes."""
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
