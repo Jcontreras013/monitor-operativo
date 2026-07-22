@@ -177,9 +177,12 @@ def sincronizar_datos_nube(conn):
                     df_nube = df_nube[~mask_basura_sync].copy()
 
             if 'EMPRESA' in df_nube.columns:
-                # Filtrar únicamente por la empresa ISCA
-                mask_empresas_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
-                df_nube = df_nube[mask_empresas_sync].copy()
+                # Descartar solo si el campo indica explícitamente OTRA empresa
+                # (no se descarta si está vacío/nulo: órdenes recién creadas o
+                # sin técnico asignado a menudo aún no tienen este campo lleno).
+                empresa_upper_sync = df_nube['EMPRESA'].astype(str).str.strip().str.upper()
+                mask_otra_empresa_sync = (empresa_upper_sync != '') & (empresa_upper_sync != 'NAN') & (empresa_upper_sync != 'NONE') & (~empresa_upper_sync.str.contains('ISCA', na=False))
+                df_nube = df_nube[~mask_otra_empresa_sync].copy()
 
                 df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
@@ -617,9 +620,10 @@ def main():
                                         df_cloud = df_cloud[~mask_basura_cloud].copy()
                                     
                                     if 'EMPRESA' in df_cloud.columns:
-                                        # Filtrar únicamente por la empresa ISCA
-                                        mask_isca_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper().str.contains('ISCA', na=False)
-                                        df_cloud = df_cloud[mask_isca_cloud].copy()
+                                        # Descartar solo si indica explícitamente otra empresa (ver nota arriba)
+                                        empresa_upper_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper()
+                                        mask_otra_empresa_cloud = (empresa_upper_cloud != '') & (empresa_upper_cloud != 'NAN') & (empresa_upper_cloud != 'NONE') & (~empresa_upper_cloud.str.contains('ISCA', na=False))
+                                        df_cloud = df_cloud[~mask_otra_empresa_cloud].copy()
 
                                     PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                                     mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
