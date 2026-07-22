@@ -39,7 +39,8 @@ from tools import (
     sobrescribir_archivo_gcs,
     leer_espejo_gcs,
     get_honduras_time,
-    procesar_fechas_seguro
+    procesar_fechas_seguro,
+    calcular_offline_y_alertas
 )
 
 PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
@@ -119,6 +120,10 @@ def ejecutar_sincronizacion_background():
         df_depurado.loc[mask_josue, 'DIAS_RETRASO'] = 0
         
     df_depurado['MINUTOS_CALC'] = (df_depurado['HORA_LIQ'] - df_depurado['HORA_INI']).dt.total_seconds() / 60
+
+    # Calcular ES_OFFLINE y ALERTA_TIEMPO con la misma lógica que usa la carga
+    # manual, para que el flujo automático también detecte equipos caídos.
+    df_depurado = calcular_offline_y_alertas(df_depurado)
 
     # 6. CONSOLIDACIÓN DE DATOS (Filtros y uniones)
     if df_sheets_master is not None and not df_sheets_master.empty:
