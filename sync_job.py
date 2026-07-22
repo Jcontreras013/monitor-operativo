@@ -54,9 +54,12 @@ def ejecutar_sincronizacion_background():
 
     print(f"[{datetime.now()}] Iniciando descarga automática desde la API de Cepheus...")
     
-    # 1. Definir rango de extracción (últimos 7 días)
+    # 1. Definir rango de extracción (últimos 60 días, el máximo permitido por
+    # IT). Con solo 7 días, las órdenes pendientes/sin asignar más antiguas
+    # (que son justo las que suelen llevar más tiempo estancadas) quedaban
+    # fuera del rango y nunca llegaban a descargarse ni a mostrarse.
     ahora_local = get_honduras_time()
-    fecha_api = ahora_local - timedelta(days=7)
+    fecha_api = ahora_local - timedelta(days=55)
     fecha_dt_api = datetime.combine(fecha_api.date(), datetime.min.time())
     
     # 2. Descargar órdenes en vivo desde la API de Cepheus
