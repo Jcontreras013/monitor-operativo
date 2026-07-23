@@ -553,7 +553,7 @@ def main():
         es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
         condicion_usar_cache = es_horario_tarde or es_fin_de_semana
         
-        if condiciones_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
+        if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
             if os.path.exists("cache_fttx.tmp"):
                 try:
                     with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
