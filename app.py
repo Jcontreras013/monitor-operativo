@@ -681,6 +681,19 @@ def main():
 
     df_base = st.session_state.df_base.copy()
 
+# === FILTRADO ESTRICTO DE ACTIVIDADES OPERATIVAS AUTORIZADAS ===
+actividades_operativas_validas = [
+    'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INS-WA', 'INSI-WA',
+    'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA',
+    'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SPLITTEROPT',
+    'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
+    'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+]
+if 'ACTIVIDAD' in df_base.columns:
+    df_base['ACTIVIDAD'] = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper()
+    df_base = df_base[df_base['ACTIVIDAD'].isin(actividades_operativas_validas)].copy()
+    
+
     # ==============================================================================
     # EXTRACCIÓN Y MAPEO DINÁMICO DEL ARCHIVO GPS.TXT
     # ==============================================================================
