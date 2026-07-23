@@ -1031,6 +1031,10 @@ def main():
     if nav_menu_diamante == "📊 Centro de Reportes":
         st.title("📊 Centro Único de Reportes Operativos")
         st.caption("Central de exportación gerencial de métricas y rendimiento.")
+        
+        # MENSAJE DE AYUDA DE NAVEGADOR PARA DESCARGAS DE REPORTES
+        st.info("💡 **Para Supervisores de Campo (Móvil):** Si estás descargando un reporte en PDF o Excel desde tu celular, asegúrate de haber abierto el monitor operativo en tu navegador nativo (**Chrome o Safari**). Si abres este monitor directamente dentro de un chat de WhatsApp o WATI, las descargas serán bloqueadas por seguridad del dispositivo móvil.")
+
         tab_diario, tab_pendientes, tab_gerencial, tab_biometrico, tab_materiales = st.tabs([
             "📦 Cierre Diario", 
             "📋 Pendientes Generales", 
@@ -1258,17 +1262,24 @@ def main():
                                     tec_alm_h = normalizar_nombre_cruce(fila_alm_h['TECNICO'])
                                     hi_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_INICIO']), '%H:%M').time())
                                     hf_alm_h = datetime.combine(fecha_cal_sel, datetime.strptime(str(fila_alm_h['HORA_FIN']), '%H:%M').time())
+                                    
+                                    # Cálculo dinámico de la duración total del almuerzo
+                                    duracion_alm_m_h = int((hf_alm_h - hi_alm_h).total_seconds() / 60)
+                                    h_h, m_h = divmod(duracion_alm_m_h, 60)
+                                    tiempo_real_alm_h = f"{h_h}h {m_h}m" if h_h > 0 else f"{m_h}m"
+                                    
                                     filas_almuerzo_h.append({
                                         'TECNICO': tec_alm_h,
                                         'ACTIVIDAD': 'ALMUERZO',
                                         'NUM': '-',
+                                        'CLIENTE': '-',
                                         'COLONIA': '-',
                                         'ESTADO': 'ALMUERZO',
                                         'GANTT_START': hi_alm_h,
                                         'GANTT_END': hf_alm_h,
                                         'Inicio': hi_alm_h.strftime('%H:%M'),
                                         'Cierre': hf_alm_h.strftime('%H:%M'),
-                                        'TIEMPO_REAL': '-'
+                                        'TIEMPO_REAL': tiempo_real_alm_h
                                     })
                                 except Exception:
                                     continue
@@ -1276,9 +1287,12 @@ def main():
                                 df_para_gantt_diario = pd.concat([df_para_gantt_diario, pd.DataFrame(filas_almuerzo_h)], ignore_index=True)
                                 df_para_gantt_diario = df_para_gantt_diario.sort_values(by=['TECNICO', 'GANTT_START'])
                         
+                        cli_series_d = df_para_gantt_diario['CLIENTE'].fillna('-').astype(str) if 'CLIENTE' in df_para_gantt_diario.columns else pd.Series(['-'] * len(df_para_gantt_diario), index=df_para_gantt_diario.index).astype(str)
+                        
                         df_para_gantt_diario['INFO_HOVER'] = (
                             "ACTIVIDAD=" + df_para_gantt_diario['ACTIVIDAD'].astype(str) + "<br>" +
                             "NUM=" + df_para_gantt_diario['NUM'].astype(str) + "<br>" +
+                            "CLIENTE=" + cli_series_d + "<br>" +
                             "COLONIA=" + df_para_gantt_diario['COLONIA'].astype(str) + "<br>" +
                             "ESTADO=" + df_para_gantt_diario['ESTADO'].astype(str) + "<br>" +
                             "Inicio=" + df_para_gantt_diario['Inicio'].astype(str) + "<br>" +
@@ -1357,7 +1371,7 @@ def main():
                     mask_ins_general = txt_ins_c.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
                     df_ins_cierre = df_cerradas_espejo[mask_ins_general].copy()
                     if not df_ins_cierre.empty:
-                        def clasificar_ins_cierre(row):
+                        def clasificas_ins_cierre(row):
                             txt = (str(row.get('ACTIVIDAD','')) + " " + str(row.get('COMENTARIO',''))).upper()
                             if re.search('ADIC', txt): return 'Adición'
                             if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
@@ -1451,9 +1465,9 @@ def main():
                             
                             def secs_to_time_str(s):
                                 if pd.isnull(s): return "N/D"
-                                h, r = divmod(int(s), 3600)
+                                hash_h, r = divmod(int(s), 3600)
                                 m, sec = divmod(r, 60)
-                                return f"{h:02d}:{m:02d}:{sec:02d}"
+                                return f"{hash_h:02d}:{m:02d}:{sec:02d}"
                                 
                             promedios_inicio['Hora_Promedio_Inicio'] = promedios_inicio['Promedio_Segundos'].apply(secs_to_time_str)
                             promedios_inicio = promedios_inicio.sort_values('Promedio_Segundos')
@@ -2148,6 +2162,7 @@ def main():
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                             ]
 
+                            # Agregar barras de ALMUERZO registradas manualmente para el día
                             if df_almuerzos_hoy is not None and not df_almuerzos_hoy.empty:
                                 filas_almuerzo = []
                                 for _, fila_alm in df_almuerzos_hoy.iterrows():
@@ -2155,17 +2170,24 @@ def main():
                                         tec_alm = normalizar_nombre_cruce(fila_alm['TECNICO'])
                                         hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
                                         hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
+                                        
+                                        # Cálculo dinámico del tiempo total del almuerzo
+                                        duracion_alm_m = int((hf_alm - hi_alm).total_seconds() / 60)
+                                        h_v, m_v = divmod(duracion_alm_m, 60)
+                                        tiempo_real_alm_v = f"{h_v}h {m_v}m" if h_v > 0 else f"{m_v}m"
+                                        
                                         filas_almuerzo.append({
                                             'TECNICO': tec_alm,
                                             'ACTIVIDAD': 'ALMUERZO',
                                             'NUM': '-',
+                                            'CLIENTE': '-',
                                             'COLONIA': '-',
                                             'ESTADO': 'ALMUERZO',
                                             'GANTT_START': hi_alm,
                                             'GANTT_END': hf_alm,
                                             'Inicio': hi_alm.strftime('%H:%M'),
                                             'Cierre': hf_alm.strftime('%H:%M'),
-                                            'TIEMPO_REAL': '-'
+                                            'TIEMPO_REAL': tiempo_real_alm_v
                                         })
                                     except Exception:
                                         continue
@@ -2173,9 +2195,12 @@ def main():
                                     df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame(filas_almuerzo)], ignore_index=True)
                                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             
+                            cli_series_f = df_para_gantt_final['CLIENTE'].fillna('-').astype(str) if 'CLIENTE' in df_para_gantt_final.columns else pd.Series(['-'] * len(df_para_gantt_final), index=df_para_gantt_final.index).astype(str)
+                            
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
                                 "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
+                                "CLIENTE=" + cli_series_f + "<br>" +
                                 "COLONIA=" + df_para_gantt_final['COLONIA'].astype(str) + "<br>" +
                                 "ESTADO=" + df_para_gantt_final['ESTADO'].astype(str) + "<br>" +
                                 "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
@@ -2388,13 +2413,11 @@ def main():
                             estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                             bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
-                            raw_hi = row.get('HORA_INI')
-                            hi_str = str(raw_hi).strip().upper() if pd.notnull(raw_hi) else ""
-                            is_hi_val = pd.notnull(raw_hi) and hi_str not in ['', '---', 'NAT', 'NONE', 'NAN']
-                            is_est_act = str(row.get('ESTADO', '')).upper().strip() in ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
-                            
-                            show_gps_mobile = (is_hi_val or is_est_act) and row.get('GPS')
-                            gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_blank" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
+                            # Ubicación GPS disponible en todo momento para el supervisor.
+                            # Se utiliza target="_self" para forzar la apertura directa en la app de mapas (Google Maps, Waze, etc.)
+                            # evitando los bloqueos de ventanas emergentes en navegadores de celular.
+                            show_gps_mobile = row.get('GPS')
+                            gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_self" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
                             
                             st.markdown(f"""
                             <div style="background-color: #1A1D24; padding: 15px; border-radius: 12px; margin-bottom: 12px; border-left: 5px solid {color_borde}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
@@ -2420,19 +2443,11 @@ def main():
                     else:
                         df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
+                        # === CONTROL DE COLUMNA GPS ===
+                        # Se remueve la máscara restrictiva para asegurar que el supervisor de campo
+                        # tenga acceso a la ubicación GPS del técnico en todo momento.
                         if "GPS" in df_v_tabla_monitor.columns:
-                            raw_hora_ini = df_v_tabla_monitor['HORA_INI']
-                            hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
-                            is_hora_ini_valid = raw_hora_ini.notna() & (~hora_ini_str.isin(['', '---', 'NAT', 'NONE', 'NAN']))
-                            
-                            is_estado_active = df_v_tabla_monitor['ESTADO'].astype(str).str.upper().str.strip().isin(
-                                ['INICIADA', 'PROCESO', 'SITIO', 'VIAJANDO', 'LLEGADA', 'RUTA', 'CAMINO']
-                            )
-                            
-                            mask_aperturada = is_hora_ini_valid | is_estado_active
-                            
-                            gps_filtrado = np.where(mask_aperturada, df_v_tabla_monitor["GPS"].fillna(""), "")
-                            df_estilo_v["GPS"] = gps_filtrado
+                            df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
                             
                             cols = list(df_estilo_v.columns)
                             if "GPS" in cols:
