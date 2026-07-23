@@ -2370,20 +2370,40 @@ def main():
                                     referencia_fin = ahora_local
                                     tiempo_transcurrido_min = max(0.0, (referencia_fin - referencia_inicio).total_seconds() / 60)
 
-                                    tiempo_trabajado_min = 0.0
+                                    # Se fusionan los intervalos de trabajo antes de sumarlos.
+                                    # Si dos órdenes se traslapan en el tiempo (ej. un bloque
+                                    # corto de reasignación "INSEQUIPO" que cae dentro de otra
+                                    # orden más larga), sumarlas por separado duplicaba minutos
+                                    # que en realidad no eran tiempo muerto, pero tampoco eran
+                                    # minutos de trabajo "nuevos".
+                                    intervalos_trabajo = []
                                     for _, r_ord in ordenes_ini_hoy.iterrows():
                                         ini_r = r_ord.get('HORA_INI')
                                         liq_r = r_ord.get('HORA_LIQ')
                                         if pd.isnull(ini_r):
                                             continue
-                                        
+
                                         ini_r_naive = ini_r.replace(tzinfo=None) if hasattr(ini_r, 'tzinfo') and ini_r.tzinfo is not None else ini_r
-                                        
+
                                         if pd.notnull(liq_r):
                                             liq_r_naive = liq_r.replace(tzinfo=None) if hasattr(liq_r, 'tzinfo') and liq_r.tzinfo is not None else liq_r
-                                            tiempo_trabajado_min += max(0.0, (liq_r_naive - ini_r_naive).total_seconds() / 60)
                                         else:
-                                            tiempo_trabajado_min += max(0.0, (ahora_local - ini_r_naive).total_seconds() / 60)
+                                            liq_r_naive = ahora_local
+
+                                        if liq_r_naive > ini_r_naive:
+                                            intervalos_trabajo.append((ini_r_naive, liq_r_naive))
+
+                                    tiempo_trabajado_min = 0.0
+                                    if intervalos_trabajo:
+                                        intervalos_trabajo.sort(key=lambda x: x[0])
+                                        cur_ini, cur_fin = intervalos_trabajo[0]
+                                        for ini_i, fin_i in intervalos_trabajo[1:]:
+                                            if ini_i <= cur_fin:
+                                                cur_fin = max(cur_fin, fin_i)
+                                            else:
+                                                tiempo_trabajado_min += (cur_fin - cur_ini).total_seconds() / 60
+                                                cur_ini, cur_fin = ini_i, fin_i
+                                        tiempo_trabajado_min += (cur_fin - cur_ini).total_seconds() / 60
 
                                     tiempo_muerto_bruto = int(round(max(0.0, tiempo_transcurrido_min - tiempo_trabajado_min)))
 
@@ -2412,7 +2432,13 @@ def main():
 
                                     filas_muerto.append({
                                         "TÉCNICO": tec,
-                                        "TIEMPO MUERTO TOTAL": tiempo_muerto_neto
+                                        "TIEMPO MUERTO TOTAL": tiempo_muerto_neto,
+                                        "_1RA ORDEN REAL": primera_orden_ini_naive.strftime('%H:%M'),
+                                        "_REFERENCIA INICIO": referencia_inicio.strftime('%H:%M'),
+                                        "_MIN TRANSCURRIDOS": int(round(tiempo_transcurrido_min)),
+                                        "_MIN TRABAJADOS": int(round(tiempo_trabajado_min)),
+                                        "_BRUTO": tiempo_muerto_bruto,
+                                        "_DESCUENTO ALMUERZO": descuento_almuerzo
                                     })
 
                             if not filas_muerto:
@@ -2421,7 +2447,7 @@ def main():
                                 filas_muerto.sort(key=lambda f: f["TIEMPO MUERTO TOTAL"], reverse=True)
                                 total_equipo_muerto = sum(f["TIEMPO MUERTO TOTAL"] for f in filas_muerto)
 
-                                df_tabla_muerto = pd.DataFrame(filas_muerto)
+                                df_tabla_muerto = pd.DataFrame(filas_muerto)[["TÉCNICO", "TIEMPO MUERTO TOTAL"]]
                                 df_tabla_muerto["TIEMPO MUERTO TOTAL"] = df_tabla_muerto["TIEMPO MUERTO TOTAL"].apply(
                                     lambda m: f"{int(m) // 60}h {int(m) % 60}m"
                                 )
@@ -2433,6 +2459,26 @@ def main():
 
                                 horas_t, mins_t = divmod(total_equipo_muerto, 60)
                                 st.metric("⏱️ Tiempo Muerto Neto Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
+
+                                # --- TABLA TEMPORAL DE DIAGNÓSTICO ---
+                                # Muestra el desglose completo del cálculo para poder
+                                # verificar cada número contra la gráfica. Se puede quitar
+                                # una vez que confirmemos que los cálculos cuadran.
+                                with st.expander("🔧 Diagnóstico (desglose del cálculo)", expanded=False):
+                                    df_diag = pd.DataFrame(filas_muerto)
+                                    df_diag = df_diag.rename(columns={
+                                        "_1RA ORDEN REAL": "1ra Orden Real",
+                                        "_REFERENCIA INICIO": "Referencia Inicio",
+                                        "_MIN TRANSCURRIDOS": "Min. Transcurridos",
+                                        "_MIN TRABAJADOS": "Min. Trabajados",
+                                        "_BRUTO": "Bruto",
+                                        "_DESCUENTO ALMUERZO": "Descuento Almuerzo"
+                                    })
+                                    st.dataframe(
+                                        df_diag[["TÉCNICO", "1ra Orden Real", "Referencia Inicio", "Min. Transcurridos", "Min. Trabajados", "Bruto", "Descuento Almuerzo", "TIEMPO MUERTO TOTAL"]],
+                                        use_container_width=True,
+                                        hide_index=True
+                                    )
 
             st.markdown("---")
             if st.session_state.get('config_ver_checkpoint', True):
