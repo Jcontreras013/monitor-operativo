@@ -2407,19 +2407,16 @@ def main():
 
                                     tiempo_muerto_bruto = int(round(max(0.0, tiempo_transcurrido_min - tiempo_trabajado_min)))
 
-                                    # Ya no se descuenta un bloque fijo de 60 min: se descuenta
-                                    # únicamente el almuerzo REAL registrado (el mismo que ya se
-                                    # dibuja como bloque "ALMUERZO" en la gráfica), si se solapa
-                                    # con el tramo de tiempo muerto.
+                                    # Ya no se descuenta el almuerzo aquí: el técnico reporta su
+                                    # hora de almuerzo y esta se agrega manualmente a la gráfica.
+                                    # Si un técnico NO reporta su almuerzo, ese tramo debe
+                                    # contar como tiempo muerto (no se le da el beneficio de la
+                                    # duda). Se deja la variable en 0 para no tocar el resto del
+                                    # cálculo ni la tabla de diagnóstico.
                                     descuento_almuerzo = 0
-                                    alm_ini_m, alm_fin_m = _obtener_almuerzo_tec(tec)
-                                    if alm_ini_m is not None and alm_fin_m is not None:
-                                        solape_ini_m = max(referencia_inicio, alm_ini_m)
-                                        solape_fin_m = min(referencia_fin, alm_fin_m)
-                                        if solape_fin_m > solape_ini_m:
-                                            descuento_almuerzo = int(round((solape_fin_m - solape_ini_m).total_seconds() / 60))
 
                                     tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
+
 
 
                                     if tiene_orden_activa_tm:
