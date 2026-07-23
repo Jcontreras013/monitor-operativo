@@ -2313,7 +2313,7 @@ def main():
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
                             filas_muerto = []
                             if not df_jornada_hoy.empty:
-                               _for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                                for tec, group in df_jornada_hoy.groupby('TECNICO'):
                                     tec_norm = normalizar_nombre_cruce(tec)
                                     if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
                                         continue
