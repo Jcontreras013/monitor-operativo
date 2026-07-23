@@ -96,6 +96,21 @@ except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
     
 # ==============================================================================
+# CONSTANTES DE NEGOCIO Y CONFIGURACIÓN GLOBAL
+# ==============================================================================
+ACTIVIDADES_VALIDAS_NO_ASIGNADAS = [
+    'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INSI-WA', 'INS-WA',
+    'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA', 
+    'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SPLITTEROPT', 
+    'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
+    'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+]
+
+PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+
+# ==============================================================================
 # FUNCIONES AUXILIARES DE SOPORTE GLOBAL
 # ==============================================================================
 def normalizar_nombre_cruce(texto):
@@ -128,6 +143,7 @@ def normalizar_nombre_cruce(texto):
     if t in alias_map:
         return alias_map[t]
     return t
+
 def mascara_tecnico_asignado(serie_tecnicos):
     """
     Retorna una serie booleana con True para técnicos asignados válidos
@@ -136,6 +152,7 @@ def mascara_tecnico_asignado(serie_tecnicos):
     s = serie_tecnicos.fillna('').astype(str).str.strip().str.upper()
     valores_invalidos = {'', 'NONE', 'NAN', 'N/D', 'NULL', '0'}
     return ~s.isin(valores_invalidos)
+
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
 # ==============================================================================
@@ -155,10 +172,6 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
-
-PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
 # SINCROFONIZACIÓN DE DATOS CON LA NUBE
@@ -323,6 +336,7 @@ def main():
                 icons=["lightning", "bar-chart", "car-front", "list"],
                 default_index=0,
                 orientation="horizontal",
+                key="mobile_nav_menu_opt",
                 styles={
                     "container": {"padding": "0!important", "background-color": "transparent"},
                     "icon": {"color": "#94A3B8", "font-size": "20px"}, 
@@ -334,7 +348,7 @@ def main():
             elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
             elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"   
             else: 
-                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["🏅 Control Calidad", "📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"])    
+                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["🏅 Control Calidad", "📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"], key="mobile_extra_sel_opt")    
         else:
             selected_nav = option_menu(
                 menu_title=None,
@@ -342,6 +356,7 @@ def main():
                 icons=["lightning", "award"],
                 default_index=0,
                 orientation="horizontal",
+                key="mobile_nav_menu_opt",
                 styles={
                     "container": {"padding": "0!important", "background-color": "transparent"},
                     "icon": {"color": "#94A3B8", "font-size": "20px"}, 
@@ -359,10 +374,10 @@ def main():
     else:
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']: 
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
+                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"], key="nav_menu_selection")
             else:
                 st.markdown("### 🖥️ Menú de Control")
-                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])    
+                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"], key="nav_menu_selection")    
 
     with sidebar_top:
         mostrar_boton_logout()
@@ -450,20 +465,20 @@ def main():
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
-            btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
+            btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary", key="btn_forzar_act_admin")
             
             st.divider()
             st.markdown("#### 📄 Actividades (rep_actividades)")
             st.caption("Solo necesitas subir las actividades. El catálogo FTTX se toma automáticamente de la nube (pestaña FTTX / GCS).")
             archivo_actividades = st.file_uploader("Sube rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_actividades_admin")
             if archivo_actividades: file_act_ptr = archivo_actividades
-            btn_reprocesar = st.button("🔄 PROCESAR ACTIVIDADES", use_container_width=True)
+            btn_reprocesar = st.button("🔄 PROCESAR ACTIVIDADES", use_container_width=True, key="btn_proc_act_admin")
 
             st.divider()
             st.markdown("#### 🚙 Catálogo FTTX")
             st.caption("Sube esto SOLO cuando necesites actualizar el catálogo de dispositivos en la nube. No requiere subir actividades a la vez.")
             archivo_fttx = st.file_uploader("Sube FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_fttx_admin")
-            btn_actualizar_fttx = st.button("🔄 ACTUALIZAR SOLO CATÁLOGO FTTX", use_container_width=True)
+            btn_actualizar_fttx = st.button("🔄 ACTUALIZAR SOLO CATÁLOGO FTTX", use_container_width=True, key="btn_act_fttx_admin")
 
             if archivo_fttx:
                 try:
@@ -487,7 +502,6 @@ def main():
                             if df_fttx_subir is None or df_fttx_subir.empty:
                                 st.error("El archivo se leyó pero está vacío.")
                             else:
-                                # Sheets es la fuente confiable, se sobrescribe la pestaña FTTX completa.
                                 conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_subir)
                                 st.success(f"✅ Catálogo FTTX actualizado en la nube ({len(df_fttx_subir)} registros).")
 
@@ -499,9 +513,9 @@ def main():
                             st.error(f"No se pudo procesar/subir el archivo FTTX: {e_fttx_up}")
         else:
             st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
-            archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
+            archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_unico_user")
             if archivo_unico: file_act_ptr = archivo_unico
-            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
+            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True, key="btn_proc_act_user")
             btn_actualizar_fttx = False
 
         ahora_hx = get_honduras_time()
@@ -592,7 +606,6 @@ def main():
                                         df_cloud = df_cloud[~mask_basura_cloud].copy()
                                     
                                     if 'EMPRESA' in df_cloud.columns:
-                                        # Descartar solo si indica explícitamente otra empresa (ver nota arriba)
                                         empresa_upper_cloud = df_cloud['EMPRESA'].astype(str).str.strip().str.upper()
                                         mask_otra_empresa_cloud = (empresa_upper_cloud != '') & (empresa_upper_cloud != 'NAN') & (empresa_upper_cloud != 'NONE') & (~empresa_upper_cloud.str.contains('ISCA', na=False))
                                         df_cloud = df_cloud[~mask_otra_empresa_cloud].copy()
@@ -703,22 +716,16 @@ def main():
     if not df_base.empty:
         if 'TECNICO' in df_base.columns:
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
-            
-            # Asignar la columna GPS dinámicamente mediante cruce de nombres normalizados
             df_base['TECNICO_NORM'] = df_base['TECNICO'].apply(normalizar_nombre_cruce)
             
-            # === BUSCADOR INTELIGENTE CON TOLERANCIA A NOMBRES INCOMPLETOS ===
             def buscar_enlace_gps(tecnico_norm):
                 if not tecnico_norm:
                     return ""
-                # 1. Coincidencia exacta post-normalización
                 if tecnico_norm in gps_map:
                     return gps_map[tecnico_norm]
-                # 2. Coincidencia parcial por sub-palabras (ej: "Nelson Ferrufino" dentro de "Nelson Ramon Ferrufino Leon")
                 for gps_name, url in gps_map.items():
                     words_gps = set(gps_name.split())
                     words_tec = set(tecnico_norm.split())
-                    # Si el nombre de gps.txt está completamente contenido en el de la base de datos
                     if words_gps.issubset(words_tec) and len(words_gps) >= 2:
                         return url
                     if words_tec.issubset(words_gps) and len(words_tec) >= 2:
@@ -781,26 +788,15 @@ def main():
             is_up = "onustatus: up" in t or "onustatus:up" in t or "statustext: online" in t or "status_text: online" in t or "statustext:online" in t
             if is_up:
                 dbm_real = None
-
-                # Formato "rx:" (ej. vendorId CDKT / equipos ONU residenciales)
-                # El valor crudo viene en CENTÉSIMAS de dBm → dividir entre 100.
-                # Ej: rx: -3045  ==  -30.45 dBm reales
                 rx_match = re.search(r'\brx:\s*(-?\d+\.?\d*)', t)
                 if rx_match:
                     try: dbm_real = float(rx_match.group(1)) / 100.0
                     except: pass
-
-                # Formato "rxPower:" (ej. type GPNC14C / tarjetas OLT)
-                # El valor crudo viene en MILÉSIMAS de dBm → dividir entre 1000.
-                # Ej: rxPower: -16460.000  ==  -16.46 dBm reales
                 rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
                 if rxpower_match:
                     try: dbm_real = float(rxpower_match.group(1)) / 1000.0
                     except: pass
-
                 if dbm_real is not None:
-                    # Umbral real de potencia óptica degradada: -30 dBm o peor
-                    # (ya convertido a dBm real, ambos formatos quedan en la misma escala)
                     if dbm_real <= -30:
                         return False
                 return True
@@ -866,14 +862,12 @@ def main():
         est_upper_c = df_base_activa['ESTADO'].fillna('').astype(str).str.upper().str.strip()
         com_upper_c = df_base_activa['COMENTARIO'].fillna('').astype(str).str.upper().str.strip()
         
-        # Mapea SOP FIBRA con espacio, sin espacio u otros formatos típicos de red
         mask_sop_c = act_upper_c.str.contains(r'SOP\s*FIBRA|SOP_FIBRA', regex=True)
         mask_falsos_c = act_upper_c.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
         mask_est_abierto_c = est_upper_c != 'CERRADA'
         mask_com_off_c = com_upper_c.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
         mask_precisa_c = com_upper_c.apply(es_offline_preciso)
         
-        # Sobrescribe el campo de caídas garantizando la lectura del espacio
         df_base_activa['ES_OFFLINE'] = (mask_est_abierto_c & mask_sop_c & ~mask_falsos_c & (mask_com_off_c | mask_precisa_c))
         
         if 'TECNICO' in df_base_activa.columns:
@@ -957,9 +951,9 @@ def main():
             lista_estados = sorted(df_base_activa['ESTADO'].dropna().unique().tolist())
             lista_motivos = sorted(df_base_activa['MOTIVO'].dropna().unique().tolist()) if 'MOTIVO' in df_base_activa.columns else []
             
-            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades")
-            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados")
-            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos")
+            filtro_actividad = st.multiselect("🛠️ Tipo de Actividad:", options=lista_actividades, default=[], placeholder="Todas las actividades", key="filtro_actividad_multiselect")
+            filtro_estado = st.multiselect("🚦 Estado de Orden:", options=lista_estados, default=[], placeholder="Todos los estados", key="filtro_estado_multiselect")
+            filtro_motivo = st.multiselect("⚠️ Motivo / Diagnóstico:", options=lista_motivos, default=[], placeholder="Todos los motivos", key="filtro_motivo_multiselect")
             
             st.divider() 
             st.markdown("### 🔍 Filtros en Vivo")
@@ -972,30 +966,30 @@ def main():
             
             total_off_count_viva = int((mascara_offline_segura & m_viva_count).sum())
             
-            mascara_no_asignadas = ~mascara_tecnico_asignado(df_base_activa['TECNICO'])
+            # --- MODIFICACIÓN DE "NO ASIGNADAS": SE VALIDA QUE LA ACTIVIDAD ESTÉ EN LA LISTA PERMITIDA ---
+            mask_no_asig_act_base = df_base_activa['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_VALIDAS_NO_ASIGNADAS)
+            mascara_no_asignadas = (~mascara_tecnico_asignado(df_base_activa['TECNICO'])) & mask_no_asig_act_base
             total_no_asignadas_viva = int((mascara_no_asignadas & m_viva_count).sum())
             
-            check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})")
-            check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})")
+            check_criticos_diamante = st.toggle(f"🚨 Ver solo Críticas ({total_off_count_viva})", key="toggle_criticos")
+            check_no_asignadas = st.toggle(f"🚨 Ver NO Asignadas ({total_no_asignadas_viva})", key="toggle_no_asignadas")
          
             total_vivas = int(m_viva_count.sum()) 
-            check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})")
+            check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})", key="toggle_totales")
             
             if check_ordenes_totales:
-                if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True):
+                if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True, key="btn_generar_pdf_totales"):
                     with st.spinner("Generando documento PDF..."):
                         df_vivas_export = df_base_activa[m_viva_count].copy()
                         st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_vivas_export, hoy_date_valor)
                 if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
-                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_download_pdf_totales")
             
             try:
-                # === IMPORTACIÓN INTERNA DIRECTA ===
                 from tools import cargar_catalogo_tecnicos
                 
                 df_cat_tecs = cargar_catalogo_tecnicos()
                 if not df_cat_tecs.empty:
-                    # === FILTRACIÓN ESTRICTA: Debe ser Técnico Principal y estar ACTIVO ===
                     df_principales = df_cat_tecs[
                         (df_cat_tecs['Clasificación'] == "TÉCNICO PRINCIPAL") & 
                         (df_cat_tecs['Estatus'] == "ACTIVO")
@@ -1003,7 +997,6 @@ def main():
                     tecs_validos_set = {normalizar_nombre_cruce(n) for n in df_principales['Nombre'].dropna()}
                     
                     tecs_en_base = df_base_activa['TECNICO'].dropna().unique().tolist()
-                    # Filtramos la lista de la pantalla quedándonos únicamente con los activos autorizados
                     tecs_filtrados = [t for t in tecs_en_base if normalizar_nombre_cruce(t) in tecs_validos_set]
                     lista_tecs_monitor = ["Todos"] + sorted(tecs_filtrados)
                 else:
@@ -1011,7 +1004,7 @@ def main():
             except Exception:
                 lista_tecs_monitor = ["Todos"] + sorted(df_base_activa['TECNICO'].dropna().unique().tolist())
                 
-            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor)
+            tec_filtro_monitor = st.selectbox("👤 Técnico:", lista_tecs_monitor, key="sel_tecnico_monitor")
 
         df_monitor_filtrado = df_base_activa.copy()
         if len(filtro_actividad) > 0: df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['ACTIVIDAD'].isin(filtro_actividad)]
@@ -1023,7 +1016,9 @@ def main():
             mask_falsos = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.upper().str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', na=False)
             df_monitor_filtrado = df_monitor_filtrado[mask_critica & mask_sop_fibra & ~mask_falsos]
         if check_no_asignadas:
-            mask_no_asignadas_filtro = ~mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
+            # --- SE APLICA EL FILTRO DE ACTIVIDAD AL FILTRAR EN VIVO LAS NO ASIGNADAS ---
+            mask_no_asig_act_filtro = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_VALIDAS_NO_ASIGNADAS)
+            mask_no_asignadas_filtro = (~mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])) & mask_no_asig_act_filtro
             df_monitor_filtrado = df_monitor_filtrado[mask_no_asignadas_filtro]
         if tec_filtro_monitor != "Todos": 
             df_monitor_filtrado = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec_filtro_monitor]
@@ -1048,11 +1043,13 @@ def main():
             st.subheader("📋 Resumen de Pendientes Generales")
             df_todas_vivas = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
             if not df_todas_vivas.empty:
-                mask_sin_tec = ~mascara_tecnico_asignado(df_todas_vivas['TECNICO'])
-                df_asig = df_todas_vivas[~mask_sin_tec].copy()
+                # --- AQUÍ TAMBIÉN SE FILTRAN LAS NO ASIGNADAS BAJO LA REGLA DE ACTIVIDAD ---
+                mask_sin_tec_act = df_todas_vivas['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_VALIDAS_NO_ASIGNADAS)
+                mask_sin_tec = (~mascara_tecnico_asignado(df_todas_vivas['TECNICO'])) & mask_sin_tec_act
+                df_asig = df_todas_vivas[mascara_tecnico_asignado(df_todas_vivas['TECNICO'])].copy()
                 df_no_asig = df_todas_vivas[mask_sin_tec].copy()
                 
-                def clasificar_dispatch(row):
+                def clasificas_dispatch(row):
                     act = str(row.get('ACTIVIDAD', '')).upper(); com = str(row.get('COMENTARIO', '')).upper(); txt = act + " " + com
                     if re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act): return "INSTALACIONES"
                     elif re.search("SOP|FALLA|MANT", act): return "MANTENIMIENTOS"
@@ -1060,12 +1057,12 @@ def main():
                     else: return "OTRAS"
                     
                 if not df_asig.empty:
-                    df_asig['CATEGORIA'] = df_asig.apply(clasificar_dispatch, axis=1)
+                    df_asig['CATEGORIA'] = df_asig.apply(clasificas_dispatch, axis=1)
                     res_a = df_asig['CATEGORIA'].value_counts().reset_index()
                     res_a.columns = ['Categoría', 'Asignadas (En Ruta)']
                 else: res_a = pd.DataFrame(columns=['Categoría', 'Asignadas (En Ruta)'])
                 if not df_no_asig.empty:
-                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificar_dispatch, axis=1)
+                    df_no_asig['CATEGORIA'] = df_no_asig.apply(clasificas_dispatch, axis=1)
                     res_n = df_no_asig['CATEGORIA'].value_counts().reset_index()
                     res_n.columns = ['Categoría', 'Nuevas (Sin Asignar)']
                 else: res_n = pd.DataFrame(columns=['Categoría', 'Nuevas (Sin Asignar)'])
@@ -1094,14 +1091,14 @@ def main():
                     st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True)
                     st.info("Genera reportes para Dispatch.")
                     buffer = io.BytesIO()
-                    df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
+                    df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificas_dispatch, axis=1)
                     cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                     df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
-                    st.download_button(label="📥 Exportar EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                    if st.button("📄 Generar PDF", use_container_width=True, type="primary"):
+                    st.download_button(label="📥 Exportar EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="btn_descargar_excel_pendientes")
+                    if st.button("📄 Generar PDF", use_container_width=True, type="primary", key="btn_generar_pdf_dispatch_mobile"):
                         with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
-                    if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                    if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_dispatch_mobile")
                 else:
                     col_d1, col_d2 = st.columns([2, 1])
                     with col_d1:
@@ -1110,14 +1107,14 @@ def main():
                     with col_d2:
                         st.info("Genera los reportes para enviar al departamento de Dispatch.")
                         buffer = io.BytesIO()
-                        df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificar_dispatch, axis=1)
+                        df_todas_vivas['CLASIFICACION_DISPATCH'] = df_todas_vivas.apply(clasificas_dispatch, axis=1)
                         cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                         df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Dispatch_Hoy')
-                        st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                        if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary"):
+                        st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="btn_descargar_excel_dispatch")
+                        if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary", key="btn_generar_pdf_dispatch_desktop"):
                             with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
-                        if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF Generado", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                        if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF Generado", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_dispatch_desktop")
             else: st.success("🎉 No hay órdenes pendientes registradas. ¡Operación limpia!")
 
         with tab_biometrico:
@@ -1143,14 +1140,14 @@ def main():
                         if ordenes_con_error > 0: st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo.")
                         st.dataframe(df_maestra, use_container_width=True, hide_index=True)
                         st.markdown("---")
-                        if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary"):
+                        if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary", key="btn_generar_pdf_gerencial"):
                             with st.spinner("Dibujando secciones por técnico..."): st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
-                        if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                        if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_gerencial")
                     except Exception as e: st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
         
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
-            fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor)
+            fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor, key="fecha_archivar_diario")
             
             mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
             mask_liq_dia = pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cal_sel
@@ -1249,7 +1246,6 @@ def main():
                             df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                         ]
 
-                        # Agregar barras de ALMUERZO registradas manualmente para la fecha seleccionada
                         try:
                             df_almuerzos_hist = cargar_almuerzos(conn, fecha=fecha_cal_sel.strftime('%Y-%m-%d'))
                         except Exception:
@@ -1327,7 +1323,7 @@ def main():
 
                         col_bpdf1, col_bpdf2 = st.columns([1, 2])
                         with col_bpdf1:
-                            if st.button("📄 GENERAR PDF TIEMPOS Y TIEMPO PERDIDO", use_container_width=True):
+                            if st.button("📄 GENERAR PDF TIEMPOS Y TIEMPO PERDIDO", use_container_width=True, key="btn_generar_pdf_tiempos_muertos"):
                                 with st.spinner("Calculando rendimientos de 8 horas..."):
                                     st.session_state['pdf_tiempos_muertos'] = generar_pdf_tiempos_muertos(df_para_gantt_diario, fecha_cal_sel)
                                     
@@ -1338,7 +1334,8 @@ def main():
                                     file_name=f"Eficiencia_Tiempos_{fecha_cal_sel}.pdf", 
                                     mime="application/pdf", 
                                     type="primary", 
-                                    use_container_width=True
+                                    use_container_width=True,
+                                    key="btn_descargar_pdf_tiempos_muertos"
                                 )
                         st.markdown("---")
                     else:
@@ -1409,11 +1406,11 @@ def main():
                     if es_movil: col_btn1, col_btn2 = st.columns(2)
                     else: col_btn1, col_btn2 = st.columns([1, 2])
                     with col_btn1:
-                        if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True):
+                        if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True, key="btn_generar_pdf_primera_orden"):
                             try:
                                 with st.spinner("Generando PDF..."): st.session_state['pdf_primera'] = generar_pdf_primera_orden(df_base, fecha_cal_sel)
                             except Exception as e: st.error(f"Error generando PDF: {e}")
-                        if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+                        if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_primera_orden")
                 else: st.info("No hay registros de inicio de órdenes para esta fecha.")
             else: st.info("No hay registros de inicio de órdenes para esta fecha.")
 
@@ -1427,7 +1424,7 @@ def main():
             with col_sel2:
                 f_fin_primera = st.date_input("Fecha Fin:", value=hoy_date_valor, key="f_fin_arranque")
                 
-            if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True):
+            if st.button("⚙️ Calcular Promedio de Inicio", use_container_width=True, key="btn_calcular_promedio_inicio"):
                 if f_inicio_primera > f_fin_primera:
                     st.warning("⚠️ La Fecha de Inicio no puede ser mayor que la Fecha Fin.")
                 else:
@@ -1488,7 +1485,7 @@ def main():
                 else: col_btn_p1, col_btn_p2 = st.columns([1, 2])
                 
                 with col_btn_p1:
-                    if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True):
+                    if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True, key="btn_generar_pdf_promedio_arranque"):
                         try:
                             with st.spinner("Generando PDF..."):
                                 st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(promedios_mostrar, f_inicio_primera, f_fin_primera)
@@ -1502,14 +1499,15 @@ def main():
                             file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", 
                             mime="application/pdf", 
                             type="primary", 
-                            use_container_width=True
+                            use_container_width=True,
+                            key="btn_descargar_pdf_prom_arranque"
                         )
 
             st.markdown("---")
             st.markdown("### 📥 Exportación")
-            if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary"):
+            if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary", key="btn_generar_pdf_cierre_diario"):
                 with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
-            if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_cierre")
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
@@ -1523,10 +1521,10 @@ def main():
                     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
                     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
                 ]
-                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1)
+                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1, key="materiales_mes_sel")
                 numero_mes = meses_nombres.index(mes_seleccionado) + 1
             with col_sel2:
-                anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1)
+                anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1, key="materiales_anio_sel")
 
             if 'df_materiales_master' not in st.session_state:
                 with st.spinner("📥 Cargando base histórica completa para inventario..."):
@@ -1624,7 +1622,7 @@ def main():
                 
                 st.markdown("### 📥 Descargar Reporte en Formato PDF")
                 
-                if st.button(f"📄 GENERAR REPORTE PDF ({mes_seleccionado} {anio_seleccionado})", use_container_width=True, type="primary"):
+                if st.button(f"📄 GENERAR REPORTE PDF ({mes_seleccionado} {anio_seleccionado})", use_container_width=True, type="primary", key="btn_generar_pdf_materiales"):
                     with st.spinner("Dibujando celdas y empaquetando reporte..."):
                         st.session_state['pdf_materiales_cargado'] = generar_pdf_materiales_mensual(
                             df_equipos, 
@@ -1640,7 +1638,8 @@ def main():
                         data=st.session_state['pdf_materiales_cargado'],
                         file_name=f"Reporte_Materiales_{mes_seleccionado}_{anio_seleccionado}.pdf",
                         mime="application/pdf",
-                        use_container_width=True
+                        use_container_width=True,
+                        key="btn_descargar_pdf_materiales"
                     )
                 
                 with st.expander("🔍 Ver Vista Previa del Detalle de Transacciones"):
@@ -1660,6 +1659,12 @@ def main():
         
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
+
+        # --- APLICACIÓN DEL REQUERIMIENTO: SOLO PASAN A NO ASIGNADAS LAS ACTIVIDADES DEL DETALLE CARGADO ---
+        mask_has_tec_mon = mascara_tecnico_asignado(df_todas_pendientes_monitor['TECNICO'])
+        mask_valid_no_asig_act = df_todas_pendientes_monitor['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_VALIDAS_NO_ASIGNADAS)
+        # Filtramos df_todas_pendientes_monitor para que mantenga las asignadas y solo las unassigned que pertenezcan a las actividades permitidas
+        df_todas_pendientes_monitor = df_todas_pendientes_monitor[mask_has_tec_mon | (~mask_has_tec_mon & mask_valid_no_asig_act)].copy()
 
         df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
 
@@ -1686,6 +1691,7 @@ def main():
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[~mask_tec_valido_mon].copy()
         else:
             df_solo_asignadas_monitor = df_todas_pendientes_monitor[mask_tec_valido_mon].copy()
+            
         vivas_count_asignadas = len(df_todas_pendientes_monitor[mask_tec_valido_mon])
         
         mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
@@ -1764,7 +1770,6 @@ def main():
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
                
                 else:
-                    # Creamos 4 columnas simétricas en una sola fila para la versión de Escritorio
                     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
                     with col_t1:
                         st.caption("📅 Resumen de Retraso")
@@ -1780,7 +1785,6 @@ def main():
                             elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
                             elif v == "= 0 Dia": bg_color = '#388e3c'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
-                        # Reducimos la altura a 178 para homogeneizar el calce de la fila
                         st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True, height=178)
                         st.write(f"**Total: {sum_total_asignadas_v}**")
 
@@ -1834,7 +1838,6 @@ def main():
                         df_sop = df_tablero[df_tablero['G_TAB'] == 'SOP']
                         res_sop = df_sop['SUB_TAB'].value_counts().reset_index()
                         res_sop.columns = ['SOP', 'Cant']
-                        # Se homogeneiza la altura a 140 para ajustarse de forma compacta
                         st.dataframe(res_sop, hide_index=True, use_container_width=True, height=140)
                         st.write(f"**Total: {df_sop.shape[0]}**")
                         st.metric("Exceden 2h ⚠️", int((df_sop['ALERTA_TIEMPO'] == True).sum()))
@@ -1848,7 +1851,6 @@ def main():
                         for c in cats_ins:
                             if c not in res_ins['Instalaciones'].values: 
                                 res_ins = pd.concat([res_ins, pd.DataFrame([{'Instalaciones': c, 'Cant': 0}])], ignore_index=True)
-                        # Se homogeneiza la altura a 178 para ajustarse de forma compacta
                         st.dataframe(res_ins, hide_index=True, use_container_width=True, height=178)
                         st.write(f"**Total: {df_ins.shape[0]}**")
 
@@ -1857,7 +1859,6 @@ def main():
                         df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
                         res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
                         res_otr.columns = ['Otros', 'Cant']
-                        # Se homogeneiza la altura a 178 para ajustarse de forma compacta
                         st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True, height=178)
                         st.write(f"**Total: {df_otros.shape[0]}**")
                         
@@ -1959,14 +1960,12 @@ def main():
                         
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
 
-                        # Almuerzos registrados manualmente para el día que se está viendo
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
                         except Exception:
                             df_almuerzos_hoy = pd.DataFrame()
 
                         def _obtener_almuerzo_tec(tec_nombre):
-                            """Devuelve (inicio_dt, fin_dt) del almuerzo registrado de un técnico hoy, o (None, None)."""
                             if df_almuerzos_hoy is None or df_almuerzos_hoy.empty:
                                 return None, None
                             tec_norm_b = str(tec_nombre).strip().upper()
@@ -1986,7 +1985,6 @@ def main():
                         alertas_9am = []
                         alertas_tiempo_muerto = []
                         
-                        # Cargar técnicos válidos desde personal_tecnico.txt (con fallback a gps.txt si no existe)
                         tecnicos_validos_alertas = set()
                         file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
                         if file_to_load:
@@ -2029,7 +2027,6 @@ def main():
                                     primera_orden_por_tec[tec] = None
                                 else:
                                     primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
-                                    # Limpieza preventiva de zona horaria (tz-naive)
                                     primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
                                     if primera_ini_tec_naive > limite_9am:
                                         alertas_9am.append(tec)
@@ -2052,7 +2049,6 @@ def main():
                                     
                                 group_sorted = group.sort_values(by='HORA_INI')
                                 
-                                # Brechas históricas entre tareas finalizadas e iniciadas
                                 for i in range(len(group_sorted) - 1):
                                     task_actual = group_sorted.iloc[i]
                                     task_siguiente = group_sorted.iloc[i+1]
@@ -2061,14 +2057,11 @@ def main():
                                     ini_siguiente = task_siguiente.get('HORA_INI')
                                     
                                     if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
-                                        # Limpieza de zona horaria para resta segura
                                         liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
                                         ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
                                         
                                         gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
 
-                                        # Descontar el solape con el almuerzo registrado manualmente,
-                                        # para no marcar como "tiempo muerto" una pausa de almuerzo real.
                                         alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
                                         if alm_ini is not None and alm_fin is not None:
                                             solape_ini = max(liq_actual_naive, alm_ini)
@@ -2087,14 +2080,12 @@ def main():
                                                 "hora_fin": liq_actual_naive.strftime('%H:%M')
                                             })
                                 
-                                # Brechas en vivo (tiempo de inactividad actual desde el último cierre)
                                 tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
                                 if not tiene_orden_activa:
                                     ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
                                     if not ordenes_cerradas.empty:
                                         ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
                                         liq_last = ultima_cerrada.get('HORA_LIQ')
-                                        # Limpieza preventiva de zona horaria para resta segura contra ahora_local
                                         liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
                                         
                                         gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
@@ -2157,7 +2148,6 @@ def main():
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
                             ]
 
-                            # Agregar barras de ALMUERZO registradas manualmente para el día
                             if df_almuerzos_hoy is not None and not df_almuerzos_hoy.empty:
                                 filas_almuerzo = []
                                 for _, fila_alm in df_almuerzos_hoy.iterrows():
@@ -2230,9 +2220,6 @@ def main():
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
 
-                        # ==============================================================================
-                        # TABLA 1: APERTURA TARDÍA (separada del gráfico)
-                        # ==============================================================================
                         with st.expander("📋 Detalle de Apertura Tardía", expanded=False):
                             if not alertas_9am:
                                 st.success("🎉 Sin retrasos de apertura registrados hoy.")
@@ -2241,7 +2228,6 @@ def main():
                                 for tec in alertas_9am:
                                     primera_ini = primera_orden_por_tec.get(tec)
                                     if primera_ini is not None:
-                                        # Ambos son naive, resta segura
                                         atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
                                         detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
                                     else:
@@ -2265,9 +2251,6 @@ def main():
                                     }
                                 )
 
-                        # ==============================================================================
-                        # TABLA 2: TIEMPO MUERTO TOTAL DE LA JORNADA (por técnico, desde su 1ra orden del día)
-                        # ==============================================================================
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
                             filas_muerto = []
                             if not df_jornada_hoy.empty:
@@ -2304,7 +2287,6 @@ def main():
                                         if pd.isnull(ini_r):
                                             continue
                                         
-                                        # Limpieza de zona horaria individual para suma de tiempos
                                         ini_r_naive = ini_r.replace(tzinfo=None) if hasattr(ini_r, 'tzinfo') and ini_r.tzinfo is not None else ini_r
                                         
                                         if pd.notnull(liq_r):
@@ -2356,27 +2338,27 @@ def main():
                                 st.metric("⏱️ Tiempo Muerto Neto Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
 
             st.markdown("---")
-            if st.session_state.get('config_ver_panel', True):
+            if st.session_state.get('config_ver_checkpoint', True):
                 with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
                     if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
                         st.session_state.st_btn_v_active = "PENDIENTE"
                         
                     if es_movil:
                         st.write("Filtros:")
-                        if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+                        if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary", key="btn_panel_v_pend_mob"): 
                             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
                         col_m1, col_m2 = st.columns(2)
-                        if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
+                        if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary", key="btn_panel_v_cerr_mob"): 
                             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                        if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
+                        if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary", key="btn_panel_v_anul_mob"): 
                             st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
                     else:
                         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
-                        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary"): 
+                        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary", key="btn_panel_v_pend_desk"): 
                             st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                        if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary"): 
+                        if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary", key="btn_panel_v_cerr_desk"): 
                             st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                        if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary"): 
+                        if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary", key="btn_panel_v_anul_desk"): 
                             st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
 
                 status_final_btn = st.session_state.st_btn_v_active
@@ -2406,7 +2388,6 @@ def main():
                             estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                             bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
-                            # Identificar si la orden está aperturada en móvil
                             raw_hi = row.get('HORA_INI')
                             hi_str = str(raw_hi).strip().upper() if pd.notnull(raw_hi) else ""
                             is_hi_val = pd.notnull(raw_hi) and hi_str not in ['', '---', 'NAT', 'NONE', 'NAN']
@@ -2439,7 +2420,6 @@ def main():
                     else:
                         df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
-                        # === CONTROL DE COLUMNA GPS Y CONDICIONES DE APERTURA ===
                         if "GPS" in df_v_tabla_monitor.columns:
                             raw_hora_ini = df_v_tabla_monitor['HORA_INI']
                             hora_ini_str = raw_hora_ini.astype(str).str.strip().str.upper()
@@ -2471,14 +2451,14 @@ def main():
                                 "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                 "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
                                 "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"), # <--- CAMBIADO AQUÍ
+                                "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
                                 "MINUTOS_CALC": None
                             }, 
                             use_container_width=True, 
                             height=600, 
                             hide_index=True, 
                             on_select="rerun", 
-                            selection_mode="single-row"
+                            key="table_visual_monitor_desktop"
                         )
                         
                         if evento_monitor_diam.selection.rows:
