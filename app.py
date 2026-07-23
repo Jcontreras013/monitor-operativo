@@ -101,7 +101,7 @@ except ImportError as e:
 ACTIVIDADES_VALIDAS_NO_ASIGNADAS = [
     'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INSI-WA', 'INS-WA',
     'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA', 
-    'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SPLITTEROPT', 
+    'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 
     'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
     'TRASLADOINTFIBRACORP', 'TVADICIONAL'
 ]
@@ -315,6 +315,10 @@ def main():
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
     
+    # === SISTEMA DE NAVEGACIÓN RESISTENTE A REINICIOS ===
+    if 'nav_menu_diamante' not in st.session_state:
+        st.session_state['nav_menu_diamante'] = "⚡ Monitor en Vivo"
+
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
@@ -371,13 +375,39 @@ def main():
             
         st.markdown('</div>', unsafe_allow_html=True)
         if nav_menu_diamante != "⚡ Monitor en Vivo": st.divider()
+        st.session_state['nav_menu_diamante'] = nav_menu_diamante
     else:
+        # Definición segura de las opciones según el rol
+        if rol_usuario in ['admin', 'jefe']:
+            opciones_menu = ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"]
+        else:
+            opciones_menu = ["⚡ Monitor en Vivo", "🏅 Control Calidad"]
+
+        # Buscar el índice del valor actual de sesión para que nunca se pierda la selección
+        default_val = st.session_state.get('nav_menu_diamante', "⚡ Monitor en Vivo")
+        if default_val in opciones_menu:
+            default_index = opciones_menu.index(default_val)
+        else:
+            default_index = 0
+
         with sidebar_top:
             if rol_usuario in ['admin', 'jefe']: 
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"], key="nav_menu_selection")
+                nav_menu_diamante = st.radio(
+                    "MENÚ DE CONTROL:", 
+                    opciones_menu, 
+                    index=default_index, 
+                    key="nav_menu_radio_admin"
+                )
             else:
                 st.markdown("### 🖥️ Menú de Control")
-                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"], key="nav_menu_selection")    
+                nav_menu_diamante = st.radio(
+                    "SELECCIONE EL MÓDULO:", 
+                    opciones_menu, 
+                    index=default_index, 
+                    key="nav_menu_radio_user"
+                )
+            # Sincronizamos la variable de sesión persistente
+            st.session_state['nav_menu_diamante'] = nav_menu_diamante
 
     with sidebar_top:
         mostrar_boton_logout()
@@ -523,7 +553,7 @@ def main():
         es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
         condicion_usar_cache = es_horario_tarde or es_fin_de_semana
         
-        if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
+        if condiciones_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
             if os.path.exists("cache_fttx.tmp"):
                 try:
                     with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
@@ -1241,7 +1271,7 @@ def main():
                             'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
                             'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 
                             'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
-                            'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
+                            'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                             'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
                             'TRASLADOINTFIBRACORP', 'TVADICIONAL'
                         ]
@@ -1308,7 +1338,9 @@ def main():
                             "PEXTERNO": "#f57c00",         
                             "PLEXISCA": "#e65100",         
                             "TRASLADOEXTFIBRA": "#8e24aa",  
+                            "SOPRECONCORP": "#c2185b",       
                             "SOPRECONHFC": "#c2185b",       
+                            "SOPRECONFIBRA": "#c2185b",
                             "TVADICIONAL": "#00897b",
                             "ALMUERZO": "#78909c"
                         }
@@ -2153,7 +2185,7 @@ def main():
                                 'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
                                 'INS-WA', 'PEXTERNO', 'PLEXISCA', 'SOP', 
                                 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
-                                'SOPRECONHFC', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
+                                'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
                                 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
                                 'TRASLADOINTFIBRACORP', 'TVADICIONAL'
                             ]
@@ -2218,7 +2250,9 @@ def main():
                                 "PEXTERNO": "#f57c00",         
                                 "PLEXISCA": "#e65100",         
                                 "TRASLADOEXTFIBRA": "#8e24aa",  
+                                "SOPRECONCORP": "#c2185b",       
                                 "SOPRECONHFC": "#c2185b",       
+                                "SOPRECONFIBRA": "#c2185b",
                                 "TVADICIONAL": "#00897b",
                                 "ALMUERZO": "#78909c"
                             }
@@ -2279,7 +2313,7 @@ def main():
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
                             filas_muerto = []
                             if not df_jornada_hoy.empty:
-                                for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                               _for tec, group in df_jornada_hoy.groupby('TECNICO'):
                                     tec_norm = normalizar_nombre_cruce(tec)
                                     if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
                                         continue
