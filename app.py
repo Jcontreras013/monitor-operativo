@@ -2050,8 +2050,21 @@ def main():
                         
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
-                        
-                        # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
+
+                        # Salvaguarda anti-desfase de nombres: si el archivo de técnicos
+                        # válidos no coincide con NINGUNO de los técnicos que sí tienen
+                        # actividad hoy en el Gantt, es señal de que los nombres no calzan
+                        # (tildes, orden de apellidos, etc.). En ese caso se desactiva el
+                        # filtro para no dejar las tablas vacías por error.
+                        if tecnicos_validos_alertas:
+                            tecnicos_en_gantt_hoy = set(
+                                normalizar_nombre_cruce(t)
+                                for t in df_para_gantt_final['TECNICO'].dropna().unique()
+                            )
+                            if not (tecnicos_validos_alertas & tecnicos_en_gantt_hoy):
+                                tecnicos_validos_alertas = set()
+
+                                                # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
                         primera_orden_por_tec = {}
                         if ahora_local > limite_9am:
                             tecs_con_asignacion = df_monitor_filtrado[
