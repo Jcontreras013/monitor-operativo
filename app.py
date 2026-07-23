@@ -2280,34 +2280,30 @@ def main():
                             st.plotly_chart(fig_gantt, use_container_width=True)
 
                         with st.expander("📋 Detalle de Apertura Tardía", expanded=False):
-                            if not alertas_9am:
+                            # Solo técnicos que SÍ iniciaron su orden (pasadas las 9:00 AM).
+                            # Se excluyen los que aún no tienen ninguna orden iniciada hoy.
+                            filas_apertura = []
+                            for tec in alertas_9am:
+                                primera_ini = primera_orden_por_tec.get(tec)
+                                if primera_ini is None:
+                                    continue
+
+                                atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
+                                filas_apertura.append({
+                                    "TÉCNICO": tec,
+                                    "HORA DE INICIO": primera_ini.strftime('%H:%M'),
+                                    "_atraso_min": atraso_min
+                                })
+
+                            if not filas_apertura:
                                 st.success("🎉 Sin retrasos de apertura registrados hoy.")
                             else:
-                                filas_apertura = []
-                                for tec in alertas_9am:
-                                    primera_ini = primera_orden_por_tec.get(tec)
-                                    if primera_ini is not None:
-                                        atraso_min = max(0, int((primera_ini - limite_9am).total_seconds() / 60))
-                                        detalle_apertura = f"⚠️ Inició {primera_ini.strftime('%H:%M')} ({atraso_min}m tarde)"
-                                    else:
-                                        atraso_min = max(0, int((ahora_local - limite_9am).total_seconds() / 60))
-                                        detalle_apertura = f"🚨 Aún sin abrir ({atraso_min}m tarde)"
-
-                                    filas_apertura.append({
-                                        "TÉCNICO": tec,
-                                        "DETALLE APERTURA": detalle_apertura,
-                                        "MINUTOS DE ATRASO": atraso_min
-                                    })
-
-                                filas_apertura.sort(key=lambda f: f["MINUTOS DE ATRASO"], reverse=True)
-                                df_tabla_apertura = pd.DataFrame(filas_apertura)
+                                filas_apertura.sort(key=lambda f: f["_atraso_min"], reverse=True)
+                                df_tabla_apertura = pd.DataFrame(filas_apertura).drop(columns=["_atraso_min"])
                                 st.dataframe(
                                     df_tabla_apertura,
                                     use_container_width=True,
-                                    hide_index=True,
-                                    column_config={
-                                        "MINUTOS DE ATRASO": st.column_config.NumberColumn("⏰ Min. de Atraso", format="%d")
-                                    }
+                                    hide_index=True
                                 )
 
                         with st.expander("🕳️ Detalle de Tiempo Muerto Total de la Jornada", expanded=False):
@@ -2355,7 +2351,19 @@ def main():
                                             tiempo_trabajado_min += max(0.0, (ahora_local - ini_r_naive).total_seconds() / 60)
 
                                     tiempo_muerto_bruto = int(round(max(0.0, tiempo_transcurrido_min - tiempo_trabajado_min)))
-                                    descuento_almuerzo = min(60, tiempo_muerto_bruto)
+
+                                    # Ya no se descuenta un bloque fijo de 60 min: se descuenta
+                                    # únicamente el almuerzo REAL registrado (el mismo que ya se
+                                    # dibuja como bloque "ALMUERZO" en la gráfica), si se solapa
+                                    # con el tramo de tiempo muerto.
+                                    descuento_almuerzo = 0
+                                    alm_ini_m, alm_fin_m = _obtener_almuerzo_tec(tec)
+                                    if alm_ini_m is not None and alm_fin_m is not None:
+                                        solape_ini_m = max(primera_orden_ini_naive, alm_ini_m)
+                                        solape_fin_m = min(referencia_fin, alm_fin_m)
+                                        if solape_fin_m > solape_ini_m:
+                                            descuento_almuerzo = int(round((solape_fin_m - solape_ini_m).total_seconds() / 60))
+
                                     tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
 
                                     if tiene_orden_activa_tm:
@@ -2368,29 +2376,23 @@ def main():
 
                                     filas_muerto.append({
                                         "TÉCNICO": tec,
-                                        "1RA ORDEN DEL DÍA": primera_orden_ini_naive.strftime('%H:%M'),
-                                        "ESTADO ACTUAL": estado_actual,
-                                        "TIEMPO MUERTO BRUTO": tiempo_muerto_bruto,
-                                        "DESCUENTO ALMUERZO": descuento_almuerzo,
-                                        "TIEMPO MUERTO NETO": tiempo_muerto_neto
+                                        "TIEMPO MUERTO TOTAL": tiempo_muerto_neto
                                     })
 
                             if not filas_muerto:
                                 st.success("🎉 Sin tiempo muerto registrado hoy.")
                             else:
-                                filas_muerto.sort(key=lambda f: f["TIEMPO MUERTO NETO"], reverse=True)
-                                total_equipo_muerto = sum(f["TIEMPO MUERTO NETO"] for f in filas_muerto)
+                                filas_muerto.sort(key=lambda f: f["TIEMPO MUERTO TOTAL"], reverse=True)
+                                total_equipo_muerto = sum(f["TIEMPO MUERTO TOTAL"] for f in filas_muerto)
 
                                 df_tabla_muerto = pd.DataFrame(filas_muerto)
+                                df_tabla_muerto["TIEMPO MUERTO TOTAL"] = df_tabla_muerto["TIEMPO MUERTO TOTAL"].apply(
+                                    lambda m: f"{int(m) // 60}h {int(m) % 60}m"
+                                )
                                 st.dataframe(
                                     df_tabla_muerto,
                                     use_container_width=True,
-                                    hide_index=True,
-                                    column_config={
-                                        "TIEMPO MUERTO BRUTO": st.column_config.NumberColumn("⏳ Muerto Bruto (min)", format="%d"),
-                                        "DESCUENTO ALMUERZO": st.column_config.NumberColumn("🍽️ Descuento Almuerzo (min)", format="%d"),
-                                        "TIEMPO MUERTO NETO": st.column_config.NumberColumn("🕳️ Muerto Neto (min)", format="%d"),
-                                    }
+                                    hide_index=True
                                 )
 
                                 horas_t, mins_t = divmod(total_equipo_muerto, 60)
