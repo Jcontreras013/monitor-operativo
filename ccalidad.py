@@ -497,16 +497,39 @@ def mostrar_modulo_calidad(conn, df_base):
                                     use_container_width=True,
                                     key="btn_download_calidad_actual"
                                 )
-                                
+                        
                         st.markdown("---")
                         
                         st.markdown("#### 🗑️ Eliminación de Registros (Uso exclusivo Gerencia)")
                         st.caption(f"Seleccione un registro del histórico para eliminarlo permanentemente de Google Sheets y GCS de la pestaña '{hoja_target}'.")
                         
-                        col_ticket_ref = 'TICKET' if 'TICKET' in df_filtered.columns else 'ORDEN_NUM'
-                        col_nombre_ref = 'NOMBRE_CLIENTE' if 'NOMBRE_CLIENTE' in df_filtered.columns else 'TECNICO'
+                        # --- DETERMINAR COLUMNAS DE REFERENCIA DE FORMA ULTRA-SEGURA ---
+                        col_ticket_ref = 'TICKET' if 'TICKET' in df_filtered.columns else ('ORDEN_NUM' if 'ORDEN_NUM' in df_filtered.columns else df_filtered.columns[0])
                         
-                        df_filtered['OPCION_ELIMINAR'] = df_filtered[col_ticket_ref].astype(str) + " - " + df_filtered[col_nombre_ref].astype(str) + " (" + df_filtered[col_fecha_cruce].astype(str) + ")"
+                        # Elegir un nombre o campo de referencia que exista para evitar KeyError en Operaciones
+                        if 'NOMBRE_CLIENTE' in df_filtered.columns:
+                            col_nombre_ref = 'NOMBRE_CLIENTE'
+                        elif 'TECNICO' in df_filtered.columns:
+                            col_nombre_ref = 'TECNICO'
+                        elif 'CODIGO_CLIENTE' in df_filtered.columns:
+                            col_nombre_ref = 'CODIGO_CLIENTE'
+                        elif 'SUPERVISOR' in df_filtered.columns:
+                            col_nombre_ref = 'SUPERVISOR'
+                        else:
+                            col_nombre_ref = None
+
+                        # Sanitización segura de la columna de fecha cruzada
+                        col_fecha_cruce_safe = col_fecha_cruce if col_fecha_cruce in df_filtered.columns else df_filtered.columns[0]
+                        
+                        ticket_part = df_filtered[col_ticket_ref].astype(str)
+                        fecha_part = df_filtered[col_fecha_cruce_safe].astype(str)
+                        
+                        if col_nombre_ref is not None:
+                            nombre_part = df_filtered[col_nombre_ref].astype(str)
+                            df_filtered['OPCION_ELIMINAR'] = ticket_part + " - " + nombre_part + " (" + fecha_part + ")"
+                        else:
+                            df_filtered['OPCION_ELIMINAR'] = ticket_part + " (" + fecha_part + ")"
+
                         lista_eliminar_ops = ["---"] + df_filtered['OPCION_ELIMINAR'].tolist()
                         
                         registro_a_borrar = st.selectbox("Seleccione el registro que desea eliminar permanentemente:", lista_eliminar_ops, key="box_eliminar_QA_general")
@@ -514,7 +537,7 @@ def mostrar_modulo_calidad(conn, df_base):
                         if registro_a_borrar != "---":
                             row_eliminar = df_filtered[df_filtered['OPCION_ELIMINAR'] == registro_a_borrar].iloc[0]
                             ticket_del = row_eliminar[col_ticket_ref]
-                            fecha_del = row_eliminar[col_fecha_cruce]
+                            fecha_del = row_eliminar[col_fecha_cruce_safe]
                             
                             col_del1, col_del2 = st.columns([1, 2])
                             with col_del1:
