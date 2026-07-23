@@ -301,220 +301,153 @@ def main():
 
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
-    
-    if es_movil and option_menu is not None:
-        st.markdown("""
-            <style>
-            [data-testid="collapsedControl"] { display: none; }
-            .bottom-menu-container {
-                position: fixed; bottom: 0; left: 0; width: 100%; z-index: 9999;
-                background-color: #1A1D24; padding-bottom: 10px; padding-top: 5px;
-                border-top: 1px solid #2D2F39; box-shadow: 0px -2px 10px rgba(0,0,0,0.5);
-            }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        st.markdown('<div class="bottom-menu-container">', unsafe_allow_html=True)
-        
-        if rol_usuario in ['admin', 'jefe']:
-            selected_nav = option_menu(
-                menu_title=None,
-                options=["Monitor", "Reportes", "Vehículos", "Más"],
-                icons=["lightning", "bar-chart", "car-front", "list"],
-                default_index=0,
-                orientation="horizontal",
-                styles={
-                    "container": {"padding": "0!important", "background-color": "transparent"},
-                    "icon": {"color": "#94A3B8", "font-size": "20px"}, 
-                    "nav-link": {"font-size": "11px", "text-align": "center", "margin":"0px", "--hover-color": "#2D2F39", "padding": "5px"},
-                    "nav-link-selected": {"background-color": "transparent", "color": "#3B82F6", "font-weight": "bold"},
-                }
-            )
-            if selected_nav == "Monitor": nav_menu_diamante = "⚡ Monitor en Vivo"
-            elif selected_nav == "Reportes": nav_menu_diamante = "📊 Centro de Reportes"
-            elif selected_nav == "Vehículos": nav_menu_diamante = "🚙 Auditoría Vehículos"   
-            else: 
-                nav_menu_diamante = st.selectbox("Seleccione un módulo extra:", ["🏅 Control Calidad", "📅 Reprog / No Inst", "⚙️ Configuración", "📁 Expedientes"])    
-        else:
-            selected_nav = option_menu(
-                menu_title=None,
-                options=["Monitor", "Calidad"],
-                icons=["lightning", "award"],
-                default_index=0,
-                orientation="horizontal",
-                styles={
-                    "container": {"padding": "0!important", "background-color": "transparent"},
-                    "icon": {"color": "#94A3B8", "font-size": "20px"}, 
-                    "nav-link": {"font-size": "11px", "text-align": "center", "margin":"0px", "--hover-color": "#2D2F39", "padding": "5px"},
-                    "nav-link-selected": {"background-color": "transparent", "color": "#3B82F6", "font-weight": "bold"},
-                }
-            )
-            if selected_nav == "Monitor": 
-                nav_menu_diamante = "⚡ Monitor en Vivo"
-            else: 
-                nav_menu_diamante = "🏅 Control Calidad"
+
+    # Inicialización por defecto de variables de carga de archivos en el sidebar
+    btn_api_procesar = False
+    file_act_ptr = None
+    file_disp_ptr = None
+
+    if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
+    st.divider()
+
+    if es_admin_o_supervisor:
+        st.markdown("### 🍽️ Registrar Almuerzo")
+        with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
+            lista_tecs_almuerzo = []
+            df_base_for_tecs = st.session_state.get('df_base')
             
-        st.markdown('</div>', unsafe_allow_html=True)
-        if nav_menu_diamante != "⚡ Monitor en Vivo": st.divider()
-    else:
-        with sidebar_top:
-            if rol_usuario in ['admin', 'jefe']: 
-                nav_menu_diamante = st.radio("MENÚ DE CONTROL:", ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"])
+            if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
+                lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
+            
+            if not lista_tecs_almuerzo:
+                try:
+                    df_cat_tecs = cargar_catalogo_tecnicos()
+                    if df_cat_tecs is not None and not df_cat_tecs.empty:
+                        lista_tecs_almuerzo = sorted(df_cat_tecs['Nombre'].dropna().unique().tolist())
+                except Exception:
+                    pass
+            
+            if not lista_tecs_almuerzo and os.path.exists("gps.txt"):
+                try:
+                    with open("gps.txt", "r", encoding="utf-8") as f:
+                        for line in f:
+                            parts = line.strip().split(",")
+                            if len(parts) >= 3:
+                                lista_tecs_almuerzo.append(parts[2].strip().rstrip("."))
+                    lista_tecs_almuerzo = sorted(list(set(lista_tecs_almuerzo)))
+                except Exception:
+                    pass
+
+            if lista_tecs_almuerzo:
+                tec_almuerzo_sel = st.selectbox("Técnico", options=lista_tecs_almuerzo, key="sel_tec_almuerzo")
             else:
-                st.markdown("### 🖥️ Menú de Control")
-                nav_menu_diamante = st.radio("SELECCIONE EL MÓDULO:", ["⚡ Monitor en Vivo", "🏅 Control Calidad"])    
+                tec_almuerzo_sel = st.text_input("Técnico (nombre exacto)", key="input_tec_almuerzo")
 
-    with sidebar_top:
-        mostrar_boton_logout()
-        st.divider()
+            fecha_almuerzo_sel = st.date_input("Fecha", value=get_honduras_time().date(), key="fecha_almuerzo_sel")
+            col_hi, col_hf = st.columns(2)
+            with col_hi:
+                hora_ini_almuerzo_txt = st.text_input("Hora inicio (HH:MM)", value="12:00", key="hora_ini_almuerzo", max_chars=5)
+            with col_hf:
+                hora_fin_almuerzo_txt = st.text_input("Hora fin (HH:MM)", value="13:00", key="hora_fin_almuerzo", max_chars=5)
 
-    with sidebar_bottom:
-        btn_api_procesar = False
-        file_act_ptr = None
-        file_disp_ptr = None
-
-        if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
-        st.divider()
-
-        if es_admin_o_supervisor:
-            st.markdown("### 🍽️ Registrar Almuerzo")
-            with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
-                lista_tecs_almuerzo = []
-                df_base_for_tecs = st.session_state.get('df_base')
-                
-                if df_base_for_tecs is not None and not df_base_for_tecs.empty and 'TECNICO' in df_base_for_tecs.columns:
-                    lista_tecs_almuerzo = sorted(df_base_for_tecs['TECNICO'].dropna().unique().tolist())
-                
-                if not lista_tecs_almuerzo:
-                    try:
-                        df_cat_tecs = cargar_catalogo_tecnicos()
-                        if df_cat_tecs is not None and not df_cat_tecs.empty:
-                            lista_tecs_almuerzo = sorted(df_cat_tecs['Nombre'].dropna().unique().tolist())
-                    except Exception:
-                        pass
-                
-                if not lista_tecs_almuerzo and os.path.exists("gps.txt"):
-                    try:
-                        with open("gps.txt", "r", encoding="utf-8") as f:
-                            for line in f:
-                                parts = line.strip().split(",")
-                                if len(parts) >= 3:
-                                    lista_tecs_almuerzo.append(parts[2].strip().rstrip("."))
-                        lista_tecs_almuerzo = sorted(list(set(lista_tecs_almuerzo)))
-                    except Exception:
-                        pass
-
-                if lista_tecs_almuerzo:
-                    tec_almuerzo_sel = st.selectbox("Técnico", options=lista_tecs_almuerzo, key="sel_tec_almuerzo")
+            if st.button("💾 Guardar Almuerzo", use_container_width=True, key="btn_guardar_almuerzo"):
+                hora_ini_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_ini_almuerzo_txt.strip())
+                hora_fin_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_fin_almuerzo_txt.strip())
+                if not tec_almuerzo_sel:
+                    st.warning("Selecciona o escribe un técnico.")
+                elif not hora_ini_valida or not hora_fin_valida:
+                    st.warning("La hora debe tener formato HH:MM en 24 horas (ej. 12:00, 13:30).")
                 else:
-                    tec_almuerzo_sel = st.text_input("Técnico (nombre exacto)", key="input_tec_almuerzo")
-
-                fecha_almuerzo_sel = st.date_input("Fecha", value=get_honduras_time().date(), key="fecha_almuerzo_sel")
-                col_hi, col_hf = st.columns(2)
-                with col_hi:
-                    hora_ini_almuerzo_txt = st.text_input("Hora inicio (HH:MM)", value="12:00", key="hora_ini_almuerzo", max_chars=5)
-                with col_hf:
-                    hora_fin_almuerzo_txt = st.text_input("Hora fin (HH:MM)", value="13:00", key="hora_fin_almuerzo", max_chars=5)
-
-                if st.button("💾 Guardar Almuerzo", use_container_width=True, key="btn_guardar_almuerzo"):
-                    hora_ini_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_ini_almuerzo_txt.strip())
-                    hora_fin_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_fin_almuerzo_txt.strip())
-                    if not tec_almuerzo_sel:
-                        st.warning("Selecciona o escribe un técnico.")
-                    elif not hora_ini_valida or not hora_fin_valida:
-                        st.warning("La hora debe tener formato HH:MM en 24 horas (ej. 12:00, 13:30).")
+                    ok_almuerzo = guardar_almuerzo(
+                        conn,
+                        tecnico=tec_almuerzo_sel,
+                        fecha=fecha_almuerzo_sel.strftime('%Y-%m-%d'),
+                        hora_inicio=hora_ini_almuerzo_txt.strip(),
+                        hora_fin=hora_fin_almuerzo_txt.strip(),
+                        registrado_por=st.session_state.get('usuario_actual', rol_usuario)
+                    )
+                    if ok_almuerzo:
+                        st.success(f"✅ Almuerzo de {tec_almuerzo_sel} guardado para el {fecha_almuerzo_sel.strftime('%d/%m/%Y')}.")
                     else:
-                        ok_almuerzo = guardar_almuerzo(
-                            conn,
-                            tecnico=tec_almuerzo_sel,
-                            fecha=fecha_almuerzo_sel.strftime('%Y-%m-%d'),
-                            hora_inicio=hora_ini_almuerzo_txt.strip(),
-                            hora_fin=hora_fin_almuerzo_txt.strip(),
-                            registrado_por=st.session_state.get('usuario_actual', rol_usuario)
-                        )
-                        if ok_almuerzo:
-                            st.success(f"✅ Almuerzo de {tec_almuerzo_sel} guardado para el {fecha_almuerzo_sel.strftime('%d/%m/%Y')}.")
-                        else:
-                            st.error("No se pudo guardar el almuerzo. Revisa la conexión con Sheets.")
-        st.divider()
+                        st.error("No se pudo guardar el almuerzo. Revisa la conexión con Sheets.")
+    st.divider()
 
-        st.markdown("### ☁️ Sincronización")
-        if st.button("☁️ ACTUALIZAR DESDE LA NUBE", use_container_width=True, key="btn_nube_sidebar"):
-            if conn is not None:
-                sincronizar_datos_nube(conn)
-            else:
-                st.error("Conexión no disponible.")
-
-        st.divider()
-        st.markdown("### 📥 Carga de Archivos")
-        
-        if es_admin:
-            st.markdown("#### ⚡ Actualización Inmediata")
-            btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
-            
-            st.divider()
-            st.markdown("#### 📄 Actividades (rep_actividades)")
-            st.caption("Solo necesitas subir las actividades. El catálogo FTTX se toma automáticamente de la nube (pestaña FTTX / GCS).")
-            archivo_actividades = st.file_uploader("Sube rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_actividades_admin")
-            if archivo_actividades: file_act_ptr = archivo_actividades
-            btn_reprocesar = st.button("🔄 PROCESAR ACTIVIDADES", use_container_width=True)
-
-            st.divider()
-            st.markdown("#### 🚙 Catálogo FTTX")
-            st.caption("Sube esto SOLO cuando necesites actualizar el catálogo de dispositivos en la nube. No requiere subir actividades a la vez.")
-            archivo_fttx = st.file_uploader("Sube FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_fttx_admin")
-            btn_actualizar_fttx = st.button("🔄 ACTUALIZAR SOLO CATÁLOGO FTTX", use_container_width=True)
-
-            if archivo_fttx:
-                try:
-                    with open("cache_fttx.tmp", "wb") as f: f.write(archivo_fttx.getvalue())
-                except: pass
-
-            if btn_actualizar_fttx:
-                if archivo_fttx is None:
-                    st.warning("Primero selecciona un archivo FttxActiveDevice para subir.")
-                elif conn is None:
-                    st.error("Conexión no disponible.")
-                else:
-                    with st.spinner("⏳ Subiendo catálogo FTTX a la nube..."):
-                        try:
-                            archivo_fttx.seek(0)
-                            if archivo_fttx.name.lower().endswith('.csv'):
-                                df_fttx_subir = pd.read_csv(archivo_fttx, sep=None, engine='python')
-                            else:
-                                df_fttx_subir = pd.read_excel(archivo_fttx, engine='openpyxl')
-
-                            if df_fttx_subir is None or df_fttx_subir.empty:
-                                st.error("El archivo se leyó pero está vacío.")
-                            else:
-                                # Sheets es la fuente confiable, se sobrescribe la pestaña FTTX completa.
-                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_subir)
-                                st.success(f"✅ Catálogo FTTX actualizado en la nube ({len(df_fttx_subir)} registros).")
-
-                                try:
-                                    sobrescribir_archivo_gcs(df_fttx_subir, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
-                                except Exception:
-                                    pass
-                        except Exception as e_fttx_up:
-                            st.error(f"No se pudo procesar/subir el archivo FTTX: {e_fttx_up}")
+    st.markdown("### ☁️ Sincronización")
+    if st.button("☁️ ACTUALIZAR DESDE LA NUBE", use_container_width=True, key="btn_nube_sidebar"):
+        if conn is not None:
+            sincronizar_datos_nube(conn)
         else:
-            st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
-            archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
-            if archivo_unico: file_act_ptr = archivo_unico
-            btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
-            btn_actualizar_fttx = False
+            st.error("Conexión no disponible.")
 
-        ahora_hx = get_honduras_time()
-        es_horario_tarde = ahora_hx.hour >= 17
-        es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
-        condicion_usar_cache = es_horario_tarde or es_fin_de_semana
+    st.divider()
+    st.markdown("### 📥 Carga de Archivos")
+    
+    if es_admin:
+        st.markdown("#### ⚡ Actualización Inmediata")
+        btn_api_procesar = st.button("🔄 FORZAR ACTUALIZACIÓN INMEDIATA", use_container_width=True, type="primary")
         
-        if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
-            if os.path.exists("cache_fttx.tmp"):
-                try:
-                    with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
-                    st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
-                except: pass
+        st.divider()
+        st.markdown("#### 📄 Actividades (rep_actividades)")
+        st.caption("Solo necesitas subir las actividades. El catálogo FTTX se toma automáticamente de la nube (pestaña FTTX / GCS).")
+        archivo_actividades = st.file_uploader("Sube rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_actividades_admin")
+        if archivo_actividades: file_act_ptr = archivo_actividades
+        btn_reprocesar = st.button("🔄 PROCESAR ACTIVIDADES", use_container_width=True)
+
+        st.divider()
+        st.markdown("#### 🚙 Catálogo FTTX")
+        st.caption("Sube esto SOLO cuando necesites actualizar el catálogo de dispositivos en la nube. No requiere subir actividades a la vez.")
+        archivo_fttx = st.file_uploader("Sube FttxActiveDevice", type=["xlsx", "csv"], accept_multiple_files=False, key="uploader_fttx_admin")
+        btn_actualizar_fttx = st.button("🔄 ACTUALIZAR SOLO CATÁLOGO FTTX", use_container_width=True)
+
+        if archivo_fttx:
+            try:
+                with open("cache_fttx.tmp", "wb") as f: f.write(archivo_fttx.getvalue())
+            except: pass
+
+        if btn_actualizar_fttx:
+            if archivo_fttx is None:
+                st.warning("Primero selecciona un archivo FttxActiveDevice para subir.")
+            elif conn is None:
+                st.error("Conexión no disponible.")
+            else:
+                with st.spinner("⏳ Subiendo catálogo FTTX a la nube..."):
+                    try:
+                        archivo_fttx.seek(0)
+                        if archivo_fttx.name.lower().endswith('.csv'):
+                            df_fttx_subir = pd.read_csv(archivo_fttx, sep=None, engine='python')
+                        else:
+                            df_fttx_subir = pd.read_excel(archivo_fttx, engine='openpyxl')
+
+                        if df_fttx_subir is None or df_fttx_subir.empty:
+                            st.error("El archivo se leyó pero está vacío.")
+                        else:
+                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="FTTX", data=df_fttx_subir)
+                            st.success(f"✅ Catálogo FTTX actualizado en la nube ({len(df_fttx_subir)} registros).")
+
+                            try:
+                                sobrescribir_archivo_gcs(df_fttx_subir, NOMBRE_BUCKET_SISTEMA, "fttx_activo.csv")
+                            except Exception:
+                                pass
+                    except Exception as e_fttx_up:
+                        st.error(f"No se pudo procesar/subir el archivo FTTX: {e_fttx_up}")
+    else:
+        st.caption("Solo necesitas subir las actividades. FTTX se bajará de la nube.")
+        archivo_unico = st.file_uploader("Sube únicamente el rep_actividades", type=["xlsx", "csv"], accept_multiple_files=False)
+        if archivo_unico: file_act_ptr = archivo_unico
+        btn_reprocesar = st.button("🔄 PROCESAR ARCHIVO SUBIDO", use_container_width=True)
+        btn_actualizar_fttx = False
+
+    ahora_hx = get_honduras_time()
+    es_horario_tarde = ahora_hx.hour >= 17
+    es_fin_de_semana = (ahora_hx.weekday() == 5 and ahora_hx.hour >= 13) or (ahora_hx.weekday() == 6)
+    condicion_usar_cache = es_horario_tarde or es_fin_de_semana
+    
+    if condicion_usar_cache and file_act_ptr is not None and file_disp_ptr is None and es_admin:
+        if os.path.exists("cache_fttx.tmp"):
+            try:
+                with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
+                st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
+            except: pass
 
     # ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS CON API INTEGRADA)
@@ -560,10 +493,10 @@ def main():
                     
                     col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
                     with col_c2:
-                        if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_central"):
-                            if conn is not None: 
+                        if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_fallback_inicial"):
+                            if conn is not None:
                                 sincronizar_datos_nube(conn)
-                            else: 
+                            else:
                                 st.error("Conexión no disponible.")
                     return
             else:
@@ -680,19 +613,18 @@ def main():
                 return
 
     df_base = st.session_state.df_base.copy()
-
-# === FILTRADO ESTRICTO DE ACTIVIDADES OPERATIVAS AUTORIZADAS ===
-actividades_operativas_validas = [
-    'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INS-WA', 'INSI-WA',
-    'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA',
-    'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SPLITTEROPT',
-    'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
-    'TRASLADOINTFIBRACORP', 'TVADICIONAL'
-]
-if 'ACTIVIDAD' in df_base.columns:
-    df_base['ACTIVIDAD'] = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper()
-    df_base = df_base[df_base['ACTIVIDAD'].isin(actividades_operativas_validas)].copy()
     
+    # === FILTRADO ESTRICTO DE ACTIVIDADES OPERATIVAS AUTORIZADAS ===
+    actividades_operativas_validas = [
+        'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INS-WA', 'INSI-WA',
+        'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA',
+        'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SPLITTEROPT',
+        'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
+        'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+    ]
+    if 'ACTIVIDAD' in df_base.columns:
+        df_base['ACTIVIDAD'] = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper()
+        df_base = df_base[df_base['ACTIVIDAD'].isin(actividades_operativas_validas)].copy()
 
     # ==============================================================================
     # EXTRACCIÓN Y MAPEO DINÁMICO DEL ARCHIVO GPS.TXT
