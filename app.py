@@ -285,14 +285,8 @@ def main():
     es_admin = (str(rol_usuario).strip().lower() == 'admin')
     es_admin_o_supervisor = str(rol_usuario).strip().lower() in ['admin', 'jefe']
     
-    ancho_pantalla = streamlit_js_eval(js_expressions='window.screen.width', key='WIDTH_CHECK', want_output=True)
-    es_movil = (ancho_pantalla is not None) and (ancho_pantalla < 800)
-
-    if rol_usuario in ['admin', 'jefe']:
-        es_movil = False
-
-    if es_movil:
-        aplicar_estilos_nativos()
+    # Se fuerza es_movil a False para unificar la interfaz de escritorio en todos los roles
+    es_movil = False
 
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -307,7 +301,7 @@ def main():
 
     sidebar_top = st.sidebar.container()
     sidebar_bottom = st.sidebar.container()
-
+    
     if es_movil and option_menu is not None:
         st.markdown("""
             <style>
