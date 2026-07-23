@@ -2026,160 +2026,16 @@ def main():
                                 return None, None
                         
                         # ==============================================================================
-                        # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
-                        # ==============================================================================
-                        alertas_9am = []
-                        alertas_tiempo_muerto = []
-                        
-                        tecnicos_validos_alertas = set()
-                        file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
-                        if file_to_load:
-                            try:
-                                with open(file_to_load, "r", encoding="utf-8") as f:
-                                    for line in f:
-                                        line = line.strip()
-                                        if line:
-                                            parts = line.split(",")
-                                            if len(parts) >= 3:
-                                                name = parts[2].strip().rstrip(".")
-                                            else:
-                                                name = parts[-1].strip().rstrip(".")
-                                            tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
-                            except Exception as e:
-                                pass
-                        
-                        ahora_local = get_honduras_time()
-                        limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
-
-                        # Técnicos que realmente aparecen hoy en el Gantt (misma fuente de
-                        # datos que dibuja la gráfica). Las tablas de abajo solo deben
-                        # mostrar técnicos que estén dentro de este conjunto.
-                        tecnicos_en_gantt_hoy = set(
-                            normalizar_nombre_cruce(t)
-                            for t in df_para_gantt_final['TECNICO'].dropna().unique()
-                        )
-
-                        # Salvaguarda anti-desfase de nombres: si el archivo de técnicos
-                        # válidos no coincide con NINGUNO de los técnicos que sí tienen
-                        # actividad hoy en el Gantt, es señal de que los nombres no calzan
-                        # (tildes, orden de apellidos, etc.). En ese caso se desactiva el
-                        # filtro para no dejar las tablas vacías por error.
-                        if tecnicos_validos_alertas and not (tecnicos_validos_alertas & tecnicos_en_gantt_hoy):
-                            tecnicos_validos_alertas = set()
-
-                        # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
-                        primera_orden_por_tec = {}
-                        if ahora_local > limite_9am:
-                            tecs_con_asignacion = df_monitor_filtrado[
-                                mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
-                            ]['TECNICO'].unique()
-                            
-                            for tec in tecs_con_asignacion:
-                                tec_norm = normalizar_nombre_cruce(tec)
-                                if tec_norm not in tecnicos_en_gantt_hoy:
-                                    continue
-                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
-                                    continue
-                                    
-                                df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
-                                ordenes_iniciadas_hoy = df_tec_hoy[
-                                    df_tec_hoy['HORA_INI'].notna() & 
-                                    (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
-                                ]
-                                if ordenes_iniciadas_hoy.empty:
-                                    alertas_9am.append(tec)
-                                    primera_orden_por_tec[tec] = None
-                                else:
-                                    primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
-                                    primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
-                                    if primera_ini_tec_naive > limite_9am:
-                                        alertas_9am.append(tec)
-                                        primera_orden_por_tec[tec] = primera_ini_tec_naive
-                                    
-
-                        # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
-                        df_jornada_hoy = df_monitor_filtrado[
-                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
-                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
-                            (df_monitor_filtrado['TECNICO'].notna()) &
-                            (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
-                        ].copy()
-                        
-                        if not df_jornada_hoy.empty:
-                            for tec, group in df_jornada_hoy.groupby('TECNICO'):
-                                tec_norm = normalizar_nombre_cruce(tec)
-                                if tec_norm not in tecnicos_en_gantt_hoy:
-                                    continue
-                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
-                                    continue
-                                    
-                                group_sorted = group.sort_values(by='HORA_INI')
-                                
-                                for i in range(len(group_sorted) - 1):
-                                    task_actual = group_sorted.iloc[i]
-                                    task_siguiente = group_sorted.iloc[i+1]
-                                    
-                                    liq_actual = task_actual.get('HORA_LIQ')
-                                    ini_siguiente = task_siguiente.get('HORA_INI')
-                                    
-                                    if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
-                                        liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
-                                        ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
-                                        
-                                        gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
-
-                                        alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
-                                        if alm_ini is not None and alm_fin is not None:
-                                            solape_ini = max(liq_actual_naive, alm_ini)
-                                            solape_fin = min(ini_siguiente_naive, alm_fin)
-                                            if solape_fin > solape_ini:
-                                                solape_mins = (solape_fin - solape_ini).total_seconds() / 60
-                                                gap_mins = max(0, gap_mins - solape_mins)
-
-                                        if gap_mins > 30:
-                                            alertas_tiempo_muerto.append({
-                                                "tipo": "historico",
-                                                "tecnico": tec,
-                                                "gap": int(gap_mins),
-                                                "orden_prev": task_actual.get('NUM', 'N/D'),
-                                                "orden_next": task_siguiente.get('NUM', 'N/D'),
-                                                "hora_fin": liq_actual_naive.strftime('%H:%M')
-                                            })
-                                
-                                tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
-                                if not tiene_orden_activa:
-                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
-                                    if not ordenes_cerradas.empty:
-                                        ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
-                                        liq_last = ultima_cerrada.get('HORA_LIQ')
-                                        liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
-                                        
-                                        gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
-
-                                        alm_ini_v, alm_fin_v = _obtener_almuerzo_tec(tec)
-                                        if alm_ini_v is not None and alm_fin_v is not None:
-                                            solape_ini_v = max(liq_last_naive, alm_ini_v)
-                                            solape_fin_v = min(ahora_local, alm_fin_v)
-                                            if solape_fin_v > solape_ini_v:
-                                                solape_mins_v = (solape_fin_v - solape_ini_v).total_seconds() / 60
-                                                gap_vivo_mins = max(0, gap_vivo_mins - solape_mins_v)
-
-                                        if gap_vivo_mins > 30:
-                                            alertas_tiempo_muerto.append({
-                                                "tipo": "vivo",
-                                                "tecnico": tec,
-                                                "gap": int(gap_vivo_mins),
-                                                "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
-                                                "hora_fin": liq_last_naive.strftime('%H:%M')
-                                            })
-
-                        # ==============================================================================
                         # CONTINUACIÓN: PROCESAMIENTO Y DIBUJADO DEL GANTT
                         # ==============================================================================
                         mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
                         
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
+
+                        # Se resetea aquí; si el Gantt termina vacío, ningún técnico debe
+                        # figurar en las tablas de abajo.
+                        tecnicos_en_gantt_hoy = set()
                         
                         if not df_para_gantt_final.empty:
                             ahora_hx = get_honduras_time()
@@ -2298,6 +2154,156 @@ def main():
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
+
+                            # Se recalcula aquí (y no antes) porque df_para_gantt_final ya
+                            # pasó por TODOS los filtros de dibujado (actividades permitidas,
+                            # bloques de almuerzo, etc.). Este es el set real de técnicos que
+                            # el usuario ve en la gráfica.
+                            tecnicos_en_gantt_hoy = set(df_para_gantt_final['TECNICO'].dropna().unique())
+
+                        # ==============================================================================
+                        # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
+                        # ==============================================================================
+                        alertas_9am = []
+                        alertas_tiempo_muerto = []
+                        
+                        tecnicos_validos_alertas = set()
+                        file_to_load = "personal_tecnico.txt" if os.path.exists("personal_tecnico.txt") else ("gps.txt" if os.path.exists("gps.txt") else None)
+                        if file_to_load:
+                            try:
+                                with open(file_to_load, "r", encoding="utf-8") as f:
+                                    for line in f:
+                                        line = line.strip()
+                                        if line:
+                                            parts = line.split(",")
+                                            if len(parts) >= 3:
+                                                name = parts[2].strip().rstrip(".")
+                                            else:
+                                                name = parts[-1].strip().rstrip(".")
+                                            tecnicos_validos_alertas.add(normalizar_nombre_cruce(name))
+                            except Exception as e:
+                                pass
+                        
+                        ahora_local = get_honduras_time()
+                        limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
+
+                        # tecnicos_en_gantt_hoy ya fue calculado justo arriba, usando el
+                        # dataframe final del Gantt (después de todos sus filtros).
+
+                        # Salvaguarda anti-desfase de nombres: si el archivo de técnicos
+                        # válidos no coincide con NINGUNO de los técnicos que sí tienen
+                        # actividad hoy en el Gantt, es señal de que los nombres no calzan
+                        # (tildes, orden de apellidos, etc.). En ese caso se desactiva el
+                        # filtro para no dejar las tablas vacías por error.
+                        if tecnicos_validos_alertas and not (tecnicos_validos_alertas & tecnicos_en_gantt_hoy):
+                            tecnicos_validos_alertas = set()
+
+                        # 1. Validación de Inicio Tardío (Pasadas las 9:00 AM)
+                        primera_orden_por_tec = {}
+                        if ahora_local > limite_9am:
+                            tecs_con_asignacion = df_monitor_filtrado[
+                                mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
+                            ]['TECNICO'].unique()
+                            
+                            for tec in tecs_con_asignacion:
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                if tec_norm not in tecnicos_en_gantt_hoy:
+                                    continue
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    continue
+                                    
+                                df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
+                                ordenes_iniciadas_hoy = df_tec_hoy[
+                                    df_tec_hoy['HORA_INI'].notna() & 
+                                    (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
+                                ]
+                                if ordenes_iniciadas_hoy.empty:
+                                    alertas_9am.append(tec)
+                                    primera_orden_por_tec[tec] = None
+                                else:
+                                    primera_ini_tec = ordenes_iniciadas_hoy['HORA_INI'].min()
+                                    primera_ini_tec_naive = primera_ini_tec.replace(tzinfo=None) if hasattr(primera_ini_tec, 'tzinfo') and primera_ini_tec.tzinfo is not None else primera_ini_tec
+                                    if primera_ini_tec_naive > limite_9am:
+                                        alertas_9am.append(tec)
+                                        primera_orden_por_tec[tec] = primera_ini_tec_naive
+                                    
+
+                        # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
+                        df_jornada_hoy = df_monitor_filtrado[
+                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
+                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
+                            (df_monitor_filtrado['TECNICO'].notna()) &
+                            (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
+                        ].copy()
+                        
+                        if not df_jornada_hoy.empty:
+                            for tec, group in df_jornada_hoy.groupby('TECNICO'):
+                                tec_norm = normalizar_nombre_cruce(tec)
+                                if tec_norm not in tecnicos_en_gantt_hoy:
+                                    continue
+                                if tecnicos_validos_alertas and tec_norm not in tecnicos_validos_alertas:
+                                    continue
+                                    
+                                group_sorted = group.sort_values(by='HORA_INI')
+                                
+                                for i in range(len(group_sorted) - 1):
+                                    task_actual = group_sorted.iloc[i]
+                                    task_siguiente = group_sorted.iloc[i+1]
+                                    
+                                    liq_actual = task_actual.get('HORA_LIQ')
+                                    ini_siguiente = task_siguiente.get('HORA_INI')
+                                    
+                                    if pd.notnull(liq_actual) and pd.notnull(ini_siguiente):
+                                        liq_actual_naive = liq_actual.replace(tzinfo=None) if hasattr(liq_actual, 'tzinfo') and liq_actual.tzinfo is not None else liq_actual
+                                        ini_siguiente_naive = ini_siguiente.replace(tzinfo=None) if hasattr(ini_siguiente, 'tzinfo') and ini_siguiente.tzinfo is not None else ini_siguiente
+                                        
+                                        gap_mins = (ini_siguiente_naive - liq_actual_naive).total_seconds() / 60
+
+                                        alm_ini, alm_fin = _obtener_almuerzo_tec(tec)
+                                        if alm_ini is not None and alm_fin is not None:
+                                            solape_ini = max(liq_actual_naive, alm_ini)
+                                            solape_fin = min(ini_siguiente_naive, alm_fin)
+                                            if solape_fin > solape_ini:
+                                                solape_mins = (solape_fin - solape_ini).total_seconds() / 60
+                                                gap_mins = max(0, gap_mins - solape_mins)
+
+                                        if gap_mins > 30:
+                                            alertas_tiempo_muerto.append({
+                                                "tipo": "historico",
+                                                "tecnico": tec,
+                                                "gap": int(gap_mins),
+                                                "orden_prev": task_actual.get('NUM', 'N/D'),
+                                                "orden_next": task_siguiente.get('NUM', 'N/D'),
+                                                "hora_fin": liq_actual_naive.strftime('%H:%M')
+                                            })
+                                
+                                tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
+                                if not tiene_orden_activa:
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
+                                    if not ordenes_cerradas.empty:
+                                        ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
+                                        liq_last = ultima_cerrada.get('HORA_LIQ')
+                                        liq_last_naive = liq_last.replace(tzinfo=None) if hasattr(liq_last, 'tzinfo') and liq_last.tzinfo is not None else liq_last
+                                        
+                                        gap_vivo_mins = (ahora_local - liq_last_naive).total_seconds() / 60
+
+                                        alm_ini_v, alm_fin_v = _obtener_almuerzo_tec(tec)
+                                        if alm_ini_v is not None and alm_fin_v is not None:
+                                            solape_ini_v = max(liq_last_naive, alm_ini_v)
+                                            solape_fin_v = min(ahora_local, alm_fin_v)
+                                            if solape_fin_v > solape_ini_v:
+                                                solape_mins_v = (solape_fin_v - solape_ini_v).total_seconds() / 60
+                                                gap_vivo_mins = max(0, gap_vivo_mins - solape_mins_v)
+
+                                        if gap_vivo_mins > 30:
+                                            alertas_tiempo_muerto.append({
+                                                "tipo": "vivo",
+                                                "tecnico": tec,
+                                                "gap": int(gap_vivo_mins),
+                                                "orden_prev": ultima_cerrada.get('NUM', 'N/D'),
+                                                "hora_fin": liq_last_naive.strftime('%H:%M')
+                                            })
+
 
                         with st.expander("📋 Detalle de Apertura Tardía", expanded=False):
                             # Solo técnicos que SÍ iniciaron su orden (pasadas las 9:00 AM).
