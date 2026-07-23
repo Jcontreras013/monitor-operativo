@@ -2360,8 +2360,15 @@ def main():
                                     cerradas_hoy_tec = ordenes_ini_hoy[ordenes_ini_hoy['HORA_LIQ'].notnull()]
                                     ultima_actividad = cerradas_hoy_tec['HORA_LIQ'].max() if not cerradas_hoy_tec.empty else None
 
+                                    # Punto de referencia para contar tiempo muerto: si el
+                                    # técnico abrió su primera orden después de las 9:00 AM,
+                                    # el tiempo muerto debe contar desde las 9:00 (no desde la
+                                    # hora en que por fin abrió la orden). Si abrió a tiempo,
+                                    # se sigue usando su hora real de inicio.
+                                    referencia_inicio = min(primera_orden_ini_naive, limite_9am)
+
                                     referencia_fin = ahora_local
-                                    tiempo_transcurrido_min = max(0.0, (referencia_fin - primera_orden_ini_naive).total_seconds() / 60)
+                                    tiempo_transcurrido_min = max(0.0, (referencia_fin - referencia_inicio).total_seconds() / 60)
 
                                     tiempo_trabajado_min = 0.0
                                     for _, r_ord in ordenes_ini_hoy.iterrows():
@@ -2387,12 +2394,13 @@ def main():
                                     descuento_almuerzo = 0
                                     alm_ini_m, alm_fin_m = _obtener_almuerzo_tec(tec)
                                     if alm_ini_m is not None and alm_fin_m is not None:
-                                        solape_ini_m = max(primera_orden_ini_naive, alm_ini_m)
+                                        solape_ini_m = max(referencia_inicio, alm_ini_m)
                                         solape_fin_m = min(referencia_fin, alm_fin_m)
                                         if solape_fin_m > solape_ini_m:
                                             descuento_almuerzo = int(round((solape_fin_m - solape_ini_m).total_seconds() / 60))
 
                                     tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
+
 
                                     if tiene_orden_activa_tm:
                                         estado_actual = "🔧 En orden activa"
