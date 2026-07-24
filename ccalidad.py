@@ -22,15 +22,25 @@ def mostrar_modulo_calidad(conn, df_base):
         st.info("ℹ️ No hay órdenes registradas en el sistema para evaluar en este momento.")
         return
 
-    # 1. BUSCADOR SIMPLE DE NÚMEROS DE ORDEN (Searchable por defecto)
-    lista_ordenes = sorted(df_evaluables['NUM'].dropna().astype(str).unique().tolist())
+    # 1. BUSCADOR MULTI-PARÁMETRO (Orden, Nombre o Código de Cliente)
+    # Permite al personal de SAC buscar escribiendo cualquiera de estos datos en un solo lugar
+    df_evaluables['SEARCH_LABEL'] = (
+        "ORD-" + df_evaluables['NUM'].astype(str) + " | " + 
+        df_evaluables['NOMBRE'].fillna('N/D').astype(str) + " | " + 
+        df_evaluables['CLIENTE'].astype(str)
+    )
+    lista_opciones_search = sorted(df_evaluables['SEARCH_LABEL'].unique().tolist())
     
-    col_sel1, col_sel2 = st.columns([1, 2])
+    col_sel1, col_sel2 = st.columns([2, 1])
     with col_sel1:
-        num_seleccionado = st.selectbox("🔍 Busque el Número de Orden (NUM):", lista_ordenes)
+        opcion_seleccionada = st.selectbox(
+            "🔍 Busque por Orden (NUM), Nombre del Cliente o Código de Cliente:", 
+            options=lista_opciones_search,
+            key="calidad_order_search_selector"
+        )
     
-    # Extraer fila correspondiente a la orden seleccionada
-    row_sel = df_evaluables[df_evaluables['NUM'].astype(str) == num_seleccionado].iloc[0]
+    # Extraer fila correspondiente a la opción seleccionada de forma segura
+    row_sel = df_evaluables[df_evaluables['SEARCH_LABEL'] == opcion_seleccionada].iloc[0]
     
     # Cargar variables de la orden
     num_orden = row_sel.get('NUM', 'N/D')
@@ -127,7 +137,6 @@ def mostrar_modulo_calidad(conn, df_base):
                         st.markdown("### 2️⃣ Encuesta de Control de Calidad – Visita Técnica")
                         st.info("Califique cada aspecto de la visita técnica en una escala de 1 (Muy insatisfecho) a 5 (Muy satisfecho).")
                         
-                        # Opciones visuales con estrellas para el operador
                         escala_estrellas = [
                             "1 ⭐ (Muy insatisfecho)", 
                             "2 ⭐⭐ (Insatisfecho)", 
@@ -247,14 +256,12 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.subheader("💬 Envío Automático mediante WATI (WhatsApp Business API)")
                 st.caption("Esta pestaña registra el envío en el historial del sistema y dispara de forma automatizada la plantilla de encuesta oficial de WATI.")
                 
-                telefono_wa = st.text_input("📞 Ingrese el número de WhatsApp del Cliente:", value="", placeholder="Ej: 99887766", key="tel_wa_QA_input")
-                comentarios_envio = st.text_area("📝 Comentarios o Notas de Envío (Opcional):", placeholder="Notas internas sobre el envío del WhatsApp...", key="comentarios_envio_wa_input")
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                col_wa1, col_wa2 = st.columns(2)
-                
-                with col_wa1:
-                    btn_disparar_bot = st.button("🚀 ENVIAR ENCUESTA OFICIAL POR WATI", use_container_width=True, type="primary", key="btn_disparar_wati_calidad")
+                # Encapsulamos la sección de WhatsApp en un formulario para eliminar la autorecarga molesta al escribir
+                form_whatsapp = st.form(key=f"form_whatsapp_envio_{num_orden}")
+                with form_whatsapp:
+                    telefono_wa = st.text_input("📞 Ingrese el número de WhatsApp del Cliente:", value="", placeholder="Ej: 99887766", key="tel_wa_QA_input")
+                    comentarios_envio = st.text_area("📝 Comentarios o Notas de Envío (Opcional):", placeholder="Notas internas sobre el envío del WhatsApp...", key="comentarios_envio_wa_input")
+                    btn_disparar_bot = st.form_submit_button("🚀 ENVIAR ENCUESTA OFICIAL POR WATI")
                     
                 if btn_disparar_bot:
                     if not telefono_wa.strip():
