@@ -124,44 +124,34 @@ def mostrar_modulo_calidad(conn, df_base):
                         
                         st.divider()
                         
-                        st.markdown("### 2️⃣ Puntualidad y Presentación")
-                        p1_puntualidad = st.radio("1. ¿El técnico llegó dentro del horario acordado?", ["Sí", "No"], horizontal=True, key="p1_radio")
-                        p2_presentacion = st.radio("2. ¿El técnico se presentó de forma adecuada (uniforme, identificación y trato respetuoso)?", ["Excelente", "Bueno", "Regular", "Deficiente"], horizontal=True, key="p2_radio")
+                        st.markdown("### 2️⃣ Encuesta de Control de Calidad – Visita Técnica")
+                        st.info("Califique cada aspecto de la visita técnica en una escala de 1 (Muy insatisfecho) a 5 (Muy satisfecho).")
+                        
+                        # Opciones visuales con estrellas para el operador
+                        escala_estrellas = [
+                            "1 ⭐ (Muy insatisfecho)", 
+                            "2 ⭐⭐ (Insatisfecho)", 
+                            "3 ⭐⭐⭐ (Regular)", 
+                            "4 ⭐⭐⭐⭐ (Satisfecho)", 
+                            "5 ⭐⭐⭐⭐⭐ (Muy satisfecho)"
+                        ]
+                        
+                        p1_puntualidad = st.radio("1. Puntualidad del técnico", escala_estrellas, index=4, horizontal=True, key="p1_puntualidad_radio")
+                        p2_presentacion = st.radio("2. Presentación y trato del técnico", escala_estrellas, index=4, horizontal=True, key="p2_presentacion_radio")
+                        p3_claridad = st.radio("3. Claridad en la explicación del trabajo realizado", escala_estrellas, index=4, horizontal=True, key="p3_claridad_radio")
+                        p4_tv_ccveo = st.radio("4. Explicación sobre el servicio de TV Cable y CCVEO", escala_estrellas, index=4, horizontal=True, key="p4_tv_ccveo_radio")
+                        p5_calidad = st.radio("5. Calidad del servicio (instalación/mantenimiento)", escala_estrellas, index=4, horizontal=True, key="p5_calidad_radio")
+                        p6_limpieza = st.radio("6. Estado en que dejó el área de trabajo", escala_estrellas, index=4, horizontal=True, key="p6_limpieza_radio")
+                        p7_satisfaccion = st.radio("7. Nivel de satisfacción general con la visita", escala_estrellas, index=4, horizontal=True, key="p7_satisfaccion_radio")
                         
                         st.divider()
                         
-                        st.markdown("### 3️⃣ Ejecución del Trabajo")
-                        p3_explicacion = st.radio("3. ¿El técnico le explicó claramente el trabajo que iba a realizar?", ["Sí", "Parcialmente", "No"], horizontal=True, key="p3_radio")
-                        p4_corresponde = st.radio("4. ¿El trabajo realizado corresponde al servicio solicitado?", ["Sí", "No"], horizontal=True, key="p4_radio")
-                        p5_funcionando = st.radio("5. ¿El servicio quedó funcionando correctamente al momento de la entrega?", ["Sí", "No"], horizontal=True, key="p5_radio")
-                        motivo_no_funciona = st.text_input("Si respondió 'No' en la pregunta anterior, indique brevemente el motivo:", value="", placeholder="Escriba el motivo aquí...", key="motivo_no_funciona_input")
+                        st.markdown("### 3️⃣ Pregunta Opcional")
+                        mejoras_opcional = st.text_area("¿Hay algo que podamos mejorar? (Respuesta corta):", key="mejoras_opcional_input")
                         
                         st.divider()
                         
-                        st.markdown("### 4️⃣ Orden, Limpieza y Cuidado")
-                        p6_limpieza = st.radio("6. ¿El área de trabajo quedó limpia y ordenada al finalizar?", ["Sí", "No"], horizontal=True, key="p6_radio")
-                        p7_cuidado = st.radio("7. ¿El técnico cuidó adecuadamente su propiedad y equipos?", ["Sí", "No"], horizontal=True, key="p7_radio")
-                        
-                        st.divider()
-                        
-                        st.markdown("### 5️⃣ Atención y Trato")
-                        p8_atencion = st.radio("8. ¿Cómo califica el trato y la atención brindada por el técnico?", ["Excelente", "Bueno", "Regular", "Deficiente"], horizontal=True, key="p8_radio")
-                        
-                        st.divider()
-                        
-                        st.markdown("### 6️⃣ Satisfacción General")
-                        p9_satisfaccion = st.radio("9. En general, ¿qué tan satisfecho(a) está con el servicio recibido?", ["Muy satisfecho", "Satisfecho", "Poco satisfecho", "Insatisfecho"], horizontal=True, key="p9_radio")
-                        p10_recomienda = st.radio("10. ¿En base al servicio recibido, recomendaría el servicio de MAXCOM a otras personas?", ["Sí", "No"], horizontal=True, key="p10_radio")
-                        
-                        st.divider()
-                        
-                        st.markdown("### 7️⃣ Observaciones del Cliente (Opcional)")
-                        observaciones_cliente = st.text_area("Comentarios u observaciones adicionales del cliente:", key="obs_cliente_call")
-                        
-                        st.divider()
-                        
-                        st.markdown("### 8️⃣ Visto Bueno y Cierre del Servicio")
-                        p11_visto_bueno = st.radio("11. ¿Autoriza usted que el técnico continúe con su siguiente instalación o visita, confirmando que el servicio quedó conforme?", ["Sí, otorgo mi visto bueno", "No"], horizontal=True, key="p11_radio")
+                        st.markdown("### 4️⃣ Visto Bueno y Cierre de la Gestión")
                         nombre_firma = st.text_input("Nombre de la persona que brinda la aceptación digital (Cliente o Responsable):", value=nombre_cliente, key="firma_call_input")
                         hora_cierre = st.text_input("Hora de cierre del servicio:", value=get_honduras_time().strftime('%I:%M %p'), key="hora_c_call_input")
                         
@@ -185,19 +175,17 @@ def mostrar_modulo_calidad(conn, df_base):
                             "TECNICO": tecnico,
                             "ACTIVIDAD": actividad,
                             "FECHA_VISITA": fecha_visita_input,
-                            "PUNTUALIDAD_HORARIO": p1_puntualidad,
-                            "PRESENTACION_TRATO": p2_presentacion,
-                            "EXPLICACION_TRABAJO": p3_explicacion,
-                            "CORRESPONDE_SERVICIO": p4_corresponde,
-                            "FUNCIONANDO_CORRECTAMENTE": p5_funcionando,
-                            "MOTIVO_FALLA_SERVICIO": motivo_no_funciona if p5_funcionando == "No" else "N/A",
-                            "ORDEN_LIMPIEZA": p6_limpieza,
-                            "CUIDADO_PROPIEDAD": p7_cuidado,
-                            "CALIFICACION_ATENCION": p8_atencion,
-                            "SATISFACCION_GENERAL": p9_satisfaccion,
-                            "RECOMENDARIA_MAXCOM": p10_recomienda,
-                            "OBSERVACIONES_CLIENTE": observaciones_cliente if observaciones_cliente.strip() else "Ninguna",
-                            "AUTORIZA_SIGUIENTE_VISITA": p11_visto_bueno,
+                            
+                            # Extracción de valores numéricos de la escala (primer carácter)
+                            "P1_PUNTUALIDAD": int(p1_puntualidad[0]),
+                            "P2_PRESENTACION_TRATO": int(p2_presentacion[0]),
+                            "P3_CLARIDAD_EXPLICACION": int(p3_claridad[0]),
+                            "P4_EXPLICACION_TV_CCVEO": int(p4_tv_ccveo[0]),
+                            "P5_CALIDAD_SERVICIO": int(p5_calidad[0]),
+                            "P6_LIMPIEZA_TRABAJO": int(p6_limpieza[0]),
+                            "P7_SATISFACCION_GENERAL": int(p7_satisfaccion[0]),
+                            
+                            "MEJORAS_OPCIONAL": mejoras_opcional if mejoras_opcional.strip() else "Ninguna",
                             "ACEPTACION_DIGITAL": nombre_firma,
                             "HORA_CIERRE_SERVICIO": hora_cierre,
                             "APROBACION_INTERNA": evaluacion_interna,
@@ -228,19 +216,17 @@ def mostrar_modulo_calidad(conn, df_base):
                             "TECNICO": tecnico,
                             "ACTIVIDAD": actividad,
                             "FECHA_VISITA": fecha_visita_str,
-                            "PUNTUALIDAD_HORARIO": "N/A",
-                            "PRESENTACION_TRATO": "N/A",
-                            "EXPLICACION_TRABAJO": "N/A",
-                            "CORRESPONDE_SERVICIO": "N/A",
-                            "FUNCIONANDO_CORRECTAMENTE": "N/A",
-                            "MOTIVO_FALLA_SERVICIO": "N/A",
-                            "ORDEN_LIMPIEZA": "N/A",
-                            "CUIDADO_PROPIEDAD": "N/A",
-                            "CALIFICACION_ATENCION": "N/A",
-                            "SATISFACCION_GENERAL": "N/A",
-                            "RECOMENDARIA_MAXCOM": "N/A",
-                            "OBSERVACIONES_CLIENTE": "Llamada no contestada",
-                            "AUTORIZA_SIGUIENTE_VISITA": "N/A",
+                            
+                            # Rellenamos con N/A en caso de que la llamada no se haya concretado
+                            "P1_PUNTUALIDAD": "N/A",
+                            "P2_PRESENTACION_TRATO": "N/A",
+                            "P3_CLARIDAD_EXPLICACION": "N/A",
+                            "P4_EXPLICACION_TV_CCVEO": "N/A",
+                            "P5_CALIDAD_SERVICIO": "N/A",
+                            "P6_LIMPIEZA_TRABAJO": "N/A",
+                            "P7_SATISFACCION_GENERAL": "N/A",
+                            
+                            "MEJORAS_OPCIONAL": "Llamada no contestada",
                             "ACEPTACION_DIGITAL": "N/A",
                             "HORA_CIERRE_SERVICIO": "N/A",
                             "APROBACION_INTERNA": "Servicio no aprobado – requiere seguimiento",
@@ -313,13 +299,7 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.subheader("🚙 Auditoría Técnica en Campo (Supervisión Presencial)")
                 st.caption("Formularios técnicos de control de calidad para ser completados por supervisores en el sitio de trabajo.")
                 
-                # Sub-selector para diferenciar Órdenes Varias de INSFIBRA.
-                # NOTA: aquí antes había un st.tabs() anidado dentro de otro st.tabs().
-                # Streamlit no recuerda de forma confiable la pestaña activa cuando hay
-                # tabs anidados: cualquier interacción (incluso en otra parte de la
-                # página) puede resetear tanto la sub-pestaña como la pestaña principal.
-                # Por eso se reemplaza por un radio horizontal controlado con
-                # session_state, que sí conserva su selección entre reruns.
+                # Sub-selector para separar Órdenes Varias de INSFIBRA sin tabs anidados
                 key_subtab_campo = f"subtab_campo_selector_{num_orden}"
                 opcion_subtab_campo = st.radio(
                     "Tipo de auditoría de campo:",
