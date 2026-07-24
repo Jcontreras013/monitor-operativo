@@ -313,10 +313,23 @@ def mostrar_modulo_calidad(conn, df_base):
                 st.subheader("🚙 Auditoría Técnica en Campo (Supervisión Presencial)")
                 st.caption("Formularios técnicos de control de calidad para ser completados por supervisores en el sitio de trabajo.")
                 
-                # Sub-pestañas para diferenciar Órdenes Varias de INSFIBRA
-                subtab_varias, subtab_insfibra = st.tabs(["📋 Auditoría de Órdenes Varias", "🔌 Auditoría de Instalaciones (INSFIBRA)"])
-                
-                with subtab_varias:
+                # Sub-selector para diferenciar Órdenes Varias de INSFIBRA.
+                # NOTA: aquí antes había un st.tabs() anidado dentro de otro st.tabs().
+                # Streamlit no recuerda de forma confiable la pestaña activa cuando hay
+                # tabs anidados: cualquier interacción (incluso en otra parte de la
+                # página) puede resetear tanto la sub-pestaña como la pestaña principal.
+                # Por eso se reemplaza por un radio horizontal controlado con
+                # session_state, que sí conserva su selección entre reruns.
+                key_subtab_campo = f"subtab_campo_selector_{num_orden}"
+                opcion_subtab_campo = st.radio(
+                    "Tipo de auditoría de campo:",
+                    ["📋 Auditoría de Órdenes Varias", "🔌 Auditoría de Instalaciones (INSFIBRA)"],
+                    horizontal=True,
+                    key=key_subtab_campo
+                )
+                st.markdown("---")
+
+                if opcion_subtab_campo == "📋 Auditoría de Órdenes Varias":
                     st.markdown("### 📋 Formulario para Órdenes Varias (Soporte, Mantenimiento, etc.)")
                     form_varias = st.form(key=f"form_auditoria_varias_{num_orden}")
                     with form_varias:
@@ -355,7 +368,7 @@ def mostrar_modulo_calidad(conn, df_base):
                         else:
                             st.error("❌ Error al guardar en Google Sheets. Por favor, asegúrese de crear la pestaña 'Operaciones'.")
                             
-                with subtab_insfibra:
+                else:
                     st.markdown("### 🔌 Formulario de Auditoría para Instalaciones (INSFIBRA)")
                     
                     tiempo_invent_str = "---"
