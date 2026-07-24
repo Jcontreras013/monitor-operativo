@@ -22,27 +22,46 @@ def mostrar_modulo_calidad(conn, df_base):
         st.info("ℹ️ No hay órdenes registradas en el sistema para evaluar en este momento.")
         return
 
-    # 1. BUSCADOR MULTI-PARÁMETRO (Orden, Nombre o Código de Cliente)
-    # Permite al personal de SAC buscar escribiendo cualquiera de estos datos en un solo lugar
-    df_evaluables['SEARCH_LABEL'] = (
-        "ORD-" + df_evaluables['NUM'].astype(str) + " | " + 
-        df_evaluables['NOMBRE'].fillna('N/D').astype(str) + " | " + 
-        df_evaluables['CLIENTE'].astype(str)
-    )
-    lista_opciones_search = sorted(df_evaluables['SEARCH_LABEL'].unique().tolist())
-    
-    col_sel1, col_sel2 = st.columns([2, 1])
+    # ==============================================================================
+    # DOS BUSCADORES INDEPENDIENTES (INICIAN COMPLETAMENTE EN BLANCO)
+    # ==============================================================================
+    row_sel = None
+
+    col_sel1, col_sel2 = st.columns(2)
     with col_sel1:
-        opcion_seleccionada = st.selectbox(
-            "🔍 Busque por Orden (NUM), Nombre del Cliente o Código de Cliente:", 
-            options=lista_opciones_search,
-            key="calidad_order_search_selector"
+        lista_ordenes = sorted(df_evaluables['NUM'].dropna().astype(str).unique().tolist())
+        num_seleccionado = st.selectbox(
+            "🔍 Buscar por Número de Orden (NUM):", 
+            options=lista_ordenes, 
+            index=None, 
+            placeholder="Escriba o seleccione una orden...",
+            key="calidad_num_search"
         )
-    
-    # Extraer fila correspondiente a la opción seleccionada de forma segura
-    row_sel = df_evaluables[df_evaluables['SEARCH_LABEL'] == opcion_seleccionada].iloc[0]
-    
-    # Cargar variables de la orden
+        
+    with col_sel2:
+        # Generar una etiqueta limpia: Nombre del Cliente (Código ID)
+        df_evaluables['CLIENTE_LABEL'] = df_evaluables['NOMBRE'].fillna('N/D').astype(str) + " (" + df_evaluables['CLIENTE'].astype(str) + ")"
+        lista_clientes = sorted(df_evaluables['CLIENTE_LABEL'].unique().tolist())
+        cliente_seleccionado = st.selectbox(
+            "👤 Buscar por Cliente (Nombre / ID):", 
+            options=lista_clientes, 
+            index=None, 
+            placeholder="Escriba o seleccione un cliente...",
+            key="calidad_cliente_search"
+        )
+
+    # Identificar la orden correspondiente según el buscador que haya utilizado el usuario
+    if num_seleccionado is not None:
+        row_sel = df_evaluables[df_evaluables['NUM'].astype(str) == num_seleccionado].iloc[0]
+    elif cliente_seleccionado is not None:
+        row_sel = df_evaluables[df_evaluables['CLIENTE_LABEL'] == cliente_seleccionado].iloc[0]
+
+    # Si no se ha realizado ninguna selección, mostramos la pantalla limpia
+    if row_sel is None:
+        st.info("💡 Por favor, busque y seleccione una orden o un cliente en los buscadores de arriba para comenzar con la auditoría.")
+        return
+
+    # Cargar variables de la orden una vez seleccionada
     num_orden = row_sel.get('NUM', 'N/D')
     cliente_id = row_sel.get('CLIENTE', 'N/D')
     nombre_cliente = row_sel.get('NOMBRE', 'N/D')
