@@ -1703,6 +1703,10 @@ def main():
     # ==============================================================================        
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
+      # === FILTRADO SEGURO DE FECHAS PARA INDICADORES ===
+        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha
+        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce')
+
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
 
@@ -1712,7 +1716,7 @@ def main():
         # Filtramos df_todas_pendientes_monitor para que mantenga las asignadas y solo las unassigned que pertenezcan a las actividades permitidas
         df_todas_pendientes_monitor = df_todas_pendientes_monitor[mask_has_tec_mon | (~mask_has_tec_mon & mask_valid_no_asig_act)].copy()
 
-        df_cerradas_hoy_monitor = df_monitor_filtrado[(df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+        # Se eliminó la asignación antigua redundante que no filtraba por técnico
 
         df_todas_pendientes_monitor['DIAS_RETRASO'] = (pd.Timestamp(ahora_local).normalize() - pd.to_datetime(df_todas_pendientes_monitor['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).astype(int)
         
@@ -1740,7 +1744,8 @@ def main():
             
         vivas_count_asignadas = len(df_todas_pendientes_monitor[mask_tec_valido_mon])
         
-        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
+        # Conteo depurado de cerradas de HOY (compara la fecha de cierre con hoy_date_valor)
+        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
         df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
     
