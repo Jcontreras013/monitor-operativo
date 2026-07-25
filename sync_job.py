@@ -178,18 +178,45 @@ def ejecutar_sincronizacion_background():
         print(f"[-] Error menor al respaldar en GCS: {e_gcs}")
 
 if __name__ == '__main__':
-    print("="*60)
-    print("🚀 INICIANDO DEMONIO DE SINCRONIZACIÓN MAXCOM PRO")
-    print("="*60)
+    print("="*60, flush=True)
+    print("🚀 INICIANDO DEMONIO DE SINCRONIZACIÓN MAXCOM PRO", flush=True)
+    print("="*60, flush=True)
+
+    ruta_heartbeat = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heartbeat.txt")
 
     while True:
+        # ======================================================================
+        # TODO el cuerpo del ciclo va dentro de este try/except (no solo la
+        # sincronización). Antes, los print() de cierre de ciclo quedaban
+        # fuera de cualquier protección: si uno de ellos fallaba (por ejemplo,
+        # el archivo de log bloqueado un instante por el antivirus o por
+        # tenerlo abierto en Notepad), la excepción mataba el proceso completo
+        # sin dejar rastro, aunque la PC siguiera encendida.
+        # ======================================================================
         try:
             ejecutar_sincronizacion_background()
         except Exception as e_critico:
-            print(f"[-] Falla crítica en el ciclo actual. Se reintentará en la siguiente ventana. Detalle: {e_critico}")
+            try:
+                print(f"[-] Falla crítica en el ciclo actual. Se reintentará en la siguiente ventana. Detalle: {e_critico}", flush=True)
+            except Exception:
+                pass
 
-        print("="*60)
-        hora_prox = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M:%S")
-        print(f"⏳ Ciclo terminado. Esperando 15 minutos. Próxima ejecución a las: {hora_prox}")
+        try:
+            print("="*60, flush=True)
+            hora_prox = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M:%S")
+            print(f"⏳ Ciclo terminado. Esperando 15 minutos. Próxima ejecución a las: {hora_prox}", flush=True)
+        except Exception:
+            # Si hasta el print de cierre de ciclo falla (log bloqueado, disco
+            # lleno, etc.), no se debe dejar morir el demonio por esto.
+            pass
+
+        # Heartbeat: se sobrescribe en cada vuelta del ciclo. Si esta hora deja
+        # de avanzar mientras la PC sigue encendida, es la prueba de que el
+        # proceso murió (o quedó colgado) justo después de la última escritura.
+        try:
+            with open(ruta_heartbeat, "w", encoding="utf-8") as f_hb:
+                f_hb.write(f"Último ciclo completado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        except Exception:
+            pass
 
         time.sleep(900)
