@@ -280,7 +280,7 @@ def sincronizar_datos_nube(conn):
                 time.sleep(1.5)
                 st.rerun()
             else: 
-                st.warning("⚠️ La base de datos en la nube está completamente vacía. Sube archivos como Emitentes primero.")
+                st.warning("⚠️ La base de datos en la nube está completamente vacía. Sube archivos como Admin primero.")
                 import time
                 time.sleep(3)
     except Exception as e: 
@@ -1249,10 +1249,6 @@ def main():
                     df_para_gantt_diario = df_base[mask_ini_dia].copy()
                     
                     if not df_para_gantt_diario.empty:
-                        # --- SOLUCIÓN: Depurar técnicos no asignados para evitar la fila "N/D" en la gráfica histórica ---
-                        df_para_gantt_diario = df_para_gantt_diario[mascara_tecnico_asignado(df_para_gantt_diario['TECNICO'])].copy()
-
-                    if not df_para_gantt_diario.empty:
                         ahora_hx_d = get_honduras_time()
                         
                         df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
@@ -1334,23 +1330,17 @@ def main():
                             "Tiempo Total=" + df_para_gantt_diario['TIEMPO_REAL'].astype(str)
                         )
 
-                        # --- CORRECCIÓN DE LA PALETA DE COLORES (MAQUEADO COMPLETO) ---
                         colores_solidos = {
                             "SOPFIBRA": "#d32f2f",         
                             "SOP": "#d32f2f",                
-                            "SOPCORP": "#b71c1c",
-                            "SOPFIBRACORP": "#b71c1c",
+                            "INSFIBRA": "#1976d2",         
+                            "INSFIBRACORP": "#0d47a1",     
+                            "PEXTERNO": "#f57c00",         
+                            "PLEXISCA": "#e65100",         
+                            "TRASLADOEXTFIBRA": "#8e24aa",  
                             "SOPRECONCORP": "#c2185b",       
                             "SOPRECONHFC": "#c2185b",       
                             "SOPRECONFIBRA": "#c2185b",
-                            "INSFIBRA": "#1976d2",         
-                            "INSFIBRACORP": "#0d47a1",     
-                            "INSHFC": "#0288d1",
-                            "INSEQUIPO": "#1e88e5",
-                            "INS-WA": "#29b6f6",
-                            "PEXTERNO": "#f57c00",         
-                            "PLEXISCA": "#e65100",         
-                            "SPLITTEROPT": "#fbc02d",
                             "TVADICIONAL": "#00897b",
                             "ALMUERZO": "#78909c"
                         }
@@ -2016,9 +2006,6 @@ def main():
                         
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
 
-                        # --- SOLUCIÓN: Depurar técnicos no asignados para evitar la fila "N/D" en la gráfica en vivo ---
-                        df_para_gantt_final = df_para_gantt_final[mascara_tecnico_asignado(df_para_gantt_final['TECNICO'])].copy()
-
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
                         except Exception:
@@ -2046,6 +2033,8 @@ def main():
                         
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
 
+                        # Se resetea aquí; si el Gantt termina vacío, ningún técnico debe
+                        # figurar en las tablas de abajo.
                         tecnicos_en_gantt_hoy = set()
                         
                         if not df_para_gantt_final.empty:
@@ -2129,23 +2118,17 @@ def main():
 
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                             
-                            # --- CORRECCIÓN DE LA PALETA DE COLORES (MAQUEADO COMPLETO) ---
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",         
                                 "SOP": "#d32f2f",                
-                                "SOPCORP": "#b71c1c",
-                                "SOPFIBRACORP": "#b71c1c",
+                                "INSFIBRA": "#1976d2",         
+                                "INSFIBRACORP": "#0d47a1",     
+                                "PEXTERNO": "#f57c00",         
+                                "PLEXISCA": "#e65100",         
+                                "TRASLADOEXTFIBRA": "#8e24aa",  
                                 "SOPRECONCORP": "#c2185b",       
                                 "SOPRECONHFC": "#c2185b",       
                                 "SOPRECONFIBRA": "#c2185b",
-                                "INSFIBRA": "#1976d2",         
-                                "INSFIBRACORP": "#0d47a1",     
-                                "INSHFC": "#0288d1",
-                                "INSEQUIPO": "#1e88e5",
-                                "INS-WA": "#29b6f6",
-                                "PEXTERNO": "#f57c00",         
-                                "PLEXISCA": "#e65100",         
-                                "SPLITTEROPT": "#fbc02d",
                                 "TVADICIONAL": "#00897b",
                                 "ALMUERZO": "#78909c"
                             }
@@ -2172,6 +2155,10 @@ def main():
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
 
+                            # Se recalcula aquí (y no antes) porque df_para_gantt_final ya
+                            # pasó por TODOS los filtros de dibujado (actividades permitidas,
+                            # bloques de almuerzo, etc.). Este es el set real de técnicos que
+                            # el usuario ve en la gráfica.
                             tecnicos_en_gantt_hoy = set(df_para_gantt_final['TECNICO'].dropna().unique())
 
                         # ==============================================================================
@@ -2200,6 +2187,14 @@ def main():
                         ahora_local = get_honduras_time()
                         limite_9am = datetime.combine(hoy_date_valor, dt_time(9, 0))
 
+                        # tecnicos_en_gantt_hoy ya fue calculado justo arriba, usando el
+                        # dataframe final del Gantt (después de todos sus filtros).
+
+                        # Salvaguarda anti-desfase de nombres: si el archivo de técnicos
+                        # válidos no coincide con NINGUNO de los técnicos que sí tienen
+                        # actividad hoy en el Gantt, es señal de que los nombres no calzan
+                        # (tildes, orden de apellidos, etc.). En ese caso se desactiva el
+                        # filtro para no dejar las tablas vacías por error.
                         if tecnicos_validos_alertas and not (tecnicos_validos_alertas & tecnicos_en_gantt_hoy):
                             tecnicos_validos_alertas = set()
 
@@ -2311,6 +2306,8 @@ def main():
 
 
                         with st.expander("📋 Detalle de Apertura Tardía", expanded=False):
+                            # Solo técnicos que SÍ iniciaron su orden (pasadas las 9:00 AM).
+                            # Se excluyen los que aún no tienen ninguna orden iniciada hoy.
                             filas_apertura = []
                             for tec in alertas_9am:
                                 primera_ini = primera_orden_por_tec.get(tec)
@@ -2363,11 +2360,22 @@ def main():
                                     cerradas_hoy_tec = ordenes_ini_hoy[ordenes_ini_hoy['HORA_LIQ'].notnull()]
                                     ultima_actividad = cerradas_hoy_tec['HORA_LIQ'].max() if not cerradas_hoy_tec.empty else None
 
+                                    # Punto de referencia para contar tiempo muerto: si el
+                                    # técnico abrió su primera orden después de las 9:00 AM,
+                                    # el tiempo muerto debe contar desde las 9:00 (no desde la
+                                    # hora en que por fin abrió la orden). Si abrió a tiempo,
+                                    # se sigue usando su hora real de inicio.
                                     referencia_inicio = min(primera_orden_ini_naive, limite_9am)
 
                                     referencia_fin = ahora_local
                                     tiempo_transcurrido_min = max(0.0, (referencia_fin - referencia_inicio).total_seconds() / 60)
 
+                                    # Se fusionan los intervalos de trabajo antes de sumarlos.
+                                    # Si dos órdenes se traslapan en el tiempo (ej. un bloque
+                                    # corto de reasignación "INSEQUIPO" que cae dentro de otra
+                                    # orden más larga), sumarlas por separado duplicaba minutos
+                                    # que en realidad no eran tiempo muerto, pero tampoco eran
+                                    # minutos de trabajo "nuevos".
                                     intervalos_trabajo = []
                                     for _, r_ord in ordenes_ini_hoy.iterrows():
                                         ini_r = r_ord.get('HORA_INI')
@@ -2398,8 +2406,18 @@ def main():
                                         tiempo_trabajado_min += (cur_fin - cur_ini).total_seconds() / 60
 
                                     tiempo_muerto_bruto = int(round(max(0.0, tiempo_transcurrido_min - tiempo_trabajado_min)))
+
+                                    # Ya no se descuenta el almuerzo aquí: el técnico reporta su
+                                    # hora de almuerzo y esta se agrega manualmente a la gráfica.
+                                    # Si un técnico NO reporta su almuerzo, ese tramo debe
+                                    # contar como tiempo muerto (no se le da el beneficio de la
+                                    # duda). Se deja la variable en 0 para no tocar el resto del
+                                    # cálculo ni la tabla de diagnóstico.
                                     descuento_almuerzo = 0
+
                                     tiempo_muerto_neto = max(0, tiempo_muerto_bruto - descuento_almuerzo)
+
+
 
                                     if tiene_orden_activa_tm:
                                         estado_actual = "🔧 En orden activa"
@@ -2439,6 +2457,10 @@ def main():
                                 horas_t, mins_t = divmod(total_equipo_muerto, 60)
                                 st.metric("⏱️ Tiempo Muerto Neto Total del Equipo Hoy", f"{horas_t}h {mins_t}m")
 
+                                # --- TABLA TEMPORAL DE DIAGNÓSTICO ---
+                                # Muestra el desglose completo del cálculo para poder
+                                # verificar cada número contra la gráfica. Se puede quitar
+                                # una vez que confirmemos que los cálculos cuadran.
                                 with st.expander("🔧 Diagnóstico (desglose del cálculo)", expanded=False):
                                     df_diag = pd.DataFrame(filas_muerto)
                                     df_diag = df_diag.rename(columns={
@@ -2506,9 +2528,12 @@ def main():
                                     estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                                     bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
-                                    hora_ini_row_gps = row.get('HORA_INI')
-                                    orden_ya_abierta_gps = pd.notnull(hora_ini_row_gps) and str(hora_ini_row_gps).strip() not in ("", "---", "NaT", "None")
-                                    show_gps_mobile = row.get('GPS') if orden_ya_abierta_gps else None
+                                    # Ubicación GPS disponible en todo momento para el supervisor.
+                                    # Se utiliza target="_self" para forzar la apertura directa en la app de mapas (Google Maps, Waze, etc.)
+                                    # evitando los bloqueos de ventanas emergentes en navegadores de celular.
+                                    estado_row_gps = str(row.get('ESTADO', '')).strip().upper()
+                                    es_orden_abierta_gps = estado_row_gps not in ("CERRADA", "ANULADA")
+                                    show_gps_mobile = row.get('GPS') if es_orden_abierta_gps else None
                                     gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_self" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
                             
                                     st.markdown(f"""
@@ -2535,9 +2560,13 @@ def main():
                             else:
                                 df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
+                                # === CONTROL DE COLUMNA GPS ===
+                                # El link de ubicación GPS solo debe mostrarse en órdenes
+                                # ABIERTAS (no CERRADA ni ANULADA), ya que la ubicación del
+                                # técnico solo es relevante mientras la orden sigue en curso.
                                 if "GPS" in df_v_tabla_monitor.columns:
-                                    if "HORA_INI" in df_v_tabla_monitor.columns:
-                                        mask_orden_abierta_gps = df_v_tabla_monitor["HORA_INI"].notna()
+                                    if "ESTADO" in df_v_tabla_monitor.columns:
+                                        mask_orden_abierta_gps = ~df_v_tabla_monitor["ESTADO"].astype(str).str.strip().str.upper().isin(["CERRADA", "ANULADA"])
                                         df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].where(mask_orden_abierta_gps, "").fillna("")
                                     else:
                                         df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
@@ -2628,7 +2657,7 @@ def main():
                                         st.caption("Sin datos de segmentos para graficar.")
                                 
                                 with col_an2:
-                                    if not motifs_conteo.empty:
+                                    if not motivos_conteo.empty:
                                         fig, ax = plt.subplots(figsize=(6, 4))
                                         motivos_conteo.plot(kind='pie', autopct='%1.1f%%', ax=ax, cmap='viridis')
                                         ax.set_ylabel('')
