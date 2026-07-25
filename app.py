@@ -2528,12 +2528,15 @@ def main():
                                     estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                                     bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
                             
-                                    # Ubicación GPS disponible en todo momento para el supervisor.
+                                    # El link de ubicación GPS solo debe mostrarse cuando el
+                                    # técnico YA abrió (inició) la orden, es decir, cuando
+                                    # HORA_INI tiene un valor real. Antes de eso no hay una
+                                    # ubicación GPS asociada a un trabajo en curso.
                                     # Se utiliza target="_self" para forzar la apertura directa en la app de mapas (Google Maps, Waze, etc.)
                                     # evitando los bloqueos de ventanas emergentes en navegadores de celular.
-                                    estado_row_gps = str(row.get('ESTADO', '')).strip().upper()
-                                    es_orden_abierta_gps = estado_row_gps not in ("CERRADA", "ANULADA")
-                                    show_gps_mobile = row.get('GPS') if es_orden_abierta_gps else None
+                                    hora_ini_row_gps = row.get('HORA_INI')
+                                    orden_ya_abierta_gps = pd.notnull(hora_ini_row_gps) and str(hora_ini_row_gps).strip() not in ("", "---", "NaT", "None")
+                                    show_gps_mobile = row.get('GPS') if orden_ya_abierta_gps else None
                                     gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_self" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
                             
                                     st.markdown(f"""
@@ -2561,12 +2564,13 @@ def main():
                                 df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
                                 # === CONTROL DE COLUMNA GPS ===
-                                # El link de ubicación GPS solo debe mostrarse en órdenes
-                                # ABIERTAS (no CERRADA ni ANULADA), ya que la ubicación del
-                                # técnico solo es relevante mientras la orden sigue en curso.
+                                # El link de ubicación GPS solo debe mostrarse cuando el
+                                # técnico YA abrió (inició) la orden, es decir, cuando
+                                # HORA_INI tiene un valor real (no "---"/vacío). Antes de
+                                # eso no existe una ubicación asociada a un trabajo en curso.
                                 if "GPS" in df_v_tabla_monitor.columns:
-                                    if "ESTADO" in df_v_tabla_monitor.columns:
-                                        mask_orden_abierta_gps = ~df_v_tabla_monitor["ESTADO"].astype(str).str.strip().str.upper().isin(["CERRADA", "ANULADA"])
+                                    if "HORA_INI" in df_v_tabla_monitor.columns:
+                                        mask_orden_abierta_gps = df_v_tabla_monitor["HORA_INI"].notna()
                                         df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].where(mask_orden_abierta_gps, "").fillna("")
                                     else:
                                         df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
