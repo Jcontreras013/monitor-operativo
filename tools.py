@@ -49,23 +49,27 @@ def normalizar_nombre_cruce(texto):
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
     return ' '.join(t.split())
 
-def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
-    """Motor blindado de conversión de fechas a partir de múltiples formatos entrantes."""
+# ==============================================================================
+# REEMPLAZAR ESTAS DOS FUNCIONES EN TOOLS.PY
+# ==============================================================================
+
+def parse_date_ultra_safe(val: Any, permitir_asumir_hoy: bool = True) -> pd.Timestamp:
+    """Motor de conversión de fechas a partir de múltiples formatos entrantes."""
     if pd.isnull(val) or str(val).strip() == "" or str(val).upper() in ["NONE", "NAN", "NAT", "NULL"]:
         return pd.NaT
     
     hoy = pd.Timestamp(get_honduras_time()).normalize()
 
     if isinstance(val, dt_time):
-        return pd.Timestamp.combine(hoy.date(), val)
+        return pd.Timestamp.combine(hoy.date(), val) if permitir_asumir_hoy else pd.NaT
     if isinstance(val, datetime):
         if val.year <= 1970:
-            return hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)
+            return (hoy + pd.Timedelta(hours=val.hour, minutes=val.minute, seconds=val.second)) if permitir_asumir_hoy else pd.NaT
         return pd.Timestamp(val)
     if isinstance(val, (int, float)):
         if val == 0 or val == 0.0: return pd.NaT
         if val > 10000: return pd.to_datetime(val, unit='D', origin='1899-12-30')
-        elif 0 < val < 1: return hoy + pd.to_timedelta(val, unit='D')
+        elif 0 < val < 1: return (hoy + pd.to_timedelta(val, unit='D')) if permitir_asumir_hoy else pd.NaT
         else: return pd.NaT
 
     # === LA CURA: Limpieza de formatos MaxCom (AM/PM) ===
@@ -75,6 +79,8 @@ def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
 
     try:
         if re.match(r'^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$', str_val, re.I):
+            if not permitir_asumir_hoy:
+                return pd.NaT
             parsed_time = pd.to_datetime(str_val).time()
             return pd.Timestamp.combine(hoy.date(), parsed_time)
 
@@ -85,17 +91,19 @@ def parse_date_ultra_safe(val: Any) -> pd.Timestamp:
 
         if pd.notnull(parsed):
             if parsed.year <= 1970:
-                return hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)
+                return (hoy + pd.Timedelta(hours=parsed.hour, minutes=parsed.minute, seconds=parsed.second)) if permitir_asumir_hoy else pd.NaT
             return parsed
         return pd.NaT
     except:
         return pd.NaT
 
-def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list) -> pd.DataFrame:
+def procesar_fechas_seguro(df_input: pd.DataFrame, columnas: list, columnas_sin_asumir_hoy: list = None) -> pd.DataFrame:
     df = df_input.copy()
+    columnas_sin_asumir_hoy = columnas_sin_asumir_hoy or []
     for col in columnas:
         if col in df.columns:
-            df[col] = df[col].apply(parse_date_ultra_safe)
+            permitir_hoy = col not in columnas_sin_asumir_hoy
+            df[col] = df[col].apply(lambda v: parse_date_ultra_safe(v, permitir_asumir_hoy=permitir_hoy))
             df[col] = pd.to_datetime(df[col], errors='coerce')
     return df
 
