@@ -107,7 +107,7 @@ def ejecutar_sincronizacion_background():
         print(f"  -> [+] Catálogo FTTX cargado con {len(df_fttx_cloud)} registros.")
 
     df_depurado = depurar_api_con_dispositivos(df_api_raw, df_fttx_cloud)
-    df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
+    df_depurado = procesar_fechas_seguro(df_depurado, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'], columnas_sin_asumir_hoy=['HORA_LIQ', 'FECHA_APE'])
 
     # 5. Calcular campos técnicos básicos
     ahora_ts = pd.Timestamp(ahora_local)
