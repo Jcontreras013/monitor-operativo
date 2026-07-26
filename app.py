@@ -2508,18 +2508,24 @@ def main():
 
                     status_final_btn = st.session_state.st_btn_v_active
 
-                    if check_ordenes_totales:
-                        df_v_tabla_monitor = df_todas_pendientes_monitor 
+                    # El toggle "Órdenes Totales Pendientes" (y "Ver solo Críticas") solo
+                    # tienen sentido dentro de la vista "Asignadas Activas": son atajos
+                    # para ver el universo completo de pendientes o solo las críticas.
+                    # Antes, si el toggle estaba encendido, se aplicaba SIEMPRE sin
+                    # importar el botón activo, así que al entrar a "Cerradas Hoy" o
+                    # "Anuladas Hoy" seguía mostrando el total de pendientes (sin filtro
+                    # de fecha), no lo cerrado/anulado del día.
+                    if status_final_btn == "PENDIENTE":
+                        if check_ordenes_totales:
+                            df_v_tabla_monitor = df_todas_pendientes_monitor
+                        elif check_criticos_diamante:
+                            df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+                        else:
+                            df_v_tabla_monitor = df_solo_asignadas_monitor
+                    elif status_final_btn == "C_HOY":
+                        df_v_tabla_monitor = df_cerradas_hoy_monitor
                     else:
-                        if status_final_btn == "PENDIENTE": 
-                            if check_criticos_diamante:
-                                df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
-                            else:
-                                df_v_tabla_monitor = df_solo_asignadas_monitor
-                        elif status_final_btn == "C_HOY": 
-                            df_v_tabla_monitor = df_cerradas_hoy_monitor
-                        else: 
-                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                        df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
                         
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
