@@ -201,7 +201,7 @@ def sincronizar_datos_nube(conn):
                 mask_otra_empresa_sync = (empresa_upper_sync != '') & (empresa_upper_sync != 'NAN') & (empresa_upper_sync != 'NONE') & (~empresa_upper_sync.str.contains('ISCA', na=False))
                 df_nube = df_nube[~mask_otra_empresa_sync].copy()
 
-                df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'], columnas_sin_asumir_hoy=['HORA_LIQ', 'FECHA_APE'])
+                df_nube = procesar_fechas_seguro(df_nube, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
                 
                 if 'HORA_INI' in df_nube.columns and 'HORA_LIQ' in df_nube.columns:
                     df_nube['MINUTOS_CALC'] = (df_nube['HORA_LIQ'] - df_nube['HORA_INI']).dt.total_seconds() / 60
@@ -796,7 +796,7 @@ def main():
         df_invalidos = df_base[df_base['NUM'] == 'N/D']
         df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
-    df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'], columnas_sin_asumir_hoy=['HORA_LIQ', 'FECHA_APE'])
+    df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'])
     
     # === FILTRADO AVANZADO DE FALSOS OFFLINE USANDO TELEMETRÍA REAL FTTX ===
     col_olt_info = None
@@ -1748,33 +1748,6 @@ def main():
         mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
         df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
-
-        # --- DIAGNÓSTICO TEMPORAL: por qué "Cerradas Hoy" da un número inflado ---
-        # Esto se puede quitar en cuanto confirmemos la causa. Muestra:
-        # 1) el valor exacto que el código está usando como "hoy"
-        # 2) cuántas filas totales tienen ESTADO=CERRADA en TODO el histórico
-        # 3) la distribución real de fechas de HORA_LIQ_CLEAN entre esas filas
-        #    (si aparecen muchas fechas distintas a hoy, el filtro de fecha no
-        #    está funcionando; si TODAS caen en hoy, el problema es que la
-        #    fecha de cierre real ya viene mal desde el origen/API)
-        # 4) una muestra cruda de filas para inspección manual
-        with st.expander("🔧 Diagnóstico temporal: Cerradas Hoy", expanded=False):
-            st.write(f"**hoy_date_valor usado por el código:** `{hoy_date_valor}`")
-            st.write(f"**dtype de HORA_LIQ_CLEAN:** `{df_monitor_filtrado['HORA_LIQ_CLEAN'].dtype}`")
-
-            total_cerradas_historico = int((df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA').sum())
-            st.write(f"**Total de filas con ESTADO=CERRADA en TODO el histórico cargado:** {total_cerradas_historico}")
-            st.write(f"**De esas, cuántas coinciden con hoy_date_valor:** {int(mask_cerradas_hoy.sum())}")
-
-            df_cerradas_all = df_monitor_filtrado[df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA'].copy()
-            if not df_cerradas_all.empty:
-                st.write("**Distribución de fechas de HORA_LIQ_CLEAN entre TODAS las filas CERRADA (top 15 fechas más frecuentes):**")
-                conteo_fechas = df_cerradas_all['HORA_LIQ_CLEAN'].dt.date.value_counts(dropna=False).head(15)
-                st.dataframe(conteo_fechas.rename_axis("FECHA_HORA_LIQ").reset_index(name="CANTIDAD"), use_container_width=True, hide_index=True)
-
-                st.write("**Muestra cruda de 20 filas marcadas como 'Cerradas Hoy' (para revisar valores reales):**")
-                cols_debug = [c for c in ['NUM', 'ESTADO', 'TECNICO', 'HORA_LIQ', 'HORA_LIQ_CLEAN', 'FECHA_APE'] if c in df_cerradas_hoy_monitor.columns]
-                st.dataframe(df_cerradas_hoy_monitor[cols_debug].head(20), use_container_width=True, hide_index=True)
     
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
@@ -2535,24 +2508,18 @@ def main():
 
                     status_final_btn = st.session_state.st_btn_v_active
 
-                    # El toggle "Órdenes Totales Pendientes" (y "Ver solo Críticas") solo
-                    # tienen sentido dentro de la vista "Asignadas Activas": son atajos
-                    # para ver el universo completo de pendientes o solo las críticas.
-                    # Antes, si el toggle estaba encendido, se aplicaba SIEMPRE sin
-                    # importar el botón activo, así que al entrar a "Cerradas Hoy" o
-                    # "Anuladas Hoy" seguía mostrando el total de pendientes (sin filtro
-                    # de fecha), no lo cerrado/anulado del día.
-                    if status_final_btn == "PENDIENTE":
-                        if check_ordenes_totales:
-                            df_v_tabla_monitor = df_todas_pendientes_monitor
-                        elif check_criticos_diamante:
-                            df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
-                        else:
-                            df_v_tabla_monitor = df_solo_asignadas_monitor
-                    elif status_final_btn == "C_HOY":
-                        df_v_tabla_monitor = df_cerradas_hoy_monitor
+                    if check_ordenes_totales:
+                        df_v_tabla_monitor = df_todas_pendientes_monitor 
                     else:
-                        df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                        if status_final_btn == "PENDIENTE": 
+                            if check_criticos_diamante:
+                                df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+                            else:
+                                df_v_tabla_monitor = df_solo_asignadas_monitor
+                        elif status_final_btn == "C_HOY": 
+                            df_v_tabla_monitor = df_cerradas_hoy_monitor
+                        else: 
+                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
                         
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
