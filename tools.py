@@ -2641,12 +2641,20 @@ def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
         df['DIAS_RETRASO'] = 0
         df['ORIGEN'] = 'MANUAL'
 
+        diff_manual = df['HORA_LIQ'] - df['HORA_INI']
+        df['TIEMPO_REAL'] = np.where(
+            df['HORA_INI'].isnull() | df['HORA_LIQ'].isnull(),
+            "En curso (Abierta)",
+            (diff_manual.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+            ((diff_manual.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+        )
+
         for col_extra in ['MOTIVO', 'CLIENTE', 'NOMBRE', 'COMENTARIO', 'EMPRESA', 'COLONIA', 'TIPO_CLIENTE', 'GPS']:
             if col_extra not in df.columns:
                 df[col_extra] = ''
         df.loc[df['COMENTARIO'] == '', 'COMENTARIO'] = 'Orden ingresada manualmente por ' + df['REGISTRADO_POR'].astype(str)
 
-        return df[['NUM', 'ACTIVIDAD', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'FECHA_APE', 'ESTADO', 'DIAS_RETRASO',
+        return df[['NUM', 'ACTIVIDAD', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'FECHA_APE', 'ESTADO', 'DIAS_RETRASO', 'TIEMPO_REAL',
                    'MOTIVO', 'CLIENTE', 'NOMBRE', 'COMENTARIO', 'EMPRESA', 'COLONIA', 'TIPO_CLIENTE', 'GPS', 'ORIGEN']].copy()
     except Exception as e:
         print(f"Error en cargar_ordenes_manuales: {e}")
