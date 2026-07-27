@@ -90,7 +90,9 @@ try:
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
-        cargar_catalogo_tecnicos
+        cargar_catalogo_tecnicos,
+        guardar_orden_manual,
+        cargar_ordenes_manuales
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -419,6 +421,66 @@ def main():
         file_disp_ptr = None
 
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
+        st.divider()
+
+        if es_admin_o_supervisor:
+            st.markdown("### 📝 Ingresar Orden Manual")
+            with st.expander("Ingresar una orden que no se refleja en el sistema", expanded=False):
+                st.caption("Úsalo cuando la API falle y una orden real de un técnico no aparezca en el monitor.")
+
+                num_orden_manual = st.text_input("Número de orden", key="input_num_orden_manual")
+
+                actividades_orden_manual = sorted(ACTIVIDADES_VALIDAS_NO_ASIGNADAS)
+                actividad_manual_sel = st.selectbox("Actividad", options=actividades_orden_manual, key="sel_actividad_orden_manual")
+
+                lista_tecs_principales_manual = []
+                try:
+                    df_cat_tecs_manual = cargar_catalogo_tecnicos()
+                    if df_cat_tecs_manual is not None and not df_cat_tecs_manual.empty:
+                        lista_tecs_principales_manual = sorted(
+                            df_cat_tecs_manual[df_cat_tecs_manual['Clasificación'] == 'TÉCNICO PRINCIPAL']['Nombre'].dropna().unique().tolist()
+                        )
+                except Exception:
+                    pass
+
+                if lista_tecs_principales_manual:
+                    tec_orden_manual_sel = st.selectbox("Técnico", options=lista_tecs_principales_manual, key="sel_tec_orden_manual")
+                else:
+                    tec_orden_manual_sel = st.text_input("Técnico (nombre exacto)", key="input_tec_orden_manual")
+
+                fecha_orden_manual_sel = st.date_input("Fecha", value=get_honduras_time().date(), key="fecha_orden_manual_sel")
+                col_omi, col_oml = st.columns(2)
+                with col_omi:
+                    hora_ini_orden_manual_txt = st.text_input("Hora inicio (HH:MM)", value="", placeholder="08:00", key="hora_ini_orden_manual", max_chars=5)
+                with col_oml:
+                    hora_liq_orden_manual_txt = st.text_input("Hora liquidada (HH:MM)", value="", placeholder="Dejar vacío si sigue abierta", key="hora_liq_orden_manual", max_chars=5)
+
+                if st.button("💾 Guardar Orden Manual", use_container_width=True, key="btn_guardar_orden_manual"):
+                    hora_ini_om_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_ini_orden_manual_txt.strip())
+                    hora_liq_om_valida = (hora_liq_orden_manual_txt.strip() == "") or re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_liq_orden_manual_txt.strip())
+                    if not num_orden_manual.strip():
+                        st.warning("Ingresa el número de orden.")
+                    elif not tec_orden_manual_sel:
+                        st.warning("Selecciona o escribe un técnico.")
+                    elif not hora_ini_om_valida:
+                        st.warning("La hora de inicio debe tener formato HH:MM en 24 horas (ej. 08:00).")
+                    elif not hora_liq_om_valida:
+                        st.warning("La hora liquidada debe tener formato HH:MM en 24 horas (ej. 14:30), o dejarse vacía si la orden sigue abierta.")
+                    else:
+                        ok_orden_manual = guardar_orden_manual(
+                            num_orden=num_orden_manual.strip(),
+                            actividad=actividad_manual_sel,
+                            tecnico=tec_orden_manual_sel,
+                            fecha=fecha_orden_manual_sel.strftime('%Y-%m-%d'),
+                            hora_inicio=hora_ini_orden_manual_txt.strip(),
+                            hora_liq=hora_liq_orden_manual_txt.strip(),
+                            registrado_por=st.session_state.get('usuario_actual', rol_usuario)
+                        )
+                        if ok_orden_manual:
+                            st.success(f"✅ Orden {num_orden_manual.strip()} guardada manualmente para {tec_orden_manual_sel}.")
+                            st.cache_data.clear()
+                        else:
+                            st.error("No se pudo guardar la orden manual.")
         st.divider()
 
         if es_admin_o_supervisor:
@@ -797,6 +859,21 @@ def main():
         df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'], columnas_sin_asumir_hoy=['HORA_LIQ', 'FECHA_APE'])
+
+    # === INTEGRACIÓN DE ÓRDENES MANUALES ===
+    # Se agregan las órdenes cargadas manualmente (para cuando la API falla y
+    # una orden real no se refleja). Si la orden real ya llegó después por la
+    # API/Sheets (mismo NUM), se descarta la versión manual para no duplicar.
+    try:
+        df_ordenes_manuales = cargar_ordenes_manuales()
+        if df_ordenes_manuales is not None and not df_ordenes_manuales.empty:
+            if 'NUM' in df_base.columns:
+                nums_ya_reales = set(df_base['NUM'].astype(str).str.strip())
+                df_ordenes_manuales = df_ordenes_manuales[~df_ordenes_manuales['NUM'].astype(str).str.strip().isin(nums_ya_reales)]
+            if not df_ordenes_manuales.empty:
+                df_base = pd.concat([df_base, df_ordenes_manuales], ignore_index=True)
+    except Exception:
+        pass
     
     # === FILTRADO AVANZADO DE FALSOS OFFLINE USANDO TELEMETRÍA REAL FTTX ===
     col_olt_info = None
