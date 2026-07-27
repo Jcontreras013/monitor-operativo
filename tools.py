@@ -1190,9 +1190,9 @@ def _ajustar_texto_a_celda(pdf, texto, ancho_celda, margen=1.6):
     if pdf.get_string_width(texto) <= ancho_max:
         return texto
     recortado = texto
-    while recortado and pdf.get_string_width(recortado + "…") > ancho_max:
+    while recortado and pdf.get_string_width(recortado + "...") > ancho_max:
         recortado = recortado[:-1]
-    return (recortado + "…") if recortado else ""
+    return (recortado + "...") if recortado else ""
 
 
 def _clasificar_subtipo_instalacion(row):
