@@ -1180,6 +1180,21 @@ def _color_por_dias(pdf, dias_val):
         pdf.set_text_color(255, 255, 255)
 
 
+def _ajustar_texto_a_celda(pdf, texto, ancho_celda, margen=1.6):
+    """Recorta el texto (con puntos suspensivos) para que quepa dentro del ancho real
+    de la celda según la fuente activa, evitando que se monte sobre celdas vecinas."""
+    texto = safestr(str(texto)) if texto is not None else ""
+    ancho_max = ancho_celda - margen
+    if ancho_max <= 0:
+        return ""
+    if pdf.get_string_width(texto) <= ancho_max:
+        return texto
+    recortado = texto
+    while recortado and pdf.get_string_width(recortado + "…") > ancho_max:
+        recortado = recortado[:-1]
+    return (recortado + "…") if recortado else ""
+
+
 def _clasificar_subtipo_instalacion(row):
     txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
     if re.search('ADIC', txt): return 'Instalación Adición'
@@ -1405,18 +1420,19 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.seccion_titulo("LISTADO GENERAL DETALLADO: TODAS LAS ORDENES PENDIENTES")
 
         columnas = [
-            ("Días", 9), ("NUM", 15), ("ACTIVIDAD", 20), ("MOTIVO UNIFICADO", 22),
-            ("RAZON CIERRE UNIF.", 22), ("SECTOR", 16), ("COLONIA", 20), ("CLIENTE", 15),
-            ("CONTRATO", 16), ("NOMBRE DEL CLIENTE", 27), ("TECNICO", 25), ("SUBESTADO", 16),
-            ("FECHA ENTRADA", 18), ("FECHA LIQUIDADO", 18), ("RENDIMIENTO", 16),
+            ("Días", 9), ("NUM", 17), ("ACTIVIDAD", 30), ("MOTIVO UNIFICADO", 32),
+            ("SECTOR", 20), ("COLONIA", 30), ("CLIENTE", 17), ("CONTRATO", 19),
+            ("NOMBRE DEL CLIENTE", 43), ("TECNICO", 34), ("SUBESTADO", 23),
         ]
+        # Suma de anchos = 274mm; el área útil en A4 horizontal con márgenes
+        # de 10mm por lado es de ~277mm, así que queda margen sin desbordar.
 
         def _dibujar_encabezado():
             pdf.set_font("Helvetica", "B", 6.5)
             pdf.set_text_color(50, 50, 50)
             pdf.set_fill_color(240, 240, 240)
             for titulo, ancho in columnas:
-                pdf.cell(ancho, 6, safestr(titulo), border=1, align="C", fill=True)
+                pdf.cell(ancho, 6, _ajustar_texto_a_celda(pdf, titulo, ancho), border=1, align="C", fill=True)
             pdf.ln()
 
         _dibujar_encabezado()
@@ -1424,7 +1440,7 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         df_ordenado = df_detalle.sort_values(by='DIAS_RETRASO', ascending=False)
 
         for _, row in df_ordenado.iterrows():
-            if pdf.get_y() > 195:
+            if pdf.get_y() > 190:
                 pdf.add_page(orientation='L')
                 _dibujar_encabezado()
 
@@ -1433,38 +1449,28 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
             subestado = _valor_flexible(row, ['SUBESTADO', 'SUB ESTADO', 'SUB-ESTADO'], default=("ASIGNADA TECNICO" if estado_asignado else "EN PROCESO"))
             contrato = _valor_flexible(row, ['CONTRATO', 'CONTRATO FÍSICO', 'CONTRATO FISICO', 'CONTRATO_FISICO', 'NO. CONTRATO'])
             motivo = _valor_flexible(row, ['MOTIVO UNIFICADO', 'MOTIVO'])
-            razon_cierre = _valor_flexible(row, ['RAZON CIERRE UNIFICADO', 'RAZON_CIERRE_SOP', 'RAZON CIERRE'])
             sector = _valor_flexible(row, ['SECTOR'])
             nombre_cliente = _valor_flexible(row, ['NOMBRE', 'NOMBRE CLIENTE', 'SUSCRIPTOR'])
-            fecha_entrada = _formatear_fecha_flexible(row, ['HORA_INI', 'FECHA ENTRADA', 'FECHAENTRADA'])
-            fecha_liquidado = _formatear_fecha_flexible(row, ['HORA_LIQ', 'FECHA LIQUIDADO', 'FECHALIQUIDADO'])
 
-            valores = [
+            valores_crudos = [
                 (str(dias_val), "C", True),
-                (safestr(str(row.get('NUM', ''))), "C", False),
-                (safestr(str(row.get('ACTIVIDAD', '')))[:16], "L", False),
-                (safestr(str(motivo))[:16], "L", False),
-                (safestr(str(razon_cierre))[:16], "L", False),
-                (safestr(str(sector))[:14], "L", False),
-                (safestr(str(row.get('COLONIA', '')))[:16], "L", False),
-                (safestr(str(row.get('CLIENTE', ''))), "C", False),
-                (safestr(str(contrato))[:14], "L", False),
-                (safestr(str(nombre_cliente))[:22], "L", False),
-                (safestr(str(row.get('TECNICO', '')))[:20], "L", False),
-                (safestr(str(subestado))[:14], "L", False),
-                (fecha_entrada, "C", False),
-                (fecha_liquidado, "C", False),
-                ("00:00:00", "C", True),
+                (row.get('NUM', ''), "C", False),
+                (row.get('ACTIVIDAD', ''), "L", False),
+                (motivo, "L", False),
+                (sector, "L", False),
+                (row.get('COLONIA', ''), "L", False),
+                (row.get('CLIENTE', ''), "C", False),
+                (contrato, "L", False),
+                (nombre_cliente, "L", False),
+                (row.get('TECNICO', ''), "L", False),
+                (subestado, "L", False),
             ]
 
-            pdf.set_font("Helvetica", "", 6)
-            for (texto, alineacion, es_coloreada), (titulo, ancho) in zip(valores, columnas):
-                if es_coloreada:
-                    if titulo == "Días":
-                        _color_por_dias(pdf, dias_val)
-                    else:
-                        pdf.set_fill_color(211, 47, 47)
-                        pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "", 6.3)
+            for (valor, alineacion, es_dias), (titulo, ancho) in zip(valores_crudos, columnas):
+                texto = _ajustar_texto_a_celda(pdf, valor, ancho)
+                if es_dias:
+                    _color_por_dias(pdf, dias_val)
                     pdf.cell(ancho, 5, texto, border=1, align=alineacion, fill=True)
                     pdf.set_text_color(0, 0, 0)
                 else:
