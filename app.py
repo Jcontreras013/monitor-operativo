@@ -90,7 +90,9 @@ try:
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
-        cargar_catalogo_tecnicos
+        cargar_catalogo_tecnicos,
+        guardar_orden_manual,
+        cargar_ordenes_manuales
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -103,6 +105,20 @@ ACTIVIDADES_VALIDAS_NO_ASIGNADAS = [
     'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA', 
     'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 
     'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
+    'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+]
+
+# Lista única de actividades que el Gantt efectivamente dibuja. Antes existían
+# dos copias de esta lista (una por cada Gantt) que se habían desincronizado
+# entre sí; ahora ambas usan esta misma constante, y también es la que se usa
+# en el desplegable de "Ingresar Orden Manual" para garantizar que cualquier
+# actividad que se pueda seleccionar ahí también se vea reflejada en el Gantt.
+ACTIVIDADES_GANTT_PERMITIDAS = [
+    'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC',
+    'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP',
+    'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP',
+    'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA',
+    'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
     'TRASLADOINTFIBRACORP', 'TVADICIONAL'
 ]
 
@@ -419,6 +435,66 @@ def main():
         file_disp_ptr = None
 
         if not es_movil: st.markdown("<br><br>", unsafe_allow_html=True)
+        st.divider()
+
+        if es_admin_o_supervisor:
+            st.markdown("### 📝 Ingresar Orden Manual")
+            with st.expander("Ingresar una orden que no se refleja en el sistema", expanded=False):
+                st.caption("Úsalo cuando la API falle y una orden real de un técnico no aparezca en el monitor.")
+
+                num_orden_manual = st.text_input("Número de orden", key="input_num_orden_manual")
+
+                actividades_orden_manual = sorted(ACTIVIDADES_GANTT_PERMITIDAS)
+                actividad_manual_sel = st.selectbox("Actividad", options=actividades_orden_manual, key="sel_actividad_orden_manual")
+
+                lista_tecs_principales_manual = []
+                try:
+                    df_cat_tecs_manual = cargar_catalogo_tecnicos()
+                    if df_cat_tecs_manual is not None and not df_cat_tecs_manual.empty:
+                        lista_tecs_principales_manual = sorted(
+                            df_cat_tecs_manual[df_cat_tecs_manual['Clasificación'] == 'TÉCNICO PRINCIPAL']['Nombre'].dropna().unique().tolist()
+                        )
+                except Exception:
+                    pass
+
+                if lista_tecs_principales_manual:
+                    tec_orden_manual_sel = st.selectbox("Técnico", options=lista_tecs_principales_manual, key="sel_tec_orden_manual")
+                else:
+                    tec_orden_manual_sel = st.text_input("Técnico (nombre exacto)", key="input_tec_orden_manual")
+
+                fecha_orden_manual_sel = st.date_input("Fecha", value=get_honduras_time().date(), key="fecha_orden_manual_sel")
+                col_omi, col_oml = st.columns(2)
+                with col_omi:
+                    hora_ini_orden_manual_txt = st.text_input("Hora inicio (HH:MM)", value="", placeholder="08:00", key="hora_ini_orden_manual", max_chars=5)
+                with col_oml:
+                    hora_liq_orden_manual_txt = st.text_input("Hora liquidada (HH:MM)", value="", placeholder="Dejar vacío si sigue abierta", key="hora_liq_orden_manual", max_chars=5)
+
+                if st.button("💾 Guardar Orden Manual", use_container_width=True, key="btn_guardar_orden_manual"):
+                    hora_ini_om_valida = re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_ini_orden_manual_txt.strip())
+                    hora_liq_om_valida = (hora_liq_orden_manual_txt.strip() == "") or re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_liq_orden_manual_txt.strip())
+                    if not num_orden_manual.strip():
+                        st.warning("Ingresa el número de orden.")
+                    elif not tec_orden_manual_sel:
+                        st.warning("Selecciona o escribe un técnico.")
+                    elif not hora_ini_om_valida:
+                        st.warning("La hora de inicio debe tener formato HH:MM en 24 horas (ej. 08:00).")
+                    elif not hora_liq_om_valida:
+                        st.warning("La hora liquidada debe tener formato HH:MM en 24 horas (ej. 14:30), o dejarse vacía si la orden sigue abierta.")
+                    else:
+                        ok_orden_manual = guardar_orden_manual(
+                            num_orden=num_orden_manual.strip(),
+                            actividad=actividad_manual_sel,
+                            tecnico=tec_orden_manual_sel,
+                            fecha=fecha_orden_manual_sel.strftime('%Y-%m-%d'),
+                            hora_inicio=hora_ini_orden_manual_txt.strip(),
+                            hora_liq=hora_liq_orden_manual_txt.strip(),
+                            registrado_por=st.session_state.get('usuario_actual', rol_usuario)
+                        )
+                        if ok_orden_manual:
+                            st.success(f"✅ Orden {num_orden_manual.strip()} guardada manualmente para {tec_orden_manual_sel}.")
+                            st.cache_data.clear()
+                        else:
+                            st.error("No se pudo guardar la orden manual.")
         st.divider()
 
         if es_admin_o_supervisor:
@@ -797,6 +873,21 @@ def main():
         df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'], columnas_sin_asumir_hoy=['HORA_LIQ', 'FECHA_APE'])
+
+    # === INTEGRACIÓN DE ÓRDENES MANUALES ===
+    # Se agregan las órdenes cargadas manualmente (para cuando la API falla y
+    # una orden real no se refleja). Si la orden real ya llegó después por la
+    # API/Sheets (mismo NUM), se descarta la versión manual para no duplicar.
+    try:
+        df_ordenes_manuales = cargar_ordenes_manuales()
+        if df_ordenes_manuales is not None and not df_ordenes_manuales.empty:
+            if 'NUM' in df_base.columns:
+                nums_ya_reales = set(df_base['NUM'].astype(str).str.strip())
+                df_ordenes_manuales = df_ordenes_manuales[~df_ordenes_manuales['NUM'].astype(str).str.strip().isin(nums_ya_reales)]
+            if not df_ordenes_manuales.empty:
+                df_base = pd.concat([df_base, df_ordenes_manuales], ignore_index=True)
+    except Exception:
+        pass
     
     # === FILTRADO AVANZADO DE FALSOS OFFLINE USANDO TELEMETRÍA REAL FTTX ===
     col_olt_info = None
@@ -1267,14 +1358,7 @@ def main():
                         df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].apply(normalizar_nombre_cruce)
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
-                        actividades_permitidas = [
-                            'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
-                            'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 
-                            'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
-                            'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
-                            'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                            'TRASLADOINTFIBRACORP', 'TVADICIONAL'
-                        ]
+                        actividades_permitidas = ACTIVIDADES_GANTT_PERMITIDAS
                         
                         df_para_gantt_diario = df_para_gantt_diario[
                             df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
@@ -1409,7 +1493,7 @@ def main():
                             if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
                             if re.search('RECUP', txt): return 'Recuperado'
                             return 'Nueva'
-                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificas_ins_cierre, axis=1)
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
                         df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
                         df_ins_grouped.columns = ['Instalaciones', 'Cant']
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
@@ -2062,14 +2146,7 @@ def main():
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
-                            actividades_permitidas = [
-                                'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
-                                'INS-WA', 'PEXTERNO', 'PLEXISCA', 'SOP', 
-                                'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
-                                'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
-                                'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                                'TRASLADOINTFIBRACORP', 'TVADICIONAL'
-                            ]
+                            actividades_permitidas = ACTIVIDADES_GANTT_PERMITIDAS
                             
                             df_para_gantt_final = df_para_gantt_final[
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
@@ -2109,6 +2186,21 @@ def main():
                                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             
                             cli_series_f = df_para_gantt_final['CLIENTE'].fillna('-').astype(str) if 'CLIENTE' in df_para_gantt_final.columns else pd.Series(['-'] * len(df_para_gantt_final), index=df_para_gantt_final.index).astype(str)
+
+                            # Salvaguarda: si por cualquier motivo TIEMPO_REAL no viene ya
+                            # calculado en alguna fila (ej. orígenes de datos distintos),
+                            # se calcula aquí mismo para que nunca falte en la nota flotante.
+                            if 'TIEMPO_REAL' not in df_para_gantt_final.columns:
+                                df_para_gantt_final['TIEMPO_REAL'] = pd.NA
+                            mask_tiempo_real_faltante = df_para_gantt_final['TIEMPO_REAL'].isna()
+                            if mask_tiempo_real_faltante.any():
+                                diff_fill = df_para_gantt_final.loc[mask_tiempo_real_faltante, 'HORA_LIQ'] - df_para_gantt_final.loc[mask_tiempo_real_faltante, 'HORA_INI']
+                                df_para_gantt_final.loc[mask_tiempo_real_faltante, 'TIEMPO_REAL'] = np.where(
+                                    df_para_gantt_final.loc[mask_tiempo_real_faltante, 'HORA_LIQ'].isnull(),
+                                    "En curso (Abierta)",
+                                    (diff_fill.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+                                    ((diff_fill.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+                                )
                             
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
