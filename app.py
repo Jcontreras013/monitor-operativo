@@ -108,6 +108,20 @@ ACTIVIDADES_VALIDAS_NO_ASIGNADAS = [
     'TRASLADOINTFIBRACORP', 'TVADICIONAL'
 ]
 
+# Lista única de actividades que el Gantt efectivamente dibuja. Antes existían
+# dos copias de esta lista (una por cada Gantt) que se habían desincronizado
+# entre sí; ahora ambas usan esta misma constante, y también es la que se usa
+# en el desplegable de "Ingresar Orden Manual" para garantizar que cualquier
+# actividad que se pueda seleccionar ahí también se vea reflejada en el Gantt.
+ACTIVIDADES_GANTT_PERMITIDAS = [
+    'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC',
+    'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP',
+    'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP',
+    'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA',
+    'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
+    'TRASLADOINTFIBRACORP', 'TVADICIONAL'
+]
+
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
@@ -430,7 +444,7 @@ def main():
 
                 num_orden_manual = st.text_input("Número de orden", key="input_num_orden_manual")
 
-                actividades_orden_manual = sorted(ACTIVIDADES_VALIDAS_NO_ASIGNADAS)
+                actividades_orden_manual = sorted(ACTIVIDADES_GANTT_PERMITIDAS)
                 actividad_manual_sel = st.selectbox("Actividad", options=actividades_orden_manual, key="sel_actividad_orden_manual")
 
                 lista_tecs_principales_manual = []
@@ -1344,14 +1358,7 @@ def main():
                         df_para_gantt_diario['TECNICO'] = df_para_gantt_diario['TECNICO'].apply(normalizar_nombre_cruce)
                         df_para_gantt_diario = df_para_gantt_diario.dropna(subset=['GANTT_START', 'GANTT_END']).sort_values(by=['TECNICO', 'GANTT_START'])
 
-                        actividades_permitidas = [
-                            'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
-                            'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 
-                            'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
-                            'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
-                            'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                            'TRASLADOINTFIBRACORP', 'TVADICIONAL'
-                        ]
+                        actividades_permitidas = ACTIVIDADES_GANTT_PERMITIDAS
                         
                         df_para_gantt_diario = df_para_gantt_diario[
                             df_para_gantt_diario['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
@@ -2139,14 +2146,7 @@ def main():
                             df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
-                            actividades_permitidas = [
-                                'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 
-                                'INS-WA', 'PEXTERNO', 'PLEXISCA', 'SOP', 
-                                'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP', 
-                                'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA', 
-                                'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
-                                'TRASLADOINTFIBRACORP', 'TVADICIONAL'
-                            ]
+                            actividades_permitidas = ACTIVIDADES_GANTT_PERMITIDAS
                             
                             df_para_gantt_final = df_para_gantt_final[
                                 df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
@@ -2186,6 +2186,21 @@ def main():
                                     df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             
                             cli_series_f = df_para_gantt_final['CLIENTE'].fillna('-').astype(str) if 'CLIENTE' in df_para_gantt_final.columns else pd.Series(['-'] * len(df_para_gantt_final), index=df_para_gantt_final.index).astype(str)
+
+                            # Salvaguarda: si por cualquier motivo TIEMPO_REAL no viene ya
+                            # calculado en alguna fila (ej. orígenes de datos distintos),
+                            # se calcula aquí mismo para que nunca falte en la nota flotante.
+                            if 'TIEMPO_REAL' not in df_para_gantt_final.columns:
+                                df_para_gantt_final['TIEMPO_REAL'] = pd.NA
+                            mask_tiempo_real_faltante = df_para_gantt_final['TIEMPO_REAL'].isna()
+                            if mask_tiempo_real_faltante.any():
+                                diff_fill = df_para_gantt_final.loc[mask_tiempo_real_faltante, 'HORA_LIQ'] - df_para_gantt_final.loc[mask_tiempo_real_faltante, 'HORA_INI']
+                                df_para_gantt_final.loc[mask_tiempo_real_faltante, 'TIEMPO_REAL'] = np.where(
+                                    df_para_gantt_final.loc[mask_tiempo_real_faltante, 'HORA_LIQ'].isnull(),
+                                    "En curso (Abierta)",
+                                    (diff_fill.dt.total_seconds() // 3600).fillna(0).astype(int).astype(str) + "h " +
+                                    ((diff_fill.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
+                                )
                             
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
