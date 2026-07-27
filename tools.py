@@ -1141,55 +1141,240 @@ def generar_pdf_primera_orden(df_base, fecha_cierre):
         print(f"Error al generar PDF de Primera Orden: {e}")
         return None
 
+def _valor_flexible(row, candidatos, default=''):
+    """Busca un valor en la fila probando varios nombres de columna posibles
+    (soporta encabezados crudos del Excel que aun no fueron mapeados)."""
+    for nombre in candidatos:
+        if nombre in row.index:
+            val = row.get(nombre)
+            if pd.notna(val) and str(val).strip().upper() not in ('', 'NAN', 'NONE', 'N/D', 'NULL'):
+                return val
+    return default
+
+
+def _formatear_fecha_flexible(row, candidatos):
+    val = _valor_flexible(row, candidatos, default=None)
+    if val is None:
+        return ""
+    try:
+        dt = pd.to_datetime(val, errors='coerce', dayfirst=True)
+        if pd.isna(dt):
+            return safestr(str(val))[:16]
+        return dt.strftime('%d/%m/%y %H:%M')
+    except Exception:
+        return safestr(str(val))[:16]
+
+
+def _color_por_dias(pdf, dias_val):
+    if dias_val >= 7:
+        pdf.set_fill_color(211, 47, 47)
+        pdf.set_text_color(255, 255, 255)
+    elif dias_val >= 4:
+        pdf.set_fill_color(245, 124, 0)
+        pdf.set_text_color(255, 255, 255)
+    elif dias_val >= 1:
+        pdf.set_fill_color(251, 192, 45)
+        pdf.set_text_color(0, 0, 0)
+    else:
+        pdf.set_fill_color(56, 142, 60)
+        pdf.set_text_color(255, 255, 255)
+
+
+def _clasificar_subtipo_instalacion(row):
+    txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
+    if re.search('ADIC', txt): return 'Instalación Adición'
+    if re.search('CAMBIO|MIGRACI', txt): return 'Instalación Cambio de Medio'
+    if re.search('RECUP', txt): return 'Recuperado'
+    return 'Instalación Nueva'
+
+
+def _clasificar_subtipo_sopfibra(row):
+    if bool(row.get('ES_OFFLINE', False)):
+        return 'ONT/ONU Offline'
+    com = str(row.get('COMENTARIO', '')).upper()
+    if re.search('TV|ANALOGIC|DIGITAL', com):
+        return 'Problemas de TV (Analógica o Digital)'
+    if re.search('FIBRA|OPTIC|OPTICO|PON|SEÑAL', com):
+        return 'Problemas de Fibra / Óptica'
+    return 'Otro Diagnóstico'
+
+
+def _dibujar_mini_tabla(pdf, x, y, w, titulo, filas, total_label="Total"):
+    """Dibuja una mini-tabla tipo resumen (Categoría / Pendiente / Total) como en el
+    panel izquierdo del reporte de referencia."""
+    pdf.set_xy(x, y)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(40, 50, 100)
+    pdf.set_fill_color(235, 238, 245)
+    pdf.cell(w, 6, safestr(titulo), border=1, align="L", fill=True)
+    pdf.set_xy(x, pdf.get_y() + 6)
+
+    pdf.set_x(x)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_fill_color(245, 245, 245)
+    pdf.set_text_color(0, 0, 0)
+    w_label = w - 30
+    pdf.cell(w_label, 5, "Categoria", border=1, fill=True)
+    pdf.cell(30, 5, "Pendiente", border=1, align="C", fill=True)
+    pdf.set_xy(x, pdf.get_y() + 5)
+
+    total = 0
+    pdf.set_font("Helvetica", "", 7)
+    for etiqueta, cantidad in filas:
+        pdf.set_x(x)
+        pdf.set_fill_color(255, 255, 255)
+        pdf.cell(w_label, 5, safestr(str(etiqueta))[:38], border=1)
+        pdf.cell(30, 5, str(int(cantidad)), border=1, align="C")
+        pdf.set_xy(x, pdf.get_y() + 5)
+        total += cantidad
+
+    pdf.set_x(x)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.set_fill_color(220, 230, 245)
+    pdf.cell(w_label, 5, total_label, border=1, fill=True)
+    pdf.cell(30, 5, str(int(total)), border=1, align="C", fill=True)
+    pdf.set_y(pdf.get_y() + 7)
+    return pdf.get_y()
+
+
 def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
-    
+
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, safestr("REPORTE DE PENDIENTES GENERALES (DISPATCH)"), border=0, ln=True, align="C")
-    
+
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, safestr(f"Corte Operativo del Día: {hoy_str}"), ln=True, align="C")
-    pdf.ln(10)
-    
-    pdf.seccion_titulo("RESUMEN DE CARGA PARA EL SIGUIENTE TURNO")
-    
+    pdf.ln(8)
+
+    # --- Preparación de la base completa (asignadas + sin asignar) con columna de días ---
+    df_detalle = df_detalle.copy()
+    if 'DIAS_RETRASO' not in df_detalle.columns:
+        df_detalle['DIAS_RETRASO'] = 0
+    df_detalle['DIAS_RETRASO'] = pd.to_numeric(df_detalle['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
+    if 'ES_OFFLINE' not in df_detalle.columns:
+        df_detalle['ES_OFFLINE'] = False
+
+    # --- 1) Caja de Días (>=7 / >=4 / >=1 / =0) ---
+    y_top = pdf.get_y()
+    bucket_7 = int((df_detalle['DIAS_RETRASO'] >= 7).sum())
+    bucket_4 = int(((df_detalle['DIAS_RETRASO'] >= 4) & (df_detalle['DIAS_RETRASO'] < 7)).sum())
+    bucket_1 = int(((df_detalle['DIAS_RETRASO'] >= 1) & (df_detalle['DIAS_RETRASO'] < 4)).sum())
+    bucket_0 = int((df_detalle['DIAS_RETRASO'] == 0).sum())
+
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(235, 238, 245)
+    pdf.set_text_color(40, 50, 100)
+    pdf.set_xy(10, y_top)
+    pdf.cell(30, 5, "Días", border=1, align="C", fill=True)
+    pdf.cell(20, 5, "Cant", border=1, align="C", fill=True)
+    pdf.set_xy(10, y_top + 5)
+
+    buckets = [
+        (">= 7 Dias", bucket_7, (211, 47, 47), (255, 255, 255)),
+        (">= 4 Dias", bucket_4, (245, 124, 0), (255, 255, 255)),
+        (">= 1 Dias", bucket_1, (251, 192, 45), (0, 0, 0)),
+        (">= 0 Dias", bucket_0, (56, 142, 60), (255, 255, 255)),
+    ]
+    pdf.set_font("Helvetica", "B", 7)
+    for etiqueta, cant, fill, txt in buckets:
+        pdf.set_x(10)
+        pdf.set_fill_color(*fill)
+        pdf.set_text_color(*txt)
+        pdf.cell(30, 5, etiqueta, border=1, fill=True)
+        pdf.cell(20, 5, str(cant), border=1, align="C", fill=True)
+        pdf.set_xy(10, pdf.get_y() + 5)
+
+    pdf.set_text_color(0, 0, 0)
+    y_after_bucket = max(pdf.get_y() + 3, y_top)
+
+    # --- 2) RESUMEN DE CARGA PARA EL SIGUIENTE TURNO ---
+    pdf.set_xy(65, y_top)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(84, 98, 143)
+    pdf.cell(0, 6, safestr("RESUMEN DE CARGA PARA EL SIGUIENTE TURNO"), ln=True, align="L")
+    pdf.set_x(65)
+
     pdf.set_fill_color(240, 240, 240)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(60, 8, "Clasificacion", border=1, fill=True)
-    pdf.cell(40, 8, "Asignadas (Ruta)", border=1, align="C", fill=True)
-    pdf.cell(40, 8, "Sin Asignar", border=1, align="C", fill=True)
-    pdf.cell(40, 8, "Total General", border=1, align="C", fill=True)
-    pdf.ln()
-    
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(50, 7, "Clasificacion", border=1, fill=True)
+    pdf.cell(30, 7, "Asignadas", border=1, align="C", fill=True)
+    pdf.cell(30, 7, "Sin Asignar", border=1, align="C", fill=True)
+    pdf.cell(30, 7, "Total", border=1, align="C", fill=True)
+    pdf.set_xy(65, pdf.get_y() + 7)
+
     for _, row in df_totales.iterrows():
         if row['Categoría'] == 'TOTAL PENDIENTES':
-            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_font("Helvetica", "B", 8)
             pdf.set_fill_color(220, 230, 245)
             fill = True
         else:
-            pdf.set_font("Helvetica", "", 8) 
+            pdf.set_font("Helvetica", "", 8)
             fill = False
-            
-        pdf.cell(60, 7, safestr(row['Categoría'])[:35], border=1, fill=fill)
-        pdf.cell(40, 7, str(row['Asignadas (En Ruta)']), border=1, align="C", fill=fill)
-        pdf.cell(40, 7, str(row['Nuevas (Sin Asignar)']), border=1, align="C", fill=fill)
-        pdf.cell(40, 7, str(row['TOTAL GENERAL']), border=1, align="C", fill=fill)
-        pdf.ln()
+        pdf.set_x(65)
+        pdf.cell(50, 6, safestr(row['Categoría'])[:28], border=1, fill=fill)
+        pdf.cell(30, 6, str(row['Asignadas (En Ruta)']), border=1, align="C", fill=fill)
+        pdf.cell(30, 6, str(row['Nuevas (Sin Asignar)']), border=1, align="C", fill=fill)
+        pdf.cell(30, 6, str(row['TOTAL GENERAL']), border=1, align="C", fill=fill)
+        pdf.set_xy(65, pdf.get_y() + 6)
 
-    pdf.ln(10)
-    
+    y_after_resumen = pdf.get_y() + 4
+    pdf.set_y(max(y_after_bucket, y_after_resumen))
+    pdf.ln(4)
+
+    # --- 3) Mini-tablas de desglose (FTTH/FIBRA, SOPFIBRA, Resto de Actividades) ---
+    act_upper = df_detalle['ACTIVIDAD'].astype(str).str.upper()
+    com_upper = df_detalle.get('COMENTARIO', pd.Series('', index=df_detalle.index)).astype(str).str.upper()
+    txt_completo = act_upper + " " + com_upper
+
+    mask_ins = txt_completo.str.contains('INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False) & ~act_upper.str.contains('SOP|FALLA|MANT', na=False)
+    df_ins = df_detalle[mask_ins].copy()
+
+    mask_sop = act_upper.str.contains('SOP|FALLA|MANT', na=False)
+    df_sop = df_detalle[mask_sop].copy()
+
+    mask_resto = ~mask_ins & ~mask_sop
+    df_resto = df_detalle[mask_resto].copy()
+
+    y_tablas = pdf.get_y()
+
+    if not df_ins.empty:
+        df_ins['SUBTIPO'] = df_ins.apply(_clasificar_subtipo_instalacion, axis=1)
+        filas_ins = list(df_ins['SUBTIPO'].value_counts().items())
+    else:
+        filas_ins = []
+    y1 = _dibujar_mini_tabla(pdf, 10, y_tablas, 62, "FTTH / FIBRA", filas_ins)
+
+    if not df_sop.empty:
+        df_sop['SUBTIPO'] = df_sop.apply(_clasificar_subtipo_sopfibra, axis=1)
+        filas_sop = list(df_sop['SUBTIPO'].value_counts().items())
+    else:
+        filas_sop = []
+    y2 = _dibujar_mini_tabla(pdf, 76, y_tablas, 62, "SOPFIBRA", filas_sop)
+
+    if not df_resto.empty:
+        filas_resto = list(df_resto['ACTIVIDAD'].astype(str).value_counts().items())
+    else:
+        filas_resto = []
+    y3 = _dibujar_mini_tabla(pdf, 142, y_tablas, 58, "Resto de las Actividades", filas_resto)
+
+    pdf.set_y(max(y1, y2, y3) + 4)
+
+    # --- 4) Listado prioritario: órdenes nuevas sin asignar ---
     mask_sin_tec = (df_detalle['TECNICO'].isna()) | (df_detalle['TECNICO'].astype(str).str.strip() == '') | (df_detalle['TECNICO'].astype(str).str.upper().isin(['NONE', 'NAN', 'N/D', 'NULL']))
     df_no_asig = df_detalle[mask_sin_tec].copy()
 
+    if pdf.get_y() > 230:
+        pdf.add_page()
+
     if not df_no_asig.empty:
         pdf.seccion_titulo("LISTADO PRIORITARIO: ORDENES NUEVAS (SIN ASIGNAR)")
-        
-        pdf.set_fill_color(255, 235, 235) 
+        pdf.set_fill_color(255, 235, 235)
         pdf.set_text_color(50, 50, 50)
         pdf.set_font("Helvetica", "B", 8)
         pdf.cell(20, 6, "Orden", border=1, align="C", fill=True)
@@ -1197,11 +1382,12 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.cell(60, 6, "Actividad", border=1, align="C", fill=True)
         pdf.cell(70, 6, "Colonia", border=1, align="C", fill=True)
         pdf.ln()
-        
+
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(0, 0, 0)
-        
         for _, row in df_no_asig.iterrows():
+            if pdf.get_y() > 275:
+                pdf.add_page()
             pdf.cell(20, 5, safestr(str(row['NUM'])), border=1, align="C")
             pdf.cell(30, 5, safestr(str(row['CLIENTE'])), border=1, align="C")
             pdf.cell(60, 5, safestr(str(row['ACTIVIDAD']))[:35], border=1, align="L")
@@ -1213,73 +1399,79 @@ def generar_pdf_pendientes_dispatch(df_totales, df_detalle, hoy_str):
         pdf.set_text_color(0, 100, 0)
         pdf.cell(0, 6, "Excelente. Todas las ordenes se encuentran asignadas a tecnicos.", ln=True)
 
-    df_asig = df_detalle[~mask_sin_tec].copy()
+    # --- 5) Listado general detallado (formato ancho, tipo hoja de cálculo) ---
+    if not df_detalle.empty:
+        pdf.add_page(orientation='L')
+        pdf.seccion_titulo("LISTADO GENERAL DETALLADO: TODAS LAS ORDENES PENDIENTES")
 
-    if not df_asig.empty:
-        pdf.add_page() 
-        pdf.seccion_titulo("LISTADO GENERAL DETALLADO: ORDENES EN RUTA (ASIGNADAS)")
-        
-        pdf.set_fill_color(240, 240, 240)
-        pdf.set_text_color(50, 50, 50)
-        pdf.set_font("Helvetica", "B", 7)
-        
-        pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
-        pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
-        pdf.cell(50, 6, "Actividad", border=1, align="C", fill=True)
-        pdf.cell(55, 6, "Colonia", border=1, align="C", fill=True)
-        pdf.cell(40, 6, "Tecnico", border=1, align="C", fill=True)
-        pdf.cell(10, 6, "Dias", border=1, align="C", fill=True)
-        pdf.ln()
-        
-        if 'DIAS_RETRASO' not in df_asig.columns:
-            df_asig['DIAS_RETRASO'] = 0
-        df_asig['DIAS_RETRASO'] = pd.to_numeric(df_asig['DIAS_RETRASO'], errors='coerce').fillna(0).astype(int)
-        df_asig = df_asig.sort_values(by=['DIAS_RETRASO', 'TECNICO'], ascending=[False, True])
-        
-        for _, row in df_asig.iterrows():
-            if pdf.get_y() > 270:
-                pdf.add_page()
-                pdf.set_font("Helvetica", "B", 7)
-                pdf.set_text_color(50, 50, 50)
-                pdf.set_fill_color(240, 240, 240)
-                pdf.cell(15, 6, "Orden", border=1, align="C", fill=True)
-                pdf.cell(20, 6, "Cliente", border=1, align="C", fill=True)
-                pdf.cell(50, 6, "Actividad", border=1, align="C", fill=True)
-                pdf.cell(55, 6, "Colonia", border=1, align="C", fill=True)
-                pdf.cell(40, 6, "Tecnico", border=1, align="C", fill=True)
-                pdf.cell(10, 6, "Dias", border=1, align="C", fill=True)
-                pdf.ln()
-            
-            dias_retraso_val = row['DIAS_RETRASO']
-            dias_retraso_str = str(dias_retraso_val)
-            
-            pdf.set_font("Helvetica", "", 6)
-            pdf.set_text_color(0, 0, 0)
-            
-            pdf.cell(15, 5, safestr(str(row.get('NUM', ''))), border=1, align="C")
-            pdf.cell(20, 5, safestr(str(row.get('CLIENTE', ''))), border=1, align="C")
-            pdf.cell(50, 5, safestr(str(row.get('ACTIVIDAD', '')))[:35], border=1, align="L")
-            pdf.cell(55, 5, safestr(str(row.get('COLONIA', '')))[:40], border=1, align="L")
-            pdf.cell(40, 5, safestr(str(row.get('TECNICO', '')))[:25], border=1, align="L")
-            
-            if dias_retraso_val >= 7:
-                pdf.set_fill_color(211, 47, 47) 
-                pdf.set_text_color(255, 255, 255)
-            elif dias_retraso_val >= 4:
-                pdf.set_fill_color(245, 124, 0) 
-                pdf.set_text_color(255, 255, 255)
-            elif dias_retraso_val >= 1:
-                pdf.set_fill_color(251, 192, 45) 
-                pdf.set_text_color(0, 0, 0)
-            else:
-                pdf.set_fill_color(56, 142, 60) 
-                pdf.set_text_color(255, 255, 255)
-                
-            pdf.cell(10, 5, safestr(dias_retraso_str), border=1, align="C", fill=True)
+        columnas = [
+            ("Días", 9), ("NUM", 15), ("ACTIVIDAD", 20), ("MOTIVO UNIFICADO", 22),
+            ("RAZON CIERRE UNIF.", 22), ("SECTOR", 16), ("COLONIA", 20), ("CLIENTE", 15),
+            ("CONTRATO", 16), ("NOMBRE DEL CLIENTE", 27), ("TECNICO", 25), ("SUBESTADO", 16),
+            ("FECHA ENTRADA", 18), ("FECHA LIQUIDADO", 18), ("RENDIMIENTO", 16),
+        ]
+
+        def _dibujar_encabezado():
+            pdf.set_font("Helvetica", "B", 6.5)
+            pdf.set_text_color(50, 50, 50)
+            pdf.set_fill_color(240, 240, 240)
+            for titulo, ancho in columnas:
+                pdf.cell(ancho, 6, safestr(titulo), border=1, align="C", fill=True)
             pdf.ln()
-            
-        pdf.set_text_color(0, 0, 0)
 
+        _dibujar_encabezado()
+
+        df_ordenado = df_detalle.sort_values(by='DIAS_RETRASO', ascending=False)
+
+        for _, row in df_ordenado.iterrows():
+            if pdf.get_y() > 195:
+                pdf.add_page(orientation='L')
+                _dibujar_encabezado()
+
+            dias_val = int(row['DIAS_RETRASO'])
+            estado_asignado = not bool(mask_sin_tec.loc[row.name]) if row.name in mask_sin_tec.index else True
+            subestado = _valor_flexible(row, ['SUBESTADO', 'SUB ESTADO', 'SUB-ESTADO'], default=("ASIGNADA TECNICO" if estado_asignado else "EN PROCESO"))
+            contrato = _valor_flexible(row, ['CONTRATO', 'CONTRATO FÍSICO', 'CONTRATO FISICO', 'CONTRATO_FISICO', 'NO. CONTRATO'])
+            motivo = _valor_flexible(row, ['MOTIVO UNIFICADO', 'MOTIVO'])
+            razon_cierre = _valor_flexible(row, ['RAZON CIERRE UNIFICADO', 'RAZON_CIERRE_SOP', 'RAZON CIERRE'])
+            sector = _valor_flexible(row, ['SECTOR'])
+            nombre_cliente = _valor_flexible(row, ['NOMBRE', 'NOMBRE CLIENTE', 'SUSCRIPTOR'])
+            fecha_entrada = _formatear_fecha_flexible(row, ['HORA_INI', 'FECHA ENTRADA', 'FECHAENTRADA'])
+            fecha_liquidado = _formatear_fecha_flexible(row, ['HORA_LIQ', 'FECHA LIQUIDADO', 'FECHALIQUIDADO'])
+
+            valores = [
+                (str(dias_val), "C", True),
+                (safestr(str(row.get('NUM', ''))), "C", False),
+                (safestr(str(row.get('ACTIVIDAD', '')))[:16], "L", False),
+                (safestr(str(motivo))[:16], "L", False),
+                (safestr(str(razon_cierre))[:16], "L", False),
+                (safestr(str(sector))[:14], "L", False),
+                (safestr(str(row.get('COLONIA', '')))[:16], "L", False),
+                (safestr(str(row.get('CLIENTE', ''))), "C", False),
+                (safestr(str(contrato))[:14], "L", False),
+                (safestr(str(nombre_cliente))[:22], "L", False),
+                (safestr(str(row.get('TECNICO', '')))[:20], "L", False),
+                (safestr(str(subestado))[:14], "L", False),
+                (fecha_entrada, "C", False),
+                (fecha_liquidado, "C", False),
+                ("00:00:00", "C", True),
+            ]
+
+            pdf.set_font("Helvetica", "", 6)
+            for (texto, alineacion, es_coloreada), (titulo, ancho) in zip(valores, columnas):
+                if es_coloreada:
+                    if titulo == "Días":
+                        _color_por_dias(pdf, dias_val)
+                    else:
+                        pdf.set_fill_color(211, 47, 47)
+                        pdf.set_text_color(255, 255, 255)
+                    pdf.cell(ancho, 5, texto, border=1, align=alineacion, fill=True)
+                    pdf.set_text_color(0, 0, 0)
+                else:
+                    pdf.cell(ancho, 5, texto, border=1, align=alineacion)
+            pdf.ln()
+
+    pdf.set_text_color(0, 0, 0)
     return finalizar_pdf(pdf)
 
 def generar_pdf_tiempos_muertos(df_dia, fecha_sel):
