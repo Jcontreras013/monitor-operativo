@@ -1341,7 +1341,7 @@ def main():
                     # Igual que en el Gantt en vivo: si HORA_INI está vacío (orden asignada
                     # pero aún no marcada "iniciada"), se usa FECHA_APE como respaldo para
                     # que no desaparezca del día en que realmente se abrió.
-                    mask_ini_dia = (hora_ini_dia_dt.dt.date == fecha_cal_sel) | (hora_ini_dia_dt.isna() & (fecha_ape_dia_dt.dt.date == fecha_cal_sel))
+                    mask_ini_dia = (hora_ini_dia_dt.dt.date == fecha_cal_sel) | (hora_ini_dia_dt.isna() & (fecha_ape_dia_dt.dt.date == fecha_cal_sel) & mascara_tecnico_asignado(df_base['TECNICO']))
                     df_para_gantt_diario = df_base[mask_ini_dia].copy()
                     
                     if not df_para_gantt_diario.empty:
@@ -2107,7 +2107,14 @@ def main():
                         # del Gantt aunque estuviera legítimamente abierta hoy.
                         mask_viva_gantt = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                         mask_hora_ini_hoy = df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor
-                        mask_sin_hora_ini_pero_ape_hoy = df_monitor_filtrado['HORA_INI'].isna() & (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor)
+                        # El respaldo por FECHA_APE solo aplica a órdenes con técnico asignado:
+                        # una orden SIN técnico (placeholder 'N/D') nunca debe generar su propia
+                        # fila en un gráfico que agrupa por técnico.
+                        mask_sin_hora_ini_pero_ape_hoy = (
+                            df_monitor_filtrado['HORA_INI'].isna()
+                            & (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor)
+                            & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])
+                        )
                         mask_abiertas_gantt = mask_viva_gantt & (mask_hora_ini_hoy | mask_sin_hora_ini_pero_ape_hoy)
 
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
@@ -2283,6 +2290,41 @@ def main():
                             # bloques de almuerzo, etc.). Este es el set real de técnicos que
                             # el usuario ve en la gráfica.
                             tecnicos_en_gantt_hoy = set(df_para_gantt_final['TECNICO'].dropna().unique())
+
+                        with st.expander("🔍 Diagnóstico: ¿por qué no veo a un técnico aquí?", expanded=False):
+                            st.caption("Escribe el nombre (o parte del nombre) de un técnico para ver el estado real de todas sus órdenes de hoy, y por qué el Gantt sí o no las está dibujando.")
+                            tec_diag_txt = st.text_input("Nombre del técnico", key="input_diag_tec_gantt")
+                            if tec_diag_txt.strip():
+                                tec_diag_norm = normalizar_nombre_cruce(tec_diag_txt)
+                                tecnico_norm_series = df_monitor_filtrado['TECNICO'].apply(normalizar_nombre_cruce)
+                                df_diag_tec = df_monitor_filtrado[tecnico_norm_series.str.contains(tec_diag_norm, na=False, regex=False)].copy()
+
+                                if df_diag_tec.empty:
+                                    st.warning("Ninguna orden en la base actual (con los filtros activos del Monitor) tiene ese nombre de técnico. Revisa que el nombre coincida con el catálogo, o que no esté oculto por otro filtro del panel lateral.")
+                                else:
+                                    def _motivo_gantt(row):
+                                        estado_up = str(row.get('ESTADO', '')).upper()
+                                        hi_d, hl_d, ape_d = row.get('HORA_INI'), row.get('HORA_LIQ'), row.get('FECHA_APE')
+                                        es_viva = bool(re.search(PATRON_ASIGNADAS_VIVA_STR, estado_up, re.IGNORECASE))
+                                        es_cerrada = estado_up == 'CERRADA'
+                                        act_up = str(row.get('ACTIVIDAD', '')).strip().upper()
+                                        if act_up not in ACTIVIDADES_GANTT_PERMITIDAS:
+                                            return f"❌ La actividad '{row.get('ACTIVIDAD','')}' no está en ACTIVIDADES_GANTT_PERMITIDAS"
+                                        if es_cerrada:
+                                            if pd.notnull(hl_d) and hl_d.date() == hoy_date_valor:
+                                                return "✅ Se muestra (cerrada hoy)"
+                                            return f"❌ Cerrada, pero HORA_LIQ no es de hoy (HORA_LIQ={hl_d})"
+                                        if es_viva:
+                                            if pd.notnull(hi_d) and hi_d.date() == hoy_date_valor:
+                                                return "✅ Se muestra (HORA_INI de hoy)"
+                                            if pd.isnull(hi_d) and pd.notnull(ape_d) and ape_d.date() == hoy_date_valor:
+                                                return "✅ Se muestra (respaldo por FECHA_APE, sin HORA_INI aún)"
+                                            return f"❌ Viva, pero ni HORA_INI ni FECHA_APE son de hoy (HORA_INI={hi_d}, FECHA_APE={ape_d})"
+                                        return f"❌ ESTADO '{row.get('ESTADO','')}' no es CERRADA ni un estado 'vivo' reconocido (PATRON_ASIGNADAS_VIVA_STR)"
+
+                                    df_diag_tec['MOTIVO_GANTT'] = df_diag_tec.apply(_motivo_gantt, axis=1)
+                                    cols_diag = [c for c in ['NUM', 'ACTIVIDAD', 'ESTADO', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'FECHA_APE', 'MOTIVO_GANTT'] if c in df_diag_tec.columns]
+                                    st.dataframe(df_diag_tec[cols_diag], use_container_width=True, hide_index=True)
 
                         # ==============================================================================
                         # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
