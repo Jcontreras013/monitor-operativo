@@ -1336,13 +1336,21 @@ def main():
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
-                    mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
+                    hora_ini_dia_dt = pd.to_datetime(df_base['HORA_INI'], errors='coerce')
+                    fecha_ape_dia_dt = pd.to_datetime(df_base['FECHA_APE'], errors='coerce') if 'FECHA_APE' in df_base.columns else pd.Series(pd.NaT, index=df_base.index)
+                    # Igual que en el Gantt en vivo: si HORA_INI está vacío (orden asignada
+                    # pero aún no marcada "iniciada"), se usa FECHA_APE como respaldo para
+                    # que no desaparezca del día en que realmente se abrió.
+                    mask_ini_dia = (hora_ini_dia_dt.dt.date == fecha_cal_sel) | (hora_ini_dia_dt.isna() & (fecha_ape_dia_dt.dt.date == fecha_cal_sel))
                     df_para_gantt_diario = df_base[mask_ini_dia].copy()
                     
                     if not df_para_gantt_diario.empty:
                         ahora_hx_d = get_honduras_time()
                         
                         df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
+                        if 'FECHA_APE' in df_para_gantt_diario.columns:
+                            mask_start_faltante_d = df_para_gantt_diario['GANTT_START'].isna()
+                            df_para_gantt_diario.loc[mask_start_faltante_d, 'GANTT_START'] = df_para_gantt_diario.loc[mask_start_faltante_d, 'FECHA_APE']
                         hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
                         
                         df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
@@ -2091,8 +2099,17 @@ def main():
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
-                        mask_abiertas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor)
-                        
+
+                        # Una orden "viva" cuenta como abierta hoy si HORA_INI es de hoy, o si
+                        # HORA_INI todavía está vacío (el técnico no la ha marcado "iniciada" en
+                        # campo) pero su FECHA_APE (fecha real de apertura de la orden) es hoy.
+                        # Sin este respaldo, cualquier orden asignada-pero-no-iniciada desaparecía
+                        # del Gantt aunque estuviera legítimamente abierta hoy.
+                        mask_viva_gantt = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                        mask_hora_ini_hoy = df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor
+                        mask_sin_hora_ini_pero_ape_hoy = df_monitor_filtrado['HORA_INI'].isna() & (df_monitor_filtrado['FECHA_APE'].dt.date == hoy_date_valor)
+                        mask_abiertas_gantt = mask_viva_gantt & (mask_hora_ini_hoy | mask_sin_hora_ini_pero_ape_hoy)
+
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
 
                         try:
@@ -2119,8 +2136,17 @@ def main():
                         # ==============================================================================
                         mask_sin_inicio = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].notnull()
                         df_para_gantt_final.loc[mask_sin_inicio, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio, 'HORA_LIQ'] - pd.Timedelta(minutes=30)
-                        
+
+                        # Órdenes que siguen abiertas (sin HORA_LIQ) y que llegaron hasta aquí
+                        # gracias al respaldo de FECHA_APE todavía no tienen HORA_INI: se usa
+                        # FECHA_APE como el mejor estimado disponible de su hora de inicio, para
+                        # que la barra sí se dibuje en vez de perderse en el filtro de abajo.
+                        mask_sin_inicio_abierta = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].isna()
+                        if 'FECHA_APE' in df_para_gantt_final.columns:
+                            df_para_gantt_final.loc[mask_sin_inicio_abierta, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio_abierta, 'FECHA_APE']
+
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
+
 
                         # Se resetea aquí; si el Gantt termina vacío, ningún técnico debe
                         # figurar en las tablas de abajo.
