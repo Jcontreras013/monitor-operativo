@@ -1353,12 +1353,17 @@ def main():
                             df_para_gantt_diario.loc[mask_start_faltante_d, 'GANTT_START'] = df_para_gantt_diario.loc[mask_start_faltante_d, 'FECHA_APE']
                         hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
                         
-                        df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
+                        mask_estado_vivo_d = df_para_gantt_diario['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                        mask_abierta_d = mask_estado_vivo_d & df_para_gantt_diario['HORA_LIQ'].isna()
 
-                        # Mismo criterio que el Gantt en vivo: una orden aún abierta (sin
-                        # HORA_LIQ) siempre se dibuja como bloque sólido de al menos 30 min,
-                        # nunca como una raya delgada casi invisible.
-                        mask_abierta_d = df_para_gantt_diario['HORA_LIQ'].isna()
+                        df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ']
+                        df_para_gantt_diario.loc[mask_abierta_d, 'GANTT_END'] = hora_cierre_proyectada
+
+                        # Cerrada (o estado no vivo) sin HORA_LIQ utilizable: bloque acotado,
+                        # no se proyecta un cierre inventado.
+                        mask_cierre_desc_d = df_para_gantt_diario['GANTT_END'].isna()
+                        df_para_gantt_diario.loc[mask_cierre_desc_d, 'GANTT_END'] = df_para_gantt_diario.loc[mask_cierre_desc_d, 'GANTT_START'] + pd.Timedelta(minutes=30)
+
                         duracion_d = df_para_gantt_diario['GANTT_END'] - df_para_gantt_diario['GANTT_START']
                         mask_bloque_corto_d = mask_abierta_d & (duracion_d < pd.Timedelta(minutes=30))
                         df_para_gantt_diario.loc[mask_bloque_corto_d, 'GANTT_START'] = df_para_gantt_diario.loc[mask_bloque_corto_d, 'GANTT_END'] - pd.Timedelta(minutes=30)
@@ -2171,16 +2176,30 @@ def main():
                             ahora_hx = get_honduras_time()
                             
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
-                            df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
 
-                            # Cualquier orden que TODAVÍA NO se ha cerrado (HORA_LIQ vacío) debe
-                            # verse como un bloque sólido y legible, sin importar cuán reciente
-                            # sea su inicio. Antes solo se corregía cuando inicio == fin exactos;
-                            # una orden abierta hace apenas unos minutos quedaba como una raya
-                            # casi invisible. Ahora se le garantiza un ancho mínimo de 30 min.
-                            mask_abierta_actual = df_para_gantt_final['HORA_LIQ'].isna()
+                            # Solo se estira la barra hasta la hora actual si la orden está
+                            # GENUINAMENTE abierta: su ESTADO es un estado vivo Y no tiene
+                            # HORA_LIQ. Antes se usaba HORA_LIQ.fillna(ahora), lo que estiraba
+                            # hasta "ahora" cualquier fila sin hora de cierre, incluidas órdenes
+                            # ya CERRADAS cuya HORA_LIQ venía vacía o no se pudo leer: esas
+                            # aparecían como barras gigantes "abiertas desde temprano" aunque en
+                            # el archivo ya estuvieran cerradas.
+                            mask_estado_vivo_barra = df_para_gantt_final['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                            mask_realmente_abierta = mask_estado_vivo_barra & df_para_gantt_final['HORA_LIQ'].isna()
+
+                            df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ']
+                            df_para_gantt_final.loc[mask_realmente_abierta, 'GANTT_END'] = ahora_hx
+
+                            # Orden ya cerrada (o en cualquier estado no vivo) pero sin HORA_LIQ
+                            # utilizable: no se inventa una duración hasta "ahora"; se le da un
+                            # bloque acotado para que no domine ni distorsione la gráfica.
+                            mask_cierre_desconocido = df_para_gantt_final['GANTT_END'].isna()
+                            df_para_gantt_final.loc[mask_cierre_desconocido, 'GANTT_END'] = df_para_gantt_final.loc[mask_cierre_desconocido, 'GANTT_START'] + pd.Timedelta(minutes=30)
+
+                            # Toda orden aún abierta se dibuja como bloque sólido de al menos
+                            # 30 min, para que nunca quede como una raya casi invisible.
                             duracion_actual_bloque = df_para_gantt_final['GANTT_END'] - df_para_gantt_final['GANTT_START']
-                            mask_bloque_muy_corto = mask_abierta_actual & (duracion_actual_bloque < pd.Timedelta(minutes=30))
+                            mask_bloque_muy_corto = mask_realmente_abierta & (duracion_actual_bloque < pd.Timedelta(minutes=30))
                             df_para_gantt_final.loc[mask_bloque_muy_corto, 'GANTT_START'] = df_para_gantt_final.loc[mask_bloque_muy_corto, 'GANTT_END'] - pd.Timedelta(minutes=30)
 
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
