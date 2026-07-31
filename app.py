@@ -1047,7 +1047,7 @@ def main():
 
         with tab_noinst:
             st.subheader("🚫 Órdenes Cerradas como NOINSTALADO Hoy")
-            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
+            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & ((df_base['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
             st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
             
         return
@@ -1796,8 +1796,13 @@ def main():
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
       # === FILTRADO SEGURO DE FECHAS PARA INDICADORES ===
-        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha
-        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce')
+        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha.
+        # OJO: HORA_LIQ llega en UTC (igual que se documenta más abajo en "Órdenes
+        # Cerradas por Hora"), así que hay que restarle 6h para obtener la fecha real
+        # en hora de Honduras. Sin este ajuste, cualquier orden cerrada entre las
+        # 6:00pm y medianoche (hora Honduras) del día ANTERIOR cae en la misma fecha
+        # UTC que la madrugada/mañana de HOY, y se cuenta como "cerrada hoy" sin serlo.
+        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
 
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
@@ -2098,7 +2103,7 @@ def main():
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
-                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
+                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
 
                         # Una orden "viva" cuenta como abierta hoy si HORA_INI es de hoy, o si
                         # HORA_INI todavía está vacío (el técnico no la ha marcado "iniciada" en
@@ -2118,6 +2123,23 @@ def main():
                         mask_abiertas_gantt = mask_viva_gantt & (mask_hora_ini_hoy | mask_sin_hora_ini_pero_ape_hoy)
 
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+
+                        # Salvaguarda anti-duplicados: si por algún desajuste de sincronización
+                        # la MISMA orden (mismo NUM) quedó con más de una fila para el mismo
+                        # técnico (ej. una copia vieja aún "abierta" y otra ya "cerrada" del
+                        # mismo pedido), sin este filtro se dibujaban 2 barras separadas en el
+                        # Gantt -- dando la falsa impresión de una segunda orden activa cuando
+                        # en realidad es la MISMA orden duplicada. Se conserva la versión más
+                        # completa (la que ya tiene HORA_LIQ, si existe) y se descarta la copia.
+                        if 'NUM' in df_para_gantt_final.columns and not df_para_gantt_final.empty:
+                            mask_num_real = df_para_gantt_final['NUM'].astype(str).str.strip().replace('', '-') != '-'
+                            df_num_real = df_para_gantt_final[mask_num_real].copy()
+                            df_sin_num = df_para_gantt_final[~mask_num_real].copy()
+                            if not df_num_real.empty:
+                                df_num_real['_TIENE_LIQ'] = df_num_real['HORA_LIQ'].notna()
+                                df_num_real = df_num_real.sort_values(by='_TIENE_LIQ', ascending=True)
+                                df_num_real = df_num_real.drop_duplicates(subset=['TECNICO', 'NUM'], keep='last').drop(columns=['_TIENE_LIQ'])
+                            df_para_gantt_final = pd.concat([df_num_real, df_sin_num])
 
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
@@ -2395,8 +2417,8 @@ def main():
 
                         # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
                         df_jornada_hoy = df_monitor_filtrado[
-                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
-                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
+                            (((df_monitor_filtrado['HORA_INI'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) | 
+                             ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)) &
                             (df_monitor_filtrado['TECNICO'].notna()) &
                             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
                         ].copy()
@@ -2444,7 +2466,7 @@ def main():
                                 
                                 tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
                                 if not tiene_orden_activa:
-                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & ((group['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)]
                                     if not ordenes_cerradas.empty:
                                         ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
                                         liq_last = ultima_cerrada.get('HORA_LIQ')
@@ -2679,7 +2701,7 @@ def main():
                         elif status_final_btn == "C_HOY": 
                             df_v_tabla_monitor = df_cerradas_hoy_monitor
                         else: 
-                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)]
                         
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
