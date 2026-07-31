@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
+from streamlit_js_eval import streamlit_js_eval
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import unicodedata
 
@@ -23,9 +25,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import expediente
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
+    aplicar_estilos_nativos, 
     mostrar_comentario_cierre, 
     mostrar_detalle_avance, 
-    aplicar_estilos_df
+    aplicar_estilos_df,
+    mostrar_seguimientos_tecnico
 )
 
 import settings 
@@ -57,21 +61,27 @@ try:
     import os
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
-        PATRON_ASIGNADAS_VIVA_STR,
-        ACTIVIDADES_BASURA,
-        NOMBRE_BUCKET_SISTEMA,
+        COLUMNS_MAPPING, 
         es_offline_preciso, 
         procesar_dataframe_base, 
+        depurar_archivos_en_crudo,
+        depurar_api_con_dispositivos,
+        consultar_api_ordenes,
+        logica_generar_pdf,
         generar_pdf_cierre_diario,
+        generar_pdf_semanal,
+        generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
         generar_pdf_primera_orden,
         generar_pdf_pendientes_dispatch,
         get_honduras_time,
+        parse_date_ultra_safe,
         procesar_fechas_seguro,
         generar_pdf_tiempos_muertos,
         generar_pdf_promedio_arranque,
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
+        extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
         leer_espejo_gcs,
@@ -112,9 +122,9 @@ ACTIVIDADES_GANTT_PERMITIDAS = [
     'TRASLADOINTFIBRACORP', 'TVADICIONAL'
 ]
 
-# PATRON_ASIGNADAS_VIVA_STR, ACTIVIDADES_BASURA y NOMBRE_BUCKET_SISTEMA ahora
-# viven únicamente en tools.py (fuente única de verdad) y se importan más abajo
-# junto con el resto de utilidades, para que nunca se desincronicen entre archivos.
+PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
+NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
 # FUNCIONES AUXILIARES DE SOPORTE GLOBAL
@@ -247,7 +257,7 @@ def sincronizar_datos_nube(conn):
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.to_datetime(df_nube['FECHA_APE'], errors='coerce'))
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                     
-                    PATRON_VIVAS = PATRON_ASIGNADAS_VIVA_STR  # reutiliza la constante única de tools.py
+                    PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                     df_nube['ES_VIVA'] = df_nube['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
                     df_nube = df_nube.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                     
@@ -706,7 +716,8 @@ def main():
                                         mask_otra_empresa_cloud = (empresa_upper_cloud != '') & (empresa_upper_cloud != 'NAN') & (empresa_upper_cloud != 'NONE') & (~empresa_upper_cloud.str.contains('ISCA', na=False))
                                         df_cloud = df_cloud[~mask_otra_empresa_cloud].copy()
 
-                                    mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False)
+                                    PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                                    mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
                                     df_historial_puro = df_cloud[~mask_vivas_nube].copy()
                                     df_combined = pd.concat([df_historial_puro, df_new])
                                 else: df_combined = df_new
@@ -718,7 +729,7 @@ def main():
                                     df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.to_datetime(df_combined['FECHA_APE'], errors='coerce'))
                                     df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                                     
-                                    PATRON_VIVAS = PATRON_ASIGNADAS_VIVA_STR  # reutiliza la constante única de tools.py
+                                    PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
                                     df_combined['ES_VIVA'] = df_combined['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
                                     
                                     df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
@@ -852,7 +863,7 @@ def main():
         df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.to_datetime(df_base['FECHA_APE'], errors='coerce'))
         df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
         
-        PATRON_VIVAS = PATRON_ASIGNADAS_VIVA_STR  # reutiliza la constante única de tools.py
+        PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
         df_base['ES_VIVA'] = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
         
         df_base = df_base.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
@@ -1036,7 +1047,7 @@ def main():
 
         with tab_noinst:
             st.subheader("🚫 Órdenes Cerradas como NOINSTALADO Hoy")
-            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & ((df_base['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
+            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
             st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
             
         return
@@ -1343,7 +1354,15 @@ def main():
                         hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
                         
                         df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ'].fillna(hora_cierre_proyectada)
-                        
+
+                        # Mismo criterio que el Gantt en vivo: una orden aún abierta (sin
+                        # HORA_LIQ) siempre se dibuja como bloque sólido de al menos 30 min,
+                        # nunca como una raya delgada casi invisible.
+                        mask_abierta_d = df_para_gantt_diario['HORA_LIQ'].isna()
+                        duracion_d = df_para_gantt_diario['GANTT_END'] - df_para_gantt_diario['GANTT_START']
+                        mask_bloque_corto_d = mask_abierta_d & (duracion_d < pd.Timedelta(minutes=30))
+                        df_para_gantt_diario.loc[mask_bloque_corto_d, 'GANTT_START'] = df_para_gantt_diario.loc[mask_bloque_corto_d, 'GANTT_END'] - pd.Timedelta(minutes=30)
+
                         mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
                         df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
                         
@@ -1785,13 +1804,8 @@ def main():
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
       # === FILTRADO SEGURO DE FECHAS PARA INDICADORES ===
-        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha.
-        # OJO: HORA_LIQ llega en UTC (igual que se documenta más abajo en "Órdenes
-        # Cerradas por Hora"), así que hay que restarle 6h para obtener la fecha real
-        # en hora de Honduras. Sin este ajuste, cualquier orden cerrada entre las
-        # 6:00pm y medianoche (hora Honduras) del día ANTERIOR cae en la misma fecha
-        # UTC que la madrugada/mañana de HOY, y se cuenta como "cerrada hoy" sin serlo.
-        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
+        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha
+        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce')
 
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
@@ -1831,11 +1845,7 @@ def main():
         vivas_count_asignadas = len(df_todas_pendientes_monitor[mask_tec_valido_mon])
         
         # Conteo depurado de cerradas de HOY (compara la fecha de cierre con hoy_date_valor)
-        # Solo se cuentan actividades de la lista oficial (ACTIVIDADES_GANTT_PERMITIDAS);
-        # actividades operativas internas como ACTIVARRES/DESACTIVAR (que no son visitas
-        # técnicas reales al cliente) no deben inflar el contador de "Cerradas Hoy".
-        mask_actividad_valida_cerr = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS)
-        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & mask_actividad_valida_cerr
+        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
         df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
     
@@ -2096,7 +2106,7 @@ def main():
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                         
-                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
+                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
 
                         # Una orden "viva" cuenta como abierta hoy si HORA_INI es de hoy, o si
                         # HORA_INI todavía está vacío (el técnico no la ha marcado "iniciada" en
@@ -2116,23 +2126,6 @@ def main():
                         mask_abiertas_gantt = mask_viva_gantt & (mask_hora_ini_hoy | mask_sin_hora_ini_pero_ape_hoy)
 
                         df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
-
-                        # Salvaguarda anti-duplicados: si por algún desajuste de sincronización
-                        # la MISMA orden (mismo NUM) quedó con más de una fila para el mismo
-                        # técnico (ej. una copia vieja aún "abierta" y otra ya "cerrada" del
-                        # mismo pedido), sin este filtro se dibujaban 2 barras separadas en el
-                        # Gantt -- dando la falsa impresión de una segunda orden activa cuando
-                        # en realidad es la MISMA orden duplicada. Se conserva la versión más
-                        # completa (la que ya tiene HORA_LIQ, si existe) y se descarta la copia.
-                        if 'NUM' in df_para_gantt_final.columns and not df_para_gantt_final.empty:
-                            mask_num_real = df_para_gantt_final['NUM'].astype(str).str.strip().replace('', '-') != '-'
-                            df_num_real = df_para_gantt_final[mask_num_real].copy()
-                            df_sin_num = df_para_gantt_final[~mask_num_real].copy()
-                            if not df_num_real.empty:
-                                df_num_real['_TIENE_LIQ'] = df_num_real['HORA_LIQ'].notna()
-                                df_num_real = df_num_real.sort_values(by='_TIENE_LIQ', ascending=True)
-                                df_num_real = df_num_real.drop_duplicates(subset=['TECNICO', 'NUM'], keep='last').drop(columns=['_TIENE_LIQ'])
-                            df_para_gantt_final = pd.concat([df_num_real, df_sin_num])
 
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
@@ -2163,22 +2156,9 @@ def main():
                         # gracias al respaldo de FECHA_APE todavía no tienen HORA_INI: se usa
                         # FECHA_APE como el mejor estimado disponible de su hora de inicio, para
                         # que la barra sí se dibuje en vez de perderse en el filtro de abajo.
-                        # OJO: si FECHA_APE solo trae la FECHA sin hora real (queda en 00:00:00
-                        # medianoche), usarla tal cual estira la barra de 00:00 hasta "ahora" --
-                        # muchísimo más larga que el resto y tapando/empalmando con otras órdenes
-                        # del mismo técnico en el Gantt (esto es justo lo que le pasó a la barra
-                        # de INSFIBRA de Rayam). En ese caso se usa un estimado corto (ahora -30min),
-                        # igual que el estimado que ya se usa arriba para órdenes cerradas sin inicio.
                         mask_sin_inicio_abierta = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].isna()
                         if 'FECHA_APE' in df_para_gantt_final.columns:
-                            ahora_hx_fallback = get_honduras_time()
-                            fecha_ape_tiene_hora = df_para_gantt_final['FECHA_APE'].dt.time != dt_time(0, 0, 0)
-
-                            mask_ape_con_hora = mask_sin_inicio_abierta & fecha_ape_tiene_hora
-                            df_para_gantt_final.loc[mask_ape_con_hora, 'HORA_INI'] = df_para_gantt_final.loc[mask_ape_con_hora, 'FECHA_APE']
-
-                            mask_ape_sin_hora = mask_sin_inicio_abierta & ~fecha_ape_tiene_hora
-                            df_para_gantt_final.loc[mask_ape_sin_hora, 'HORA_INI'] = ahora_hx_fallback - pd.Timedelta(minutes=30)
+                            df_para_gantt_final.loc[mask_sin_inicio_abierta, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio_abierta, 'FECHA_APE']
 
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
 
@@ -2192,10 +2172,17 @@ def main():
                             
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ'].fillna(ahora_hx)
-                            
-                            mask_cero_min = df_para_gantt_final['GANTT_START'] == df_para_gantt_final['GANTT_END']
-                            df_para_gantt_final.loc[mask_cero_min, 'GANTT_START'] = df_para_gantt_final.loc[mask_cero_min, 'GANTT_END'] - pd.Timedelta(minutes=30)
-                            
+
+                            # Cualquier orden que TODAVÍA NO se ha cerrado (HORA_LIQ vacío) debe
+                            # verse como un bloque sólido y legible, sin importar cuán reciente
+                            # sea su inicio. Antes solo se corregía cuando inicio == fin exactos;
+                            # una orden abierta hace apenas unos minutos quedaba como una raya
+                            # casi invisible. Ahora se le garantiza un ancho mínimo de 30 min.
+                            mask_abierta_actual = df_para_gantt_final['HORA_LIQ'].isna()
+                            duracion_actual_bloque = df_para_gantt_final['GANTT_END'] - df_para_gantt_final['GANTT_START']
+                            mask_bloque_muy_corto = mask_abierta_actual & (duracion_actual_bloque < pd.Timedelta(minutes=30))
+                            df_para_gantt_final.loc[mask_bloque_muy_corto, 'GANTT_START'] = df_para_gantt_final.loc[mask_bloque_muy_corto, 'GANTT_END'] - pd.Timedelta(minutes=30)
+
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                             df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
                             
@@ -2423,8 +2410,8 @@ def main():
 
                         # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
                         df_jornada_hoy = df_monitor_filtrado[
-                            (((df_monitor_filtrado['HORA_INI'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) | 
-                             ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)) &
+                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
+                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
                             (df_monitor_filtrado['TECNICO'].notna()) &
                             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
                         ].copy()
@@ -2472,7 +2459,7 @@ def main():
                                 
                                 tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
                                 if not tiene_orden_activa:
-                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & ((group['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)]
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
                                     if not ordenes_cerradas.empty:
                                         ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
                                         liq_last = ultima_cerrada.get('HORA_LIQ')
@@ -2707,7 +2694,7 @@ def main():
                         elif status_final_btn == "C_HOY": 
                             df_v_tabla_monitor = df_cerradas_hoy_monitor
                         else: 
-                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) & (df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS))]
+                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
                         
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
