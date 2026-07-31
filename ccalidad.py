@@ -8,7 +8,8 @@ from tools import (
     get_honduras_time, 
     normalizar_nombre_cruce,
     leer_espejo_gcs,
-    guardar_auditoria_campo
+    guardar_auditoria_campo,
+    NOMBRE_BUCKET_SISTEMA
 )
 
 def mostrar_modulo_calidad(conn, df_base):
@@ -455,7 +456,7 @@ def mostrar_modulo_calidad(conn, df_base):
                     df_qa = None
                     
                 if df_qa is None or df_qa.empty:
-                    df_qa = leer_espejo_gcs("jovial-trilogy-306216.appspot.com", archivo_respaldo)
+                    df_qa = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, archivo_respaldo)
                     
                 if df_qa is None or df_qa.empty:
                     st.info(f"ℹ️ Aún no se han registrado auditorías en la pestaña '{hoja_target}' de Google Sheets.")

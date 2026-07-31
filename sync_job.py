@@ -40,12 +40,11 @@ from tools import (
     leer_espejo_gcs,
     get_honduras_time,
     procesar_fechas_seguro,
-    calcular_offline_y_alertas
+    calcular_offline_y_alertas,
+    PATRON_ASIGNADAS_VIVA_STR as PATRON_VIVAS,
+    ACTIVIDADES_BASURA,
+    NOMBRE_BUCKET_SISTEMA as NOMBRE_BUCKET
 )
-
-PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
-NOMBRE_BUCKET = "jovial-trilogy-306216.appspot.com"
 
 def ejecutar_sincronizacion_background():
     if not HAS_GSPREAD:

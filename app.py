@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import unicodedata
 
@@ -25,11 +23,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import expediente
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
-    aplicar_estilos_nativos, 
     mostrar_comentario_cierre, 
     mostrar_detalle_avance, 
-    aplicar_estilos_df,
-    mostrar_seguimientos_tecnico
+    aplicar_estilos_df
 )
 
 import settings 
@@ -61,27 +57,21 @@ try:
     import os
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
-        COLUMNS_MAPPING, 
+        PATRON_ASIGNADAS_VIVA_STR,
+        ACTIVIDADES_BASURA,
+        NOMBRE_BUCKET_SISTEMA,
         es_offline_preciso, 
         procesar_dataframe_base, 
-        depurar_archivos_en_crudo,
-        depurar_api_con_dispositivos,
-        consultar_api_ordenes,
-        logica_generar_pdf,
         generar_pdf_cierre_diario,
-        generar_pdf_semanal,
-        generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
         generar_pdf_primera_orden,
         generar_pdf_pendientes_dispatch,
         get_honduras_time,
-        parse_date_ultra_safe,
         procesar_fechas_seguro,
         generar_pdf_tiempos_muertos,
         generar_pdf_promedio_arranque,
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
-        extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
         leer_espejo_gcs,
@@ -122,9 +112,9 @@ ACTIVIDADES_GANTT_PERMITIDAS = [
     'TRASLADOINTFIBRACORP', 'TVADICIONAL'
 ]
 
-PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR']
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+# PATRON_ASIGNADAS_VIVA_STR, ACTIVIDADES_BASURA y NOMBRE_BUCKET_SISTEMA ahora
+# viven únicamente en tools.py (fuente única de verdad) y se importan más abajo
+# junto con el resto de utilidades, para que nunca se desincronicen entre archivos.
 
 # ==============================================================================
 # FUNCIONES AUXILIARES DE SOPORTE GLOBAL
@@ -257,7 +247,7 @@ def sincronizar_datos_nube(conn):
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.to_datetime(df_nube['FECHA_APE'], errors='coerce'))
                     df_nube['SORT_DATE'] = df_nube['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                     
-                    PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                    PATRON_VIVAS = PATRON_ASIGNADAS_VIVA_STR  # reutiliza la constante única de tools.py
                     df_nube['ES_VIVA'] = df_nube['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
                     df_nube = df_nube.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
                     
@@ -716,8 +706,7 @@ def main():
                                         mask_otra_empresa_cloud = (empresa_upper_cloud != '') & (empresa_upper_cloud != 'NAN') & (empresa_upper_cloud != 'NONE') & (~empresa_upper_cloud.str.contains('ISCA', na=False))
                                         df_cloud = df_cloud[~mask_otra_empresa_cloud].copy()
 
-                                    PATRON_VIVAS_NUBE = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
-                                    mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS_NUBE, na=False)
+                                    mask_vivas_nube = df_cloud['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False)
                                     df_historial_puro = df_cloud[~mask_vivas_nube].copy()
                                     df_combined = pd.concat([df_historial_puro, df_new])
                                 else: df_combined = df_new
@@ -729,7 +718,7 @@ def main():
                                     df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.to_datetime(df_combined['FECHA_APE'], errors='coerce'))
                                     df_combined['SORT_DATE'] = df_combined['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
                                     
-                                    PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+                                    PATRON_VIVAS = PATRON_ASIGNADAS_VIVA_STR  # reutiliza la constante única de tools.py
                                     df_combined['ES_VIVA'] = df_combined['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
                                     
                                     df_combined = df_combined.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
@@ -863,7 +852,7 @@ def main():
         df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.to_datetime(df_base['FECHA_APE'], errors='coerce'))
         df_base['SORT_DATE'] = df_base['SORT_DATE'].fillna(pd.Timestamp('1970-01-01'))
         
-        PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
+        PATRON_VIVAS = PATRON_ASIGNADAS_VIVA_STR  # reutiliza la constante única de tools.py
         df_base['ES_VIVA'] = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
         
         df_base = df_base.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])

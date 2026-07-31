@@ -31,16 +31,15 @@ except ImportError:
     pass
 
 try:
-    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs, generar_docx_reporte_faltas_individual
+    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs, generar_docx_reporte_faltas_individual, NOMBRE_BUCKET_SISTEMA
 except ImportError:
-    pass
+    NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"  # respaldo si tools.py no está disponible
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
@@ -173,9 +172,6 @@ def es_llegada_tarde(motivo, comentario):
         if kw in com_u:
             return True
     return False
-
-def clasificiar_grave_o_leve(motivo, comentario, n_tardes=0):
-    return clasificar_grave_o_leve(motivo, comentario, n_tardes)
 
 def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     motivo_u = str(motivo).upper().strip()

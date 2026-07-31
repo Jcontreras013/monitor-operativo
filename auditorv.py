@@ -24,7 +24,8 @@ try:
         generar_pdf_semanal_tiempos,
         generar_pdf_telemetria_matriz,
         generar_pdf_gastos_vehiculo,
-        generar_pdf_reporte_general_gastos
+        generar_pdf_reporte_general_gastos,
+        NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
     st.error(f"⚠️ Error al importar herramientas de tools.py en auditorv.py: {e}")
@@ -48,8 +49,6 @@ try:
     from fpdf import FPDF
 except ImportError:
     st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
-
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # --- DETECCIÓN DE CREDENCIALES MULTIPLATAFORMA ---
 def obtener_credenciales_actuales():

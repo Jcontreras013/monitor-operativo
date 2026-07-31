@@ -17,12 +17,12 @@ try:
         procesar_fechas_seguro,
         generar_pdf_rendimiento_integral_360,
         leer_espejo_gcs,
-        get_honduras_time
+        get_honduras_time,
+        NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
     st.error(f"Error al importar módulos de soporte desde tools.py: {e}")
-
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+    NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"  # respaldo si tools.py no está disponible
 
 # ==============================================================================
 # CLASIFICADOR DE TIPO DE ORDEN
