@@ -2174,9 +2174,22 @@ def main():
                         # gracias al respaldo de FECHA_APE todavía no tienen HORA_INI: se usa
                         # FECHA_APE como el mejor estimado disponible de su hora de inicio, para
                         # que la barra sí se dibuje en vez de perderse en el filtro de abajo.
+                        # OJO: si FECHA_APE solo trae la FECHA sin hora real (queda en 00:00:00
+                        # medianoche), usarla tal cual estira la barra de 00:00 hasta "ahora" --
+                        # muchísimo más larga que el resto y tapando/empalmando con otras órdenes
+                        # del mismo técnico en el Gantt (esto es justo lo que le pasó a la barra
+                        # de INSFIBRA de Rayam). En ese caso se usa un estimado corto (ahora -30min),
+                        # igual que el estimado que ya se usa arriba para órdenes cerradas sin inicio.
                         mask_sin_inicio_abierta = df_para_gantt_final['HORA_INI'].isna() & df_para_gantt_final['HORA_LIQ'].isna()
                         if 'FECHA_APE' in df_para_gantt_final.columns:
-                            df_para_gantt_final.loc[mask_sin_inicio_abierta, 'HORA_INI'] = df_para_gantt_final.loc[mask_sin_inicio_abierta, 'FECHA_APE']
+                            ahora_hx_fallback = get_honduras_time()
+                            fecha_ape_tiene_hora = df_para_gantt_final['FECHA_APE'].dt.time != dt_time(0, 0, 0)
+
+                            mask_ape_con_hora = mask_sin_inicio_abierta & fecha_ape_tiene_hora
+                            df_para_gantt_final.loc[mask_ape_con_hora, 'HORA_INI'] = df_para_gantt_final.loc[mask_ape_con_hora, 'FECHA_APE']
+
+                            mask_ape_sin_hora = mask_sin_inicio_abierta & ~fecha_ape_tiene_hora
+                            df_para_gantt_final.loc[mask_ape_sin_hora, 'HORA_INI'] = ahora_hx_fallback - pd.Timedelta(minutes=30)
 
                         df_para_gantt_final = df_para_gantt_final[df_para_gantt_final['HORA_INI'].notnull()].copy()
 
