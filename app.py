@@ -1358,12 +1358,25 @@ def main():
                         mask_cierre_desc_d = df_para_gantt_diario['GANTT_END'].isna()
                         df_para_gantt_diario.loc[mask_cierre_desc_d, 'GANTT_END'] = df_para_gantt_diario.loc[mask_cierre_desc_d, 'GANTT_START'] + pd.Timedelta(minutes=30)
 
-                        duracion_d = df_para_gantt_diario['GANTT_END'] - df_para_gantt_diario['GANTT_START']
-                        mask_bloque_corto_d = mask_abierta_d & (duracion_d < pd.Timedelta(minutes=30))
-                        df_para_gantt_diario.loc[mask_bloque_corto_d, 'GANTT_START'] = df_para_gantt_diario.loc[mask_bloque_corto_d, 'GANTT_END'] - pd.Timedelta(minutes=30)
+                        # Ninguna barra puede extenderse más allá del inicio de la siguiente
+                        # orden del mismo técnico: así se conservan los huecos reales entre
+                        # una orden y la siguiente, y nada queda montado.
+                        df_para_gantt_diario = df_para_gantt_diario.sort_values(by=['TECNICO', 'GANTT_START'])
+                        siguiente_inicio_d = df_para_gantt_diario.groupby('TECNICO')['GANTT_START'].shift(-1)
+
+                        mask_invade_d = siguiente_inicio_d.notna() & (df_para_gantt_diario['GANTT_END'] > siguiente_inicio_d) & (siguiente_inicio_d > df_para_gantt_diario['GANTT_START'])
+                        df_para_gantt_diario.loc[mask_invade_d, 'GANTT_END'] = siguiente_inicio_d[mask_invade_d]
+
+                        ancho_min_barra_d = pd.Timedelta(minutes=10)
+                        fin_objetivo_d = df_para_gantt_diario['GANTT_START'] + ancho_min_barra_d
+                        tope_permitido_d = siguiente_inicio_d.where(siguiente_inicio_d > df_para_gantt_diario['GANTT_START'], fin_objetivo_d).fillna(fin_objetivo_d)
+                        fin_ajustado_d = pd.concat([fin_objetivo_d, tope_permitido_d], axis=1).min(axis=1)
+
+                        mask_barra_corta_d = (df_para_gantt_diario['GANTT_END'] - df_para_gantt_diario['GANTT_START']) < ancho_min_barra_d
+                        df_para_gantt_diario.loc[mask_barra_corta_d, 'GANTT_END'] = fin_ajustado_d[mask_barra_corta_d]
 
                         mask_inv = df_para_gantt_diario['GANTT_END'] < df_para_gantt_diario['GANTT_START']
-                        df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + pd.Timedelta(minutes=30)
+                        df_para_gantt_diario.loc[mask_inv, 'GANTT_END'] = df_para_gantt_diario.loc[mask_inv, 'GANTT_START'] + ancho_min_barra_d
                         
                         df_para_gantt_diario['Inicio'] = df_para_gantt_diario['HORA_INI'].dt.strftime('%H:%M')
                         df_para_gantt_diario['Cierre'] = df_para_gantt_diario['HORA_LIQ'].apply(
@@ -1457,8 +1470,9 @@ def main():
                         )
                         
                         fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
-                        hora_inicio_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
-                        hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                        margen_eje_d = pd.Timedelta(minutes=30)
+                        hora_inicio_pantalla_d = (df_para_gantt_diario['GANTT_START'].min() - margen_eje_d).strftime('%Y-%m-%d %H:%M:%S')
+                        hora_fin_pantalla_d = (df_para_gantt_diario['GANTT_END'].max() + margen_eje_d).strftime('%Y-%m-%d %H:%M:%S')
                         
                         fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
                         fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=1.0, hovertemplate="%{customdata[0]}<extra></extra>")
@@ -2174,14 +2188,31 @@ def main():
                             mask_cierre_desconocido = df_para_gantt_final['GANTT_END'].isna()
                             df_para_gantt_final.loc[mask_cierre_desconocido, 'GANTT_END'] = df_para_gantt_final.loc[mask_cierre_desconocido, 'GANTT_START'] + pd.Timedelta(minutes=30)
 
-                            # Toda orden aún abierta se dibuja como bloque sólido de al menos
-                            # 30 min, para que nunca quede como una raya casi invisible.
-                            duracion_actual_bloque = df_para_gantt_final['GANTT_END'] - df_para_gantt_final['GANTT_START']
-                            mask_bloque_muy_corto = mask_realmente_abierta & (duracion_actual_bloque < pd.Timedelta(minutes=30))
-                            df_para_gantt_final.loc[mask_bloque_muy_corto, 'GANTT_START'] = df_para_gantt_final.loc[mask_bloque_muy_corto, 'GANTT_END'] - pd.Timedelta(minutes=30)
+                            # --- Garantizar que las barras NUNCA se monten unas sobre otras ---
+                            # Regla única: ninguna barra puede extenderse más allá del inicio de
+                            # la siguiente orden del mismo técnico. Esto aplica a TODAS las
+                            # barras, no solo a las abiertas, porque el ancho mínimo de abajo
+                            # también podía empujar una barra corta sobre la siguiente.
+                            # Así, si una orden cerró 08:45 y la siguiente abrió 09:01, ese
+                            # hueco de 16 min se conserva y se ve como espacio real.
+                            df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
+                            siguiente_inicio = df_para_gantt_final.groupby('TECNICO')['GANTT_START'].shift(-1)
+
+                            mask_invade = siguiente_inicio.notna() & (df_para_gantt_final['GANTT_END'] > siguiente_inicio) & (siguiente_inicio > df_para_gantt_final['GANTT_START'])
+                            df_para_gantt_final.loc[mask_invade, 'GANTT_END'] = siguiente_inicio[mask_invade]
+
+                            # Ancho mínimo visible (10 min), expandiendo hacia adelante pero
+                            # SIN pasar del inicio de la siguiente orden.
+                            ancho_min_barra = pd.Timedelta(minutes=10)
+                            fin_objetivo = df_para_gantt_final['GANTT_START'] + ancho_min_barra
+                            tope_permitido = siguiente_inicio.where(siguiente_inicio > df_para_gantt_final['GANTT_START'], fin_objetivo).fillna(fin_objetivo)
+                            fin_ajustado = pd.concat([fin_objetivo, tope_permitido], axis=1).min(axis=1)
+
+                            mask_barra_corta = (df_para_gantt_final['GANTT_END'] - df_para_gantt_final['GANTT_START']) < ancho_min_barra
+                            df_para_gantt_final.loc[mask_barra_corta, 'GANTT_END'] = fin_ajustado[mask_barra_corta]
 
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
-                            df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + pd.Timedelta(minutes=30)
+                            df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + ancho_min_barra
                             
                             df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
                             df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
@@ -2288,8 +2319,17 @@ def main():
                             )
                             
                             fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
-                            hora_inicio_pantalla = datetime.combine(hoy_date_valor, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
-                            hora_fin_pantalla = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+
+                            # El eje se ajusta al horario real de actividad del día (con 30 min
+                            # de margen) en vez de un fijo 06:00-22:00. Antes, si el trabajo
+                            # terminaba a las 15:00, casi la mitad del ancho quedaba vacía y
+                            # comprimía todas las barras, haciendo que los huecos reales entre
+                            # una orden y otra fueran casi imperceptibles.
+                            margen_eje = pd.Timedelta(minutes=30)
+                            inicio_real_dia = df_para_gantt_final['GANTT_START'].min() - margen_eje
+                            fin_real_dia = df_para_gantt_final['GANTT_END'].max() + margen_eje
+                            hora_inicio_pantalla = inicio_real_dia.strftime('%Y-%m-%d %H:%M:%S')
+                            hora_fin_pantalla = fin_real_dia.strftime('%Y-%m-%d %H:%M:%S')
                             
                             fig_gantt.update_xaxes(range=[hora_inicio_pantalla, hora_fin_pantalla], tickformat="%H:%M", title_text="Cronograma de Actividades")
                             # opacity=1.0: las barras deben ser SÓLIDAS. Con opacidad menor,
