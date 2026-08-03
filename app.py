@@ -1532,7 +1532,7 @@ def main():
                             if re.search('CAMBIO|MIGRACI', txt): return 'Cambio / Migración'
                             if re.search('RECUP', txt): return 'Recuperado'
                             return 'Nueva'
-                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificar_ins_cierre, axis=1)
+                        df_ins_cierre['SUBTIPO'] = df_ins_cierre.apply(clasificas_ins_cierre, axis=1)
                         df_ins_grouped = df_ins_cierre['SUBTIPO'].value_counts().reset_index()
                         df_ins_grouped.columns = ['Instalaciones', 'Cant']
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
