@@ -1823,8 +1823,13 @@ def main():
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
       # === FILTRADO SEGURO DE FECHAS PARA INDICADORES ===
-        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha
-        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce')
+        # Aseguramos la conversión a Datetime64 para evitar falsos positivos de fecha.
+        # OJO: HORA_LIQ llega en UTC, así que hay que restarle 6h para obtener la
+        # fecha real en hora de Honduras. Sin este ajuste, cualquier orden cerrada
+        # entre las 6:00pm y medianoche (hora Honduras) del día ANTERIOR cae en la
+        # misma fecha UTC que la madrugada/mañana de HOY, y se cuenta como
+        # "cerrada hoy" sin serlo.
+        df_monitor_filtrado['HORA_LIQ_CLEAN'] = pd.to_datetime(df_monitor_filtrado['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
 
         mask_vivas_monitor = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
         df_todas_pendientes_monitor = df_monitor_filtrado[mask_vivas_monitor].copy()
@@ -1864,7 +1869,11 @@ def main():
         vivas_count_asignadas = len(df_todas_pendientes_monitor[mask_tec_valido_mon])
         
         # Conteo depurado de cerradas de HOY (compara la fecha de cierre con hoy_date_valor)
-        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA')
+        # Solo se cuentan actividades de la lista oficial (ACTIVIDADES_GANTT_PERMITIDAS);
+        # actividades internas como ACTEFO/ACTIVARRES (que no son visitas técnicas
+        # reales al cliente) no deben mostrarse ni inflar el contador de "Cerradas Hoy".
+        mask_actividad_valida_cerr = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS)
+        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & mask_actividad_valida_cerr
         df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
     
@@ -2749,7 +2758,7 @@ def main():
                         elif status_final_btn == "C_HOY": 
                             df_v_tabla_monitor = df_cerradas_hoy_monitor
                         else: 
-                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)]
+                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) & (df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS))]
                         
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
