@@ -2384,8 +2384,21 @@ def main():
                                 tecnico_norm_series = df_monitor_filtrado['TECNICO'].apply(normalizar_nombre_cruce)
                                 df_diag_tec = df_monitor_filtrado[tecnico_norm_series.str.contains(tec_diag_norm, na=False, regex=False)].copy()
 
-                                if df_diag_tec.empty:
-                                    st.warning("Ninguna orden en la base actual (con los filtros activos del Monitor) tiene ese nombre de técnico. Revisa que el nombre coincida con el catálogo, o que no esté oculto por otro filtro del panel lateral.")
+                                # También se busca en la base SIN los filtros del panel lateral,
+                                # para poder distinguir "la orden no existe" de "la orden existe
+                                # pero un filtro activo la está escondiendo".
+                                try:
+                                    tec_norm_base = df_base_activa['TECNICO'].apply(normalizar_nombre_cruce)
+                                    df_diag_sin_filtros = df_base_activa[tec_norm_base.str.contains(tec_diag_norm, na=False, regex=False)].copy()
+                                except Exception:
+                                    df_diag_sin_filtros = pd.DataFrame()
+
+                                if not df_diag_sin_filtros.empty and len(df_diag_sin_filtros) > len(df_diag_tec):
+                                    ocultas = len(df_diag_sin_filtros) - len(df_diag_tec)
+                                    st.warning(f"⚠️ Este técnico tiene {ocultas} orden(es) más en la base que los filtros activos del panel lateral están ocultando. Limpia los filtros (Actividad, Estado, Motivo, etc.) para verlas.")
+
+                                if df_diag_tec.empty and df_diag_sin_filtros.empty:
+                                    st.error("No existe ninguna orden con ese nombre de técnico en la base de hoy. Revisa que el nombre coincida con el catálogo de técnicos.")
                                 else:
                                     def _motivo_gantt(row):
                                         estado_up = str(row.get('ESTADO', '')).upper()
@@ -2401,15 +2414,19 @@ def main():
                                             return f"❌ Cerrada, pero HORA_LIQ no es de hoy (HORA_LIQ={hl_d})"
                                         if es_viva:
                                             if pd.notnull(hi_d) and hi_d.date() == hoy_date_valor:
-                                                return "✅ Se muestra (HORA_INI de hoy)"
+                                                return f"✅ Se muestra (abierta, inicia {hi_d.strftime('%H:%M')})"
                                             if pd.isnull(hi_d):
                                                 return f"❌ Sin HORA_INI: la orden está asignada pero aún no fue iniciada en campo (FECHA_APE={ape_d})"
                                             return f"❌ Viva, pero su HORA_INI no es de hoy (HORA_INI={hi_d})"
                                         return f"❌ ESTADO '{row.get('ESTADO','')}' no es CERRADA ni un estado 'vivo' reconocido (PATRON_ASIGNADAS_VIVA_STR)"
 
-                                    df_diag_tec['MOTIVO_GANTT'] = df_diag_tec.apply(_motivo_gantt, axis=1)
-                                    cols_diag = [c for c in ['NUM', 'ACTIVIDAD', 'ESTADO', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'FECHA_APE', 'MOTIVO_GANTT'] if c in df_diag_tec.columns]
-                                    st.dataframe(df_diag_tec[cols_diag], use_container_width=True, hide_index=True)
+                                    df_diag_mostrar = df_diag_sin_filtros if not df_diag_sin_filtros.empty else df_diag_tec
+                                    df_diag_mostrar = df_diag_mostrar.copy()
+                                    df_diag_mostrar['MOTIVO_GANTT'] = df_diag_mostrar.apply(_motivo_gantt, axis=1)
+                                    if 'HORA_INI' in df_diag_mostrar.columns:
+                                        df_diag_mostrar = df_diag_mostrar.sort_values(by='HORA_INI', na_position='last')
+                                    cols_diag = [c for c in ['NUM', 'ACTIVIDAD', 'ESTADO', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'FECHA_APE', 'MOTIVO_GANTT'] if c in df_diag_mostrar.columns]
+                                    st.dataframe(df_diag_mostrar[cols_diag], use_container_width=True, hide_index=True)
 
                         # ==============================================================================
                         # CÁLCULO DE ALERTAS OPERATIVAS EN TIEMPO REAL
