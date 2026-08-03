@@ -1471,8 +1471,14 @@ def main():
                         
                         fig_gantt_d.update_yaxes(autorange="reversed", title_text="", type="category")
                         margen_eje_d = pd.Timedelta(minutes=30)
-                        hora_inicio_pantalla_d = (df_para_gantt_diario['GANTT_START'].min() - margen_eje_d).strftime('%Y-%m-%d %H:%M:%S')
-                        hora_fin_pantalla_d = (df_para_gantt_diario['GANTT_END'].max() + margen_eje_d).strftime('%Y-%m-%d %H:%M:%S')
+                        if df_para_gantt_diario.empty or df_para_gantt_diario['GANTT_START'].isna().all() or df_para_gantt_diario['GANTT_END'].isna().all():
+                            # Sin datos para ese día -- respaldo fijo (06:00-22:00 del día
+                            # seleccionado) en vez de tronar con NaT.strftime().
+                            hora_inicio_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                            hora_fin_pantalla_d = datetime.combine(fecha_cal_sel, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            hora_inicio_pantalla_d = (df_para_gantt_diario['GANTT_START'].min() - margen_eje_d).strftime('%Y-%m-%d %H:%M:%S')
+                            hora_fin_pantalla_d = (df_para_gantt_diario['GANTT_END'].max() + margen_eje_d).strftime('%Y-%m-%d %H:%M:%S')
                         
                         fig_gantt_d.update_xaxes(range=[hora_inicio_pantalla_d, hora_fin_pantalla_d], tickformat="%H:%M", title_text=f"Cronograma Operativo - {fecha_cal_sel.strftime('%d/%m/%Y')}")
                         fig_gantt_d.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=1.0, hovertemplate="%{customdata[0]}<extra></extra>")
@@ -2326,10 +2332,18 @@ def main():
                             # comprimía todas las barras, haciendo que los huecos reales entre
                             # una orden y otra fueran casi imperceptibles.
                             margen_eje = pd.Timedelta(minutes=30)
-                            inicio_real_dia = df_para_gantt_final['GANTT_START'].min() - margen_eje
-                            fin_real_dia = df_para_gantt_final['GANTT_END'].max() + margen_eje
-                            hora_inicio_pantalla = inicio_real_dia.strftime('%Y-%m-%d %H:%M:%S')
-                            hora_fin_pantalla = fin_real_dia.strftime('%Y-%m-%d %H:%M:%S')
+                            if df_para_gantt_final.empty or df_para_gantt_final['GANTT_START'].isna().all() or df_para_gantt_final['GANTT_END'].isna().all():
+                                # Sin datos (aún) para calcular un rango real -- se usa el
+                                # respaldo fijo de siempre (06:00 a las 22:00 de hoy) en vez de
+                                # tronar con NaT.strftime(). Esto pasa típicamente muy temprano
+                                # en el día, cuando todavía no hay ninguna orden abierta/cerrada.
+                                hora_inicio_pantalla = datetime.combine(hoy_date_valor, dt_time(6, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                                hora_fin_pantalla = datetime.combine(hoy_date_valor, dt_time(22, 0)).strftime('%Y-%m-%d %H:%M:%S')
+                            else:
+                                inicio_real_dia = df_para_gantt_final['GANTT_START'].min() - margen_eje
+                                fin_real_dia = df_para_gantt_final['GANTT_END'].max() + margen_eje
+                                hora_inicio_pantalla = inicio_real_dia.strftime('%Y-%m-%d %H:%M:%S')
+                                hora_fin_pantalla = fin_real_dia.strftime('%Y-%m-%d %H:%M:%S')
                             
                             fig_gantt.update_xaxes(range=[hora_inicio_pantalla, hora_fin_pantalla], tickformat="%H:%M", title_text="Cronograma de Actividades")
                             # opacity=1.0: las barras deben ser SÓLIDAS. Con opacidad menor,
