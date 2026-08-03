@@ -1347,8 +1347,12 @@ def main():
                         df_para_gantt_diario['GANTT_START'] = df_para_gantt_diario['HORA_INI']
                         hora_cierre_proyectada = ahora_hx_d if fecha_cal_sel == ahora_hx_d.date() else datetime.combine(fecha_cal_sel, dt_time(22, 0))
                         
+                        # Mismo criterio que en el Gantt en vivo: se confía en el ESTADO por
+                        # encima de HORA_LIQ para decidir si sigue realmente abierta, ya que
+                        # a veces queda un timestamp provisional en HORA_LIQ antes del cierre
+                        # confirmado (ver comentario detallado en el bloque del Gantt en vivo).
                         mask_estado_vivo_d = df_para_gantt_diario['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                        mask_abierta_d = mask_estado_vivo_d & df_para_gantt_diario['HORA_LIQ'].isna()
+                        mask_abierta_d = mask_estado_vivo_d
 
                         df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ']
                         df_para_gantt_diario.loc[mask_abierta_d, 'GANTT_END'] = hora_cierre_proyectada
@@ -2185,14 +2189,16 @@ def main():
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
 
                             # Solo se estira la barra hasta la hora actual si la orden está
-                            # GENUINAMENTE abierta: su ESTADO es un estado vivo Y no tiene
-                            # HORA_LIQ. Antes se usaba HORA_LIQ.fillna(ahora), lo que estiraba
-                            # hasta "ahora" cualquier fila sin hora de cierre, incluidas órdenes
-                            # ya CERRADAS cuya HORA_LIQ venía vacía o no se pudo leer: esas
-                            # aparecían como barras gigantes "abiertas desde temprano" aunque en
-                            # el archivo ya estuvieran cerradas.
+                            # GENUINAMENTE abierta. El criterio único es el ESTADO: si dice que
+                            # sigue en un estado vivo (PENDIENTE/INICIADA/EN RUTA/etc.), se
+                            # confía en eso por encima de HORA_LIQ -- a veces el sistema deja un
+                            # timestamp provisional en HORA_LIQ antes de que el técnico confirme
+                            # el cierre real, y exigir HORA_LIQ vacío además del ESTADO vivo
+                            # cortaba esas barras antes de tiempo, haciendo que técnicos que
+                            # siguen trabajando ahora mismo se vieran "terminados" en horas
+                            # distintas en vez de todos llegar hasta el mismo punto (ahora).
                             mask_estado_vivo_barra = df_para_gantt_final['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                            mask_realmente_abierta = mask_estado_vivo_barra & df_para_gantt_final['HORA_LIQ'].isna()
+                            mask_realmente_abierta = mask_estado_vivo_barra
 
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ']
                             df_para_gantt_final.loc[mask_realmente_abierta, 'GANTT_END'] = ahora_hx
