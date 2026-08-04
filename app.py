@@ -100,27 +100,28 @@ except ImportError as e:
 # ==============================================================================
 # CONSTANTES DE NEGOCIO Y CONFIGURACIÓN GLOBAL
 # ==============================================================================
-ACTIVIDADES_VALIDAS_NO_ASIGNADAS = [
-    'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INSI-WA', 'INS-WA',
-    'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA', 
-    'SOPFIBRACORP', 'SOPRECONCORP', 'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 
-    'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA', 
+# ==============================================================================
+# LISTA MAESTRA DE ACTIVIDADES
+# ==============================================================================
+# Esta es la ÚNICA fuente de verdad sobre qué actividades son visitas técnicas
+# reales y por lo tanto pueden mostrarse en la aplicación (Gantt, reportes,
+# asignadas, pendientes, PDFs, KPIs). Se aplica como filtro global sobre df_base,
+# así que cualquier actividad que NO esté aquí queda descartada desde la raíz del
+# pipeline y no puede reaparecer en ninguna vista.
+# Para agregar o quitar una actividad, se edita SOLO esta lista.
+ACTIVIDADES_PERMITIDAS = [
+    'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INS-WA',
+    'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP',
+    'SOPRECONCORP', 'SOPRECONFIBRA', 'SOPRECONHFC', 'SPLITTEROPT',
+    'TRASLADOEXTFIBRA', 'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
     'TRASLADOINTFIBRACORP', 'TVADICIONAL'
 ]
 
-# Lista única de actividades que el Gantt efectivamente dibuja. Antes existían
-# dos copias de esta lista (una por cada Gantt) que se habían desincronizado
-# entre sí; ahora ambas usan esta misma constante, y también es la que se usa
-# en el desplegable de "Ingresar Orden Manual" para garantizar que cualquier
-# actividad que se pueda seleccionar ahí también se vea reflejada en el Gantt.
-ACTIVIDADES_GANTT_PERMITIDAS = [
-    'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC',
-    'INS-WA', 'NOINSTALADO', 'PEXTERNO', 'PLEXISCA', 'SOP',
-    'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP', 'SOPRECONCORP',
-    'SOPRECONHFC', 'SOPRECONFIBRA', 'SPLITTEROPT', 'TRASLADOEXTFIBRA',
-    'TRASLADOEXTFIBRACORP', 'TRASLADOINTERNOFIBRA',
-    'TRASLADOINTFIBRACORP', 'TVADICIONAL'
-]
+# Las constantes de abajo se mantienen por compatibilidad con el resto del
+# código, pero ya NO son listas independientes: todas apuntan a la lista maestra
+# para que sea imposible que se vuelvan a desincronizar entre sí.
+ACTIVIDADES_VALIDAS_NO_ASIGNADAS = ACTIVIDADES_PERMITIDAS
+ACTIVIDADES_GANTT_PERMITIDAS = ACTIVIDADES_PERMITIDAS
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR', 'ACTIVARRES', 'DESTEFO']
@@ -852,9 +853,20 @@ def main():
         if 'HORA_LIQ' in df_base.columns:
             df_base['HORA_LIQ'] = pd.to_datetime(df_base['HORA_LIQ'], dayfirst=True, errors='coerce')
     
+    # Copia previa al filtro de actividad. Se define siempre (aunque no exista la
+    # columna ACTIVIDAD) para que las vistas que dependen de ella nunca fallen.
+    df_base_sin_filtro_actividad = df_base.copy()
+
     if 'ACTIVIDAD' in df_base.columns:
-        mask_basura_global = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
-        df_base = df_base[~mask_basura_global].copy()
+        # FILTRO GLOBAL POR LISTA BLANCA. Antes se usaba una lista negra
+        # (ACTIVIDADES_BASURA), lo que obligaba a ir agregando cada actividad
+        # indeseada una por una conforme aparecía. Ahora se invierte el criterio:
+        # SOLO sobreviven las actividades de la lista maestra. Como este filtro se
+        # aplica sobre df_base -- la raíz de la que derivan el Monitor, el Gantt,
+        # asignadas, pendientes, reportes y PDFs -- cualquier otra actividad queda
+        # descartada de toda la aplicación y no puede reaparecer en ninguna vista.
+        mask_actividad_permitida = df_base['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_PERMITIDAS)
+        df_base = df_base[mask_actividad_permitida].copy()
 
     if 'NUM' in df_base.columns:
         df_base['NUM'] = df_base['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -1047,8 +1059,31 @@ def main():
 
         with tab_noinst:
             st.subheader("🚫 Órdenes Cerradas como NOINSTALADO Hoy")
-            mask_noinst_hoy = (df_base['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)) & (df_base['HORA_LIQ'].dt.date == hoy_date_valor)
-            st.dataframe(df_base[mask_noinst_hoy][['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']], use_container_width=True, height=600, hide_index=True)
+            st.caption("Órdenes asignadas que el técnico cerró como NO INSTALADAS durante el día de hoy.")
+            # Se lee de la copia PREVIA al filtro global de actividad, porque
+            # NOINSTALADO no está en la lista maestra y de otro modo esta vista
+            # quedaría vacía. OJO: eso NO significa traer historial -- abajo se
+            # sigue acotando estrictamente al día de hoy.
+            df_fuente_noinst = df_base_sin_filtro_actividad
+
+            # HORA_LIQ viene en UTC, así que se le restan 6h para obtener la fecha
+            # real en hora de Honduras. Sin este ajuste, las órdenes cerradas ayer
+            # entre las 6:00pm y medianoche caen en la misma fecha UTC que hoy y
+            # se colaban en esta vista como si fueran del día actual.
+            hora_liq_local_noinst = pd.to_datetime(df_fuente_noinst['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
+
+            mask_noinst_hoy = (
+                df_fuente_noinst['ACTIVIDAD'].astype(str).str.upper().str.contains('NOINSTALADO', na=False)
+                & (hora_liq_local_noinst.dt.date == hoy_date_valor)
+                & mascara_tecnico_asignado(df_fuente_noinst['TECNICO'])
+            )
+
+            df_noinst_hoy = df_fuente_noinst[mask_noinst_hoy].copy()
+            if df_noinst_hoy.empty:
+                st.success("✅ No hay órdenes cerradas como NOINSTALADO en el día de hoy.")
+            else:
+                st.metric("Total NOINSTALADO hoy", len(df_noinst_hoy))
+                st.dataframe(df_noinst_hoy[['NUM','CLIENTE','TECNICO','HORA_LIQ','COMENTARIO']].sort_values(by='HORA_LIQ'), use_container_width=True, height=600, hide_index=True)
             
         return
 
