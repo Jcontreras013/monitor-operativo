@@ -569,6 +569,25 @@ def main():
 
         st.divider()
         st.markdown("### 📥 Carga de Archivos")
+
+        # Indicador de antigüedad de los datos en memoria. Los datos NO se
+        # refrescan solos: quedan congelados en la sesión desde que se cargaron.
+        # Sin este aviso, una sesión abierta hace horas muestra información vieja
+        # sin ninguna señal, y parece que "faltan órdenes" cuando en realidad lo
+        # que falta es actualizar.
+        _cargado_en = st.session_state.get('df_base_cargado_en')
+        if _cargado_en is not None:
+            try:
+                _minutos_datos = int((get_honduras_time() - _cargado_en).total_seconds() // 60)
+                _hora_datos = _cargado_en.strftime('%H:%M')
+                if _minutos_datos >= 60:
+                    st.warning(f"⚠️ Datos cargados a las {_hora_datos} (hace {_minutos_datos // 60}h {_minutos_datos % 60}min). Actualiza para ver las órdenes más recientes.")
+                elif _minutos_datos >= 20:
+                    st.info(f"🕒 Datos cargados a las {_hora_datos} (hace {_minutos_datos} min).")
+                else:
+                    st.caption(f"🟢 Datos actualizados a las {_hora_datos}.")
+            except Exception:
+                pass
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
@@ -798,6 +817,14 @@ def main():
                         else:
                             st.error("Conexión no disponible.")
                 return
+
+    # Marca de tiempo del "snapshot" de datos que vive en memoria de ESTA sesión.
+    # df_base se guarda en st.session_state y NO se refresca solo: cada sesión
+    # conserva la foto de los datos del momento en que se cargó. Por eso dos
+    # usuarios distintos pueden ver información diferente al mismo tiempo si uno
+    # abrió su sesión antes que el otro. Guardar la hora permite avisarlo.
+    if btn_reprocesar or btn_api_procesar or st.session_state.get('df_base_cargado_en') is None:
+        st.session_state['df_base_cargado_en'] = get_honduras_time()
 
     df_base = st.session_state.df_base.copy()
 
