@@ -1395,20 +1395,37 @@ def mostrar_repositorio_documentos(conn):
                                 st.caption(f"📝 {fila['DESCRIPCION']}")
 
                         with c2:
-                            # Se descarga desde Catbox solo cuando se pide, y se
-                            # restaura el nombre real: los archivos con extensión
-                            # bloqueada (Word) están guardados allá como .bin.
+                            # Enlace directo: siempre funciona porque los archivos
+                            # de Catbox son públicos y lo abre el navegador, sin
+                            # que el servidor tenga que descargarlos.
+                            st.link_button("🔗 Abrir", str(fila['ENLACE']), use_container_width=True)
+
+                            # Descarga por el servidor: sirve para restaurar el
+                            # nombre real de los archivos de Word, que en Catbox
+                            # están guardados con extensión .bin.
                             if st.button("⬇️ Preparar", key=f"repo_prep_{idx}", use_container_width=True):
                                 with st.spinner("Descargando..."):
+                                    datos, motivo_error = None, None
                                     try:
-                                        r_doc = requests.get(str(fila['ENLACE']), timeout=60)
-                                        datos = r_doc.content if r_doc.status_code == 200 else None
-                                    except Exception:
-                                        datos = None
+                                        # Catbox rechaza peticiones sin User-Agent.
+                                        r_doc = requests.get(
+                                            str(fila['ENLACE']).strip(),
+                                            timeout=60,
+                                            headers={"User-Agent": "Mozilla/5.0 (compatible; MonitorOperativo/1.0)"}
+                                        )
+                                        if r_doc.status_code == 200:
+                                            datos = r_doc.content
+                                        else:
+                                            motivo_error = f"El servidor respondió {r_doc.status_code}."
+                                    except Exception as e_dl:
+                                        motivo_error = str(e_dl)
+
                                 if datos:
                                     st.session_state[f"repo_datos_{idx}"] = datos
                                 else:
-                                    st.error("No se encontró el archivo en la nube.")
+                                    st.error(f"No se pudo descargar: {motivo_error}")
+                                    st.caption("Usa **🔗 Abrir** para bajarlo directo del navegador.")
+                                    st.code(str(fila['ENLACE']), language=None)
 
                             if st.session_state.get(f"repo_datos_{idx}"):
                                 ext_f = str(fila.get('TIPO', '')).lower()
