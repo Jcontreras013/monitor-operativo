@@ -2999,6 +2999,103 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
     except Exception as e:
         print(f"Error al leer desde GCS: {e}")
         return None
+
+
+# ==============================================================================
+# GESTIÓN DE ARCHIVOS BINARIOS EN GCS (repositorio documental de expedientes)
+# ==============================================================================
+# leer_espejo_gcs() solo sabe leer CSV (hace pd.read_csv), así que sirve para el
+# índice de documentos pero NO para recuperar un PDF, Word o Excel. Estas cuatro
+# funciones cubren ese hueco: subir, descargar como bytes, eliminar y listar.
+
+def subir_archivo_binario_gcs(archivo, nombre_bucket, ruta_destino, content_type=None):
+    """
+    Sube un archivo binario (PDF, Word, Excel, imagen...) a GCS conservando su
+    tipo MIME real, para que al descargarlo se abra con la aplicación correcta.
+
+    'archivo' puede ser bytes o un UploadedFile de Streamlit.
+    Devuelve (True, None) si funcionó, o (False, mensaje_de_error) si falló.
+    """
+    try:
+        cliente = obtener_cliente_gcs_nativo()
+        bucket = cliente.bucket(nombre_bucket)
+        blob = bucket.blob(ruta_destino)
+
+        if isinstance(archivo, bytes):
+            datos = archivo
+        else:
+            try:
+                archivo.seek(0)
+            except Exception:
+                pass
+            datos = archivo.read()
+
+        if not datos:
+            return False, "El archivo está vacío o no se pudo leer."
+
+        blob.upload_from_string(datos, content_type=content_type or "application/octet-stream")
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def descargar_archivo_gcs(nombre_bucket, ruta_archivo):
+    """
+    Descarga un archivo de GCS y devuelve sus bytes crudos, listos para
+    entregarlos con st.download_button. Devuelve None si no existe o falla.
+    """
+    try:
+        cliente = obtener_cliente_gcs_nativo()
+        bucket = cliente.bucket(nombre_bucket)
+        blob = bucket.blob(ruta_archivo)
+        if not blob.exists():
+            return None
+        return blob.download_as_bytes()
+    except Exception as e:
+        print(f"Error al descargar {ruta_archivo} de GCS: {e}")
+        return None
+
+
+def eliminar_archivo_gcs(nombre_bucket, ruta_archivo):
+    """
+    Elimina un archivo de GCS. Devuelve (True, None) o (False, error).
+    Si el archivo ya no existe se considera éxito, para que el índice se pueda
+    limpiar igual y no queden registros huérfanos apuntando a nada.
+    """
+    try:
+        cliente = obtener_cliente_gcs_nativo()
+        bucket = cliente.bucket(nombre_bucket)
+        blob = bucket.blob(ruta_archivo)
+        if blob.exists():
+            blob.delete()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def listar_archivos_gcs(nombre_bucket, prefijo=""):
+    """
+    Lista los archivos del bucket bajo un prefijo (carpeta). Devuelve una lista
+    de diccionarios con ruta, nombre, tamaño en KB y fecha de subida.
+    Sirve para reconstruir el repositorio aunque el índice CSV se dañe.
+    """
+    try:
+        cliente = obtener_cliente_gcs_nativo()
+        bucket = cliente.bucket(nombre_bucket)
+        resultados = []
+        for blob in cliente.list_blobs(bucket, prefix=prefijo):
+            if blob.name.endswith('/'):
+                continue
+            resultados.append({
+                "RUTA_GCS": blob.name,
+                "NOMBRE_ARCHIVO": blob.name.split('/')[-1],
+                "TAMANO_KB": round((blob.size or 0) / 1024, 1),
+                "FECHA_SUBIDA": blob.time_created.strftime('%Y-%m-%d %H:%M:%S') if blob.time_created else "",
+            })
+        return resultados
+    except Exception as e:
+        print(f"Error al listar archivos en GCS: {e}")
+        return []
         
 # ==============================================================================
 # PROCESAMIENTO DE RENDIMIENTO INTEGRAL (ÓRDENES, GPS, EXPEDIENTES)
