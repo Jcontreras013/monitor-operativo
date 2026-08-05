@@ -48,10 +48,18 @@ try:
 except ImportError:
     GCS_DOCUMENTOS_OK = False
 
-# Usuarios autorizados para el repositorio documental. Se comparan en minúsculas
-# contra st.session_state['usuario_actual'], que login.py llena con el usuario
-# definido en st.secrets["credenciales"].
-USUARIOS_REPOSITORIO = {"admin", "afajardo", "oscar"}
+# Usuarios autorizados para el repositorio documental. En login.py el nombre de
+# usuario y el rol son valores DISTINTOS (st.secrets["credenciales"][usuario]["rol"]),
+# y aquí el acceso se controla ÚNICAMENTE por nombre de usuario: tener rol de
+# admin no basta. La comparación es exacta (en minúsculas) a propósito, para que
+# nadie entre por parecido de nombre a un documento laboral sensible.
+USUARIOS_REPOSITORIO = {"oscar", "afajardo", "jaison"}
+
+
+def tiene_acceso_repositorio():
+    """Devuelve True solo si el usuario conectado está en la lista autorizada."""
+    usuario = str(st.session_state.get('usuario_actual', '') or '').strip().lower()
+    return bool(usuario) and usuario in USUARIOS_REPOSITORIO
 
 # Carpeta raíz dentro del bucket y archivo índice del repositorio.
 CARPETA_REPOSITORIO = "expedientes_documentos"
@@ -979,9 +987,10 @@ def mostrar_repositorio_documentos(conn):
     """
     st.subheader("🗄️ Repositorio de Documentos")
 
-    usuario_actual = str(st.session_state.get('usuario_actual', '')).strip().lower()
-    if usuario_actual not in USUARIOS_REPOSITORIO:
+    if not tiene_acceso_repositorio():
+        _u = st.session_state.get('usuario_actual', '(no detectado)')
         st.warning("🔒 No tienes acceso a este repositorio. Solicítalo al administrador.")
+        st.caption(f"Usuario conectado: `{_u}`")
         return
 
     if not GCS_DOCUMENTOS_OK:
@@ -1512,8 +1521,7 @@ def mostrar_modulo_expedientes(conn, df_base):
     # ==========================================================================
     # La pestaña del repositorio solo se muestra a los usuarios autorizados, para
     # no exponer siquiera su existencia al resto del personal.
-    _usuario_repo = str(st.session_state.get('usuario_actual', '')).strip().lower()
-    if _usuario_repo in USUARIOS_REPOSITORIO:
+    if tiene_acceso_repositorio():
         tab_tecnicos, tab_admin, tab_repositorio = st.tabs([
             "⚙️ Operaciones (Técnicos y Auxiliares)",
             "🏢 Administrativo (SAC, Ventas, etc.)",
