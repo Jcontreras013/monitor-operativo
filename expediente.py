@@ -140,12 +140,32 @@ def _cargar_indice_repositorio(conn):
 
 
 def _guardar_indice_repositorio(conn, df):
-    """Guarda el índice en Google Sheets. Devuelve True/False."""
+    """
+    Guarda el índice en Google Sheets. Si la hoja todavía no existe, la crea:
+    conn.update() falla con WorksheetNotFound cuando la worksheet no está creada,
+    y esa era la causa del error 'No se pudo guardar el índice: RepositorioDocs'.
+    """
     try:
         conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
         return True
+    except Exception:
+        pass
+
+    # Segundo intento: crear la hoja y escribir en ella.
+    try:
+        conn.create(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
+        return True
+    except Exception:
+        pass
+
+    # Tercer intento: crear vacía y luego actualizar (algunas versiones de
+    # st-gsheets-connection no aceptan 'data' en create()).
+    try:
+        conn.create(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO)
+        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
+        return True
     except Exception as e:
-        st.error(f"No se pudo guardar el índice en Sheets: {e}")
+        st.error(f"No se pudo guardar el índice en la hoja '{HOJA_REPOSITORIO}': {e}")
         return False
 
 # ==============================================================================
@@ -1035,9 +1055,23 @@ def _finalizar_subida(conn, df_indice, nuevos_registros, fallidos, colaborador=N
             time.sleep(1.5)
             st.rerun()
         else:
-            # El archivo sí subió, pero el índice no: hay que avisarlo con
-            # claridad para no dar por perdido el documento.
-            st.warning("⚠️ Los archivos se subieron, pero no se pudo actualizar el índice. Aparecerán al usar 'Reconstruir índice' en Mantenimiento.")
+            # CRÍTICO: el archivo ya está en Catbox, pero si el índice no se
+            # guarda, el enlace se pierde para siempre (Catbox no permite listar
+            # los archivos de una cuenta). Por eso se muestran aquí para poder
+            # rescatarlos a mano antes de recargar la página.
+            st.error(
+                "⚠️ Los archivos SÍ se subieron, pero no se pudo guardar el índice. "
+                "**Copia estos enlaces ahora**: no hay forma de recuperarlos después."
+            )
+            df_rescate = pd.DataFrame(nuevos_registros)[["COLABORADOR", "NOMBRE_ARCHIVO", "ENLACE"]]
+            st.dataframe(df_rescate, use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 Descargar estos enlaces (CSV)",
+                data=df_rescate.to_csv(index=False).encode('utf-8'),
+                file_name=f"enlaces_rescate_{get_honduras_time().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key=f"rescate_{get_honduras_time().strftime('%H%M%S')}"
+            )
 
     if fallidos:
         st.error("❌ No se pudieron subir:\n\n- " + "\n- ".join(fallidos[:15]))
@@ -1442,6 +1476,38 @@ def mostrar_repositorio_documentos(conn):
                         st.error(f"❌ {len(rotos)} enlace(s) no responden:\n\n- " + "\n- ".join(rotos[:20]))
                     else:
                         st.success(f"✅ Los {total_v} enlaces están activos.")
+
+            st.divider()
+            st.caption("Si un archivo se subió pero no quedó registrado, pega aquí su enlace de Catbox para agregarlo al índice.")
+            with st.form("form_rescate_enlace", clear_on_submit=True):
+                col_r1, col_r2 = st.columns(2)
+                with col_r1:
+                    rescate_colab = st.text_input("Colaborador:", key="rescate_colab").strip().upper()
+                with col_r2:
+                    rescate_nombre = st.text_input("Nombre del archivo:", key="rescate_nombre", placeholder="ej: CONSTANCIA.pdf").strip()
+                rescate_url = st.text_input("Enlace de Catbox:", key="rescate_url", placeholder="https://files.catbox.moe/...").strip()
+
+                if st.form_submit_button("➕ Agregar al índice", use_container_width=True):
+                    if not (rescate_colab and rescate_nombre and rescate_url.startswith("http")):
+                        st.error("Completa los tres campos. El enlace debe empezar con http.")
+                    else:
+                        ext_r = rescate_nombre.rsplit('.', 1)[-1].upper() if '.' in rescate_nombre else ""
+                        registro_r = [{
+                            "COLABORADOR": rescate_colab,
+                            "CARPETA": _sanitizar_nombre_carpeta(rescate_colab),
+                            "NOMBRE_ARCHIVO": rescate_nombre,
+                            "ENLACE": rescate_url,
+                            "TIPO": ext_r,
+                            "TAMANO_KB": "",
+                            "DESCRIPCION": "(agregado manualmente)",
+                            "SUBIDO_POR": st.session_state.get('usuario_actual', ''),
+                            "FECHA_SUBIDA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                        }]
+                        df_r = pd.concat([df_indice, pd.DataFrame(registro_r)], ignore_index=True)
+                        if _guardar_indice_repositorio(conn, df_r):
+                            st.success("✅ Registrado en el índice.")
+                            time.sleep(1.2)
+                            st.rerun()
 
             st.divider()
             st.caption("Descarga el índice completo como respaldo (los enlaces quedan incluidos).")
