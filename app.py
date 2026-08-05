@@ -2199,19 +2199,45 @@ def main():
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
-                        
+
+                        # Una orden que se inició AYER y sigue abierta hoy desaparecía por
+                        # completo del Gantt, aunque el técnico la siga trabajando: el filtro
+                        # solo aceptaba HORA_INI de hoy. Esta opción permite arrastrarlas.
+                        incluir_arrastradas = st.checkbox(
+                            "➕ Incluir órdenes que siguen abiertas de días anteriores",
+                            value=True,
+                            key="chk_gantt_arrastradas",
+                            help="Órdenes iniciadas en días previos que aún no se cierran. Su barra empieza al inicio de la jornada de hoy, porque el trabajo real de días anteriores no cabe en esta línea de tiempo."
+                        )
+
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
 
                         # El Gantt representa TRABAJO REALIZADO en la línea de tiempo, así que
-                        # una orden solo entra si tiene una hora de inicio real (HORA_INI) de
-                        # hoy, o si se cerró hoy. Una orden sin HORA_INI todavía no fue iniciada
-                        # en campo -- está únicamente asignada -- y dibujarla implicaría inventar
-                        # un horario de trabajo que nunca ocurrió.
+                        # una orden solo entra si tiene una hora de inicio real (HORA_INI). Una
+                        # orden sin HORA_INI todavía no fue iniciada en campo -- está únicamente
+                        # asignada -- y dibujarla implicaría inventar un horario que nunca ocurrió.
                         mask_viva_gantt = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                         mask_hora_ini_hoy = df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor
                         mask_abiertas_gantt = mask_viva_gantt & mask_hora_ini_hoy
 
-                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
+                        # Abiertas iniciadas en días anteriores (siguen vivas, nunca se cerraron)
+                        mask_arrastradas = (
+                            mask_viva_gantt
+                            & df_monitor_filtrado['HORA_INI'].notna()
+                            & (df_monitor_filtrado['HORA_INI'].dt.date < hoy_date_valor)
+                            & df_monitor_filtrado['HORA_LIQ'].isna()
+                        )
+                        if not incluir_arrastradas:
+                            mask_arrastradas = mask_arrastradas & False
+
+                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt | mask_arrastradas].copy()
+
+                        # Se marcan para poder identificarlas y recortar su barra al día de hoy.
+                        df_para_gantt_final['ES_ARRASTRADA'] = mask_arrastradas.reindex(df_para_gantt_final.index, fill_value=False)
+
+                        n_arrastradas = int(df_para_gantt_final['ES_ARRASTRADA'].sum())
+                        if n_arrastradas:
+                            st.caption(f"🔁 {n_arrastradas} orden(es) vienen abiertas de días anteriores. Su barra arranca al inicio de la jornada.")
 
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
@@ -2249,6 +2275,16 @@ def main():
                             ahora_hx = get_honduras_time()
                             
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
+
+                            # Las órdenes arrastradas de días anteriores se recortan al inicio
+                            # de la jornada de hoy. Si se dejara su HORA_INI real, el eje se
+                            # estiraría días hacia atrás y comprimiría todo el trabajo de hoy
+                            # hasta volverlo ilegible.
+                            if 'ES_ARRASTRADA' in df_para_gantt_final.columns:
+                                mask_arr = df_para_gantt_final['ES_ARRASTRADA'].fillna(False).astype(bool)
+                                if mask_arr.any():
+                                    inicio_jornada = datetime.combine(hoy_date_valor, dt_time(6, 0))
+                                    df_para_gantt_final.loc[mask_arr, 'GANTT_START'] = inicio_jornada
 
                             # Solo se estira la barra hasta la hora actual si la orden está
                             # GENUINAMENTE abierta. El criterio único es el ESTADO: si dice que
@@ -2361,6 +2397,17 @@ def main():
                                     ((diff_fill.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
                                 )
                             
+                            # Para las arrastradas se aclara su fecha real de inicio, porque
+                            # su barra aparece recortada al inicio de la jornada de hoy.
+                            if 'ES_ARRASTRADA' in df_para_gantt_final.columns:
+                                nota_arrastre = df_para_gantt_final.apply(
+                                    lambda r: f"<br>⚠️ Abierta desde {r['HORA_INI'].strftime('%d/%m %H:%M')}"
+                                    if bool(r.get('ES_ARRASTRADA')) and pd.notnull(r.get('HORA_INI')) else "",
+                                    axis=1
+                                )
+                            else:
+                                nota_arrastre = ""
+
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
                                 "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
@@ -2370,6 +2417,7 @@ def main():
                                 "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
                                 "Cierre=" + df_para_gantt_final['Cierre'].astype(str) + "<br>" +
                                 "Tiempo Total=" + df_para_gantt_final['TIEMPO_REAL'].astype(str)
+                                + nota_arrastre
                             )
 
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
