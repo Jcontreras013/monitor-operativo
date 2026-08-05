@@ -12,6 +12,7 @@ import plotly.express as px
 import re
 import io
 import unicodedata
+import zipfile
 
 # --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
 try:
@@ -36,17 +37,6 @@ try:
 except ImportError:
     NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"  # respaldo si tools.py no está disponible
 
-# --- HERRAMIENTAS PARA EL REPOSITORIO DOCUMENTAL (archivos binarios en GCS) ---
-try:
-    from tools import (
-        subir_archivo_binario_gcs,
-        descargar_archivo_gcs,
-        eliminar_archivo_gcs,
-        listar_archivos_gcs,
-    )
-    GCS_DOCUMENTOS_OK = True
-except ImportError:
-    GCS_DOCUMENTOS_OK = False
 
 # Usuarios autorizados para el repositorio documental. OJO: en login.py el nombre
 # de usuario y el rol son valores DISTINTOS (st.secrets["credenciales"][usuario]["rol"]),
@@ -55,11 +45,23 @@ except ImportError:
 # parecido de nombre a documentos laborales sensibles.
 USUARIOS_REPOSITORIO = {"oscar", "afajardo", "jaison"}
 
-# Carpeta raíz dentro del bucket y archivo índice del repositorio.
+# ==============================================================================
+# ALMACENAMIENTO DEL REPOSITORIO: CATBOX
+# ==============================================================================
+# Los archivos se suben a Catbox y el índice (quién es dueño de qué) vive en una
+# hoja de Google Sheets, porque sin GCS no hay otro lugar donde guardarlo.
+#
+# ADVERTENCIA DE PRIVACIDAD: los enlaces de Catbox son PÚBLICOS. Cualquiera que
+# tenga la URL puede abrir el documento sin contraseña. La app protege la LISTA
+# (solo la ven los usuarios autorizados), pero no los archivos en sí.
 CARPETA_REPOSITORIO = "expedientes_documentos"
-INDICE_REPOSITORIO = "documentos_expedientes.csv"
+HOJA_REPOSITORIO = "RepositorioDocs"
 
-# Tipos de archivo permitidos y su MIME, para que al descargar se abran bien.
+# Catbox rechaza estas extensiones. Como Word está entre ellas y sí se necesita,
+# el archivo se sube renombrado a .bin y el nombre real queda en el índice; al
+# descargarlo se restaura, así que para el usuario es transparente.
+EXTENSIONES_BLOQUEADAS_CATBOX = {"doc", "docx", "exe", "scr", "cpl", "jar"}
+
 MIMES_REPOSITORIO = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -67,10 +69,84 @@ MIMES_REPOSITORIO = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "xls": "application/vnd.ms-excel",
     "csv": "text/csv",
+    "zip": "application/zip",
     "png": "image/png",
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
 }
+
+
+def _subir_documento_repositorio(datos_bytes, nombre_original):
+    """
+    Sube un archivo a Catbox. Devuelve (url, None) o (None, error).
+    Si la extensión está bloqueada por Catbox, se sube con extensión .bin.
+    """
+    ext = nombre_original.rsplit('.', 1)[-1].lower() if '.' in nombre_original else ''
+    nombre_envio = nombre_original
+    if ext in EXTENSIONES_BLOQUEADAS_CATBOX:
+        base = nombre_original.rsplit('.', 1)[0]
+        nombre_envio = f"{base}__{ext}.bin"
+
+    try:
+        url = subir_archivo_catbox(datos_bytes, nombre_envio)
+        if url and str(url).startswith("http"):
+            return str(url).strip(), None
+        return None, f"Catbox devolvió una respuesta inesperada: {url}"
+    except Exception as e:
+        return None, str(e)
+
+
+def _borrar_documento_repositorio(url):
+    """
+    Elimina un archivo de Catbox usando el userhash de la cuenta.
+    Devuelve (True, None) o (False, error). Si el archivo ya no existe se
+    considera éxito, para poder limpiar el índice igual.
+    """
+    try:
+        nombre_en_catbox = str(url).rstrip('/').split('/')[-1]
+        resp = requests.post(
+            "https://catbox.moe/user/api.php",
+            data={
+                "reqtype": "deletefiles",
+                "userhash": CATBOX_USERHASH,
+                "files": nombre_en_catbox,
+            },
+            timeout=30
+        )
+        if resp.status_code == 200:
+            return True, None
+        return False, f"Catbox respondió {resp.status_code}: {resp.text[:120]}"
+    except Exception as e:
+        return False, str(e)
+
+
+def _cargar_indice_repositorio(conn):
+    """Lee el índice de documentos desde Google Sheets."""
+    columnas = ["COLABORADOR", "CARPETA", "NOMBRE_ARCHIVO", "ENLACE", "TIPO",
+                "TAMANO_KB", "DESCRIPCION", "SUBIDO_POR", "FECHA_SUBIDA"]
+    try:
+        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, ttl=0)
+        df = df.dropna(how="all")
+    except Exception:
+        df = None
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columnas)
+
+    for c in columnas:
+        if c not in df.columns:
+            df[c] = ""
+    return df
+
+
+def _guardar_indice_repositorio(conn, df):
+    """Guarda el índice en Google Sheets. Devuelve True/False."""
+    try:
+        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
+        return True
+    except Exception as e:
+        st.error(f"No se pudo guardar el índice en Sheets: {e}")
+        return False
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
@@ -929,11 +1005,11 @@ def obtener_datos_memoria(conn):
 # 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS
 # ==============================================================================
 # ==============================================================================
-# REPOSITORIO DOCUMENTAL DE EXPEDIENTES (archivos en GCS por colaborador)
+# REPOSITORIO DOCUMENTAL DE EXPEDIENTES (archivos en Catbox, agrupados por colaborador)
 # ==============================================================================
 def _sanitizar_nombre_carpeta(nombre):
     """
-    Convierte el nombre de un colaborador en un nombre de carpeta seguro para GCS:
+    Convierte el nombre de un colaborador en un identificador de carpeta seguro:
     sin acentos, sin caracteres raros y con guiones bajos en vez de espacios.
     El nombre legible original se conserva en el índice CSV.
     """
@@ -944,29 +1020,29 @@ def _sanitizar_nombre_carpeta(nombre):
     return txt or "SIN_NOMBRE"
 
 
-def _cargar_indice_repositorio():
-    """Lee el índice de documentos desde GCS. Devuelve siempre un DataFrame."""
-    columnas = ["COLABORADOR", "CARPETA", "NOMBRE_ARCHIVO", "RUTA_GCS", "TIPO",
-                "TAMANO_KB", "DESCRIPCION", "SUBIDO_POR", "FECHA_SUBIDA"]
-    try:
-        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, INDICE_REPOSITORIO)
-    except Exception:
-        df = None
+def _finalizar_subida(conn, df_indice, nuevos_registros, fallidos, colaborador=None):
+    """
+    Guarda el índice y reporta el resultado. La comparte la subida de archivos
+    sueltos y la de ZIP para que ambas se comporten igual ante un fallo.
+    """
+    if nuevos_registros:
+        df_actualizado = pd.concat([df_indice, pd.DataFrame(nuevos_registros)], ignore_index=True)
+        if _guardar_indice_repositorio(conn, df_actualizado):
+            destino = f" en la carpeta de {colaborador}" if colaborador else ""
+            personas = sorted({r["COLABORADOR"] for r in nuevos_registros})
+            detalle = f" ({len(personas)} colaborador(es))" if len(personas) > 1 else ""
+            st.success(f"✅ {len(nuevos_registros)} archivo(s) guardado(s){destino}{detalle}.")
+            time.sleep(1.5)
+            st.rerun()
+        else:
+            # El archivo sí subió, pero el índice no: hay que avisarlo con
+            # claridad para no dar por perdido el documento.
+            st.warning("⚠️ Los archivos se subieron, pero no se pudo actualizar el índice. Aparecerán al usar 'Reconstruir índice' en Mantenimiento.")
 
-    if df is None or df.empty:
-        return pd.DataFrame(columns=columnas)
-
-    for c in columnas:
-        if c not in df.columns:
-            df[c] = ""
-    return df
-
-
-def _guardar_indice_repositorio(df):
-    try:
-        return bool(sobrescribir_archivo_gcs(df, NOMBRE_BUCKET_SISTEMA, INDICE_REPOSITORIO))
-    except Exception:
-        return False
+    if fallidos:
+        st.error("❌ No se pudieron subir:\n\n- " + "\n- ".join(fallidos[:15]))
+        if len(fallidos) > 15:
+            st.caption(f"...y {len(fallidos) - 15} más.")
 
 
 def mostrar_repositorio_documentos(conn):
@@ -987,13 +1063,12 @@ def mostrar_repositorio_documentos(conn):
         st.caption(f"Usuario conectado: `{usuario_actual or '(no detectado)'}`")
         return
 
-    if not GCS_DOCUMENTOS_OK:
-        st.error("❌ No se pudieron cargar las funciones de almacenamiento. Verifica que `tools.py` esté actualizado con las funciones de manejo de archivos en GCS.")
-        return
+    st.caption(
+        "Los archivos se guardan en Catbox y se organizan por colaborador. "
+        "⚠️ Los enlaces son públicos: quien tenga la URL puede abrir el documento."
+    )
 
-    st.caption("Los archivos se guardan en el almacenamiento privado de la empresa, en una carpeta por colaborador. Solo son accesibles desde esta aplicación.")
-
-    df_indice = _cargar_indice_repositorio()
+    df_indice = _cargar_indice_repositorio(conn)
 
     # ----------------------------------------------------------------------
     # LISTA DE COLABORADORES (técnicos + administrativos + carpetas existentes)
@@ -1038,70 +1113,210 @@ def mostrar_repositorio_documentos(conn):
         with col_b:
             descripcion_doc = st.text_input("📝 Descripción (opcional):", key="repo_desc", placeholder="Ej: Contrato firmado 2026")
 
-        archivos_subir = st.file_uploader(
-            "📎 Archivos (PDF, Word, Excel, imágenes):",
-            type=list(MIMES_REPOSITORIO.keys()),
-            accept_multiple_files=True,
-            key="repo_uploader"
+        st.divider()
+        modo_carga = st.radio(
+            "¿Qué vas a subir?",
+            ["📄 Archivos sueltos", "🗂️ Una carpeta completa (ZIP)"],
+            horizontal=True,
+            key="repo_modo_carga"
         )
 
-        if colaborador_sel:
-            st.caption(f"📁 Se guardará en: `{CARPETA_REPOSITORIO}/{_sanitizar_nombre_carpeta(colaborador_sel)}/`")
+        # ------------------------------------------------------------------
+        # MODO A: ARCHIVOS SUELTOS
+        # ------------------------------------------------------------------
+        if modo_carga == "📄 Archivos sueltos":
+            archivos_subir = st.file_uploader(
+                "📎 Archivos (PDF, Word, Excel, imágenes):",
+                type=list(MIMES_REPOSITORIO.keys()),
+                accept_multiple_files=True,
+                key="repo_uploader"
+            )
+            st.caption("💡 Puedes abrir la carpeta, seleccionar todo con **Ctrl+A** y arrastrar los archivos aquí.")
 
-        if st.button("☁️ Subir al Repositorio", type="primary", use_container_width=True, key="repo_btn_subir"):
-            if not colaborador_sel:
-                st.error("⚠️ Debes indicar el colaborador.")
-            elif not archivos_subir:
-                st.error("⚠️ Selecciona al menos un archivo.")
-            else:
-                carpeta = _sanitizar_nombre_carpeta(colaborador_sel)
-                nuevos_registros = []
-                fallidos = []
+            if colaborador_sel:
+                st.caption(f"📁 Se guardará en: `{CARPETA_REPOSITORIO}/{_sanitizar_nombre_carpeta(colaborador_sel)}/`")
 
-                barra = st.progress(0.0, text="Subiendo archivos...")
-                for i, arch in enumerate(archivos_subir):
-                    extension = arch.name.rsplit('.', 1)[-1].lower() if '.' in arch.name else ''
-                    mime = MIMES_REPOSITORIO.get(extension, "application/octet-stream")
+            if st.button("☁️ Subir al Repositorio", type="primary", use_container_width=True, key="repo_btn_subir"):
+                if not colaborador_sel:
+                    st.error("⚠️ Debes indicar el colaborador.")
+                elif not archivos_subir:
+                    st.error("⚠️ Selecciona al menos un archivo.")
+                else:
+                    carpeta = _sanitizar_nombre_carpeta(colaborador_sel)
+                    nuevos_registros = []
+                    fallidos = []
 
-                    # Se antepone la marca de tiempo para que subir dos veces un
-                    # archivo con el mismo nombre no sobrescriba el anterior.
-                    sello = get_honduras_time().strftime('%Y%m%d_%H%M%S')
-                    nombre_seguro = re.sub(r'[^\w\.\-]', '_', arch.name)
-                    ruta = f"{CARPETA_REPOSITORIO}/{carpeta}/{sello}_{nombre_seguro}"
+                    barra = st.progress(0.0, text="Subiendo archivos...")
+                    for i, arch in enumerate(archivos_subir):
+                        extension = arch.name.rsplit('.', 1)[-1].lower() if '.' in arch.name else ''
+                        try:
+                            arch.seek(0)
+                        except Exception:
+                            pass
+                        enlace, err = _subir_documento_repositorio(arch.read(), arch.name)
+                        if enlace:
+                            nuevos_registros.append({
+                                "COLABORADOR": colaborador_sel,
+                                "CARPETA": carpeta,
+                                "NOMBRE_ARCHIVO": arch.name,
+                                "ENLACE": enlace,
+                                "TIPO": extension.upper(),
+                                "TAMANO_KB": round(arch.size / 1024, 1) if getattr(arch, 'size', None) else "",
+                                "DESCRIPCION": descripcion_doc,
+                                "SUBIDO_POR": st.session_state.get('usuario_actual', ''),
+                                "FECHA_SUBIDA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                            })
+                        else:
+                            fallidos.append(f"{arch.name} ({err})")
 
-                    ok, err = subir_archivo_binario_gcs(arch, NOMBRE_BUCKET_SISTEMA, ruta, content_type=mime)
-                    if ok:
-                        nuevos_registros.append({
-                            "COLABORADOR": colaborador_sel,
-                            "CARPETA": carpeta,
-                            "NOMBRE_ARCHIVO": arch.name,
-                            "RUTA_GCS": ruta,
-                            "TIPO": extension.upper(),
-                            "TAMANO_KB": round(arch.size / 1024, 1) if getattr(arch, 'size', None) else "",
-                            "DESCRIPCION": descripcion_doc,
-                            "SUBIDO_POR": st.session_state.get('usuario_actual', ''),
-                            "FECHA_SUBIDA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
-                        })
+                        barra.progress((i + 1) / len(archivos_subir), text=f"Subiendo {arch.name}...")
+
+                    barra.empty()
+                    _finalizar_subida(conn, df_indice, nuevos_registros, fallidos, colaborador_sel)
+
+        # ------------------------------------------------------------------
+        # MODO B: CARPETA COMPLETA EN ZIP
+        # ------------------------------------------------------------------
+        else:
+            st.info(
+                "Comprime la carpeta en tu computadora (clic derecho → **Enviar a → Carpeta comprimida** en Windows, "
+                "o **Comprimir** en Mac) y sube el ZIP aquí. Se conservan las subcarpetas."
+            )
+
+            modo_zip = st.radio(
+                "¿Cómo se organiza el ZIP?",
+                [
+                    "Todo pertenece a UN colaborador",
+                    "Cada carpeta dentro del ZIP es un colaborador distinto",
+                ],
+                key="repo_modo_zip"
+            )
+
+            if modo_zip == "Cada carpeta dentro del ZIP es un colaborador distinto":
+                st.caption(
+                    "Ejemplo: un ZIP con `JUAN PEREZ/contrato.pdf` y `MARIA LOPEZ/constancia.pdf` "
+                    "creará una carpeta por cada persona automáticamente."
+                )
+
+            archivo_zip = st.file_uploader(
+                "🗂️ Archivo ZIP:",
+                type=["zip"],
+                accept_multiple_files=False,
+                key="repo_uploader_zip"
+            )
+
+            # Vista previa del contenido antes de subir nada, para que no haya
+            # sorpresas con archivos basura o carpetas mal nombradas.
+            contenido_zip = []
+            if archivo_zip is not None:
+                try:
+                    archivo_zip.seek(0)
+                    with zipfile.ZipFile(io.BytesIO(archivo_zip.read())) as zf:
+                        for info in zf.infolist():
+                            if info.is_dir():
+                                continue
+                            nombre_interno = info.filename
+                            base = nombre_interno.split('/')[-1]
+                            # Basura típica de Windows/Mac que no debe subirse
+                            if base.startswith('.') or base.startswith('~$') or '__MACOSX' in nombre_interno:
+                                continue
+                            ext = base.rsplit('.', 1)[-1].lower() if '.' in base else ''
+                            contenido_zip.append({
+                                "ruta_interna": nombre_interno,
+                                "nombre": base,
+                                "ext": ext,
+                                "permitido": ext in MIMES_REPOSITORIO,
+                                "tam_kb": round(info.file_size / 1024, 1),
+                            })
+                except zipfile.BadZipFile:
+                    st.error("❌ El archivo no es un ZIP válido o está dañado.")
+                except Exception as e_zip:
+                    st.error(f"❌ No se pudo leer el ZIP: {e_zip}")
+
+            if contenido_zip:
+                validos = [c for c in contenido_zip if c["permitido"]]
+                omitidos = [c for c in contenido_zip if not c["permitido"]]
+
+                st.success(f"📦 {len(validos)} archivo(s) listos para subir.")
+                if omitidos:
+                    with st.expander(f"⚠️ {len(omitidos)} archivo(s) se omitirán (tipo no permitido)"):
+                        st.write(", ".join(sorted({c['nombre'] for c in omitidos})))
+
+                if modo_zip == "Cada carpeta dentro del ZIP es un colaborador distinto":
+                    carpetas_detectadas = sorted({
+                        c["ruta_interna"].split('/')[0].upper()
+                        for c in validos if '/' in c["ruta_interna"]
+                    })
+                    sueltos = [c for c in validos if '/' not in c["ruta_interna"]]
+                    if carpetas_detectadas:
+                        st.caption(f"👥 Colaboradores detectados: {', '.join(carpetas_detectadas)}")
+                    if sueltos:
+                        st.warning(
+                            f"⚠️ {len(sueltos)} archivo(s) están en la raíz del ZIP, sin carpeta. "
+                            "Se asignarán al colaborador escrito arriba."
+                        )
+
+                if st.button("☁️ Subir Carpeta al Repositorio", type="primary", use_container_width=True, key="repo_btn_subir_zip"):
+                    necesita_nombre = (
+                        modo_zip == "Todo pertenece a UN colaborador"
+                        or any('/' not in c["ruta_interna"] for c in validos)
+                    )
+                    if necesita_nombre and not colaborador_sel:
+                        st.error("⚠️ Debes indicar el colaborador.")
                     else:
-                        fallidos.append(f"{arch.name} ({err})")
+                        nuevos_registros = []
+                        fallidos = []
+                        sello = get_honduras_time().strftime('%Y%m%d_%H%M%S')
 
-                    barra.progress((i + 1) / len(archivos_subir), text=f"Subiendo {arch.name}...")
+                        archivo_zip.seek(0)
+                        datos_zip = io.BytesIO(archivo_zip.read())
 
-                barra.empty()
+                        barra = st.progress(0.0, text="Procesando carpeta...")
+                        with zipfile.ZipFile(datos_zip) as zf:
+                            for i, item in enumerate(validos):
+                                ruta_interna = item["ruta_interna"]
+                                partes = ruta_interna.split('/')
 
-                if nuevos_registros:
-                    df_actualizado = pd.concat([df_indice, pd.DataFrame(nuevos_registros)], ignore_index=True)
-                    if _guardar_indice_repositorio(df_actualizado):
-                        st.success(f"✅ {len(nuevos_registros)} archivo(s) guardado(s) en la carpeta de {colaborador_sel}.")
-                        time.sleep(1.5)
-                        st.rerun()
-                    else:
-                        # El archivo sí subió, pero el índice no: hay que avisarlo
-                        # con claridad para no dar por perdido el documento.
-                        st.warning("⚠️ Los archivos se subieron, pero no se pudo actualizar el índice. Aparecerán al reconstruir el índice desde 'Explorar Carpetas'.")
+                                # Determinar a qué colaborador pertenece el archivo
+                                if modo_zip == "Cada carpeta dentro del ZIP es un colaborador distinto" and len(partes) > 1:
+                                    dueno = partes[0].strip().upper()
+                                    subruta = partes[1:]
+                                else:
+                                    dueno = colaborador_sel
+                                    subruta = partes
 
-                if fallidos:
-                    st.error("❌ No se pudieron subir:\n\n- " + "\n- ".join(fallidos))
+                                carpeta_dueno = _sanitizar_nombre_carpeta(dueno)
+
+                                # En Catbox no existen carpetas reales: la jerarquía
+                                # se conserva en el índice (COLABORADOR + DESCRIPCION),
+                                # que es lo que la app usa para agrupar y filtrar.
+                                subcarpetas = [p for p in subruta[:-1]]
+
+                                try:
+                                    contenido = zf.read(ruta_interna)
+                                    enlace, err = _subir_documento_repositorio(contenido, item["nombre"])
+                                except Exception as e_item:
+                                    enlace, err = None, str(e_item)
+
+                                if enlace:
+                                    nuevos_registros.append({
+                                        "COLABORADOR": dueno,
+                                        "CARPETA": carpeta_dueno,
+                                        "NOMBRE_ARCHIVO": item["nombre"],
+                                        "ENLACE": enlace,
+                                        "TIPO": item["ext"].upper(),
+                                        "TAMANO_KB": item["tam_kb"],
+                                        "DESCRIPCION": descripcion_doc or ("/".join(subcarpetas) if subcarpetas else ""),
+                                        "SUBIDO_POR": st.session_state.get('usuario_actual', ''),
+                                        "FECHA_SUBIDA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                                    })
+                                else:
+                                    fallidos.append(f"{ruta_interna} ({err})")
+
+                                barra.progress((i + 1) / len(validos), text=f"Subiendo {item['nombre']}...")
+
+                        barra.empty()
+                        _finalizar_subida(conn, df_indice, nuevos_registros, fallidos, None)
 
     # ======================================================================
     # EXPLORAR
@@ -1146,11 +1361,16 @@ def mostrar_repositorio_documentos(conn):
                                 st.caption(f"📝 {fila['DESCRIPCION']}")
 
                         with c2:
-                            # La descarga se prepara solo cuando se pide, para no
-                            # bajar todos los archivos del bucket en cada recarga.
+                            # Se descarga desde Catbox solo cuando se pide, y se
+                            # restaura el nombre real: los archivos con extensión
+                            # bloqueada (Word) están guardados allá como .bin.
                             if st.button("⬇️ Preparar", key=f"repo_prep_{idx}", use_container_width=True):
                                 with st.spinner("Descargando..."):
-                                    datos = descargar_archivo_gcs(NOMBRE_BUCKET_SISTEMA, fila['RUTA_GCS'])
+                                    try:
+                                        r_doc = requests.get(str(fila['ENLACE']), timeout=60)
+                                        datos = r_doc.content if r_doc.status_code == 200 else None
+                                    except Exception:
+                                        datos = None
                                 if datos:
                                     st.session_state[f"repo_datos_{idx}"] = datos
                                 else:
@@ -1171,10 +1391,10 @@ def mostrar_repositorio_documentos(conn):
                             if st.session_state.get(f"repo_confirmar_{idx}"):
                                 st.caption("¿Seguro?")
                                 if st.button("✅ Sí", key=f"repo_si_{idx}", use_container_width=True):
-                                    ok_del, err_del = eliminar_archivo_gcs(NOMBRE_BUCKET_SISTEMA, fila['RUTA_GCS'])
+                                    ok_del, err_del = _borrar_documento_repositorio(fila['ENLACE'])
                                     if ok_del:
-                                        df_nuevo = df_indice[df_indice['RUTA_GCS'] != fila['RUTA_GCS']]
-                                        _guardar_indice_repositorio(df_nuevo)
+                                        df_nuevo = df_indice[df_indice['ENLACE'] != fila['ENLACE']]
+                                        _guardar_indice_repositorio(conn, df_nuevo)
                                         st.session_state[f"repo_confirmar_{idx}"] = False
                                         st.success("Eliminado.")
                                         time.sleep(1)
@@ -1193,44 +1413,46 @@ def mostrar_repositorio_documentos(conn):
         # MANTENIMIENTO
         # ------------------------------------------------------------------
         with st.expander("🛠️ Mantenimiento del repositorio"):
-            st.caption("Reconstruye el índice leyendo directamente el almacenamiento. Útil si un archivo se subió pero no aparece en la lista.")
-            if st.button("🔧 Reconstruir índice desde la nube", key="repo_reconstruir"):
-                with st.spinner("Leyendo el almacenamiento..."):
-                    archivos_nube = listar_archivos_gcs(NOMBRE_BUCKET_SISTEMA, prefijo=f"{CARPETA_REPOSITORIO}/")
+            st.markdown("**Almacenamiento:** Catbox (enlaces públicos) · **Índice:** Google Sheets")
+            st.caption(
+                "⚠️ Los enlaces de Catbox no tienen contraseña: cualquiera que tenga la URL "
+                "puede abrir el documento. La app protege la lista, no los archivos."
+            )
 
-                if not archivos_nube:
-                    st.warning("No se encontraron archivos en el repositorio.")
+            st.divider()
+            st.caption("Verifica que todos los enlaces del índice sigan vivos en Catbox.")
+            if st.button("🩺 Verificar enlaces", key="repo_verificar_enlaces"):
+                if df_indice.empty:
+                    st.info("No hay documentos registrados.")
                 else:
-                    rutas_indexadas = set(df_indice['RUTA_GCS'].astype(str)) if not df_indice.empty else set()
-                    huerfanos = []
-                    for a in archivos_nube:
-                        if a['RUTA_GCS'] in rutas_indexadas:
-                            continue
-                        partes = a['RUTA_GCS'].split('/')
-                        carpeta_h = partes[1] if len(partes) > 2 else "SIN_NOMBRE"
-                        nombre_limpio = re.sub(r'^\d{8}_\d{6}_', '', a['NOMBRE_ARCHIVO'])
-                        huerfanos.append({
-                            "COLABORADOR": carpeta_h.replace('_', ' '),
-                            "CARPETA": carpeta_h,
-                            "NOMBRE_ARCHIVO": nombre_limpio,
-                            "RUTA_GCS": a['RUTA_GCS'],
-                            "TIPO": nombre_limpio.rsplit('.', 1)[-1].upper() if '.' in nombre_limpio else "",
-                            "TAMANO_KB": a['TAMANO_KB'],
-                            "DESCRIPCION": "(recuperado del almacenamiento)",
-                            "SUBIDO_POR": "",
-                            "FECHA_SUBIDA": a['FECHA_SUBIDA'],
-                        })
+                    rotos = []
+                    barra_v = st.progress(0.0, text="Verificando...")
+                    total_v = len(df_indice)
+                    for j, (_, f_v) in enumerate(df_indice.iterrows()):
+                        try:
+                            r_v = requests.head(str(f_v['ENLACE']), timeout=15, allow_redirects=True)
+                            if r_v.status_code >= 400:
+                                rotos.append(f"{f_v['COLABORADOR']} — {f_v['NOMBRE_ARCHIVO']}")
+                        except Exception:
+                            rotos.append(f"{f_v['COLABORADOR']} — {f_v['NOMBRE_ARCHIVO']}")
+                        barra_v.progress((j + 1) / total_v, text=f"Verificando {j + 1}/{total_v}...")
+                    barra_v.empty()
 
-                    if huerfanos:
-                        df_rec = pd.concat([df_indice, pd.DataFrame(huerfanos)], ignore_index=True)
-                        if _guardar_indice_repositorio(df_rec):
-                            st.success(f"✅ Se recuperaron {len(huerfanos)} archivo(s) que no estaban en el índice.")
-                            time.sleep(1.5)
-                            st.rerun()
-                        else:
-                            st.error("No se pudo guardar el índice reconstruido.")
+                    if rotos:
+                        st.error(f"❌ {len(rotos)} enlace(s) no responden:\n\n- " + "\n- ".join(rotos[:20]))
                     else:
-                        st.info("✅ El índice ya está completo, no hay archivos sueltos.")
+                        st.success(f"✅ Los {total_v} enlaces están activos.")
+
+            st.divider()
+            st.caption("Descarga el índice completo como respaldo (los enlaces quedan incluidos).")
+            if not df_indice.empty:
+                st.download_button(
+                    "📥 Descargar índice (CSV)",
+                    data=df_indice.to_csv(index=False).encode('utf-8'),
+                    file_name=f"repositorio_expedientes_{get_honduras_time().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    key="repo_backup_indice"
+                )
 
 
 def mostrar_modulo_expedientes(conn, df_base):
