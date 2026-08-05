@@ -38,6 +38,21 @@ except ImportError:
     NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"  # respaldo si tools.py no está disponible
 
 
+def _leer_secreto(clave, default=None):
+    """
+    Lee un valor de st.secrets de forma segura en cualquier versión de Streamlit.
+
+    En algunas versiones el objeto Secrets no hereda de Mapping, por lo que
+    st.secrets.get("clave", default) no resuelve el método 'get' y termina
+    lanzando KeyError: 'get' al importar el módulo, tumbando toda la app.
+    Esta función accede por corchetes y captura cualquier fallo.
+    """
+    try:
+        return st.secrets[clave]
+    except Exception:
+        return default
+
+
 # Usuarios autorizados para el repositorio documental. OJO: en login.py el nombre
 # de usuario y el rol son valores DISTINTOS (st.secrets["credenciales"][usuario]["rol"]),
 # así que aquí van NOMBRES DE USUARIO, no roles: tener rol de admin no da acceso.
@@ -125,7 +140,7 @@ def _cargar_indice_repositorio(conn):
     columnas = ["COLABORADOR", "CARPETA", "NOMBRE_ARCHIVO", "ENLACE", "TIPO",
                 "TAMANO_KB", "DESCRIPCION", "SUBIDO_POR", "FECHA_SUBIDA"]
     try:
-        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, ttl=0)
+        df = conn.read(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, ttl=0)
         df = df.dropna(how="all")
     except Exception:
         df = None
@@ -146,14 +161,14 @@ def _guardar_indice_repositorio(conn, df):
     y esa era la causa del error 'No se pudo guardar el índice: RepositorioDocs'.
     """
     try:
-        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
+        conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
         return True
     except Exception:
         pass
 
     # Segundo intento: crear la hoja y escribir en ella.
     try:
-        conn.create(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
+        conn.create(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
         return True
     except Exception:
         pass
@@ -161,8 +176,8 @@ def _guardar_indice_repositorio(conn, df):
     # Tercer intento: crear vacía y luego actualizar (algunas versiones de
     # st-gsheets-connection no aceptan 'data' en create()).
     try:
-        conn.create(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO)
-        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REPOSITORIO, data=df)
+        conn.create(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO)
+        conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
         return True
     except Exception as e:
         st.error(f"No se pudo guardar el índice en la hoja '{HOJA_REPOSITORIO}': {e}")
@@ -171,8 +186,8 @@ def _guardar_indice_repositorio(conn, df):
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
-API_KEY_FREEIMAGE = st.secrets.get("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-CATBOX_USERHASH = st.secrets.get("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
+API_KEY_FREEIMAGE = _leer_secreto("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
+CATBOX_USERHASH = _leer_secreto("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
 
 def get_honduras_time():
     return datetime.now(timezone.utc) - timedelta(hours=6)
@@ -1013,7 +1028,7 @@ def generar_docx_consolidado(df):
 def forzar_actualizacion_memoria(conn):
     df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
     if df is None or df.empty:
-        df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", ttl=0)
+        df = conn.read(spreadsheet=_leer_secreto("url_base_datos"), worksheet="Expedientes", ttl=0)
     st.session_state['df_exp_memoria'] = df
 
 def obtener_datos_memoria(conn):
@@ -1801,7 +1816,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                             if idx_sel in df_borrado.index:
                                                 df_borrado = df_borrado.drop(idx_sel).reset_index(drop=True)
                                                 sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_borrado)
+                                                conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet="Expedientes", data=df_borrado)
                                             st.success("✅ Eliminado.")
                                             forzar_actualizacion_memoria(conn)
                                             time.sleep(1)
@@ -1916,7 +1931,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 df_final = nuevo_df
                                 
                             sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                            conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+                            conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet="Expedientes", data=df_final)
 
                         st.success(f"✅ ¡Guardado exitosamente! {colaborador_sel} registrado en la base de datos.")
                         forzar_actualizacion_memoria(conn)
@@ -2032,7 +2047,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     df_final = nuevo_df
                                     
                                 sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET_SISTEMA, "expedientes_maestro.csv")
-                                conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Expedientes", data=df_final)
+                                conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet="Expedientes", data=df_final)
 
                             st.success(f"✅ ¡Guardado exitosamente! {nombre_admin} registrado en la base de datos.")
                             forzar_actualizacion_memoria(conn)
