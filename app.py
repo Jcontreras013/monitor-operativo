@@ -904,22 +904,9 @@ def main():
         
         PATRON_VIVAS = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
         df_base['ES_VIVA'] = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_VIVAS, na=False)
-
-        # DEDUPLICACIÓN POR NUM: debe sobrevivir el registro MÁS RECIENTE.
-        #
-        # Antes se ordenaba por ES_VIVA primero (descendente) y se conservaba el
-        # último, lo que hacía que CUALQUIER registro no-vivo le ganara siempre a
-        # la versión viva, sin importar las fechas. Si una orden traía un registro
-        # viejo CERRADA/ANULADA además del registro vivo actual, se conservaba el
-        # viejo y la orden real desaparecía del Monitor, del Gantt y de pendientes.
-        #
-        # Ahora manda SORT_DATE (recencia). Esto sigue funcionando bien para las
-        # órdenes genuinamente cerradas, porque su HORA_LIQ siempre es posterior a
-        # su propia FECHA_APE, así que el registro cerrado gana por sí solo.
-        # ES_VIVA queda únicamente como desempate: si dos registros tienen la misma
-        # fecha, prevalece el estado final (no vivo).
-        df_base = df_base.sort_values(by=['SORT_DATE', 'ES_VIVA'], ascending=[True, False])
-
+        
+        df_base = df_base.sort_values(by=['ES_VIVA', 'SORT_DATE'], ascending=[False, True])
+        
         df_validos = df_base[df_base['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
         df_invalidos = df_base[df_base['NUM'] == 'N/D']
         df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
@@ -2212,45 +2199,19 @@ def main():
             if not es_movil:
                 if st.session_state.get('config_ver_gantt', True):
                     with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
-
-                        # Una orden que se inició AYER y sigue abierta hoy desaparecía por
-                        # completo del Gantt, aunque el técnico la siga trabajando: el filtro
-                        # solo aceptaba HORA_INI de hoy. Esta opción permite arrastrarlas.
-                        incluir_arrastradas = st.checkbox(
-                            "➕ Incluir órdenes que siguen abiertas de días anteriores",
-                            value=True,
-                            key="chk_gantt_arrastradas",
-                            help="Órdenes iniciadas en días previos que aún no se cierran. Su barra empieza al inicio de la jornada de hoy, porque el trabajo real de días anteriores no cabe en esta línea de tiempo."
-                        )
-
+                        
                         mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
 
                         # El Gantt representa TRABAJO REALIZADO en la línea de tiempo, así que
-                        # una orden solo entra si tiene una hora de inicio real (HORA_INI). Una
-                        # orden sin HORA_INI todavía no fue iniciada en campo -- está únicamente
-                        # asignada -- y dibujarla implicaría inventar un horario que nunca ocurrió.
+                        # una orden solo entra si tiene una hora de inicio real (HORA_INI) de
+                        # hoy, o si se cerró hoy. Una orden sin HORA_INI todavía no fue iniciada
+                        # en campo -- está únicamente asignada -- y dibujarla implicaría inventar
+                        # un horario de trabajo que nunca ocurrió.
                         mask_viva_gantt = df_monitor_filtrado['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                         mask_hora_ini_hoy = df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor
                         mask_abiertas_gantt = mask_viva_gantt & mask_hora_ini_hoy
 
-                        # Abiertas iniciadas en días anteriores (siguen vivas, nunca se cerraron)
-                        mask_arrastradas = (
-                            mask_viva_gantt
-                            & df_monitor_filtrado['HORA_INI'].notna()
-                            & (df_monitor_filtrado['HORA_INI'].dt.date < hoy_date_valor)
-                            & df_monitor_filtrado['HORA_LIQ'].isna()
-                        )
-                        if not incluir_arrastradas:
-                            mask_arrastradas = mask_arrastradas & False
-
-                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt | mask_arrastradas].copy()
-
-                        # Se marcan para poder identificarlas y recortar su barra al día de hoy.
-                        df_para_gantt_final['ES_ARRASTRADA'] = mask_arrastradas.reindex(df_para_gantt_final.index, fill_value=False)
-
-                        n_arrastradas = int(df_para_gantt_final['ES_ARRASTRADA'].sum())
-                        if n_arrastradas:
-                            st.caption(f"🔁 {n_arrastradas} orden(es) vienen abiertas de días anteriores. Su barra arranca al inicio de la jornada.")
+                        df_para_gantt_final = df_monitor_filtrado[mask_cerradas_gantt | mask_abiertas_gantt].copy()
 
                         try:
                             df_almuerzos_hoy = cargar_almuerzos(conn, fecha=hoy_date_valor.strftime('%Y-%m-%d'))
@@ -2288,16 +2249,6 @@ def main():
                             ahora_hx = get_honduras_time()
                             
                             df_para_gantt_final['GANTT_START'] = df_para_gantt_final['HORA_INI']
-
-                            # Las órdenes arrastradas de días anteriores se recortan al inicio
-                            # de la jornada de hoy. Si se dejara su HORA_INI real, el eje se
-                            # estiraría días hacia atrás y comprimiría todo el trabajo de hoy
-                            # hasta volverlo ilegible.
-                            if 'ES_ARRASTRADA' in df_para_gantt_final.columns:
-                                mask_arr = df_para_gantt_final['ES_ARRASTRADA'].fillna(False).astype(bool)
-                                if mask_arr.any():
-                                    inicio_jornada = datetime.combine(hoy_date_valor, dt_time(6, 0))
-                                    df_para_gantt_final.loc[mask_arr, 'GANTT_START'] = inicio_jornada
 
                             # Solo se estira la barra hasta la hora actual si la orden está
                             # GENUINAMENTE abierta. El criterio único es el ESTADO: si dice que
@@ -2410,17 +2361,6 @@ def main():
                                     ((diff_fill.dt.total_seconds() % 3600) // 60).fillna(0).astype(int).astype(str) + "m"
                                 )
                             
-                            # Para las arrastradas se aclara su fecha real de inicio, porque
-                            # su barra aparece recortada al inicio de la jornada de hoy.
-                            if 'ES_ARRASTRADA' in df_para_gantt_final.columns:
-                                nota_arrastre = df_para_gantt_final.apply(
-                                    lambda r: f"<br>⚠️ Abierta desde {r['HORA_INI'].strftime('%d/%m %H:%M')}"
-                                    if bool(r.get('ES_ARRASTRADA')) and pd.notnull(r.get('HORA_INI')) else "",
-                                    axis=1
-                                )
-                            else:
-                                nota_arrastre = ""
-
                             df_para_gantt_final['INFO_HOVER'] = (
                                 "ACTIVIDAD=" + df_para_gantt_final['ACTIVIDAD'].astype(str) + "<br>" +
                                 "NUM=" + df_para_gantt_final['NUM'].astype(str) + "<br>" +
@@ -2430,7 +2370,6 @@ def main():
                                 "Inicio=" + df_para_gantt_final['Inicio'].astype(str) + "<br>" +
                                 "Cierre=" + df_para_gantt_final['Cierre'].astype(str) + "<br>" +
                                 "Tiempo Total=" + df_para_gantt_final['TIEMPO_REAL'].astype(str)
-                                + nota_arrastre
                             )
 
                             st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
@@ -2500,59 +2439,6 @@ def main():
                             tecnicos_en_gantt_hoy = set(df_para_gantt_final['TECNICO'].dropna().unique())
 
                         with st.expander("🔍 Diagnóstico: ¿por qué no veo a un técnico aquí?", expanded=False):
-
-                            # --- Vista rápida: TODO lo que quedó fuera del Gantt hoy ---
-                            st.markdown("**Órdenes que NO se están dibujando hoy**")
-                            st.caption("Lista completa de lo que quedó fuera del Gantt, con el motivo de cada exclusión.")
-
-                            def _motivo_exclusion(row):
-                                estado_up = str(row.get('ESTADO', '')).upper()
-                                hi_d, hl_d = row.get('HORA_INI'), row.get('HORA_LIQ')
-                                act_up = str(row.get('ACTIVIDAD', '')).strip().upper()
-                                es_viva = bool(re.search(PATRON_ASIGNADAS_VIVA_STR, estado_up, re.IGNORECASE))
-                                es_cerrada = estado_up == 'CERRADA'
-
-                                if act_up not in ACTIVIDADES_GANTT_PERMITIDAS:
-                                    return f"Actividad '{act_up}' no está en la lista permitida"
-                                if not mascara_tecnico_asignado(pd.Series([row.get('TECNICO')])).iloc[0]:
-                                    return "Sin técnico asignado"
-                                if es_cerrada:
-                                    if pd.isnull(hl_d):
-                                        return "Cerrada pero sin HORA_LIQ"
-                                    return f"Cerrada el {hl_d.strftime('%d/%m')}, no hoy"
-                                if es_viva:
-                                    if pd.isnull(hi_d):
-                                        return "Asignada pero nunca iniciada en campo (sin HORA_INI)"
-                                    if hi_d.date() != hoy_date_valor:
-                                        return f"Iniciada el {hi_d.strftime('%d/%m')} y ya está cerrada o fuera de rango"
-                                    return "Debería mostrarse (revisar)"
-                                return f"ESTADO '{estado_up}' no reconocido como vivo ni cerrado"
-
-                            try:
-                                nums_dibujados = set(df_para_gantt_final['NUM'].astype(str)) if not df_para_gantt_final.empty else set()
-                                df_fuera = df_monitor_filtrado[~df_monitor_filtrado['NUM'].astype(str).isin(nums_dibujados)].copy()
-
-                                if df_fuera.empty:
-                                    st.success("✅ Todas las órdenes visibles con los filtros actuales se están dibujando.")
-                                else:
-                                    df_fuera['MOTIVO'] = df_fuera.apply(_motivo_exclusion, axis=1)
-                                    cols_f = [c for c in ['NUM', 'ACTIVIDAD', 'ESTADO', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'MOTIVO'] if c in df_fuera.columns]
-
-                                    st.caption(f"Total excluidas: {len(df_fuera)}")
-                                    resumen_motivos = df_fuera['MOTIVO'].value_counts()
-                                    st.dataframe(resumen_motivos.rename("Cantidad"), use_container_width=True)
-
-                                    solo_tec = st.text_input("Filtrar por técnico (opcional):", key="diag_filtro_tec_fuera").strip().upper()
-                                    df_fuera_ver = df_fuera
-                                    if solo_tec:
-                                        df_fuera_ver = df_fuera[df_fuera['TECNICO'].astype(str).str.upper().str.contains(solo_tec, na=False)]
-
-                                    st.dataframe(df_fuera_ver[cols_f].sort_values(by='TECNICO'), use_container_width=True, hide_index=True)
-                            except Exception as e_diag:
-                                st.warning(f"No se pudo generar el diagnóstico: {e_diag}")
-
-                            st.divider()
-                            st.markdown("**Buscar un técnico específico**")
                             st.caption("Escribe el nombre (o parte del nombre) de un técnico para ver el estado real de todas sus órdenes de hoy, y por qué el Gantt sí o no las está dibujando.")
                             tec_diag_txt = st.text_input("Nombre del técnico", key="input_diag_tec_gantt")
                             if tec_diag_txt.strip():
