@@ -12,7 +12,6 @@ import plotly.express as px
 import re
 import io
 import unicodedata
-import difflib
 
 # --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
 try:
@@ -49,18 +48,10 @@ try:
 except ImportError:
     GCS_DOCUMENTOS_OK = False
 
-# Usuarios autorizados para el repositorio documental. En login.py el nombre de
-# usuario y el rol son valores DISTINTOS (st.secrets["credenciales"][usuario]["rol"]),
-# y aquí el acceso se controla ÚNICAMENTE por nombre de usuario: tener rol de
-# admin no basta. La comparación es exacta (en minúsculas) a propósito, para que
-# nadie entre por parecido de nombre a un documento laboral sensible.
-USUARIOS_REPOSITORIO = {"oscar", "afajardo", "jaison"}
-
-
-def tiene_acceso_repositorio():
-    """Devuelve True solo si el usuario conectado está en la lista autorizada."""
-    usuario = str(st.session_state.get('usuario_actual', '') or '').strip().lower()
-    return bool(usuario) and usuario in USUARIOS_REPOSITORIO
+# Usuarios autorizados para el repositorio documental. Se comparan en minúsculas
+# contra st.session_state['usuario_actual'], que login.py llena con el usuario
+# definido en st.secrets["credenciales"].
+USUARIOS_REPOSITORIO = {"admin", "afajardo", "oscar"}
 
 # Carpeta raíz dentro del bucket y archivo índice del repositorio.
 CARPETA_REPOSITORIO = "expedientes_documentos"
@@ -988,10 +979,9 @@ def mostrar_repositorio_documentos(conn):
     """
     st.subheader("🗄️ Repositorio de Documentos")
 
-    if not tiene_acceso_repositorio():
-        _u = st.session_state.get('usuario_actual', '(no detectado)')
+    usuario_actual = str(st.session_state.get('usuario_actual', '')).strip().lower()
+    if usuario_actual not in USUARIOS_REPOSITORIO:
         st.warning("🔒 No tienes acceso a este repositorio. Solicítalo al administrador.")
-        st.caption(f"Usuario conectado: `{_u}`")
         return
 
     if not GCS_DOCUMENTOS_OK:
@@ -1029,64 +1019,21 @@ def mostrar_repositorio_documentos(conn):
     # SUBIR
     # ======================================================================
     with tab_subir:
-        # El nombre se escribe libremente (hay que archivar expedientes de gente
-        # que ya no labora y por lo tanto no está en las listas de personal).
-        # Las listas conocidas ya no limitan: ahora funcionan como buscador, para
-        # que al reutilizar un nombre se escriba SIEMPRE igual y no se generen
-        # carpetas duplicadas por una letra de diferencia.
         col_a, col_b = st.columns(2)
         with col_a:
-            colaborador_sel = st.text_input(
-                "👤 Nombre del colaborador:",
-                key="repo_colab_txt",
-                placeholder="Escribe el nombre completo..."
-            ).strip().upper()
+            modo_nombre = st.radio(
+                "Colaborador:",
+                ["Seleccionar de la lista", "Escribir uno nuevo"],
+                horizontal=True,
+                key="repo_modo_nombre"
+            )
+            if modo_nombre == "Seleccionar de la lista" and lista_colaboradores:
+                colaborador_sel = st.selectbox("👤 Nombre:", options=lista_colaboradores, key="repo_colab_sel")
+            else:
+                colaborador_sel = st.text_input("👤 Nombre del colaborador:", key="repo_colab_txt", placeholder="Ej: JUAN PEREZ").strip().upper()
+
         with col_b:
             descripcion_doc = st.text_input("📝 Descripción (opcional):", key="repo_desc", placeholder="Ej: Contrato firmado 2026")
-
-        def _fijar_nombre_colaborador(valor):
-            # Se usa como callback (on_click) porque Streamlit no permite
-            # modificar la clave de un widget después de haberlo instanciado.
-            st.session_state["repo_colab_txt"] = valor
-
-        # --- Buscador de nombres ya conocidos ---
-        carpetas_existentes = set()
-        if not df_indice.empty:
-            carpetas_existentes = set(df_indice['COLABORADOR'].dropna().astype(str).str.upper())
-
-        if colaborador_sel:
-            coincidencias = [n for n in lista_colaboradores if colaborador_sel in n.upper()]
-            coincidencias = [n for n in coincidencias if n.upper() != colaborador_sel][:6]
-
-            if coincidencias:
-                st.caption("¿Te refieres a alguno de estos? (clic para usar el nombre exacto)")
-                cols_sug = st.columns(min(3, len(coincidencias)))
-                for i, sugerido in enumerate(coincidencias):
-                    etiqueta = f"📁 {sugerido}" if sugerido.upper() in carpetas_existentes else sugerido
-                    cols_sug[i % 3].button(
-                        etiqueta,
-                        key=f"repo_sug_{i}",
-                        use_container_width=True,
-                        on_click=_fijar_nombre_colaborador,
-                        args=(sugerido,)
-                    )
-
-            # Aviso de posible duplicado por error de tecleo.
-            if colaborador_sel not in carpetas_existentes and carpetas_existentes:
-                parecidos = difflib.get_close_matches(colaborador_sel, list(carpetas_existentes), n=3, cutoff=0.82)
-                if parecidos:
-                    st.warning(
-                        "⚠️ Ya existe una carpeta con un nombre muy parecido: "
-                        + ", ".join(f"**{p}**" for p in parecidos)
-                        + ". Si es la misma persona, usa el nombre existente para no crear una carpeta duplicada."
-                    )
-        else:
-            with st.expander(f"🔎 Ver nombres registrados ({len(lista_colaboradores)})", expanded=False):
-                if carpetas_existentes:
-                    st.caption("📁 Con carpeta ya creada:")
-                    st.write(", ".join(sorted(carpetas_existentes)))
-                st.caption("👥 Personal en listas del sistema:")
-                st.write(", ".join(lista_colaboradores) if lista_colaboradores else "Sin registros.")
 
         archivos_subir = st.file_uploader(
             "📎 Archivos (PDF, Word, Excel, imágenes):",
@@ -1096,12 +1043,7 @@ def mostrar_repositorio_documentos(conn):
         )
 
         if colaborador_sel:
-            _carpeta_destino = _sanitizar_nombre_carpeta(colaborador_sel)
-            if colaborador_sel in carpetas_existentes:
-                _n_previos = len(df_indice[df_indice['COLABORADOR'].astype(str).str.upper() == colaborador_sel])
-                st.success(f"📁 Carpeta existente de **{colaborador_sel}** ({_n_previos} documento(s)). Ruta: `{CARPETA_REPOSITORIO}/{_carpeta_destino}/`")
-            else:
-                st.info(f"🆕 Se creará una carpeta nueva para **{colaborador_sel}**. Ruta: `{CARPETA_REPOSITORIO}/{_carpeta_destino}/`")
+            st.caption(f"📁 Se guardará en: `{CARPETA_REPOSITORIO}/{_sanitizar_nombre_carpeta(colaborador_sel)}/`")
 
         if st.button("☁️ Subir al Repositorio", type="primary", use_container_width=True, key="repo_btn_subir"):
             if not colaborador_sel:
@@ -1570,7 +1512,8 @@ def mostrar_modulo_expedientes(conn, df_base):
     # ==========================================================================
     # La pestaña del repositorio solo se muestra a los usuarios autorizados, para
     # no exponer siquiera su existencia al resto del personal.
-    if tiene_acceso_repositorio():
+    _usuario_repo = str(st.session_state.get('usuario_actual', '')).strip().lower()
+    if _usuario_repo in USUARIOS_REPOSITORIO:
         tab_tecnicos, tab_admin, tab_repositorio = st.tabs([
             "⚙️ Operaciones (Técnicos y Auxiliares)",
             "🏢 Administrativo (SAC, Ventas, etc.)",
