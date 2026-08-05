@@ -11,6 +11,7 @@ from fpdf import FPDF
 import plotly.express as px
 import re
 import io
+import unicodedata
 
 # --- ARRANQUE BLINDADO: IMPORTACIÓN OPCIONAL DE WORD ---
 try:
@@ -34,6 +35,40 @@ try:
     from tools import leer_espejo_gcs, sobrescribir_archivo_gcs, generar_docx_reporte_faltas_individual, NOMBRE_BUCKET_SISTEMA
 except ImportError:
     NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"  # respaldo si tools.py no está disponible
+
+# --- HERRAMIENTAS PARA EL REPOSITORIO DOCUMENTAL (archivos binarios en GCS) ---
+try:
+    from tools import (
+        subir_archivo_binario_gcs,
+        descargar_archivo_gcs,
+        eliminar_archivo_gcs,
+        listar_archivos_gcs,
+    )
+    GCS_DOCUMENTOS_OK = True
+except ImportError:
+    GCS_DOCUMENTOS_OK = False
+
+# Usuarios autorizados para el repositorio documental. Se comparan en minúsculas
+# contra st.session_state['usuario_actual'], que login.py llena con el usuario
+# definido en st.secrets["credenciales"].
+USUARIOS_REPOSITORIO = {"admin", "afajardo", "oscar"}
+
+# Carpeta raíz dentro del bucket y archivo índice del repositorio.
+CARPETA_REPOSITORIO = "expedientes_documentos"
+INDICE_REPOSITORIO = "documentos_expedientes.csv"
+
+# Tipos de archivo permitidos y su MIME, para que al descargar se abran bien.
+MIMES_REPOSITORIO = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "csv": "text/csv",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+}
 
 # ==============================================================================
 # CONFIGURACIÓN Y CARGA DE PERSONAL
@@ -891,6 +926,310 @@ def obtener_datos_memoria(conn):
 # ==============================================================================
 # 3. INTERFAZ DE EXPEDIENTES Y VISTAS AISLADAS
 # ==============================================================================
+# ==============================================================================
+# REPOSITORIO DOCUMENTAL DE EXPEDIENTES (archivos en GCS por colaborador)
+# ==============================================================================
+def _sanitizar_nombre_carpeta(nombre):
+    """
+    Convierte el nombre de un colaborador en un nombre de carpeta seguro para GCS:
+    sin acentos, sin caracteres raros y con guiones bajos en vez de espacios.
+    El nombre legible original se conserva en el índice CSV.
+    """
+    txt = unicodedata.normalize('NFKD', str(nombre)).encode('ascii', 'ignore').decode('ascii')
+    txt = txt.upper().strip()
+    txt = re.sub(r'[^A-Z0-9\s_-]', '', txt)
+    txt = re.sub(r'\s+', '_', txt)
+    return txt or "SIN_NOMBRE"
+
+
+def _cargar_indice_repositorio():
+    """Lee el índice de documentos desde GCS. Devuelve siempre un DataFrame."""
+    columnas = ["COLABORADOR", "CARPETA", "NOMBRE_ARCHIVO", "RUTA_GCS", "TIPO",
+                "TAMANO_KB", "DESCRIPCION", "SUBIDO_POR", "FECHA_SUBIDA"]
+    try:
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, INDICE_REPOSITORIO)
+    except Exception:
+        df = None
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columnas)
+
+    for c in columnas:
+        if c not in df.columns:
+            df[c] = ""
+    return df
+
+
+def _guardar_indice_repositorio(df):
+    try:
+        return bool(sobrescribir_archivo_gcs(df, NOMBRE_BUCKET_SISTEMA, INDICE_REPOSITORIO))
+    except Exception:
+        return False
+
+
+def mostrar_repositorio_documentos(conn):
+    """
+    Repositorio de documentos (PDF / Word / Excel) guardados en Google Cloud
+    Storage, organizados en una carpeta por colaborador.
+
+    A diferencia de las evidencias de incidencias (que van a Catbox y quedan con
+    URL pública), estos archivos viven en el bucket privado de la empresa: solo
+    se pueden abrir a través de la aplicación y por usuarios autorizados. Esto
+    importa porque aquí se guardan documentos laborales sensibles.
+    """
+    st.subheader("🗄️ Repositorio de Documentos")
+
+    usuario_actual = str(st.session_state.get('usuario_actual', '')).strip().lower()
+    if usuario_actual not in USUARIOS_REPOSITORIO:
+        st.warning("🔒 No tienes acceso a este repositorio. Solicítalo al administrador.")
+        return
+
+    if not GCS_DOCUMENTOS_OK:
+        st.error("❌ No se pudieron cargar las funciones de almacenamiento. Verifica que `tools.py` esté actualizado con las funciones de manejo de archivos en GCS.")
+        return
+
+    st.caption("Los archivos se guardan en el almacenamiento privado de la empresa, en una carpeta por colaborador. Solo son accesibles desde esta aplicación.")
+
+    df_indice = _cargar_indice_repositorio()
+
+    # ----------------------------------------------------------------------
+    # LISTA DE COLABORADORES (técnicos + administrativos + carpetas existentes)
+    # ----------------------------------------------------------------------
+    nombres_tecnicos = cargar_personal("personal_tecnico.txt")
+    nombres_admin = []
+    try:
+        for _dep, _emps in cargar_personal_admin("personal_sac.txt").items():
+            nombres_admin.extend(_emps)
+    except Exception:
+        pass
+
+    nombres_existentes = []
+    if not df_indice.empty:
+        nombres_existentes = df_indice['COLABORADOR'].dropna().astype(str).unique().tolist()
+
+    lista_colaboradores = sorted(set(
+        [n for n in nombres_tecnicos if n] +
+        [n for n in nombres_admin if n] +
+        [n for n in nombres_existentes if n]
+    ))
+
+    tab_subir, tab_explorar = st.tabs(["📤 Subir Documento", "📂 Explorar Carpetas"])
+
+    # ======================================================================
+    # SUBIR
+    # ======================================================================
+    with tab_subir:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            modo_nombre = st.radio(
+                "Colaborador:",
+                ["Seleccionar de la lista", "Escribir uno nuevo"],
+                horizontal=True,
+                key="repo_modo_nombre"
+            )
+            if modo_nombre == "Seleccionar de la lista" and lista_colaboradores:
+                colaborador_sel = st.selectbox("👤 Nombre:", options=lista_colaboradores, key="repo_colab_sel")
+            else:
+                colaborador_sel = st.text_input("👤 Nombre del colaborador:", key="repo_colab_txt", placeholder="Ej: JUAN PEREZ").strip().upper()
+
+        with col_b:
+            descripcion_doc = st.text_input("📝 Descripción (opcional):", key="repo_desc", placeholder="Ej: Contrato firmado 2026")
+
+        archivos_subir = st.file_uploader(
+            "📎 Archivos (PDF, Word, Excel, imágenes):",
+            type=list(MIMES_REPOSITORIO.keys()),
+            accept_multiple_files=True,
+            key="repo_uploader"
+        )
+
+        if colaborador_sel:
+            st.caption(f"📁 Se guardará en: `{CARPETA_REPOSITORIO}/{_sanitizar_nombre_carpeta(colaborador_sel)}/`")
+
+        if st.button("☁️ Subir al Repositorio", type="primary", use_container_width=True, key="repo_btn_subir"):
+            if not colaborador_sel:
+                st.error("⚠️ Debes indicar el colaborador.")
+            elif not archivos_subir:
+                st.error("⚠️ Selecciona al menos un archivo.")
+            else:
+                carpeta = _sanitizar_nombre_carpeta(colaborador_sel)
+                nuevos_registros = []
+                fallidos = []
+
+                barra = st.progress(0.0, text="Subiendo archivos...")
+                for i, arch in enumerate(archivos_subir):
+                    extension = arch.name.rsplit('.', 1)[-1].lower() if '.' in arch.name else ''
+                    mime = MIMES_REPOSITORIO.get(extension, "application/octet-stream")
+
+                    # Se antepone la marca de tiempo para que subir dos veces un
+                    # archivo con el mismo nombre no sobrescriba el anterior.
+                    sello = get_honduras_time().strftime('%Y%m%d_%H%M%S')
+                    nombre_seguro = re.sub(r'[^\w\.\-]', '_', arch.name)
+                    ruta = f"{CARPETA_REPOSITORIO}/{carpeta}/{sello}_{nombre_seguro}"
+
+                    ok, err = subir_archivo_binario_gcs(arch, NOMBRE_BUCKET_SISTEMA, ruta, content_type=mime)
+                    if ok:
+                        nuevos_registros.append({
+                            "COLABORADOR": colaborador_sel,
+                            "CARPETA": carpeta,
+                            "NOMBRE_ARCHIVO": arch.name,
+                            "RUTA_GCS": ruta,
+                            "TIPO": extension.upper(),
+                            "TAMANO_KB": round(arch.size / 1024, 1) if getattr(arch, 'size', None) else "",
+                            "DESCRIPCION": descripcion_doc,
+                            "SUBIDO_POR": st.session_state.get('usuario_actual', ''),
+                            "FECHA_SUBIDA": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                        })
+                    else:
+                        fallidos.append(f"{arch.name} ({err})")
+
+                    barra.progress((i + 1) / len(archivos_subir), text=f"Subiendo {arch.name}...")
+
+                barra.empty()
+
+                if nuevos_registros:
+                    df_actualizado = pd.concat([df_indice, pd.DataFrame(nuevos_registros)], ignore_index=True)
+                    if _guardar_indice_repositorio(df_actualizado):
+                        st.success(f"✅ {len(nuevos_registros)} archivo(s) guardado(s) en la carpeta de {colaborador_sel}.")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        # El archivo sí subió, pero el índice no: hay que avisarlo
+                        # con claridad para no dar por perdido el documento.
+                        st.warning("⚠️ Los archivos se subieron, pero no se pudo actualizar el índice. Aparecerán al reconstruir el índice desde 'Explorar Carpetas'.")
+
+                if fallidos:
+                    st.error("❌ No se pudieron subir:\n\n- " + "\n- ".join(fallidos))
+
+    # ======================================================================
+    # EXPLORAR
+    # ======================================================================
+    with tab_explorar:
+        col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+        with col_f1:
+            opciones_filtro = ["VER TODOS"] + (sorted(df_indice['COLABORADOR'].dropna().astype(str).unique().tolist()) if not df_indice.empty else [])
+            filtro_colab = st.selectbox("🔍 Carpeta:", options=opciones_filtro, key="repo_filtro_colab")
+        with col_f2:
+            buscar_archivo = st.text_input("🔎 Buscar por nombre:", key="repo_buscar")
+        with col_f3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔄 Refrescar", use_container_width=True, key="repo_refrescar"):
+                st.rerun()
+
+        if df_indice.empty:
+            st.info("📭 El repositorio está vacío. Sube el primer documento en la pestaña anterior.")
+        else:
+            df_ver = df_indice.copy()
+            if filtro_colab != "VER TODOS":
+                df_ver = df_ver[df_ver['COLABORADOR'].astype(str) == filtro_colab]
+            if buscar_archivo.strip():
+                df_ver = df_ver[df_ver['NOMBRE_ARCHIVO'].astype(str).str.contains(buscar_archivo.strip(), case=False, na=False)]
+
+            if df_ver.empty:
+                st.warning("No hay documentos que coincidan con el filtro.")
+            else:
+                df_ver = df_ver.sort_values(by='FECHA_SUBIDA', ascending=False)
+                st.caption(f"📄 {len(df_ver)} documento(s)")
+
+                for idx, fila in df_ver.iterrows():
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([5, 1.2, 1.2])
+                        with c1:
+                            st.markdown(f"**{fila['NOMBRE_ARCHIVO']}**")
+                            detalle = f"👤 {fila['COLABORADOR']} · 📅 {fila['FECHA_SUBIDA']} · ⬆️ {fila['SUBIDO_POR']}"
+                            if str(fila.get('TAMANO_KB', '')).strip():
+                                detalle += f" · {fila['TAMANO_KB']} KB"
+                            st.caption(detalle)
+                            if str(fila.get('DESCRIPCION', '')).strip():
+                                st.caption(f"📝 {fila['DESCRIPCION']}")
+
+                        with c2:
+                            # La descarga se prepara solo cuando se pide, para no
+                            # bajar todos los archivos del bucket en cada recarga.
+                            if st.button("⬇️ Preparar", key=f"repo_prep_{idx}", use_container_width=True):
+                                with st.spinner("Descargando..."):
+                                    datos = descargar_archivo_gcs(NOMBRE_BUCKET_SISTEMA, fila['RUTA_GCS'])
+                                if datos:
+                                    st.session_state[f"repo_datos_{idx}"] = datos
+                                else:
+                                    st.error("No se encontró el archivo en la nube.")
+
+                            if st.session_state.get(f"repo_datos_{idx}"):
+                                ext_f = str(fila.get('TIPO', '')).lower()
+                                st.download_button(
+                                    "💾 Guardar",
+                                    data=st.session_state[f"repo_datos_{idx}"],
+                                    file_name=fila['NOMBRE_ARCHIVO'],
+                                    mime=MIMES_REPOSITORIO.get(ext_f, "application/octet-stream"),
+                                    key=f"repo_dl_{idx}",
+                                    use_container_width=True
+                                )
+
+                        with c3:
+                            if st.session_state.get(f"repo_confirmar_{idx}"):
+                                st.caption("¿Seguro?")
+                                if st.button("✅ Sí", key=f"repo_si_{idx}", use_container_width=True):
+                                    ok_del, err_del = eliminar_archivo_gcs(NOMBRE_BUCKET_SISTEMA, fila['RUTA_GCS'])
+                                    if ok_del:
+                                        df_nuevo = df_indice[df_indice['RUTA_GCS'] != fila['RUTA_GCS']]
+                                        _guardar_indice_repositorio(df_nuevo)
+                                        st.session_state[f"repo_confirmar_{idx}"] = False
+                                        st.success("Eliminado.")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"No se pudo eliminar: {err_del}")
+                                if st.button("✖️ No", key=f"repo_no_{idx}", use_container_width=True):
+                                    st.session_state[f"repo_confirmar_{idx}"] = False
+                                    st.rerun()
+                            else:
+                                if st.button("🗑️ Borrar", key=f"repo_del_{idx}", use_container_width=True):
+                                    st.session_state[f"repo_confirmar_{idx}"] = True
+                                    st.rerun()
+
+        # ------------------------------------------------------------------
+        # MANTENIMIENTO
+        # ------------------------------------------------------------------
+        with st.expander("🛠️ Mantenimiento del repositorio"):
+            st.caption("Reconstruye el índice leyendo directamente el almacenamiento. Útil si un archivo se subió pero no aparece en la lista.")
+            if st.button("🔧 Reconstruir índice desde la nube", key="repo_reconstruir"):
+                with st.spinner("Leyendo el almacenamiento..."):
+                    archivos_nube = listar_archivos_gcs(NOMBRE_BUCKET_SISTEMA, prefijo=f"{CARPETA_REPOSITORIO}/")
+
+                if not archivos_nube:
+                    st.warning("No se encontraron archivos en el repositorio.")
+                else:
+                    rutas_indexadas = set(df_indice['RUTA_GCS'].astype(str)) if not df_indice.empty else set()
+                    huerfanos = []
+                    for a in archivos_nube:
+                        if a['RUTA_GCS'] in rutas_indexadas:
+                            continue
+                        partes = a['RUTA_GCS'].split('/')
+                        carpeta_h = partes[1] if len(partes) > 2 else "SIN_NOMBRE"
+                        nombre_limpio = re.sub(r'^\d{8}_\d{6}_', '', a['NOMBRE_ARCHIVO'])
+                        huerfanos.append({
+                            "COLABORADOR": carpeta_h.replace('_', ' '),
+                            "CARPETA": carpeta_h,
+                            "NOMBRE_ARCHIVO": nombre_limpio,
+                            "RUTA_GCS": a['RUTA_GCS'],
+                            "TIPO": nombre_limpio.rsplit('.', 1)[-1].upper() if '.' in nombre_limpio else "",
+                            "TAMANO_KB": a['TAMANO_KB'],
+                            "DESCRIPCION": "(recuperado del almacenamiento)",
+                            "SUBIDO_POR": "",
+                            "FECHA_SUBIDA": a['FECHA_SUBIDA'],
+                        })
+
+                    if huerfanos:
+                        df_rec = pd.concat([df_indice, pd.DataFrame(huerfanos)], ignore_index=True)
+                        if _guardar_indice_repositorio(df_rec):
+                            st.success(f"✅ Se recuperaron {len(huerfanos)} archivo(s) que no estaban en el índice.")
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error("No se pudo guardar el índice reconstruido.")
+                    else:
+                        st.info("✅ El índice ya está completo, no hay archivos sueltos.")
+
+
 def mostrar_modulo_expedientes(conn, df_base):
     supervisor_actual = st.session_state.get('usuario_actual', st.session_state.get('username', 'Supervisor'))
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
@@ -1171,7 +1510,21 @@ def mostrar_modulo_expedientes(conn, df_base):
     # ==========================================================================
     # DEFINICIÓN DE PESTAÑAS (Ubicado fuera de generar_vista_historial)
     # ==========================================================================
-    tab_tecnicos, tab_admin = st.tabs(["⚙️ Operaciones (Técnicos y Auxiliares)", "🏢 Administrativo (SAC, Ventas, etc.)"])
+    # La pestaña del repositorio solo se muestra a los usuarios autorizados, para
+    # no exponer siquiera su existencia al resto del personal.
+    _usuario_repo = str(st.session_state.get('usuario_actual', '')).strip().lower()
+    if _usuario_repo in USUARIOS_REPOSITORIO:
+        tab_tecnicos, tab_admin, tab_repositorio = st.tabs([
+            "⚙️ Operaciones (Técnicos y Auxiliares)",
+            "🏢 Administrativo (SAC, Ventas, etc.)",
+            "🗄️ Repositorio de Documentos"
+        ])
+    else:
+        tab_tecnicos, tab_admin = st.tabs([
+            "⚙️ Operaciones (Técnicos y Auxiliares)",
+            "🏢 Administrativo (SAC, Ventas, etc.)"
+        ])
+        tab_repositorio = None
     
     # ==========================================================================
     # PESTAÑA 1: OPERACIONES (TÉCNICOS)
@@ -1398,3 +1751,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                 df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
                 
                 generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
+
+    # ==========================================================================
+    # PESTAÑA 3: REPOSITORIO DOCUMENTAL (solo usuarios autorizados)
+    # ==========================================================================
+    if tab_repositorio is not None:
+        with tab_repositorio:
+            mostrar_repositorio_documentos(conn)
