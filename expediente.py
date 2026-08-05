@@ -48,10 +48,12 @@ try:
 except ImportError:
     GCS_DOCUMENTOS_OK = False
 
-# Usuarios autorizados para el repositorio documental. Se comparan en minúsculas
-# contra st.session_state['usuario_actual'], que login.py llena con el usuario
-# definido en st.secrets["credenciales"].
-USUARIOS_REPOSITORIO = {"admin", "afajardo", "oscar"}
+# Usuarios autorizados para el repositorio documental. OJO: en login.py el nombre
+# de usuario y el rol son valores DISTINTOS (st.secrets["credenciales"][usuario]["rol"]),
+# así que aquí van NOMBRES DE USUARIO, no roles: tener rol de admin no da acceso.
+# La comparación es exacta (en minúsculas) a propósito, para que nadie entre por
+# parecido de nombre a documentos laborales sensibles.
+USUARIOS_REPOSITORIO = {"oscar", "afajardo", "jaison"}
 
 # Carpeta raíz dentro del bucket y archivo índice del repositorio.
 CARPETA_REPOSITORIO = "expedientes_documentos"
@@ -982,6 +984,7 @@ def mostrar_repositorio_documentos(conn):
     usuario_actual = str(st.session_state.get('usuario_actual', '')).strip().lower()
     if usuario_actual not in USUARIOS_REPOSITORIO:
         st.warning("🔒 No tienes acceso a este repositorio. Solicítalo al administrador.")
+        st.caption(f"Usuario conectado: `{usuario_actual or '(no detectado)'}`")
         return
 
     if not GCS_DOCUMENTOS_OK:
