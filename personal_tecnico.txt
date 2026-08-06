@@ -24,13 +24,12 @@ Darren Henley	Webster Bennett, Tecnico principal, ACTIVO
 Zoiner Gualberto Hernandez Hernández, Ayudante-Plex
 Andres Alberto Alvarado Velasquez, Supervisor
 Jermy Modesto	Padilla Cardona,Tecnico principal, ACTIVO
-Jose Adan Lijan Alvarado, Ayudante-FTTH
+Jose Adan Lujan Alvarado, Ayudante-FTTH
 Kevin Oswaldo Martinez Ruiz, Ayudante-Plex
 Francisco Josue Padilla Izaguirre, Ayudante-FTTH
-Noel Santos Padilla, Ayudante-Plex
 Darwin Raul	Aguilar Benítez, Tecnico principal, ACTIVO
 Axel Jose	Alberto Lainez, Ayudante-Plex
-Victor Manuel	Castellanos Duron, FTTH
+Victor Manuel	Castellanos Duron, Ayudante-FTTH
 Roberto Carlos Juarez Padilla, Tecnico principal, ACTIVO
 Marvin Eduardo Gamoneda Díaz, IT
 Aydon Oliver	Fisher Richards, Ayudante-FTTH
@@ -40,3 +39,7 @@ Elvin Alexander Menocal Martinez, Ayudante-FTTH
 Franklin Alonzo Delarca Zelaya, Tecnico principal, ACTIVO
 Oscar Manuel Lobo Murillo, Ayudante-FTTH
 Hector Dario maldonado Hernandez, FTTH
+Marvin Moises Garcia Garcia, Ayudanrte-Plex
+Juan Fernando Villanueva Alvarado, Ayudante-FTTH
+Yiner Antonio Cantillano Escobar, Ayudante-FTTH
+
