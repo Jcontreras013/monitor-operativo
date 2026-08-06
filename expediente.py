@@ -1371,32 +1371,96 @@ def mostrar_repositorio_documentos(conn):
     # EXPLORAR
     # ======================================================================
     with tab_explorar:
-        col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
-        with col_f1:
-            opciones_filtro = ["VER TODOS"] + (sorted(df_indice['COLABORADOR'].dropna().astype(str).unique().tolist()) if not df_indice.empty else [])
-            filtro_colab = st.selectbox("🔍 Carpeta:", options=opciones_filtro, key="repo_filtro_colab")
+        # Navegación tipo explorador: primero las carpetas, y al abrir una se ven
+        # sus documentos. Con una lista plana el repositorio se volvía inmanejable
+        # conforme crecía el número de expedientes.
+        if 'repo_carpeta_abierta' not in st.session_state:
+            st.session_state['repo_carpeta_abierta'] = None
+
+        carpeta_abierta = st.session_state['repo_carpeta_abierta']
+
+        col_f2, col_f3 = st.columns([4, 1])
         with col_f2:
-            buscar_archivo = st.text_input("🔎 Buscar por nombre:", key="repo_buscar")
+            buscar_archivo = st.text_input(
+                "🔎 Buscar documento en todo el repositorio:",
+                key="repo_buscar",
+                placeholder="Escribe parte del nombre para buscar en todas las carpetas..."
+            )
         with col_f3:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🔄 Refrescar", use_container_width=True, key="repo_refrescar"):
                 st.rerun()
 
+        def _abrir_carpeta(nombre):
+            st.session_state['repo_carpeta_abierta'] = nombre
+
+        def _cerrar_carpeta():
+            st.session_state['repo_carpeta_abierta'] = None
+
         if df_indice.empty:
             st.info("📭 El repositorio está vacío. Sube el primer documento en la pestaña anterior.")
-        else:
-            df_ver = df_indice.copy()
-            if filtro_colab != "VER TODOS":
-                df_ver = df_ver[df_ver['COLABORADOR'].astype(str) == filtro_colab]
-            if buscar_archivo.strip():
-                df_ver = df_ver[df_ver['NOMBRE_ARCHIVO'].astype(str).str.contains(buscar_archivo.strip(), case=False, na=False)]
+            df_ver = None
 
+        # --- BÚSQUEDA GLOBAL: pasa por encima de la navegación de carpetas ---
+        elif buscar_archivo.strip():
+            df_ver = df_indice[df_indice['NOMBRE_ARCHIVO'].astype(str).str.contains(buscar_archivo.strip(), case=False, na=False)]
             if df_ver.empty:
-                st.warning("No hay documentos que coincidan con el filtro.")
+                st.warning(f"No se encontró ningún documento que contenga «{buscar_archivo.strip()}».")
+                df_ver = None
             else:
+                st.caption(f"🔎 {len(df_ver)} resultado(s) en todo el repositorio")
                 df_ver = df_ver.sort_values(by='FECHA_SUBIDA', ascending=False)
-                st.caption(f"📄 {len(df_ver)} documento(s)")
 
+        # --- VISTA DE CARPETAS ---
+        elif carpeta_abierta is None:
+            resumen = (
+                df_indice.groupby(df_indice['COLABORADOR'].astype(str))
+                .agg(DOCS=('NOMBRE_ARCHIVO', 'count'), ULTIMA=('FECHA_SUBIDA', 'max'))
+                .reset_index()
+                .sort_values(by='COLABORADOR')
+            )
+
+            st.caption(f"📁 {len(resumen)} carpeta(s) · {len(df_indice)} documento(s) en total")
+
+            filtro_carpeta = st.text_input("🔍 Filtrar carpetas:", key="repo_filtro_carpetas", placeholder="Nombre del colaborador...").strip().upper()
+            if filtro_carpeta:
+                resumen = resumen[resumen['COLABORADOR'].str.upper().str.contains(filtro_carpeta, na=False)]
+
+            if resumen.empty:
+                st.warning("Ninguna carpeta coincide con ese nombre.")
+            else:
+                cols_carpetas = st.columns(3)
+                for i, (_, fila_c) in enumerate(resumen.iterrows()):
+                    with cols_carpetas[i % 3]:
+                        with st.container(border=True):
+                            st.markdown(f"### 📁")
+                            st.markdown(f"**{fila_c['COLABORADOR']}**")
+                            st.caption(f"{int(fila_c['DOCS'])} documento(s)")
+                            st.caption(f"Último: {str(fila_c['ULTIMA'])[:10]}")
+                            st.button(
+                                "Abrir",
+                                key=f"repo_abrir_{i}",
+                                use_container_width=True,
+                                on_click=_abrir_carpeta,
+                                args=(fila_c['COLABORADOR'],)
+                            )
+            df_ver = None
+
+        # --- DENTRO DE UNA CARPETA ---
+        else:
+            st.button("⬅️ Volver a carpetas", key="repo_volver", on_click=_cerrar_carpeta)
+            st.markdown(f"### 📂 {carpeta_abierta}")
+
+            df_ver = df_indice[df_indice['COLABORADOR'].astype(str) == carpeta_abierta]
+            if df_ver.empty:
+                st.warning("Esta carpeta ya no tiene documentos.")
+                df_ver = None
+            else:
+                st.caption(f"📄 {len(df_ver)} documento(s)")
+                df_ver = df_ver.sort_values(by='FECHA_SUBIDA', ascending=False)
+
+        # --- LISTADO DE DOCUMENTOS (compartido por búsqueda y carpeta abierta) ---
+        if df_ver is not None and not df_ver.empty:
                 for idx, fila in df_ver.iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([5, 1.2, 1.2])
