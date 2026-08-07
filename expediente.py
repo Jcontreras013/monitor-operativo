@@ -437,20 +437,34 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
 # ==============================================================================
 class MemoPDF(FPDF):
     def header(self):
-        logo_path = 'logo.png'
-        if os.path.exists(logo_path):
-            try: self.image(logo_path, 10, 6, 35)
+        _lw, _lh = 0, 10
+        try:
+            from tools import obtener_logo_reporte, MARCA_TAGLINE, medidas_logo_en_caja
+            logo_path = obtener_logo_reporte()
+            tagline = MARCA_TAGLINE
+            if logo_path:
+                _lw, _lh = medidas_logo_en_caja(logo_path)
+        except Exception:
+            logo_path = 'logo.png' if os.path.exists('logo.png') else None
+            tagline = "connecting your world"
+
+        if logo_path and os.path.exists(logo_path):
+            try: self.image(logo_path, 10, 7, _lw, _lh)
             except: pass
         self.set_y(10); self.set_x(50); self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "B", 10)
         self.cell(0, 5, "MAXCOM - DEPARTAMENTO DE CONTROL OPERATIVO", ln=True, align="R")
         self.set_font("Helvetica", "", 8); self.set_x(50)
-        self.cell(0, 5, "Reporte Oficial de Gestion de Personal", ln=True, align="R")
+        self.cell(0, 5, tagline, ln=True, align="R")
         self.set_draw_color(200, 200, 200); self.line(10, 22, 200, 22); self.ln(10)
         
     def footer(self):
-        self.set_y(-15); self.set_text_color(150, 150, 150); self.set_font("Helvetica", "I", 8)
-        self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
+        try:
+            from tools import dibujar_pie_membrete
+            dibujar_pie_membrete(self)
+        except Exception:
+            self.set_y(-15); self.set_text_color(150, 150, 150); self.set_font("Helvetica", "I", 8)
+            self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
 
 def sanitizar(texto):
     import unicodedata
@@ -756,12 +770,16 @@ def generar_docx_consolidado(df):
     header_table.columns[1].width = Inches(3.7)
     header_table.columns[2].width = Inches(2.5)
 
-    # Columna 1: Logotipo (Utiliza logo.png)
+    # Columna 1: Logotipo (centralizado en tools.py)
     cell_logo = header_table.cell(0, 0)
     p_logo = cell_logo.paragraphs[0]
-    logo_path = 'logo.png'
-    if os.path.exists(logo_path):
-        try: p_logo.add_run().add_picture(logo_path, width=Inches(1.1))
+    try:
+        from tools import obtener_logo_reporte
+        logo_path = obtener_logo_reporte()
+    except Exception:
+        logo_path = 'logo.png'
+    if logo_path and os.path.exists(logo_path):
+        try: p_logo.add_run().add_picture(logo_path, height=Inches(0.4))  # por alto
         except: p_logo.text = "MAXCOM"
     else:
         p_logo.text = "MAXCOM"
