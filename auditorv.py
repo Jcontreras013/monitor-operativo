@@ -219,7 +219,7 @@ class FormatoInspeccionPDF(FPDF):
         self.ln(10)
 
     def footer(self):
-        self.set_y(-25)
+        self.set_y(-30)
         self.set_draw_color(200, 200, 200)
         self.line(10, self.get_y(), 200, self.get_y())
         self.ln(2)
@@ -227,18 +227,18 @@ class FormatoInspeccionPDF(FPDF):
         self.set_text_color(15, 23, 42)
         self.cell(90, 8, "Firma del Conductor: ___________________", align="C")
         self.cell(90, 8, "Firma del Supervisor: ___________________", ln=True, align="C")
-        self.ln(1)
-        try:
-            from tools import MARCA_PIE
-            pie_txt = MARCA_PIE
-        except Exception:
-            pie_txt = "@maxcomhn   |   +504 2454-7070 / 8730-2675   |   www.maxcom.hn   |   info@maxcom.hn"
-        self.set_font("Helvetica", "", 6.5)
-        self.set_text_color(90, 90, 90)
-        self.cell(0, 4, pie_txt, ln=True, align="C")
         self.set_font("Helvetica", "I", 7)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 4, "Este documento debe ser escaneado y subido a la plataforma MaxCom PRO.", align="C")
+        self.cell(0, 4, "Este documento debe ser escaneado y subido a la plataforma MaxCom PRO.", ln=True, align="C")
+
+        # Pie institucional con iconos y QR, idéntico al del membrete oficial.
+        try:
+            from tools import dibujar_pie_membrete
+            dibujar_pie_membrete(self, mostrar_pagina=False)
+        except Exception:
+            self.set_font("Helvetica", "", 6.5)
+            self.set_text_color(90, 90, 90)
+            self.cell(0, 4, "@maxcomhn   |   +504 2454-7070 / 8730-2675   |   www.maxcom.hn   |   info@maxcom.hn", align="C")
 
 @st.cache_data(show_spinner=False)
 def generar_pdf_en_blanco():
