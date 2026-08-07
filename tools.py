@@ -141,6 +141,137 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # 8. Ahora todos importan esta constante.
 NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
+# ==============================================================================
+# IDENTIDAD DE MARCA PARA REPORTES (logo y pie de membrete)
+# ==============================================================================
+# Fuente ÚNICA de la marca. Antes la ruta del logo estaba repetida en 5 lugares
+# distintos (tools.py, expediente.py, auditorv.py), así que cambiar el logo
+# obligaba a editar archivo por archivo. Ahora se edita solo aquí.
+
+# Rutas candidatas, en orden de preferencia. Se usa la primera que exista, de
+# modo que si el archivo se renombra o falta, el reporte no sale sin logo.
+LOGOS_REPORTE = [
+    "image/LogoMaxcom-1.png",
+    "image/LogoMaxcom-4.png",
+    "image/LogoMaxcom-3.png",
+    "logo.png",
+]
+
+# Datos tomados del membrete oficial (MEMBRETE-MAXCOM).
+MARCA_TAGLINE = "connecting your world"
+MARCA_REDES = "@maxcomhn"
+MARCA_TELEFONOS = "+504 2454-7070 / 8730-2675"
+MARCA_WEB = "www.maxcom.hn"
+MARCA_CORREO = "info@maxcom.hn"
+MARCA_PIE = f"{MARCA_REDES}   |   {MARCA_TELEFONOS}   |   {MARCA_WEB}   |   {MARCA_CORREO}"
+
+_LOGO_RECORTADO_CACHE = {}
+
+
+def obtener_logo_reporte():
+    """
+    Devuelve la ruta de un logo listo para insertar en un PDF/DOCX.
+
+    Los PNG de marca vienen sobre un lienzo enorme con mucho margen vacío: en
+    LogoMaxcom-1 la figura ocupa apenas un 11% del ancho. Si se insertara tal
+    cual con un ancho de 35 mm, la marca visible mediría ~4 mm y el reporte se
+    vería roto. Por eso se recorta el margen transparente/blanco una sola vez y
+    se guarda el resultado en un archivo temporal reutilizable.
+
+    Si Pillow no está disponible, se devuelve el archivo original sin recortar:
+    el logo saldrá pequeño, pero el reporte no falla.
+    """
+    ruta_origen = next((p for p in LOGOS_REPORTE if os.path.exists(p)), None)
+    if not ruta_origen:
+        return None
+
+    if ruta_origen in _LOGO_RECORTADO_CACHE:
+        cacheado = _LOGO_RECORTADO_CACHE[ruta_origen]
+        if cacheado and os.path.exists(cacheado):
+            return cacheado
+
+    try:
+        from PIL import Image
+        import numpy as _np
+
+        img = Image.open(ruta_origen).convert("RGBA")
+        arr = _np.array(img)
+        rgb, alfa = arr[..., :3], arr[..., 3]
+        # Se considera "visible" lo que no es transparente ni casi blanco.
+        visible = (alfa > 20) & (rgb.min(axis=-1) < 240)
+        ys, xs = _np.where(visible)
+
+        if len(xs) == 0:
+            _LOGO_RECORTADO_CACHE[ruta_origen] = ruta_origen
+            return ruta_origen
+
+        recorte = img.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+
+        # Fondo blanco: los PDF no manejan bien la transparencia del PNG.
+        fondo = Image.new("RGBA", recorte.size, (255, 255, 255, 255))
+        fondo.alpha_composite(recorte)
+
+        destino = os.path.join(tempfile.gettempdir(), "maxcom_logo_reporte.png")
+        fondo.convert("RGB").save(destino, "PNG")
+        _LOGO_RECORTADO_CACHE[ruta_origen] = destino
+        return destino
+    except Exception:
+        _LOGO_RECORTADO_CACHE[ruta_origen] = ruta_origen
+        return ruta_origen
+
+
+def medidas_logo_en_caja(ruta_logo, ancho_max=34.0, alto_max=9.0):
+    """
+    Calcula (ancho, alto) en mm para que el logo quepa dentro de una caja, sin
+    deformarse. Es necesario porque los logos de marca tienen proporciones muy
+    distintas: el isotipo es cuadrado (1:1) y el logotipo completo es muy
+    horizontal (~7.8:1). Fijar solo el ancho deformaría el encabezado con uno,
+    y fijar solo el alto haría que el otro invadiera el título.
+    """
+    try:
+        from PIL import Image
+        with Image.open(ruta_logo) as im:
+            w_px, h_px = im.size
+        if not w_px or not h_px:
+            return ancho_max, 0
+        proporcion = w_px / h_px
+        alto = alto_max
+        ancho = alto * proporcion
+        if ancho > ancho_max:
+            ancho = ancho_max
+            alto = ancho / proporcion
+        return round(ancho, 2), round(alto, 2)
+    except Exception:
+        # Sin Pillow: se fija el alto y se deja que FPDF calcule el ancho.
+        return 0, alto_max
+
+
+def dibujar_pie_membrete(pdf, mostrar_pagina=True):
+    """
+    Dibuja el pie de página institucional (los mismos datos del membrete oficial)
+    en cualquier PDF construido con FPDF. Se usa desde el footer() de cada clase
+    de reporte para que todos queden idénticos.
+    """
+    try:
+        pdf.set_y(-15)
+        pdf.set_draw_color(210, 210, 210)
+        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+
+        pdf.set_y(-13)
+        pdf.set_font("Helvetica", "", 6.5)
+        pdf.set_text_color(90, 90, 90)
+        pdf.cell(0, 5, safestr(MARCA_PIE), ln=True, align="C")
+
+        if mostrar_pagina:
+            pdf.set_font("Helvetica", "", 6.5)
+            pdf.set_text_color(150, 150, 150)
+            pdf.cell(0, 4, f"{pdf.page_no()} / {{nb}}", align="R")
+
+        pdf.set_text_color(0, 0, 0)
+    except Exception:
+        pass
+
+
 # Lista de actividades "basura" (tareas internas de mantenimiento de equipo,
 # no visitas técnicas reales) que se excluyen de la consolidación de datos.
 # Antes duplicada entre app.py y sync_job.py.
@@ -288,25 +419,28 @@ def depurar_api_con_dispositivos(df_api: pd.DataFrame, file_dispositivos_o_df: A
 # ==============================================================================
 class ReporteGenerencialPDF(FPDF):
     def header(self):
-        if os.path.exists('logo.png'):
-            self.image('logo.png', 10, 6, 35) 
-        
+        _logo = obtener_logo_reporte()
+        if _logo:
+            # El logo se ajusta a una caja fija: así entra igual de bien el
+            # isotipo cuadrado que el logotipo horizontal, sin deformarse ni
+            # invadir el título ni la línea del encabezado.
+            _lw, _lh = medidas_logo_en_caja(_logo)
+            self.image(_logo, 10, 7, _lw, _lh)
+
         self.set_x(50) 
         self.set_text_color(0, 0, 0)
         self.set_font("Helvetica", "", 7)
         self.cell(80, 5, safestr("Reporte Operativo Consolidado"), ln=False, align="L")
-        self.cell(0, 5, safestr("Maxcom PRO - Modulo Gerencial"), ln=True, align="R")
-        
+        self.set_font("Helvetica", "B", 7)
+        self.cell(0, 5, safestr(MARCA_TAGLINE), ln=True, align="R")
+
         self.set_draw_color(200, 200, 200)
         y_line = max(self.get_y(), 18) 
         self.line(10, y_line, 200, y_line)
         self.set_y(y_line + 5)
 
     def footer(self):
-        self.set_y(-15)
-        self.set_text_color(150, 150, 150)
-        self.set_font("Helvetica", "", 7)
-        self.cell(0, 10, f"{self.page_no()} / {{nb}}", align="R")
+        dibujar_pie_membrete(self)
 
     def seccion_titulo(self, titulo):
         self.set_text_color(84, 98, 143)
@@ -3605,9 +3739,10 @@ def generar_docx_reporte_faltas_individual(df):
         
     # Celda 1: Área del logo de Maxcom
     p1 = format_cell_p(cells[0], WD_ALIGN_PARAGRAPH.CENTER)
-    if os.path.exists('logo.png'):
+    _logo_docx = obtener_logo_reporte()
+    if _logo_docx:
         try:
-            p1.add_run().add_picture('logo.png', width=Inches(1.3))
+            p1.add_run().add_picture(_logo_docx, height=Inches(0.42))  # por alto: cualquier proporción cabe
         except:
             r = p1.add_run("maxcom")
             r.font.bold = True
