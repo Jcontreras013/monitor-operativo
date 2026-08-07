@@ -151,11 +151,16 @@ NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 # Rutas candidatas, en orden de preferencia. Se usa la primera que exista, de
 # modo que si el archivo se renombra o falta, el reporte no sale sin logo.
 LOGOS_REPORTE = [
-    "image/LogoMaxcom-1.png",
     "image/LogoMaxcom-4.png",
     "image/LogoMaxcom-3.png",
+    "image/LogoMaxcom-1.png",
     "logo.png",
 ]
+
+# Membrete oficial. De él se recorta la franja del pie (iconos de redes,
+# teléfonos, web, correo y código QR) para reproducirla EXACTAMENTE en los
+# reportes, en vez de intentar redibujar los iconos con texto.
+RUTA_MEMBRETE = "image/MEMBRETE-MAXCOM.png"
 
 # Datos tomados del membrete oficial (MEMBRETE-MAXCOM).
 MARCA_TAGLINE = "connecting your world"
@@ -246,26 +251,115 @@ def medidas_logo_en_caja(ruta_logo, ancho_max=34.0, alto_max=9.0):
         return 0, alto_max
 
 
+_PIE_IMAGEN_CACHE = {}
+
+
+def obtener_pie_membrete_imagen():
+    """
+    Recorta del membrete oficial la franja inferior (iconos de redes sociales,
+    teléfonos, sitio web, correo y código QR) y la devuelve como archivo listo
+    para insertar en un PDF.
+
+    Se recorta de la imagen real en vez de redibujar los iconos con texto,
+    porque así el pie queda idéntico al membrete institucional, incluido el QR.
+    Devuelve (ruta, proporcion_ancho_alto) o (None, None) si no se puede.
+    """
+    if "pie" in _PIE_IMAGEN_CACHE:
+        ruta, prop = _PIE_IMAGEN_CACHE["pie"]
+        if ruta and os.path.exists(ruta):
+            return ruta, prop
+
+    if not os.path.exists(RUTA_MEMBRETE):
+        return None, None
+
+    try:
+        from PIL import Image
+        import numpy as _np
+
+        img = Image.open(RUTA_MEMBRETE).convert("RGB")
+        arr = _np.array(img)
+        alto_total = arr.shape[0]
+
+        # La franja del pie es la última banda con contenido de la hoja. Se
+        # localiza dinámicamente (no con coordenadas fijas) para que siga
+        # funcionando si el membrete se reemplaza por otra versión.
+        filas_con_tinta = _np.where((arr.min(axis=2) < 240).any(axis=1))[0]
+        if len(filas_con_tinta) == 0:
+            return None, None
+
+        y_fin = int(filas_con_tinta.max())
+        y_ini = y_fin
+        for y in range(y_fin, 0, -1):
+            if not (arr[y].min(axis=1) < 240).any():
+                # Se corta al encontrar 40 px seguidos en blanco hacia arriba.
+                if all(not (arr[yy].min(axis=1) < 240).any() for yy in range(max(0, y - 40), y)):
+                    y_ini = y
+                    break
+        if y_ini >= y_fin:
+            y_ini = max(0, y_fin - int(alto_total * 0.05))
+
+        banda = arr[y_ini:y_fin + 1]
+        cols = _np.where((banda.min(axis=2) < 240).any(axis=0))[0]
+        x_ini, x_fin = int(cols.min()), int(cols.max())
+
+        margen = 10
+        recorte = img.crop((
+            max(0, x_ini - margen), max(0, y_ini - margen),
+            min(img.width, x_fin + margen), min(img.height, y_fin + margen)
+        ))
+
+        destino = os.path.join(tempfile.gettempdir(), "maxcom_pie_membrete.png")
+        recorte.save(destino, "PNG")
+        proporcion = recorte.width / recorte.height
+        _PIE_IMAGEN_CACHE["pie"] = (destino, proporcion)
+        return destino, proporcion
+    except Exception:
+        _PIE_IMAGEN_CACHE["pie"] = (None, None)
+        return None, None
+
+
 def dibujar_pie_membrete(pdf, mostrar_pagina=True):
     """
-    Dibuja el pie de página institucional (los mismos datos del membrete oficial)
-    en cualquier PDF construido con FPDF. Se usa desde el footer() de cada clase
-    de reporte para que todos queden idénticos.
+    Dibuja el pie institucional en cualquier PDF de FPDF. Usa la franja recortada
+    del membrete oficial (con iconos y QR); si no está disponible, cae a una
+    versión en texto para que el reporte nunca quede sin datos de contacto.
     """
     try:
-        pdf.set_y(-15)
-        pdf.set_draw_color(210, 210, 210)
-        pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+        ruta_pie, proporcion = obtener_pie_membrete_imagen()
+        ancho_util = pdf.w - 20
 
-        pdf.set_y(-13)
-        pdf.set_font("Helvetica", "", 6.5)
-        pdf.set_text_color(90, 90, 90)
-        pdf.cell(0, 5, safestr(MARCA_PIE), ln=True, align="C")
+        if ruta_pie and proporcion:
+            # Se ajusta a una altura fija y se centra. La altura manda para que
+            # el pie ocupe lo mismo en hojas verticales y horizontales.
+            alto_pie = 9.0
+            ancho_pie = alto_pie * proporcion
+            if ancho_pie > ancho_util:
+                ancho_pie = ancho_util
+                alto_pie = ancho_pie / proporcion
 
-        if mostrar_pagina:
+            y_pie = pdf.h - alto_pie - 8
+            x_pie = (pdf.w - ancho_pie) / 2
+
+            pdf.set_draw_color(210, 210, 210)
+            pdf.line(10, y_pie - 2.5, pdf.w - 10, y_pie - 2.5)
+            pdf.image(ruta_pie, x_pie, y_pie, ancho_pie, alto_pie)
+
+            if mostrar_pagina:
+                pdf.set_y(-6)
+                pdf.set_font("Helvetica", "", 6.5)
+                pdf.set_text_color(150, 150, 150)
+                pdf.cell(0, 4, f"{pdf.page_no()} / {{nb}}", align="R")
+        else:
+            pdf.set_y(-15)
+            pdf.set_draw_color(210, 210, 210)
+            pdf.line(10, pdf.get_y(), pdf.w - 10, pdf.get_y())
+            pdf.set_y(-13)
             pdf.set_font("Helvetica", "", 6.5)
-            pdf.set_text_color(150, 150, 150)
-            pdf.cell(0, 4, f"{pdf.page_no()} / {{nb}}", align="R")
+            pdf.set_text_color(90, 90, 90)
+            pdf.cell(0, 5, safestr(MARCA_PIE), ln=True, align="C")
+            if mostrar_pagina:
+                pdf.set_text_color(150, 150, 150)
+                pdf.cell(0, 4, f"{pdf.page_no()} / {{nb}}", align="R")
 
         pdf.set_text_color(0, 0, 0)
     except Exception:
