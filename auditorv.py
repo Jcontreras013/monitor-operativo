@@ -195,6 +195,18 @@ DATOS_CALENDARIO = [
 
 class FormatoInspeccionPDF(FPDF):
     def header(self):
+        _lw, _lh = 0, 10
+        try:
+            from tools import obtener_logo_reporte, medidas_logo_en_caja
+            _logo = obtener_logo_reporte()
+            if _logo:
+                _lw, _lh = medidas_logo_en_caja(_logo)
+        except Exception:
+            _logo = 'logo.png' if os.path.exists('logo.png') else None
+        if _logo and os.path.exists(_logo):
+            try: self.image(_logo, 10, 7, _lw, _lh)
+            except: pass
+
         self.set_y(10)
         self.set_font("Helvetica", "B", 14)
         self.set_text_color(15, 23, 42)
@@ -215,10 +227,18 @@ class FormatoInspeccionPDF(FPDF):
         self.set_text_color(15, 23, 42)
         self.cell(90, 8, "Firma del Conductor: ___________________", align="C")
         self.cell(90, 8, "Firma del Supervisor: ___________________", ln=True, align="C")
-        self.ln(2)
-        self.set_font("Helvetica", "I", 8)
+        self.ln(1)
+        try:
+            from tools import MARCA_PIE
+            pie_txt = MARCA_PIE
+        except Exception:
+            pie_txt = "@maxcomhn   |   +504 2454-7070 / 8730-2675   |   www.maxcom.hn   |   info@maxcom.hn"
+        self.set_font("Helvetica", "", 6.5)
+        self.set_text_color(90, 90, 90)
+        self.cell(0, 4, pie_txt, ln=True, align="C")
+        self.set_font("Helvetica", "I", 7)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 5, "Este documento debe ser escaneado y subido a la plataforma MaxCom PRO.", align="C")
+        self.cell(0, 4, "Este documento debe ser escaneado y subido a la plataforma MaxCom PRO.", align="C")
 
 @st.cache_data(show_spinner=False)
 def generar_pdf_en_blanco():
