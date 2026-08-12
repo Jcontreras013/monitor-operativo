@@ -815,22 +815,79 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         d[c] = ""
                 return d
             except Exception:
+                # La hoja aún no existe: es normal antes del primer registro y no
+                # se trata como error, pero tampoco se oculta.
+                st.session_state['reco_hoja_faltante'] = True
                 return pd.DataFrame(columns=cols)
 
         def _guardar_avisos(d):
+            """
+            Guarda el índice de avisos en Google Sheets.
+
+            La hoja 'AvisosReco' normalmente no existe la primera vez, y
+            conn.update() falla con WorksheetNotFound. Se intentan varias
+            estrategias porque distintas versiones de st-gsheets-connection
+            manejan create() de forma diferente. Si todas fallan se muestra el
+            error REAL: un mensaje genérico no permite diagnosticar nada.
+            """
             if conn is None:
-                st.error("Sin conexión a la base de datos.")
+                st.error("Sin conexión a la base de datos (conn no disponible).")
                 return False
-            for intento in ("update", "create"):
-                try:
-                    getattr(conn, intento)(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_AVISOS, data=d)
-                    return True
-                except Exception:
-                    continue
-            st.error("No se pudo guardar el aviso.")
+
+            url_hoja = st.secrets["url_base_datos"]
+            errores = []
+
+            # 1) Actualizar la hoja (funciona si ya existe)
+            try:
+                conn.update(spreadsheet=url_hoja, worksheet=HOJA_AVISOS, data=d)
+                return True
+            except Exception as e:
+                errores.append(f"update: {type(e).__name__}: {e}")
+
+            # 2) Crear la hoja con los datos
+            try:
+                conn.create(spreadsheet=url_hoja, worksheet=HOJA_AVISOS, data=d)
+                return True
+            except Exception as e:
+                errores.append(f"create(data): {type(e).__name__}: {e}")
+
+            # 3) Crear vacía y luego actualizar
+            try:
+                conn.create(spreadsheet=url_hoja, worksheet=HOJA_AVISOS)
+                conn.update(spreadsheet=url_hoja, worksheet=HOJA_AVISOS, data=d)
+                return True
+            except Exception as e:
+                errores.append(f"create+update: {type(e).__name__}: {e}")
+
+            st.error(
+                f"No se pudo guardar en la hoja **{HOJA_AVISOS}**. Detalle de los intentos:\n\n- "
+                + "\n- ".join(errores)
+            )
+            st.info(
+                f"💡 Solución más rápida: abre tu Google Sheet y crea manualmente una pestaña "
+                f"llamada exactamente **{HOJA_AVISOS}**. Luego vuelve a registrar el aviso."
+            )
+            # El aviso no se pierde: se ofrece descargarlo para no rehacer el trabajo.
+            try:
+                st.download_button(
+                    "📥 Descargar este aviso (CSV)",
+                    data=d.tail(1).to_csv(index=False).encode('utf-8'),
+                    file_name=f"aviso_reco_{get_honduras_time().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key=f"aviso_rescate_{get_honduras_time().strftime('%H%M%S')}"
+                )
+            except Exception:
+                pass
             return False
 
         df_avisos = _cargar_avisos()
+
+        if st.session_state.get('reco_hoja_faltante') and df_avisos.empty:
+            st.info(
+                f"ℹ️ La hoja **{HOJA_AVISOS}** aún no existe en tu Google Sheet. "
+                "El sistema intentará crearla al registrar el primer aviso; si no lo logra, "
+                "créala manualmente con ese nombre exacto."
+            )
 
         detectadas, fechas_detectadas = [], []
         if texto_aviso.strip():
