@@ -592,6 +592,69 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
 
         HOJA_AVISOS = "AvisosReco"
 
+        def _normalizar_txt(t):
+            """Quita acentos y normaliza para comparar nombres de colonias."""
+            t = unicodedata.normalize('NFKD', str(t)).encode('ascii', 'ignore').decode('ascii')
+            return re.sub(r'\s+', ' ', t).strip().upper()
+
+        def _extraer_colonias(texto, catalogo):
+            """
+            Busca las colonias del catálogo dentro del comunicado.
+
+            Los avisos de RECO escriben "Col. Bella Vista" y usan acentos
+            ("Los Ángeles"), mientras que en Cepheus están sin prefijo ni tildes.
+            Por eso se compara sobre texto normalizado y se recorta el "Col.".
+            """
+            txt = _normalizar_txt(texto)
+            # "COL. BELLA VISTA" -> "BELLA VISTA" para que empate con el catálogo
+            txt = re.sub(r'\bCOL\.?\s+', '', txt)
+            encontradas = []
+            for c in catalogo:
+                cn = _normalizar_txt(c)
+                if len(cn) > 3 and cn in txt:
+                    encontradas.append(c)
+            # Descarta nombres contenidos en otro más largo (BAY dentro de SANDY BAY)
+            return [c for c in encontradas
+                    if not any(c != o and _normalizar_txt(c) in _normalizar_txt(o) for o in encontradas)]
+
+        def _extraer_fechas(texto, anio_ref):
+            """
+            Extrae fechas del comunicado evitando dos trampas reales:
+
+            1) Los avisos vienen en español e inglés, y la misma fecha aparece
+               como 07/08/2026 y 08/07/2026. Tomar ambas produciría una fecha
+               falsa, así que se prioriza la que sigue a la etiqueta "Fecha:"
+               (versión en español, formato día/mes).
+            2) Los teléfonos y extensiones ("2405-1130/99", "1108 / 1110")
+               parecen fechas; se exigen números de 1-2 dígitos y se validan.
+            """
+            candidatas = []
+
+            # Prioridad: lo que viene justo después de "Fecha:" (español)
+            m_es = re.search(r'FECHA\s*:?\s*(?:[A-ZÁÉÍÓÚÑ]+\s+)?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})',
+                             texto, re.IGNORECASE)
+            if m_es:
+                d_, m_, a_ = m_es.groups()
+                candidatas.append((int(d_), int(m_), a_))
+
+            if not candidatas:
+                for d_, m_, a_ in re.findall(r'(?<![\d/-])(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?![\d/-])', texto):
+                    candidatas.append((int(d_), int(m_), a_))
+
+            fechas = []
+            for d_, m_, a_ in candidatas:
+                if len(a_) == 2:
+                    a_ = "20" + a_
+                # Si el "día" supera 12 es inequívocamente día/mes; si el mes
+                # supera 12, venía en formato inglés y se invierte.
+                if m_ > 12 and d_ <= 12:
+                    d_, m_ = m_, d_
+                try:
+                    fechas.append(pd.Timestamp(int(a_), m_, d_))
+                except Exception:
+                    pass
+            return sorted(set(fechas))
+
         def _ocr_imagen(archivo_img):
             """
             Extrae el texto de una captura del comunicado.
@@ -611,6 +674,12 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             try:
                 img = Image.open(archivo_img)
                 img = ImageOps.exif_transpose(img).convert("L")
+
+                # Modo oscuro: si el fondo predomina oscuro, se invierte. Sin esto
+                # el OCR falla casi por completo con las capturas de Facebook en
+                # tema oscuro (texto blanco sobre negro), que son muy comunes.
+                if np.array(img).mean() < 110:
+                    img = ImageOps.invert(img)
 
                 # Ampliar mejora bastante el OCR en capturas de celular.
                 if img.width < 1200:
@@ -710,18 +779,8 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
 
         detectadas, fechas_detectadas = [], []
         if texto_aviso.strip():
-            txt_up = texto_aviso.upper()
-            detectadas = [c for c in colonias_conocidas if c in txt_up]
-            # Fechas en formato dd/mm/aaaa, dd-mm-aaaa o dd/mm
-            for m in re.findall(r'\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b', texto_aviso):
-                d_, m_, a_ = m
-                a_ = a_ or str(hoy_date_valor.year)
-                if len(a_) == 2:
-                    a_ = "20" + a_
-                try:
-                    fechas_detectadas.append(pd.Timestamp(int(a_), int(m_), int(d_)))
-                except Exception:
-                    pass
+            detectadas = _extraer_colonias(texto_aviso, colonias_conocidas)
+            fechas_detectadas = _extraer_fechas(texto_aviso, hoy_date_valor.year)
 
             c1, c2 = st.columns(2)
             with c1:
@@ -731,7 +790,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                     st.warning("No se reconoció ninguna colonia. Puedes escribirlas manualmente abajo.")
             with c2:
                 if fechas_detectadas:
-                    st.info("📅 Fechas: " + ", ".join(f.strftime('%d/%m/%Y') for f in sorted(set(fechas_detectadas))))
+                    st.info("📅 Fechas: " + ", ".join(f.strftime('%d/%m/%Y') for f in fechas_detectadas))
 
         col_a1, col_a2 = st.columns(2)
         with col_a1:
