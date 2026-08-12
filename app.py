@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from streamlit_js_eval import streamlit_js_eval
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
+import time
 import unicodedata
 
 # ==============================================================================
