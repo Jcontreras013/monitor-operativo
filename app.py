@@ -583,7 +583,101 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 "cruzarlas con las fallas) sí es automático."
             )
 
+        # Catálogo de colonias reales, para detectarlas dentro del texto del aviso.
+        colonias_conocidas = sorted({
+            str(c).strip().upper()
+            for c in df_base_activa.get('COLONIA', pd.Series(dtype=str)).dropna().unique()
+            if len(str(c).strip()) > 3
+        })
+
         HOJA_AVISOS = "AvisosReco"
+
+        def _ocr_imagen(archivo_img):
+            """
+            Extrae el texto de una captura del comunicado.
+
+            Las capturas de Facebook son texto digital nítido, así que el OCR
+            funciona bien; los afiches con letra estilizada o fondo de color son
+            más difíciles. Por eso la imagen se preprocesa (escala de grises,
+            aumento de tamaño y contraste) antes de leerla, y el resultado SIEMPRE
+            queda editable: el OCR se equivoca y corregir debe ser trivial.
+            """
+            try:
+                import pytesseract
+                from PIL import Image, ImageOps, ImageEnhance
+            except ImportError:
+                return None, "falta_libreria"
+
+            try:
+                img = Image.open(archivo_img)
+                img = ImageOps.exif_transpose(img).convert("L")
+
+                # Ampliar mejora bastante el OCR en capturas de celular.
+                if img.width < 1200:
+                    factor = 1200 / img.width
+                    img = img.resize((int(img.width * factor), int(img.height * factor)), Image.LANCZOS)
+
+                img = ImageOps.autocontrast(img)
+                img = ImageEnhance.Sharpness(img).enhance(1.5)
+
+                texto = ""
+                for cfg in ("--psm 6", "--psm 4", "--psm 3"):
+                    try:
+                        t = pytesseract.image_to_string(img, lang="spa+eng", config=cfg)
+                    except Exception:
+                        t = pytesseract.image_to_string(img, config=cfg)
+                    if len(t.strip()) > len(texto.strip()):
+                        texto = t
+                return texto.strip(), None
+            except Exception as e:
+                return None, str(e)
+
+        modo_entrada = st.radio(
+            "¿Cómo quieres cargar el comunicado?",
+            ["📷 Subir captura de pantalla", "⌨️ Escribir o pegar texto"],
+            horizontal=True,
+            key="reco_modo"
+        )
+
+        texto_ocr = ""
+        if modo_entrada == "📷 Subir captura de pantalla":
+            img_aviso = st.file_uploader(
+                "Captura del comunicado:",
+                type=["png", "jpg", "jpeg", "webp"],
+                key="reco_img"
+            )
+            if img_aviso is not None:
+                col_img1, col_img2 = st.columns([1, 2])
+                with col_img1:
+                    st.image(img_aviso, caption="Captura cargada", use_container_width=True)
+                with col_img2:
+                    with st.spinner("Leyendo el texto de la imagen..."):
+                        texto_ocr, err_ocr = _ocr_imagen(img_aviso)
+
+                    if err_ocr == "falta_libreria":
+                        st.error(
+                            "El servidor aún no tiene instalado el lector de imágenes.\n\n"
+                            "Agrega al repositorio un archivo **packages.txt** con `tesseract-ocr` y "
+                            "`tesseract-ocr-spa`, y **pytesseract** en `requirements.txt`. "
+                            "Mientras tanto, usa la opción de escribir el texto."
+                        )
+                    elif err_ocr:
+                        st.error(f"No se pudo leer la imagen: {err_ocr}")
+                    elif not texto_ocr or len(texto_ocr) < 15:
+                        st.warning(
+                            "Se leyó muy poco texto. Si el comunicado es un afiche con letra decorativa, "
+                            "conviene escribirlo a mano en la otra opción."
+                        )
+                    else:
+                        st.success(f"✅ Texto extraído ({len(texto_ocr)} caracteres). Revísalo y corrige lo que haga falta.")
+
+        texto_aviso = st.text_area(
+            "Texto del comunicado:",
+            value=texto_ocr,
+            height=130,
+            key="reco_texto",
+            placeholder="Ej: RECO informa que el día 08/08/2026 se realizarán trabajos de cambio de postes en Gravel Bay y Sandy Bay, de 8:00 am a 4:00 pm."
+        )
 
         def _cargar_avisos():
             cols = ["FECHA_REGISTRO", "FECHA_TRABAJO", "COLONIAS", "TIPO", "TEXTO", "REGISTRADO_POR"]
@@ -613,20 +707,6 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             return False
 
         df_avisos = _cargar_avisos()
-
-        # Catálogo de colonias reales, para detectarlas dentro del texto del aviso.
-        colonias_conocidas = sorted({
-            str(c).strip().upper()
-            for c in df_base_activa.get('COLONIA', pd.Series(dtype=str)).dropna().unique()
-            if len(str(c).strip()) > 3
-        })
-
-        texto_aviso = st.text_area(
-            "Texto del comunicado:",
-            height=130,
-            key="reco_texto",
-            placeholder="Ej: RECO informa que el día 08/08/2026 se realizarán trabajos de cambio de postes en Gravel Bay y Sandy Bay, de 8:00 am a 4:00 pm."
-        )
 
         detectadas, fechas_detectadas = [], []
         if texto_aviso.strip():
