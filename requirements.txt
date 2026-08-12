@@ -3,8 +3,6 @@ streamlit
 extra-streamlit-components
 streamlit-option-menu
 streamlit-js-eval
-pytesseract
-
 
 # --- Nueva API y Servidor ---
 fastapi
@@ -48,3 +46,4 @@ requests
 
 
 pillow
+pytesseract
