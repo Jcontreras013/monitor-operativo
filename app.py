@@ -701,6 +701,23 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             except Exception as e:
                 return None, str(e)
 
+        def _detectar_tipo_trabajo(texto):
+            """Deduce el tipo de trabajo por palabras clave del comunicado."""
+            t = _normalizar_txt(texto)
+            reglas = [
+                ("Cambio de postes", ['CAMBIO DE POSTE', 'POSTES', 'SUSTITUCION DE POSTE']),
+                ("Poda de árboles", ['PODA', 'ARBOL', 'DESPEJE DE ARBOL', 'RAMAS']),
+                ("Obra vial", ['OBRA VIAL', 'CARRETERA', 'PAVIMENT', 'EXCAVA']),
+                ("Corte programado de energía", ['INTERRUPCION', 'SUSPENSION', 'CORTE DE ENERGIA',
+                                                 'SCHEDULED OUTAGE', 'OUTAGE', 'DESPEJE', 'LINEA TRONCAL']),
+                ("Mantenimiento de red eléctrica", ['MANTENIMIENTO', 'MEJORAS EN LA RED',
+                                                    'RED DE DISTRIBUCION', 'DISTRIBUTION SYSTEM']),
+            ]
+            for etiqueta, claves in reglas:
+                if any(k in t for k in claves):
+                    return etiqueta
+            return "Otro"
+
         modo_entrada = st.radio(
             "¿Cómo quieres cargar el comunicado?",
             ["📷 Subir captura de pantalla", "⌨️ Escribir o pegar texto"],
@@ -708,20 +725,54 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             key="reco_modo"
         )
 
-        texto_ocr = ""
         if modo_entrada == "📷 Subir captura de pantalla":
             img_aviso = st.file_uploader(
                 "Captura del comunicado:",
                 type=["png", "jpg", "jpeg", "webp"],
                 key="reco_img"
             )
+
             if img_aviso is not None:
+                # La imagen se procesa UNA sola vez por archivo. Se identifica por
+                # nombre+tamaño para no releerla en cada recarga de la página, que
+                # además borraría las correcciones que el usuario ya hizo a mano.
+                firma_img = f"{img_aviso.name}_{img_aviso.size}"
+
+                if st.session_state.get('reco_firma_img') != firma_img:
+                    with st.spinner("Leyendo el comunicado y completando los campos..."):
+                        texto_leido, err_ocr = _ocr_imagen(img_aviso)
+
+                    st.session_state['reco_firma_img'] = firma_img
+                    st.session_state['reco_error_ocr'] = err_ocr
+
+                    if texto_leido:
+                        # Se escriben los valores en session_state ANTES de crear los
+                        # widgets. Pasarlos como value= no funciona: una vez que el
+                        # widget existe, session_state tiene prioridad y el campo
+                        # quedaría vacío aunque el texto sí se hubiera leído.
+                        st.session_state['reco_texto'] = texto_leido
+
+                        cols_det = _extraer_colonias(texto_leido, colonias_conocidas)
+                        st.session_state['reco_colonias'] = ", ".join(cols_det)
+
+                        fechas_det = _extraer_fechas(texto_leido, hoy_date_valor.year)
+                        if fechas_det:
+                            st.session_state['reco_fecha'] = fechas_det[0].date()
+
+                        st.session_state['reco_tipo'] = _detectar_tipo_trabajo(texto_leido)
+                        st.session_state['reco_autocompletado'] = {
+                            'colonias': len(cols_det),
+                            'fecha': fechas_det[0].strftime('%d/%m/%Y') if fechas_det else None,
+                            'tipo': st.session_state['reco_tipo'],
+                        }
+                    st.rerun()
+
                 col_img1, col_img2 = st.columns([1, 2])
                 with col_img1:
                     st.image(img_aviso, caption="Captura cargada", use_container_width=True)
                 with col_img2:
-                    with st.spinner("Leyendo el texto de la imagen..."):
-                        texto_ocr, err_ocr = _ocr_imagen(img_aviso)
+                    err_ocr = st.session_state.get('reco_error_ocr')
+                    resumen = st.session_state.get('reco_autocompletado')
 
                     if err_ocr == "falta_libreria":
                         st.error(
@@ -732,17 +783,21 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         )
                     elif err_ocr:
                         st.error(f"No se pudo leer la imagen: {err_ocr}")
-                    elif not texto_ocr or len(texto_ocr) < 15:
-                        st.warning(
-                            "Se leyó muy poco texto. Si el comunicado es un afiche con letra decorativa, "
-                            "conviene escribirlo a mano en la otra opción."
+                    elif resumen:
+                        st.success("✅ Campos completados automáticamente:")
+                        st.markdown(
+                            f"- 📍 **{resumen['colonias']}** colonia(s) detectada(s)\n"
+                            f"- 📅 Fecha: **{resumen['fecha'] or 'no detectada'}**\n"
+                            f"- 🛠️ Tipo: **{resumen['tipo']}**"
                         )
-                    else:
-                        st.success(f"✅ Texto extraído ({len(texto_ocr)} caracteres). Revísalo y corrige lo que haga falta.")
+                        if resumen['colonias'] == 0:
+                            st.warning("No se reconoció ninguna colonia. Escríbelas abajo.")
+                        if not resumen['fecha']:
+                            st.warning("No se detectó la fecha. Selecciónala abajo.")
+                        st.caption("Revisa los campos y corrige si algo quedó mal antes de registrar.")
 
         texto_aviso = st.text_area(
             "Texto del comunicado:",
-            value=texto_ocr,
             height=130,
             key="reco_texto",
             placeholder="Ej: RECO informa que el día 08/08/2026 se realizarán trabajos de cambio de postes en Gravel Bay y Sandy Bay, de 8:00 am a 4:00 pm."
@@ -794,24 +849,24 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
 
         col_a1, col_a2 = st.columns(2)
         with col_a1:
+            # Sin value=: el contenido viene de session_state, que es donde el
+            # lector de la imagen deja las colonias detectadas.
+            if 'reco_colonias' not in st.session_state:
+                st.session_state['reco_colonias'] = ", ".join(detectadas)
             colonias_final = st.text_input(
                 "Colonias afectadas (separadas por coma):",
-                value=", ".join(detectadas),
                 key="reco_colonias"
             ).strip().upper()
         with col_a2:
-            fecha_trabajo = st.date_input(
-                "Fecha del trabajo:",
-                value=(sorted(set(fechas_detectadas))[0].date() if fechas_detectadas else hoy_date_valor),
-                key="reco_fecha"
-            )
+            if 'reco_fecha' not in st.session_state:
+                st.session_state['reco_fecha'] = (fechas_detectadas[0].date() if fechas_detectadas else hoy_date_valor)
+            fecha_trabajo = st.date_input("Fecha del trabajo:", key="reco_fecha")
 
-        tipo_aviso = st.selectbox(
-            "Tipo de trabajo:",
-            ["Cambio de postes", "Mantenimiento de red eléctrica", "Poda de árboles",
-             "Obra vial", "Corte programado de energía", "Otro"],
-            key="reco_tipo"
-        )
+        OPCIONES_TIPO = ["Cambio de postes", "Mantenimiento de red eléctrica", "Poda de árboles",
+                         "Obra vial", "Corte programado de energía", "Otro"]
+        if 'reco_tipo' not in st.session_state:
+            st.session_state['reco_tipo'] = OPCIONES_TIPO[0]
+        tipo_aviso = st.selectbox("Tipo de trabajo:", OPCIONES_TIPO, key="reco_tipo")
 
         if st.button("💾 Registrar aviso", type="primary", use_container_width=True, key="reco_guardar"):
             if not colonias_final:
@@ -827,6 +882,11 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 }])
                 if _guardar_avisos(pd.concat([df_avisos, nuevo], ignore_index=True)):
                     st.success("✅ Aviso registrado.")
+                    # Se limpia el formulario para que el siguiente comunicado
+                    # no herede los datos del anterior.
+                    for k in ['reco_texto', 'reco_colonias', 'reco_firma_img',
+                              'reco_autocompletado', 'reco_error_ocr']:
+                        st.session_state.pop(k, None)
                     time.sleep(1.2)
                     st.rerun()
 
