@@ -308,6 +308,226 @@ def sincronizar_datos_nube(conn):
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
+def mostrar_analisis_red(df_base_activa, hoy_date_valor):
+    """
+    Analiza dónde se concentran las fallas dentro de la red FTTH usando las
+    columnas OLT y PON que ahora entrega Cepheus.
+
+    La idea de fondo: varios reportes de clientes distintos en el MISMO puerto
+    PON y en una ventana corta de tiempo casi nunca son fallas independientes;
+    normalmente son un solo daño físico (una fibra cortada, un poste movido, un
+    splitter dañado) visto desde muchos clientes. Detectarlo permite atender la
+    causa en vez de despachar un técnico por cada llamada.
+    """
+    st.subheader("🛰️ Análisis de Red por OLT / PON")
+
+    if 'OLT' not in df_base_activa.columns and 'PON' not in df_base_activa.columns:
+        st.warning(
+            "No se encontraron las columnas **OLT** ni **PON** en los datos cargados.\n\n"
+            "Verifica que el reporte de Cepheus las incluya. El sistema busca los encabezados "
+            "`OLT`, `NOMBRE OLT`, `PON`, `PUERTO PON`, `SPLITTER`, entre otros. "
+            "Si en tu reporte se llaman distinto, dime el nombre exacto para agregarlo al mapeo."
+        )
+        return
+
+    df_red = df_base_activa.copy()
+    for c in ['OLT', 'PON']:
+        if c not in df_red.columns:
+            df_red[c] = ""
+        df_red[c] = df_red[c].fillna("").astype(str).str.strip().str.upper()
+
+    # Solo incidencias de red: soportes/averías de fibra. Las instalaciones no
+    # indican falla, así que incluirlas distorsionaría el diagnóstico.
+    act = df_red['ACTIVIDAD'].astype(str).str.upper()
+    mask_falla = act.str.contains('SOP|PEXTERNO|SPLITTEROPT|RECON', na=False)
+    df_fallas = df_red[mask_falla].copy()
+
+    if df_fallas.empty:
+        st.info("No hay incidencias de red (soportes/averías) en el rango de datos cargado.")
+        return
+
+    # ---------------- Filtros ----------------
+    col_f1, col_f2 = st.columns([1, 2])
+    with col_f1:
+        dias_rango = st.selectbox("Periodo a analizar:", [7, 15, 30, 60, 90], index=2, key="red_dias")
+    with col_f2:
+        solo_offline = st.checkbox(
+            "Solo caídas totales (ONT/ONU Offline)",
+            value=False,
+            key="red_solo_off",
+            help="Filtra únicamente clientes sin señal. Útil para separar cortes de fibra de problemas de atenuación o TV."
+        )
+
+    fecha_corte = pd.Timestamp(hoy_date_valor) - pd.Timedelta(days=dias_rango)
+    ref_fecha = pd.to_datetime(df_fallas['FECHA_APE'], errors='coerce')
+    ref_fecha = ref_fecha.fillna(pd.to_datetime(df_fallas['HORA_INI'], errors='coerce'))
+    df_fallas = df_fallas[ref_fecha >= fecha_corte].copy()
+    df_fallas['FECHA_REF'] = ref_fecha[ref_fecha >= fecha_corte]
+
+    if solo_offline and 'ES_OFFLINE' in df_fallas.columns:
+        df_fallas = df_fallas[df_fallas['ES_OFFLINE'].fillna(False).astype(bool)]
+
+    if df_fallas.empty:
+        st.info("No hay incidencias en el periodo seleccionado.")
+        return
+
+    con_olt = (df_fallas['OLT'].str.len() > 0).sum()
+    st.caption(
+        f"Analizando **{len(df_fallas)}** incidencias de los últimos **{dias_rango}** días · "
+        f"{con_olt} con OLT identificada ({100*con_olt/len(df_fallas):.0f}%)"
+    )
+    if con_olt < len(df_fallas) * 0.5:
+        st.warning(
+            "⚠️ Más de la mitad de las incidencias no traen OLT. El análisis sigue siendo válido "
+            "para las que sí la tienen, pero el ranking puede no reflejar la realidad completa."
+        )
+
+    sub_olt, sub_eventos, sub_cruce = st.tabs([
+        "📊 Ranking OLT / PON",
+        "🚨 Eventos Masivos",
+        "🗺️ Cruce con Sector"
+    ])
+
+    # ============================================================
+    # 1) RANKING
+    # ============================================================
+    with sub_olt:
+        df_con_olt = df_fallas[df_fallas['OLT'].str.len() > 0]
+        if df_con_olt.empty:
+            st.info("Ninguna incidencia del periodo tiene OLT registrada.")
+        else:
+            resumen_olt = (
+                df_con_olt.groupby('OLT')
+                .agg(INCIDENCIAS=('NUM', 'count'),
+                     CLIENTES=('CLIENTE', 'nunique'),
+                     COLONIAS=('COLONIA', 'nunique'))
+                .reset_index()
+                .sort_values('INCIDENCIAS', ascending=False)
+            )
+            st.markdown("**Incidencias por OLT**")
+            st.bar_chart(resumen_olt.set_index('OLT')['INCIDENCIAS'], height=280)
+            st.dataframe(resumen_olt, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.markdown("**Puertos PON más afectados**")
+            st.caption("Un PON con muchas incidencias suele indicar un problema físico en ese ramal, no fallas de clientes independientes.")
+
+            df_pon = df_con_olt[df_con_olt['PON'].str.len() > 0].copy()
+            if df_pon.empty:
+                st.info("No hay puertos PON registrados en el periodo.")
+            else:
+                df_pon['NODO'] = df_pon['OLT'] + " / PON " + df_pon['PON']
+                resumen_pon = (
+                    df_pon.groupby('NODO')
+                    .agg(INCIDENCIAS=('NUM', 'count'),
+                         CLIENTES=('CLIENTE', 'nunique'),
+                         COLONIA=('COLONIA', lambda s: s.mode().iloc[0] if not s.mode().empty else ""))
+                    .reset_index()
+                    .sort_values('INCIDENCIAS', ascending=False)
+                    .head(25)
+                )
+                st.dataframe(resumen_pon, use_container_width=True, hide_index=True)
+
+    # ============================================================
+    # 2) EVENTOS MASIVOS  (el corazón del análisis)
+    # ============================================================
+    with sub_eventos:
+        st.markdown("**Detección de fallas con causa común**")
+        st.caption(
+            "Agrupa incidencias de un mismo puerto PON ocurridas en una ventana corta de tiempo. "
+            "Varios clientes distintos fallando a la vez en el mismo ramal apunta a un único daño físico."
+        )
+
+        col_e1, col_e2 = st.columns(2)
+        with col_e1:
+            ventana_horas = st.slider("Ventana de tiempo (horas):", 1, 48, 6, key="red_ventana")
+        with col_e2:
+            minimo_clientes = st.slider("Mínimo de clientes afectados:", 2, 10, 3, key="red_minimo")
+
+        df_ev = df_fallas[(df_fallas['PON'].str.len() > 0) & df_fallas['FECHA_REF'].notna()].copy()
+
+        if df_ev.empty:
+            st.info("No hay incidencias con PON y fecha válidas para agrupar.")
+        else:
+            df_ev['NODO'] = df_ev['OLT'] + " / PON " + df_ev['PON']
+            df_ev = df_ev.sort_values(['NODO', 'FECHA_REF'])
+
+            eventos = []
+            for nodo, grupo in df_ev.groupby('NODO'):
+                grupo = grupo.sort_values('FECHA_REF')
+                bloque = []
+                for _, fila in grupo.iterrows():
+                    if bloque and (fila['FECHA_REF'] - bloque[0]['FECHA_REF']) > pd.Timedelta(hours=ventana_horas):
+                        if len(bloque) >= minimo_clientes:
+                            eventos.append((nodo, bloque))
+                        bloque = []
+                    bloque.append(fila)
+                if len(bloque) >= minimo_clientes:
+                    eventos.append((nodo, bloque))
+
+            if not eventos:
+                st.success(
+                    f"✅ No se detectaron eventos masivos con los criterios actuales "
+                    f"({minimo_clientes}+ clientes en {ventana_horas}h en el mismo PON)."
+                )
+            else:
+                eventos.sort(key=lambda e: len(e[1]), reverse=True)
+                st.error(f"🚨 Se detectaron **{len(eventos)}** evento(s) con posible causa común.")
+
+                for i, (nodo, bloque) in enumerate(eventos[:20]):
+                    df_bloque = pd.DataFrame(bloque)
+                    inicio = df_bloque['FECHA_REF'].min()
+                    fin = df_bloque['FECHA_REF'].max()
+                    colonias = ", ".join(sorted(set(df_bloque['COLONIA'].astype(str))))[:70]
+                    n_cli = df_bloque['CLIENTE'].nunique()
+
+                    with st.expander(f"🔴 {nodo} — {n_cli} clientes · {inicio.strftime('%d/%m %H:%M')} → {fin.strftime('%d/%m %H:%M')}"):
+                        st.markdown(f"**Colonias afectadas:** {colonias}")
+                        st.caption(
+                            f"Duración del evento: {(fin - inicio).total_seconds()/3600:.1f} horas · "
+                            f"{len(df_bloque)} órdenes"
+                        )
+                        st.info(
+                            "💡 Revisa si hubo trabajos programados (cambio de postes, poda, obra vial) "
+                            f"en **{colonias.split(',')[0]}** en esas fechas. Si coincide, el origen está identificado."
+                        )
+                        cols_ev = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'FECHA_REF', 'ESTADO', 'TECNICO', 'COMENTARIO'] if c in df_bloque.columns]
+                        st.dataframe(df_bloque[cols_ev], use_container_width=True, hide_index=True)
+
+    # ============================================================
+    # 3) CRUCE CON SECTOR
+    # ============================================================
+    with sub_cruce:
+        st.markdown("**Concentración geográfica de fallas**")
+        st.caption("Cruza la infraestructura con la ubicación: si una colonia concentra fallas de un solo PON, el problema es de red; si son de varios PON, apunta a algo externo (obra, clima, energía).")
+
+        df_c = df_fallas[df_fallas['COLONIA'].astype(str).str.len() > 0].copy()
+        if df_c.empty:
+            st.info("Sin datos de colonia en el periodo.")
+        else:
+            resumen_col = (
+                df_c.groupby(df_c['COLONIA'].astype(str).str.upper())
+                .agg(INCIDENCIAS=('NUM', 'count'),
+                     CLIENTES=('CLIENTE', 'nunique'),
+                     PON_DISTINTOS=('PON', lambda s: s[s.str.len() > 0].nunique()),
+                     OLT_DISTINTAS=('OLT', lambda s: s[s.str.len() > 0].nunique()))
+                .reset_index()
+                .rename(columns={'COLONIA': 'COLONIA'})
+                .sort_values('INCIDENCIAS', ascending=False)
+                .head(30)
+            )
+
+            def _diagnostico(fila):
+                if fila['PON_DISTINTOS'] == 1 and fila['INCIDENCIAS'] >= 3:
+                    return "🔴 Un solo PON: probable daño en el ramal"
+                if fila['PON_DISTINTOS'] >= 3 and fila['INCIDENCIAS'] >= 5:
+                    return "🟠 Varios PON: posible causa externa (obra, clima, energía)"
+                return "🟢 Disperso"
+
+            resumen_col['DIAGNOSTICO'] = resumen_col.apply(_diagnostico, axis=1)
+            st.dataframe(resumen_col, use_container_width=True, hide_index=True)
+
+
 def main():
     settings.inicializar_configuracion() 
 
@@ -1258,13 +1478,17 @@ def main():
         # MENSAJE DE AYUDA DE NAVEGADOR PARA DESCARGAS DE REPORTES
         st.info("💡 **Para Supervisores de Campo (Móvil):** Si estás descargando un reporte en PDF o Excel desde tu celular, asegúrate de haber abierto el monitor operativo en tu navegador nativo (**Chrome o Safari**). Si abres este monitor directamente dentro de un chat de WhatsApp o WATI, las descargas serán bloqueadas por seguridad del dispositivo móvil.")
 
-        tab_diario, tab_pendientes, tab_gerencial, tab_biometrico, tab_materiales = st.tabs([
+        tab_diario, tab_pendientes, tab_gerencial, tab_red, tab_biometrico, tab_materiales = st.tabs([
             "📦 Cierre Diario", 
             "📋 Pendientes Generales", 
             "💼 Gerencial (Trimestral)", 
+            "🛰️ Análisis de Red (OLT/PON)",
             "⏱️ Biométrico",
             "🔌 Control de Materiales"
         ])
+
+        with tab_red:
+            mostrar_analisis_red(df_base_activa, hoy_date_valor)
 
         with tab_pendientes:
             st.subheader("📋 Resumen de Pendientes Generales")
