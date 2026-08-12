@@ -308,7 +308,7 @@ def sincronizar_datos_nube(conn):
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
 # ==============================================================================
-def mostrar_analisis_red(df_base_activa, hoy_date_valor):
+def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
     """
     Analiza dónde se concentran las fallas dentro de la red FTTH usando las
     columnas OLT y PON que ahora entrega Cepheus.
@@ -382,51 +382,84 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor):
             "para las que sí la tienen, pero el ranking puede no reflejar la realidad completa."
         )
 
-    sub_olt, sub_eventos, sub_cruce = st.tabs([
-        "📊 Ranking OLT / PON",
+    sub_olt, sub_eventos, sub_cruce, sub_avisos = st.tabs([
+        "📊 Desglose OLT / PON",
         "🚨 Eventos Masivos",
-        "🗺️ Cruce con Sector"
+        "🗺️ Cruce con Sector",
+        "📢 Avisos RECO"
     ])
 
     # ============================================================
     # 1) RANKING
     # ============================================================
     with sub_olt:
-        df_con_olt = df_fallas[df_fallas['OLT'].str.len() > 0]
+        df_con_olt = df_fallas[df_fallas['OLT'].str.len() > 0].copy()
         if df_con_olt.empty:
             st.info("Ninguna incidencia del periodo tiene OLT registrada.")
         else:
-            resumen_olt = (
-                df_con_olt.groupby('OLT')
-                .agg(INCIDENCIAS=('NUM', 'count'),
-                     CLIENTES=('CLIENTE', 'nunique'),
-                     COLONIAS=('COLONIA', 'nunique'))
-                .reset_index()
-                .sort_values('INCIDENCIAS', ascending=False)
+            df_con_olt['MES'] = df_con_olt['FECHA_REF'].dt.strftime('%Y-%m')
+            df_con_olt['MES_ETIQUETA'] = df_con_olt['FECHA_REF'].dt.strftime('%b').str.lower()
+            df_con_olt['PON_LABEL'] = df_con_olt['PON'].replace('', '(sin PON)')
+
+            meses_orden = sorted(df_con_olt['MES'].dropna().unique())
+            mapa_mes = (
+                df_con_olt.drop_duplicates('MES')
+                .set_index('MES')['MES_ETIQUETA']
+                .to_dict()
             )
-            st.markdown("**Incidencias por OLT**")
-            st.bar_chart(resumen_olt.set_index('OLT')['INCIDENCIAS'], height=280)
-            st.dataframe(resumen_olt, use_container_width=True, hide_index=True)
+
+            # Tabla dinámica: OLT (grupo) -> PON (detalle), una columna por mes.
+            tabla = pd.pivot_table(
+                df_con_olt, index=['OLT', 'PON_LABEL'], columns='MES',
+                values='NUM', aggfunc='count', fill_value=0
+            )
+            tabla = tabla.reindex(columns=meses_orden, fill_value=0)
+            tabla.columns = [mapa_mes.get(m, m) for m in tabla.columns]
+            tabla['Total'] = tabla.sum(axis=1)
+
+            totales_olt = tabla.groupby(level=0).sum().sort_values('Total', ascending=False)
+
+            st.markdown("**Resumen por OLT**")
+            st.caption("Total de incidencias por equipo, desglosado por mes. Expande cada OLT para ver sus puertos PON.")
+            st.dataframe(
+                totales_olt.style.background_gradient(cmap='Reds', subset=['Total']).format('{:.0f}'),
+                use_container_width=True
+            )
 
             st.divider()
-            st.markdown("**Puertos PON más afectados**")
-            st.caption("Un PON con muchas incidencias suele indicar un problema físico en ese ramal, no fallas de clientes independientes.")
+            st.markdown("**Desglose por puerto PON**")
 
-            df_pon = df_con_olt[df_con_olt['PON'].str.len() > 0].copy()
-            if df_pon.empty:
-                st.info("No hay puertos PON registrados en el periodo.")
-            else:
-                df_pon['NODO'] = df_pon['OLT'] + " / PON " + df_pon['PON']
-                resumen_pon = (
-                    df_pon.groupby('NODO')
-                    .agg(INCIDENCIAS=('NUM', 'count'),
-                         CLIENTES=('CLIENTE', 'nunique'),
-                         COLONIA=('COLONIA', lambda s: s.mode().iloc[0] if not s.mode().empty else ""))
-                    .reset_index()
-                    .sort_values('INCIDENCIAS', ascending=False)
-                    .head(25)
-                )
-                st.dataframe(resumen_pon, use_container_width=True, hide_index=True)
+            for olt in totales_olt.index:
+                sub = tabla.loc[olt].sort_values('Total', ascending=False)
+                total_olt = int(totales_olt.loc[olt, 'Total'])
+                n_pon = len(sub)
+                # El PON más golpeado se muestra en el título: es el dato que
+                # normalmente se busca al abrir el desglose.
+                peor_pon, peor_val = sub.index[0], int(sub.iloc[0]['Total'])
+
+                with st.expander(f"📡 **{olt}** — {total_olt} incidencias en {n_pon} puerto(s) · más afectado: PON {peor_pon} ({peor_val})"):
+                    st.dataframe(
+                        sub.style.background_gradient(cmap='Oranges', subset=['Total']).format('{:.0f}'),
+                        use_container_width=True
+                    )
+
+                    detalle = df_con_olt[df_con_olt['OLT'] == olt]
+                    colonias = (
+                        detalle.groupby(detalle['COLONIA'].astype(str).str.upper())['NUM']
+                        .count().sort_values(ascending=False).head(5)
+                    )
+                    if not colonias.empty:
+                        st.caption("Colonias con más incidencias en esta OLT: " +
+                                   " · ".join(f"**{c}** ({v})" for c, v in colonias.items()))
+
+            csv_pivot = tabla.reset_index().to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Descargar desglose (CSV)",
+                data=csv_pivot,
+                file_name=f"desglose_olt_pon_{hoy_date_valor.strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="red_dl_pivot"
+            )
 
     # ============================================================
     # 2) EVENTOS MASIVOS  (el corazón del análisis)
@@ -526,6 +559,196 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor):
 
             resumen_col['DIAGNOSTICO'] = resumen_col.apply(_diagnostico, axis=1)
             st.dataframe(resumen_col, use_container_width=True, hide_index=True)
+
+
+    # ============================================================
+    # 4) AVISOS RECO
+    # ============================================================
+    with sub_avisos:
+        st.markdown("**Registro de avisos de RECO / trabajos programados**")
+        st.caption(
+            "Pega aquí el texto del comunicado. El sistema extrae las colonias y fechas, "
+            "y las cruza con las incidencias para identificar el origen de las fallas."
+        )
+
+        with st.expander("ℹ️ ¿Por qué no se conecta solo al Facebook de RECO?"):
+            st.markdown(
+                "Meta cerró el acceso a páginas de terceros: leer publicaciones de una página "
+                "que **no administras** requiere *Page Public Content Access*, que exige revisión "
+                "de app y verificación de negocio ante Meta, y aun así no garantiza la aprobación. "
+                "Los servicios que lo hacen por fuera operan con raspado web, que **viola los "
+                "términos de Meta** y se rompe cada vez que cambian la página.\n\n"
+                "Por eso este módulo funciona con copiar y pegar: toma 15 segundos, no depende de "
+                "terceros y no expone a la empresa. Todo lo demás (extraer colonias, fechas y "
+                "cruzarlas con las fallas) sí es automático."
+            )
+
+        HOJA_AVISOS = "AvisosReco"
+
+        def _cargar_avisos():
+            cols = ["FECHA_REGISTRO", "FECHA_TRABAJO", "COLONIAS", "TIPO", "TEXTO", "REGISTRADO_POR"]
+            if conn is None:
+                return pd.DataFrame(columns=cols)
+            try:
+                d = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_AVISOS, ttl=0)
+                d = d.dropna(how="all")
+                for c in cols:
+                    if c not in d.columns:
+                        d[c] = ""
+                return d
+            except Exception:
+                return pd.DataFrame(columns=cols)
+
+        def _guardar_avisos(d):
+            if conn is None:
+                st.error("Sin conexión a la base de datos.")
+                return False
+            for intento in ("update", "create"):
+                try:
+                    getattr(conn, intento)(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_AVISOS, data=d)
+                    return True
+                except Exception:
+                    continue
+            st.error("No se pudo guardar el aviso.")
+            return False
+
+        df_avisos = _cargar_avisos()
+
+        # Catálogo de colonias reales, para detectarlas dentro del texto del aviso.
+        colonias_conocidas = sorted({
+            str(c).strip().upper()
+            for c in df_base_activa.get('COLONIA', pd.Series(dtype=str)).dropna().unique()
+            if len(str(c).strip()) > 3
+        })
+
+        texto_aviso = st.text_area(
+            "Texto del comunicado:",
+            height=130,
+            key="reco_texto",
+            placeholder="Ej: RECO informa que el día 08/08/2026 se realizarán trabajos de cambio de postes en Gravel Bay y Sandy Bay, de 8:00 am a 4:00 pm."
+        )
+
+        detectadas, fechas_detectadas = [], []
+        if texto_aviso.strip():
+            txt_up = texto_aviso.upper()
+            detectadas = [c for c in colonias_conocidas if c in txt_up]
+            # Fechas en formato dd/mm/aaaa, dd-mm-aaaa o dd/mm
+            for m in re.findall(r'\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b', texto_aviso):
+                d_, m_, a_ = m
+                a_ = a_ or str(hoy_date_valor.year)
+                if len(a_) == 2:
+                    a_ = "20" + a_
+                try:
+                    fechas_detectadas.append(pd.Timestamp(int(a_), int(m_), int(d_)))
+                except Exception:
+                    pass
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if detectadas:
+                    st.success(f"📍 Colonias detectadas: **{', '.join(detectadas)}**")
+                else:
+                    st.warning("No se reconoció ninguna colonia. Puedes escribirlas manualmente abajo.")
+            with c2:
+                if fechas_detectadas:
+                    st.info("📅 Fechas: " + ", ".join(f.strftime('%d/%m/%Y') for f in sorted(set(fechas_detectadas))))
+
+        col_a1, col_a2 = st.columns(2)
+        with col_a1:
+            colonias_final = st.text_input(
+                "Colonias afectadas (separadas por coma):",
+                value=", ".join(detectadas),
+                key="reco_colonias"
+            ).strip().upper()
+        with col_a2:
+            fecha_trabajo = st.date_input(
+                "Fecha del trabajo:",
+                value=(sorted(set(fechas_detectadas))[0].date() if fechas_detectadas else hoy_date_valor),
+                key="reco_fecha"
+            )
+
+        tipo_aviso = st.selectbox(
+            "Tipo de trabajo:",
+            ["Cambio de postes", "Mantenimiento de red eléctrica", "Poda de árboles",
+             "Obra vial", "Corte programado de energía", "Otro"],
+            key="reco_tipo"
+        )
+
+        if st.button("💾 Registrar aviso", type="primary", use_container_width=True, key="reco_guardar"):
+            if not colonias_final:
+                st.error("Indica al menos una colonia.")
+            else:
+                nuevo = pd.DataFrame([{
+                    "FECHA_REGISTRO": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
+                    "FECHA_TRABAJO": fecha_trabajo.strftime('%Y-%m-%d'),
+                    "COLONIAS": colonias_final,
+                    "TIPO": tipo_aviso,
+                    "TEXTO": texto_aviso.strip()[:500],
+                    "REGISTRADO_POR": st.session_state.get('usuario_actual', ''),
+                }])
+                if _guardar_avisos(pd.concat([df_avisos, nuevo], ignore_index=True)):
+                    st.success("✅ Aviso registrado.")
+                    time.sleep(1.2)
+                    st.rerun()
+
+        st.divider()
+
+        # ---------- CRUCE: avisos vs incidencias ----------
+        if df_avisos.empty:
+            st.info("Aún no hay avisos registrados. Al registrar el primero, aquí verás el cruce con las fallas.")
+        else:
+            st.markdown("**Correlación entre avisos y fallas**")
+            margen_dias = st.slider("Ventana de correlación (días después del trabajo):", 1, 15, 5, key="reco_margen")
+
+            resultados = []
+            for _, av in df_avisos.iterrows():
+                try:
+                    f_trab = pd.to_datetime(av['FECHA_TRABAJO'], errors='coerce')
+                    if pd.isna(f_trab):
+                        continue
+                except Exception:
+                    continue
+
+                cols_aviso = [c.strip().upper() for c in str(av['COLONIAS']).split(',') if c.strip()]
+                if not cols_aviso:
+                    continue
+
+                col_serie = df_fallas['COLONIA'].astype(str).str.upper()
+                mask_col = col_serie.apply(lambda x: any(ca in x or x in ca for ca in cols_aviso))
+                mask_fec = (df_fallas['FECHA_REF'] >= f_trab) & (df_fallas['FECHA_REF'] <= f_trab + pd.Timedelta(days=margen_dias))
+                coincidencias = df_fallas[mask_col & mask_fec]
+
+                if not coincidencias.empty:
+                    pon_afectados = coincidencias[coincidencias['PON'].str.len() > 0]['PON'].nunique()
+                    resultados.append({
+                        'aviso': av, 'f_trab': f_trab, 'df': coincidencias,
+                        'n': len(coincidencias), 'pon': pon_afectados
+                    })
+
+            if not resultados:
+                st.success("✅ Ningún aviso registrado coincide con fallas en el periodo analizado.")
+            else:
+                resultados.sort(key=lambda r: r['n'], reverse=True)
+                st.error(f"🔗 **{len(resultados)}** aviso(s) coinciden con fallas posteriores.")
+
+                for r in resultados:
+                    av, coincid = r['aviso'], r['df']
+                    titulo = f"⚡ {av['TIPO']} en {av['COLONIAS']} ({r['f_trab'].strftime('%d/%m/%Y')}) → {r['n']} falla(s)"
+                    with st.expander(titulo):
+                        if r['pon'] == 1:
+                            st.error("🔴 Todas las fallas provienen de **un solo PON**: apunta directamente a un daño físico causado por este trabajo.")
+                        elif r['pon'] > 1:
+                            st.warning(f"🟠 Fallas repartidas en **{r['pon']} puertos PON**: el trabajo pudo afectar varios ramales.")
+
+                        st.caption(f"Comunicado: {str(av['TEXTO'])[:250]}")
+                        cols_m = [c for c in ['NUM', 'CLIENTE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO'] if c in coincid.columns]
+                        st.dataframe(coincid[cols_m].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
+
+            with st.expander(f"📋 Avisos registrados ({len(df_avisos)})"):
+                st.dataframe(
+                    df_avisos[['FECHA_TRABAJO', 'TIPO', 'COLONIAS', 'REGISTRADO_POR']].sort_values('FECHA_TRABAJO', ascending=False),
+                    use_container_width=True, hide_index=True
+                )
 
 
 def main():
@@ -1488,7 +1711,7 @@ def main():
         ])
 
         with tab_red:
-            mostrar_analisis_red(df_base_activa, hoy_date_valor)
+            mostrar_analisis_red(df_base_activa, hoy_date_valor, conn)
 
         with tab_pendientes:
             st.subheader("📋 Resumen de Pendientes Generales")
