@@ -804,8 +804,73 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             placeholder="Ej: RECO informa que el día 08/08/2026 se realizarán trabajos de cambio de postes en Gravel Bay y Sandy Bay, de 8:00 am a 4:00 pm."
         )
 
+        def _mapear_infraestructura_afectada(lista_colonias, df_universo):
+            """
+            CRUCE MASIVO: traduce las colonias de un comunicado a la infraestructura
+            real que las atiende, y al universo de clientes que dependen de ella.
+
+            Esto es lo que permite anticipar en vez de reaccionar: cuando RECO
+            anuncia un corte en ciertas colonias, aquí se resuelve de inmediato
+            QUÉ OLT y QUÉ puertos PON alimentan ese sector y CUÁNTOS clientes hay
+            detrás. Así, cuando después entren SOP/SOPFIBRA de esa zona, ya se
+            sabe que pertenecen al mismo evento y no son fallas independientes.
+
+            El mapa se construye con el histórico real de órdenes: si un cliente
+            de esa colonia fue atendido alguna vez y quedó registrado su OLT/PON,
+            esa relación colonia->infraestructura es un hecho, no una suposición.
+            """
+            if not lista_colonias or df_universo is None or df_universo.empty:
+                return {}
+
+            df_u = df_universo.copy()
+            for c in ['OLT', 'PON', 'COLONIA']:
+                if c not in df_u.columns:
+                    df_u[c] = ""
+                df_u[c] = df_u[c].fillna("").astype(str).str.strip().str.upper()
+
+            cols_norm = [_normalizar_txt(c) for c in lista_colonias if str(c).strip()]
+            colonia_norm_serie = df_u['COLONIA'].apply(_normalizar_txt)
+
+            mask_zona = colonia_norm_serie.apply(
+                lambda x: any(cn and (cn in x or x in cn) for cn in cols_norm)
+            )
+            df_zona = df_u[mask_zona]
+
+            if df_zona.empty:
+                return {'colonias_encontradas': [], 'olts': [], 'pones': [],
+                        'clientes': 0, 'df_zona': df_zona, 'detalle_olt': pd.DataFrame()}
+
+            olts = sorted([o for o in df_zona['OLT'].unique() if o])
+            pones = sorted([f"{r['OLT']}/{r['PON']}" for _, r in
+                            df_zona[df_zona['PON'].str.len() > 0].drop_duplicates(subset=['OLT', 'PON']).iterrows()])
+
+            detalle_olt = pd.DataFrame()
+            if olts:
+                detalle_olt = (
+                    df_zona[df_zona['OLT'].str.len() > 0]
+                    .groupby('OLT')
+                    .agg(CLIENTES=('CLIENTE', 'nunique'),
+                         PUERTOS_PON=('PON', lambda s: s[s.str.len() > 0].nunique()),
+                         COLONIAS=('COLONIA', lambda s: ", ".join(sorted(set(s))[:4])))
+                    .reset_index()
+                    .sort_values('CLIENTES', ascending=False)
+                )
+
+            return {
+                'colonias_encontradas': sorted(df_zona['COLONIA'].unique().tolist()),
+                'olts': olts,
+                'pones': pones,
+                'clientes': int(df_zona['CLIENTE'].nunique()),
+                'df_zona': df_zona,
+                'detalle_olt': detalle_olt,
+            }
+
         def _cargar_avisos():
-            cols = ["FECHA_REGISTRO", "FECHA_TRABAJO", "COLONIAS", "TIPO", "TEXTO", "REGISTRADO_POR"]
+            # OLTS/PONES/CLIENTES_RIESGO guardan la infraestructura mapeada al
+            # momento de registrar el aviso: así el cruce con órdenes futuras se
+            # puede hacer por PUERTO PON (preciso) y no solo por nombre de colonia.
+            cols = ["FECHA_REGISTRO", "FECHA_TRABAJO", "COLONIAS", "TIPO", "PROGRAMADA",
+                    "OLTS", "PONES", "CLIENTES_RIESGO", "TEXTO", "REGISTRADO_POR"]
             if conn is None:
                 return pd.DataFrame(columns=cols)
             try:
@@ -845,20 +910,29 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             except Exception as e:
                 errores.append(f"update: {type(e).__name__}: {e}")
 
-            # 2) Crear la hoja con los datos
+            # 2) Crear la pestaña directamente con gspread. conn.create() de
+            # st-gsheets-connection tiene un bug conocido: ignora
+            # el spreadsheet= que se le pasa por parámetro y solo usa el que esté
+            # configurado como default en secrets.toml, así que siempre falla con
+            # "Spreadsheet must be specified" aunque el valor sí se haya pasado.
+            # Se evita el problema autenticando gspread directo con las mismas
+            # credenciales de servicio que ya usa el sistema para GCS.
             try:
-                conn.create(spreadsheet=url_hoja, worksheet=HOJA_AVISOS, data=d)
-                return True
-            except Exception as e:
-                errores.append(f"create(data): {type(e).__name__}: {e}")
+                import gspread
+                from google.oauth2.service_account import Credentials as _GSCredentials
 
-            # 3) Crear vacía y luego actualizar
-            try:
-                conn.create(spreadsheet=url_hoja, worksheet=HOJA_AVISOS)
+                creds_dict = st.secrets["connections"]["gsheets"]
+                scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                          "https://www.googleapis.com/auth/drive"]
+                creds = _GSCredentials.from_service_account_info(creds_dict, scopes=scopes)
+                gc = gspread.authorize(creds)
+                sh = gc.open_by_url(url_hoja)
+                sh.add_worksheet(title=HOJA_AVISOS, rows=200, cols=10)
+
                 conn.update(spreadsheet=url_hoja, worksheet=HOJA_AVISOS, data=d)
                 return True
             except Exception as e:
-                errores.append(f"create+update: {type(e).__name__}: {e}")
+                errores.append(f"gspread directo: {type(e).__name__}: {e}")
 
             st.error(
                 f"No se pudo guardar en la hoja **{HOJA_AVISOS}**. Detalle de los intentos:\n\n- "
@@ -926,27 +1000,139 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             st.session_state['reco_tipo'] = OPCIONES_TIPO[0]
         tipo_aviso = st.selectbox("Tipo de trabajo:", OPCIONES_TIPO, key="reco_tipo")
 
-        if st.button("💾 Registrar aviso", type="primary", use_container_width=True, key="reco_guardar"):
+        margen_dias_registro = st.slider(
+            "Ventana de impacto (días a monitorear después del trabajo):",
+            1, 15, 5, key="reco_margen_registro"
+        )
+
+        # ==========================================================
+        # CRUCE MASIVO EN VIVO: colonias -> OLT/PON -> clientes
+        # ==========================================================
+        # Se ejecuta apenas hay colonias detectadas, ANTES de registrar nada,
+        # para que se vea el alcance real del corte de inmediato.
+        if colonias_final:
+            lista_cols_actual = [c.strip() for c in colonias_final.split(',') if c.strip()]
+            mapa = _mapear_infraestructura_afectada(lista_cols_actual, df_base_activa)
+
+            st.markdown("#### 🎯 Cruce masivo: infraestructura y clientes en riesgo")
+
+            if not mapa or not mapa.get('colonias_encontradas'):
+                st.warning(
+                    "No se encontró ninguna colonia del comunicado en el histórico del sistema. "
+                    "Verifica los nombres: deben coincidir con los que usa Cepheus."
+                )
+            else:
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("📍 Colonias", len(mapa['colonias_encontradas']))
+                m2.metric("🛰️ OLT afectadas", len(mapa['olts']))
+                m3.metric("🔌 Puertos PON", len(mapa['pones']))
+                m4.metric("👥 Clientes en riesgo", mapa['clientes'])
+
+                if mapa['olts']:
+                    st.caption("**OLT que alimentan este sector:** " + " · ".join(mapa['olts']))
+                    with st.expander(f"Ver desglose por OLT ({len(mapa['olts'])})"):
+                        st.dataframe(mapa['detalle_olt'], use_container_width=True, hide_index=True)
+                else:
+                    st.info(
+                        "Las colonias existen en el sistema pero sus órdenes no traen OLT registrada. "
+                        "El monitoreo funcionará por colonia, sin el detalle de infraestructura."
+                    )
+
+        if st.button("💾 Registrar incidencia y activar monitoreo", type="primary", use_container_width=True, key="reco_guardar"):
             if not colonias_final:
                 st.error("Indica al menos una colonia.")
             else:
+                lista_cols_g = [c.strip() for c in colonias_final.split(',') if c.strip()]
+                mapa_g = _mapear_infraestructura_afectada(lista_cols_g, df_base_activa)
+
+                es_programada = "SI" if "PROGRAM" in _normalizar_txt(texto_aviso + " " + tipo_aviso) else "NO"
+
                 nuevo = pd.DataFrame([{
                     "FECHA_REGISTRO": get_honduras_time().strftime('%Y-%m-%d %H:%M:%S'),
                     "FECHA_TRABAJO": fecha_trabajo.strftime('%Y-%m-%d'),
                     "COLONIAS": colonias_final,
                     "TIPO": tipo_aviso,
+                    "PROGRAMADA": es_programada,
+                    "OLTS": ", ".join(mapa_g.get('olts', [])),
+                    "PONES": ", ".join(mapa_g.get('pones', [])),
+                    "CLIENTES_RIESGO": mapa_g.get('clientes', 0),
                     "TEXTO": texto_aviso.strip()[:500],
                     "REGISTRADO_POR": st.session_state.get('usuario_actual', ''),
                 }])
+
+                # --- IMPACTO REAL: órdenes ya generadas por esta incidencia ---
+                st.divider()
+                st.markdown("### 📊 Impacto de esta incidencia")
+
+                cols_aviso_nuevo = [c.strip().upper() for c in colonias_final.split(',') if c.strip()]
+                f_trab_nuevo = pd.to_datetime(fecha_trabajo)
+
+                col_serie_n = df_fallas['COLONIA'].astype(str).str.upper()
+                mask_col_n = col_serie_n.apply(lambda x: any(ca in x or x in ca for ca in cols_aviso_nuevo))
+
+                # Además de la colonia, se cruza por PUERTO PON: si el corte tocó
+                # un ramal concreto, cualquier orden de ese PON pertenece al mismo
+                # evento aunque el nombre de la colonia esté escrito distinto.
+                pones_afectados = set(mapa_g.get('pones', []))
+                if pones_afectados:
+                    nodo_serie = df_fallas['OLT'].astype(str) + "/" + df_fallas['PON'].astype(str)
+                    mask_pon_n = nodo_serie.isin(pones_afectados)
+                else:
+                    mask_pon_n = pd.Series(False, index=df_fallas.index)
+
+                mask_fec_n = (df_fallas['FECHA_REF'] >= f_trab_nuevo) & (df_fallas['FECHA_REF'] <= f_trab_nuevo + pd.Timedelta(days=margen_dias_registro))
+                coincid_nuevo = df_fallas[(mask_col_n | mask_pon_n) & mask_fec_n].copy()
+
+                clientes_riesgo = mapa_g.get('clientes', 0)
+
+                if coincid_nuevo.empty:
+                    st.success(
+                        f"✅ Todavía **no se han generado órdenes** por esta incidencia "
+                        f"(ventana del {fecha_trabajo.strftime('%d/%m/%Y')} + {margen_dias_registro} días)."
+                    )
+                    if clientes_riesgo:
+                        st.info(f"👥 Hay **{clientes_riesgo} clientes** en la zona. Si empiezan a reportar, las órdenes aparecerán aquí.")
+                else:
+                    n_ord = len(coincid_nuevo)
+                    n_cli = coincid_nuevo['CLIENTE'].nunique()
+                    pct = (n_cli / clientes_riesgo * 100) if clientes_riesgo else 0
+
+                    k1, k2, k3 = st.columns(3)
+                    k1.metric("📋 Órdenes generadas", n_ord)
+                    k2.metric("👤 Clientes que reportaron", n_cli)
+                    k3.metric("📉 % de la zona afectada", f"{pct:.1f}%" if clientes_riesgo else "N/D")
+
+                    pon_afectados_n = coincid_nuevo[coincid_nuevo['PON'].str.len() > 0]['PON'].nunique()
+                    if pon_afectados_n == 1:
+                        st.error("🔴 Todas las órdenes provienen de **un solo PON**: daño físico concentrado en ese ramal.")
+                    elif pon_afectados_n > 1:
+                        st.warning(f"🟠 Órdenes repartidas en **{pon_afectados_n} puertos PON**: el evento afectó varios ramales.")
+
+                    resumen_por_colonia = (
+                        coincid_nuevo.groupby(coincid_nuevo['COLONIA'].astype(str).str.upper())
+                        .size().sort_values(ascending=False)
+                    )
+                    st.markdown("**Órdenes por colonia:** " + " · ".join(
+                        f"{c}: **{n}**" for c, n in resumen_por_colonia.items()
+                    ))
+
+                    cols_m_n = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO'] if c in coincid_nuevo.columns]
+                    st.dataframe(coincid_nuevo[cols_m_n].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
+
+                    st.download_button(
+                        "📥 Descargar clientes afectados (CSV)",
+                        data=coincid_nuevo[cols_m_n].to_csv(index=False).encode('utf-8'),
+                        file_name=f"impacto_{fecha_trabajo.strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        key="dl_impacto_nuevo"
+                    )
+
+                # --- Guardado (no bloquea lo mostrado arriba) ---
                 if _guardar_avisos(pd.concat([df_avisos, nuevo], ignore_index=True)):
-                    st.success("✅ Aviso registrado.")
-                    # Se limpia el formulario para que el siguiente comunicado
-                    # no herede los datos del anterior.
+                    st.success("✅ Incidencia registrada. El monitoreo queda activo para futuras órdenes.")
                     for k in ['reco_texto', 'reco_colonias', 'reco_firma_img',
                               'reco_autocompletado', 'reco_error_ocr']:
                         st.session_state.pop(k, None)
-                    time.sleep(1.2)
-                    st.rerun()
 
         st.divider()
 
@@ -972,14 +1158,31 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
 
                 col_serie = df_fallas['COLONIA'].astype(str).str.upper()
                 mask_col = col_serie.apply(lambda x: any(ca in x or x in ca for ca in cols_aviso))
+
+                # Cruce adicional por PUERTO PON usando la infraestructura que se
+                # mapeó al registrar la incidencia. Es más preciso que el nombre de
+                # la colonia: si el corte tocó un ramal, toda orden de ese PON
+                # pertenece al evento aunque la colonia venga escrita distinto.
+                pones_guardados = {p.strip() for p in str(av.get('PONES', '')).split(',') if p.strip()}
+                if pones_guardados:
+                    nodo_serie_av = df_fallas['OLT'].astype(str) + "/" + df_fallas['PON'].astype(str)
+                    mask_pon_av = nodo_serie_av.isin(pones_guardados)
+                else:
+                    mask_pon_av = pd.Series(False, index=df_fallas.index)
+
                 mask_fec = (df_fallas['FECHA_REF'] >= f_trab) & (df_fallas['FECHA_REF'] <= f_trab + pd.Timedelta(days=margen_dias))
-                coincidencias = df_fallas[mask_col & mask_fec]
+                coincidencias = df_fallas[(mask_col | mask_pon_av) & mask_fec]
 
                 if not coincidencias.empty:
                     pon_afectados = coincidencias[coincidencias['PON'].str.len() > 0]['PON'].nunique()
+                    try:
+                        cli_riesgo_av = int(float(av.get('CLIENTES_RIESGO', 0) or 0))
+                    except Exception:
+                        cli_riesgo_av = 0
                     resultados.append({
                         'aviso': av, 'f_trab': f_trab, 'df': coincidencias,
-                        'n': len(coincidencias), 'pon': pon_afectados
+                        'n': len(coincidencias), 'pon': pon_afectados,
+                        'riesgo': cli_riesgo_av
                     })
 
             if not resultados:
@@ -990,20 +1193,45 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
 
                 for r in resultados:
                     av, coincid = r['aviso'], r['df']
-                    titulo = f"⚡ {av['TIPO']} en {av['COLONIAS']} ({r['f_trab'].strftime('%d/%m/%Y')}) → {r['n']} falla(s)"
+                    n_cli_r = coincid['CLIENTE'].nunique()
+                    marca_prog = "📅" if str(av.get('PROGRAMADA', '')).upper() == "SI" else "⚠️"
+                    titulo = f"{marca_prog} {av['TIPO']} · {av['COLONIAS']} ({r['f_trab'].strftime('%d/%m/%Y')}) → {r['n']} orden(es)"
                     with st.expander(titulo):
+                        k1, k2, k3 = st.columns(3)
+                        k1.metric("📋 Órdenes", r['n'])
+                        k2.metric("👤 Clientes que reportaron", n_cli_r)
+                        if r.get('riesgo'):
+                            k3.metric("📉 % de la zona", f"{n_cli_r / r['riesgo'] * 100:.1f}%")
+                        else:
+                            k3.metric("👥 Clientes en zona", "N/D")
+
+                        if str(av.get('OLTS', '')).strip():
+                            st.caption(f"🛰️ **OLT del sector:** {av['OLTS']}")
+
                         if r['pon'] == 1:
-                            st.error("🔴 Todas las fallas provienen de **un solo PON**: apunta directamente a un daño físico causado por este trabajo.")
+                            st.error("🔴 Todas las órdenes provienen de **un solo PON**: daño físico concentrado en ese ramal.")
                         elif r['pon'] > 1:
-                            st.warning(f"🟠 Fallas repartidas en **{r['pon']} puertos PON**: el trabajo pudo afectar varios ramales.")
+                            st.warning(f"🟠 Órdenes repartidas en **{r['pon']} puertos PON**: el evento afectó varios ramales.")
+
+                        resumen_col_r = coincid.groupby(coincid['COLONIA'].astype(str).str.upper()).size().sort_values(ascending=False)
+                        st.markdown("**Órdenes por colonia:** " + " · ".join(f"{c}: **{n}**" for c, n in resumen_col_r.items()))
 
                         st.caption(f"Comunicado: {str(av['TEXTO'])[:250]}")
-                        cols_m = [c for c in ['NUM', 'CLIENTE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO'] if c in coincid.columns]
+                        cols_m = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO'] if c in coincid.columns]
                         st.dataframe(coincid[cols_m].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
 
-            with st.expander(f"📋 Avisos registrados ({len(df_avisos)})"):
+                        st.download_button(
+                            "📥 Descargar clientes afectados (CSV)",
+                            data=coincid[cols_m].to_csv(index=False).encode('utf-8'),
+                            file_name=f"impacto_{r['f_trab'].strftime('%Y%m%d')}_{str(av['COLONIAS'])[:20]}.csv",
+                            mime="text/csv",
+                            key=f"dl_imp_{r['f_trab'].strftime('%Y%m%d')}_{r['n']}_{n_cli_r}"
+                        )
+
+            with st.expander(f"📋 Incidencias registradas ({len(df_avisos)})"):
+                cols_hist = [c for c in ['FECHA_TRABAJO', 'TIPO', 'PROGRAMADA', 'COLONIAS', 'OLTS', 'CLIENTES_RIESGO', 'REGISTRADO_POR'] if c in df_avisos.columns]
                 st.dataframe(
-                    df_avisos[['FECHA_TRABAJO', 'TIPO', 'COLONIAS', 'REGISTRADO_POR']].sort_values('FECHA_TRABAJO', ascending=False),
+                    df_avisos[cols_hist].sort_values('FECHA_TRABAJO', ascending=False),
                     use_container_width=True, hide_index=True
                 )
 
