@@ -3423,6 +3423,81 @@ def main():
 
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                             df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + ancho_min_barra
+
+                            # --- DETECCIÓN DE BARRAS OCULTAS ---
+                            # La regla anti-solape de arriba recorta una barra al inicio de la
+                            # siguiente, pero NO puede separar dos órdenes que arrancan a la
+                            # MISMA hora (o una contenida dentro de otra): ambas ocupan el mismo
+                            # espacio y, al ser sólidas, la que se dibuja encima tapa a la otra.
+                            # La orden existe y está en los datos, pero el usuario no la ve.
+                            # Se detectan aquí para poder avisarlo en vez de perderlas en silencio.
+                            ocultas = []
+                            try:
+                                for _tec, _grp in df_para_gantt_final.groupby('TECNICO'):
+                                    _g = _grp.sort_values('GANTT_START')
+                                    for i in range(len(_g)):
+                                        a_ini, a_fin = _g.iloc[i]['GANTT_START'], _g.iloc[i]['GANTT_END']
+                                        for j in range(len(_g)):
+                                            if i == j:
+                                                continue
+                                            b_ini, b_fin = _g.iloc[j]['GANTT_START'], _g.iloc[j]['GANTT_END']
+                                            contenida = (b_ini <= a_ini) and (a_fin <= b_fin)
+                                            if not contenida:
+                                                continue
+                                            # Si la de abajo es más larga, tapa a la de arriba.
+                                            # Si son IDÉNTICAS (mismo inicio y fin) también se
+                                            # tapan: se marca solo una (la de índice mayor) para
+                                            # no reportar el par dos veces.
+                                            mas_larga = (b_fin - b_ini) > (a_fin - a_ini)
+                                            identica = (b_ini == a_ini) and (b_fin == a_fin) and j < i
+                                            if mas_larga or identica:
+                                                ocultas.append({
+                                                    'TECNICO': _tec,
+                                                    'NUM': _g.iloc[i].get('NUM', 'N/D'),
+                                                    'ACTIVIDAD': _g.iloc[i].get('ACTIVIDAD', ''),
+                                                    'INICIA': a_ini.strftime('%H:%M'),
+                                                    'TAPADA_POR': f"{_g.iloc[j].get('ACTIVIDAD','')} ({_g.iloc[j].get('NUM','N/D')})",
+                                                })
+                                                break
+                            except Exception:
+                                ocultas = []
+
+                            if ocultas:
+                                st.warning(
+                                    f"⚠️ **{len(ocultas)} orden(es) no se alcanzan a ver en la gráfica**: coinciden en horario "
+                                    "con otra orden del mismo técnico y quedan tapadas debajo. Están en los datos, "
+                                    "pero visualmente no caben en la misma fila."
+                                )
+                                st.dataframe(pd.DataFrame(ocultas), use_container_width=True, hide_index=True)
+
+                                separar = st.checkbox(
+                                    "📐 Separar las órdenes que coinciden en horario (para poder verlas todas)",
+                                    value=False,
+                                    key="chk_separar_solapes",
+                                    help="Reparte en secuencia las órdenes que se traslapan. OJO: las horas mostradas dejan de ser exactas — es una vista para inspeccionar, no para medir tiempos."
+                                )
+
+                                if separar:
+                                    # Se reparten en secuencia dentro del rango que ya ocupaban.
+                                    # Esto DISTORSIONA las horas reales a propósito, por eso es
+                                    # opcional y viene apagado: sirve para ver qué hay debajo,
+                                    # no para medir duración.
+                                    partes = []
+                                    for _tec, _grp in df_para_gantt_final.groupby('TECNICO'):
+                                        _g = _grp.sort_values('GANTT_START').copy()
+                                        cursor = None
+                                        for idx_g in _g.index:
+                                            ini_g = _g.at[idx_g, 'GANTT_START']
+                                            fin_g = _g.at[idx_g, 'GANTT_END']
+                                            if cursor is not None and ini_g < cursor:
+                                                dur = max(fin_g - ini_g, ancho_min_barra)
+                                                _g.at[idx_g, 'GANTT_START'] = cursor
+                                                _g.at[idx_g, 'GANTT_END'] = cursor + dur
+                                            cursor = _g.at[idx_g, 'GANTT_END']
+                                        partes.append(_g)
+                                    if partes:
+                                        df_para_gantt_final = pd.concat(partes).sort_values(by=['TECNICO', 'GANTT_START'])
+                                        st.info("📐 Vista separada activa: las horas mostradas están desplazadas para que ninguna orden quede tapada.")
                             
                             df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
                             df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
