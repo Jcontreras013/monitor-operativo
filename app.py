@@ -599,20 +599,26 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             return re.sub(r'\s+', ' ', t).strip().upper()
 
         # Vocabulario real de campo. Cuando RECO trabaja en los postes, la fibra
-        # se corta y el técnico lo escribe en el comentario de cierre. Estas son
-        # las formas en que efectivamente aparece redactado.
+        # se corta y el técnico lo escribe en el comentario de cierre.
+        #
+        # OJO: aquí van SOLO indicadores fuertes. Palabras sueltas como "CORTADO",
+        # "CORTADA" o "ACOMETIDA" se quitaron a propósito porque aparecen en
+        # averías que nada tienen que ver con RECO ("servicio cortado por mora",
+        # "se cambia acometida por deterioro") e inflaban el conteo del evento.
         CLAVES_CORTE_EXTERNO = [
-            # Mención directa al responsable
-            'RECO', 'ENEE', 'ELECTRICA', 'ELECTRICIDAD', 'ENERGIA',
-            # El daño en sí
+            # Mención directa al responsable del trabajo externo
+            'RECO', 'ENEE', 'ELECTRICA', 'ELECTRICIDAD',
+            # El daño físico, siempre en frase (no palabra suelta)
             'CORTE DE ACOMETIDA', 'ACOMETIDA CORTADA', 'ACOMETIDA ROTA',
-            'ACOMETIDA DANADA', 'ACOMETIDA REVENTADA', 'CORTARON LA ACOMETIDA',
-            'CABLE CORTADO', 'CORTARON EL CABLE', 'FIBRA CORTADA',
-            'CORTARON LA FIBRA', 'DROP CORTADO', 'CABLE REVENTADO',
-            'ACOMETIDA', 'CORTADA', 'CORTADO', 'CORTARON', 'REVENTADA', 'REVENTADO',
-            # Causa/contexto del corte
-            'POSTE', 'POSTES', 'CAMBIO DE POSTE', 'PODA', 'ARBOL', 'RAMA',
-            'TENDIDO', 'TRONCAL', 'EMPALME', 'FUSION',
+            'ACOMETIDA DANADA', 'ACOMETIDA REVENTADA', 'ACOMETIDA REVENTO',
+            'CORTARON LA ACOMETIDA', 'CORTO LA ACOMETIDA',
+            'CABLE CORTADO', 'CORTARON EL CABLE', 'CABLE REVENTADO',
+            'FIBRA CORTADA', 'CORTARON LA FIBRA', 'CORTO LA FIBRA',
+            'DROP CORTADO', 'DROP REVENTADO',
+            # Causa/contexto inequívoco del corte
+            'CAMBIO DE POSTE', 'CAMBIARON EL POSTE', 'POSTE NUEVO',
+            'PODA', 'PODARON', 'CAIDA DE ARBOL', 'RAMA CAIDA',
+            'LINEA TRONCAL', 'TRONCAL',
         ]
 
         # Se compila una sola vez. \b exige palabra completa: así "RECO" no
@@ -620,6 +626,18 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
         _PATRON_CORTE_EXTERNO = re.compile(
             r'\b(' + '|'.join(re.escape(k) for k in CLAVES_CORTE_EXTERNO) + r')\b'
         )
+
+        def _claves_detectadas(row):
+            """
+            Devuelve las palabras clave que hicieron coincidir una orden.
+            Se muestra como columna EVIDENCIA para que el criterio sea auditable:
+            si una orden aparece sin razón aparente, aquí se ve exactamente qué
+            término la activó y se puede corregir el vocabulario.
+            """
+            texto = _normalizar_txt(str(row.get('COMENTARIO', '')) + " " + str(row.get('RAZON_CIERRE_SOP', '')))
+            if not texto:
+                return ""
+            return ", ".join(sorted(set(_PATRON_CORTE_EXTERNO.findall(texto))))
 
         def _es_corte_externo(row):
             """
@@ -1065,13 +1083,24 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
         # cualquiera del cliente que coincidió en fecha y colonia.
         if solo_cortes:
             df_fallas_reco = df_fallas[df_fallas.apply(_es_corte_externo, axis=1)].copy()
+            # Se registra QUÉ término activó cada coincidencia, para poder auditar
+            # el criterio en pantalla en vez de confiar a ciegas en el filtro.
+            if not df_fallas_reco.empty:
+                df_fallas_reco['EVIDENCIA'] = df_fallas_reco.apply(_claves_detectadas, axis=1)
         else:
             df_fallas_reco = df_fallas.copy()
+            df_fallas_reco['EVIDENCIA'] = ""
 
         if solo_cortes:
             st.caption(
                 f"Analizando **{len(df_fallas_reco)}** órdenes de corte "
                 f"(de {len(df_fallas)} averías totales en el periodo)."
+            )
+        else:
+            st.warning(
+                "⚠️ **Filtro desactivado.** Se están incluyendo TODAS las averías de la zona "
+                "(routers, lentitud, niveles de fibra, TV), no solo los cortes por trabajo externo. "
+                "Actívalo para que el conteo refleje únicamente el impacto de RECO."
             )
 
         # ==========================================================
@@ -1185,7 +1214,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         f"{c}: **{n}**" for c, n in resumen_por_colonia.items()
                     ))
 
-                    cols_m_n = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO', 'COMENTARIO'] if c in coincid_nuevo.columns]
+                    cols_m_n = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO', 'EVIDENCIA', 'COMENTARIO'] if c in coincid_nuevo.columns]
                     st.dataframe(coincid_nuevo[cols_m_n].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
 
                     st.download_button(
@@ -1286,7 +1315,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         st.markdown("**Órdenes por colonia:** " + " · ".join(f"{c}: **{n}**" for c, n in resumen_col_r.items()))
 
                         st.caption(f"Comunicado: {str(av['TEXTO'])[:250]}")
-                        cols_m = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO', 'COMENTARIO'] if c in coincid.columns]
+                        cols_m = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO', 'EVIDENCIA', 'COMENTARIO'] if c in coincid.columns]
                         st.dataframe(coincid[cols_m].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
 
                         st.download_button(
