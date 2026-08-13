@@ -3426,17 +3426,79 @@ def main():
                             mask_cierre_desconocido = df_para_gantt_final['GANTT_END'].isna()
                             df_para_gantt_final.loc[mask_cierre_desconocido, 'GANTT_END'] = df_para_gantt_final.loc[mask_cierre_desconocido, 'GANTT_START'] + pd.Timedelta(minutes=30)
 
-                            # --- Garantizar que las barras NUNCA se monten unas sobre otras ---
-                            # Regla única: ninguna barra puede extenderse más allá del inicio de
-                            # la siguiente orden del mismo técnico. Esto aplica a TODAS las
-                            # barras, no solo a las abiertas, porque el ancho mínimo de abajo
-                            # también podía empujar una barra corta sobre la siguiente.
-                            # Así, si una orden cerró 08:45 y la siguiente abrió 09:01, ese
-                            # hueco de 16 min se conserva y se ve como espacio real.
+                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
+                            df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
+                                lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
+                            )
+                            
+                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
+                            df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
+
+                            actividades_permitidas = ACTIVIDADES_GANTT_PERMITIDAS
+                            
+                            df_para_gantt_final = df_para_gantt_final[
+                                df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
+                            ]
+
+                            # Agregar barras de ALMUERZO registradas manualmente para el día
+                            if df_almuerzos_hoy is not None and not df_almuerzos_hoy.empty:
+                                filas_almuerzo = []
+                                for _, fila_alm in df_almuerzos_hoy.iterrows():
+                                    try:
+                                        tec_alm = normalizar_nombre_cruce(fila_alm['TECNICO'])
+                                        hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
+                                        hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
+                                        
+                                        # Cálculo dinámico del tiempo total del almuerzo
+                                        duracion_alm_m = int((hf_alm - hi_alm).total_seconds() / 60)
+                                        h_v, m_v = divmod(duracion_alm_m, 60)
+                                        tiempo_real_alm_v = f"{h_v}h {m_v}m" if h_v > 0 else f"{m_v}m"
+                                        
+                                        filas_almuerzo.append({
+                                            'TECNICO': tec_alm,
+                                            'ACTIVIDAD': 'ALMUERZO',
+                                            'NUM': '-',
+                                            'CLIENTE': '-',
+                                            'COLONIA': '-',
+                                            'ESTADO': 'ALMUERZO',
+                                            'GANTT_START': hi_alm,
+                                            'GANTT_END': hf_alm,
+                                            'Inicio': hi_alm.strftime('%H:%M'),
+                                            'Cierre': hf_alm.strftime('%H:%M'),
+                                            'TIEMPO_REAL': tiempo_real_alm_v
+                                        })
+                                    except Exception:
+                                        continue
+                                if filas_almuerzo:
+                                    df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame(filas_almuerzo)], ignore_index=True)
+                                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
+
+                            # NOTA DE ORDEN: el control de solapes se ejecuta AQUÍ, después de
+                            # insertar los almuerzos, y no antes. El bloque de almuerzo es una
+                            # barra más en la fila del técnico; si se agregara después del
+                            # control, entraría sin pasar por él y podría montarse encima de una
+                            # orden que empezó dentro de ese horario, ocultándola por completo.
+                            # --- CAPAS: la orden abierta sigue corriendo por debajo ---
+                            # Una orden que sigue abierta NO se recorta al iniciar la siguiente:
+                            # su barra continúa hasta la hora actual, porque el trabajo sigue
+                            # vigente. Para que las órdenes nuevas no queden escondidas debajo,
+                            # se dibujan en una capa superior (ver construcción del gráfico).
+                            #
+                            # Las órdenes YA CERRADAS sí se recortan entre sí: ahí el traslape
+                            # no representa nada real y solo taparía información.
                             df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
                             siguiente_inicio = df_para_gantt_final.groupby('TECNICO')['GANTT_START'].shift(-1)
 
-                            mask_invade = siguiente_inicio.notna() & (df_para_gantt_final['GANTT_END'] > siguiente_inicio) & (siguiente_inicio > df_para_gantt_final['GANTT_START'])
+                            _sigue_abierta = df_para_gantt_final['ESTADO'].astype(str).str.upper().str.strip().apply(
+                                lambda e: not any(t in e for t in ESTADOS_TERMINALES)
+                            ) & (df_para_gantt_final['ACTIVIDAD'].astype(str) != 'ALMUERZO')
+
+                            mask_invade = (
+                                siguiente_inicio.notna()
+                                & (df_para_gantt_final['GANTT_END'] > siguiente_inicio)
+                                & (siguiente_inicio > df_para_gantt_final['GANTT_START'])
+                                & ~_sigue_abierta
+                            )
                             df_para_gantt_final.loc[mask_invade, 'GANTT_END'] = siguiente_inicio[mask_invade]
 
                             # Ancho mínimo visible (10 min), expandiendo hacia adelante pero
@@ -3451,6 +3513,12 @@ def main():
 
                             mask_inv_m = df_para_gantt_final['GANTT_END'] < df_para_gantt_final['GANTT_START']
                             df_para_gantt_final.loc[mask_inv_m, 'GANTT_END'] = df_para_gantt_final.loc[mask_inv_m, 'GANTT_START'] + ancho_min_barra
+
+                            # CAPA DE FONDO: órdenes abiertas cuya barra se traslapa con otra
+                            # posterior del mismo técnico. Van abajo para que las demás se vean.
+                            _fin_por_fila = df_para_gantt_final['GANTT_END']
+                            _hay_posterior = siguiente_inicio.notna() & (_fin_por_fila > siguiente_inicio)
+                            df_para_gantt_final['ES_FONDO'] = (_sigue_abierta & _hay_posterior).fillna(False)
 
                             # --- DETECCIÓN DE BARRAS OCULTAS ---
                             # La regla anti-solape de arriba recorta una barra al inicio de la
@@ -3527,52 +3595,7 @@ def main():
                                         df_para_gantt_final = pd.concat(partes).sort_values(by=['TECNICO', 'GANTT_START'])
                                         st.info("📐 Vista separada activa: las horas mostradas están desplazadas para que ninguna orden quede tapada.")
                             
-                            df_para_gantt_final['Inicio'] = df_para_gantt_final['HORA_INI'].dt.strftime('%H:%M')
-                            df_para_gantt_final['Cierre'] = df_para_gantt_final['HORA_LIQ'].apply(
-                                lambda x: x.strftime('%H:%M') if pd.notnull(x) else "En curso (Abierta)"
-                            )
-                            
-                            df_para_gantt_final['TECNICO'] = df_para_gantt_final['TECNICO'].apply(normalizar_nombre_cruce)
-                            df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
-                            actividades_permitidas = ACTIVIDADES_GANTT_PERMITIDAS
-                            
-                            df_para_gantt_final = df_para_gantt_final[
-                                df_para_gantt_final['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(actividades_permitidas)
-                            ]
-
-                            # Agregar barras de ALMUERZO registradas manualmente para el día
-                            if df_almuerzos_hoy is not None and not df_almuerzos_hoy.empty:
-                                filas_almuerzo = []
-                                for _, fila_alm in df_almuerzos_hoy.iterrows():
-                                    try:
-                                        tec_alm = normalizar_nombre_cruce(fila_alm['TECNICO'])
-                                        hi_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_INICIO']), '%H:%M').time())
-                                        hf_alm = datetime.combine(hoy_date_valor, datetime.strptime(str(fila_alm['HORA_FIN']), '%H:%M').time())
-                                        
-                                        # Cálculo dinámico del tiempo total del almuerzo
-                                        duracion_alm_m = int((hf_alm - hi_alm).total_seconds() / 60)
-                                        h_v, m_v = divmod(duracion_alm_m, 60)
-                                        tiempo_real_alm_v = f"{h_v}h {m_v}m" if h_v > 0 else f"{m_v}m"
-                                        
-                                        filas_almuerzo.append({
-                                            'TECNICO': tec_alm,
-                                            'ACTIVIDAD': 'ALMUERZO',
-                                            'NUM': '-',
-                                            'CLIENTE': '-',
-                                            'COLONIA': '-',
-                                            'ESTADO': 'ALMUERZO',
-                                            'GANTT_START': hi_alm,
-                                            'GANTT_END': hf_alm,
-                                            'Inicio': hi_alm.strftime('%H:%M'),
-                                            'Cierre': hf_alm.strftime('%H:%M'),
-                                            'TIEMPO_REAL': tiempo_real_alm_v
-                                        })
-                                    except Exception:
-                                        continue
-                                if filas_almuerzo:
-                                    df_para_gantt_final = pd.concat([df_para_gantt_final, pd.DataFrame(filas_almuerzo)], ignore_index=True)
-                                    df_para_gantt_final = df_para_gantt_final.sort_values(by=['TECNICO', 'GANTT_START'])
 
                             cli_series_f = df_para_gantt_final['CLIENTE'].fillna('-').astype(str) if 'CLIENTE' in df_para_gantt_final.columns else pd.Series(['-'] * len(df_para_gantt_final), index=df_para_gantt_final.index).astype(str)
 
@@ -3631,17 +3654,55 @@ def main():
                                 "ALMUERZO": "#78909c"
                             }
 
-                            fig_gantt = px.timeline(
-                                df_para_gantt_final, 
-                                x_start="GANTT_START", 
-                                x_end="GANTT_END", 
-                                y="TECNICO", 
-                                color="ACTIVIDAD", 
-                                text="ACTIVIDAD",  
-                                custom_data=["INFO_HOVER"], 
-                                color_discrete_map=colores_solidos,
-                                height=max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
-                            )
+                            # --- GRÁFICO EN DOS CAPAS ---
+                            # Plotly dibuja los trazos en el orden en que se agregan, así que
+                            # el orden de fig.data define qué queda encima. Se arman dos
+                            # figuras y se combinan: primero las órdenes abiertas que siguen
+                            # corriendo (fondo), luego todo lo demás (frente). Así la barra de
+                            # una orden abierta continúa hasta la hora actual, pero las órdenes
+                            # que el técnico inició después se dibujan por encima y quedan
+                            # visibles en vez de perderse debajo.
+                            _alto_fig = max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
+                            _cats_y = sorted(df_para_gantt_final['TECNICO'].dropna().unique().tolist())
+
+                            _df_fondo = df_para_gantt_final[df_para_gantt_final['ES_FONDO'] == True]
+                            _df_frente = df_para_gantt_final[df_para_gantt_final['ES_FONDO'] != True]
+
+                            def _crear_timeline(_df):
+                                return px.timeline(
+                                    _df,
+                                    x_start="GANTT_START",
+                                    x_end="GANTT_END",
+                                    y="TECNICO",
+                                    color="ACTIVIDAD",
+                                    text="ACTIVIDAD",
+                                    custom_data=["INFO_HOVER"],
+                                    color_discrete_map=colores_solidos,
+                                    height=_alto_fig
+                                )
+
+                            if not _df_fondo.empty and not _df_frente.empty:
+                                _fig_fondo = _crear_timeline(_df_fondo)
+                                _fig_frente = _crear_timeline(_df_frente)
+
+                                # Las del fondo se atenúan un poco y no repiten leyenda, para
+                                # que se lean como "sigue en curso" sin competir con las de arriba.
+                                for _tr in _fig_fondo.data:
+                                    _tr.showlegend = False
+                                    _tr.opacity = 0.55
+
+                                fig_gantt = go.Figure(
+                                    data=list(_fig_fondo.data) + list(_fig_frente.data),
+                                    layout=_fig_frente.layout
+                                )
+                                fig_gantt.update_yaxes(categoryorder='array', categoryarray=_cats_y)
+                                fig_gantt.update_layout(barmode='overlay', height=_alto_fig)
+                                st.caption(
+                                    f"🔁 {len(_df_fondo)} orden(es) siguen abiertas: su barra continúa atenuada por "
+                                    "debajo, y las órdenes iniciadas después se muestran encima."
+                                )
+                            else:
+                                fig_gantt = _crear_timeline(df_para_gantt_final)
                             
                             fig_gantt.update_yaxes(autorange="reversed", title_text="", type="category")
 
@@ -3669,7 +3730,12 @@ def main():
                             # las órdenes abiertas (que se extienden hasta la hora actual) se
                             # encimaban unas con otras y se transparentaban entre sí, lo que
                             # producía un efecto de "rayado" en vez de bloques limpios.
-                            fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, opacity=1.0, hovertemplate="%{customdata[0]}<extra></extra>")
+                            # Se aplica a todos MENOS la opacidad, que se fija después para no
+                            # borrar la atenuación de las barras de fondo (órdenes en curso).
+                            fig_gantt.update_traces(textposition='inside', insidetextanchor='middle', marker_line_color='white', marker_line_width=1.5, hovertemplate="%{customdata[0]}<extra></extra>")
+                            for _tr in fig_gantt.data:
+                                if _tr.opacity is None:
+                                    _tr.opacity = 1.0
                             fig_gantt.update_layout(showlegend=True, legend_title_text='Identificador de Actividades', legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02), margin=dict(t=10, b=20, l=0, r=150), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)")
                             
                             st.plotly_chart(fig_gantt, use_container_width=True)
