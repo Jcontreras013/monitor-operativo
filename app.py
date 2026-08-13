@@ -598,6 +598,52 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             t = unicodedata.normalize('NFKD', str(t)).encode('ascii', 'ignore').decode('ascii')
             return re.sub(r'\s+', ' ', t).strip().upper()
 
+        # Vocabulario real de campo. Cuando RECO trabaja en los postes, la fibra
+        # se corta y el técnico lo escribe en el comentario de cierre. Estas son
+        # las formas en que efectivamente aparece redactado.
+        CLAVES_CORTE_EXTERNO = [
+            # Mención directa al responsable
+            'RECO', 'ENEE', 'ELECTRICA', 'ELECTRICIDAD', 'ENERGIA',
+            # El daño en sí
+            'CORTE DE ACOMETIDA', 'ACOMETIDA CORTADA', 'ACOMETIDA ROTA',
+            'ACOMETIDA DANADA', 'ACOMETIDA REVENTADA', 'CORTARON LA ACOMETIDA',
+            'CABLE CORTADO', 'CORTARON EL CABLE', 'FIBRA CORTADA',
+            'CORTARON LA FIBRA', 'DROP CORTADO', 'CABLE REVENTADO',
+            'ACOMETIDA', 'CORTADA', 'CORTADO', 'CORTARON', 'REVENTADA', 'REVENTADO',
+            # Causa/contexto del corte
+            'POSTE', 'POSTES', 'CAMBIO DE POSTE', 'PODA', 'ARBOL', 'RAMA',
+            'TENDIDO', 'TRONCAL', 'EMPALME', 'FUSION',
+        ]
+
+        # Se compila una sola vez. \b exige palabra completa: así "RECO" no
+        # coincide dentro de "RECONFIGURA" ni "PODA" dentro de "PODADORA".
+        _PATRON_CORTE_EXTERNO = re.compile(
+            r'\b(' + '|'.join(re.escape(k) for k in CLAVES_CORTE_EXTERNO) + r')\b'
+        )
+
+        def _es_corte_externo(row):
+            """
+            Identifica si una orden corresponde a un corte causado por trabajo
+            externo (RECO, poda, cambio de poste) y no a una falla del cliente.
+
+            Se exige DOBLE condición: que la actividad sea SOP/SOPFIBRA -- una
+            avería, no una instalación -- Y que el comentario contenga vocabulario
+            de corte físico. Sin la segunda condición entrarían todas las SOP de
+            la zona (routers, lentitud, TV), que no tienen relación con el corte
+            y desvirtuarían el conteo de impacto.
+
+            La búsqueda es por PALABRA COMPLETA, no por subcadena: buscar "RECO"
+            suelto daba falsos positivos dentro de "RECOnfigura", "RECOnexion" o
+            "RECOrrido", metiendo averías comunes al conteo del evento.
+            """
+            act = _normalizar_txt(row.get('ACTIVIDAD', ''))
+            if 'SOP' not in act:
+                return False
+            texto = _normalizar_txt(str(row.get('COMENTARIO', '')) + " " + str(row.get('RAZON_CIERRE_SOP', '')))
+            if not texto:
+                return False
+            return bool(_PATRON_CORTE_EXTERNO.search(texto))
+
         def _extraer_colonias(texto, catalogo):
             """
             Busca las colonias del catálogo dentro del comunicado.
@@ -1000,10 +1046,33 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
             st.session_state['reco_tipo'] = OPCIONES_TIPO[0]
         tipo_aviso = st.selectbox("Tipo de trabajo:", OPCIONES_TIPO, key="reco_tipo")
 
-        margen_dias_registro = st.slider(
-            "Ventana de impacto (días a monitorear después del trabajo):",
-            1, 15, 5, key="reco_margen_registro"
-        )
+        col_mg1, col_mg2 = st.columns([1, 1])
+        with col_mg1:
+            margen_dias_registro = st.slider(
+                "Ventana de impacto (días a monitorear después del trabajo):",
+                1, 15, 5, key="reco_margen_registro"
+            )
+        with col_mg2:
+            solo_cortes = st.checkbox(
+                "🎯 Solo cortes de acometida / menciones a RECO",
+                value=True,
+                key="reco_solo_cortes",
+                help="Filtra únicamente SOP/SOPFIBRA cuyo comentario indique corte de acometida, fibra cortada, poste, poda o mención directa a RECO. Desactívalo para ver todas las averías de la zona."
+            )
+
+        # Universo de órdenes a considerar. El filtro por comentario es lo que
+        # separa un corte real causado por el trabajo externo de una avería
+        # cualquiera del cliente que coincidió en fecha y colonia.
+        if solo_cortes:
+            df_fallas_reco = df_fallas[df_fallas.apply(_es_corte_externo, axis=1)].copy()
+        else:
+            df_fallas_reco = df_fallas.copy()
+
+        if solo_cortes:
+            st.caption(
+                f"Analizando **{len(df_fallas_reco)}** órdenes de corte "
+                f"(de {len(df_fallas)} averías totales en el periodo)."
+            )
 
         # ==========================================================
         # CRUCE MASIVO EN VIVO: colonias -> OLT/PON -> clientes
@@ -1067,7 +1136,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 cols_aviso_nuevo = [c.strip().upper() for c in colonias_final.split(',') if c.strip()]
                 f_trab_nuevo = pd.to_datetime(fecha_trabajo)
 
-                col_serie_n = df_fallas['COLONIA'].astype(str).str.upper()
+                col_serie_n = df_fallas_reco['COLONIA'].astype(str).str.upper()
                 mask_col_n = col_serie_n.apply(lambda x: any(ca in x or x in ca for ca in cols_aviso_nuevo))
 
                 # Además de la colonia, se cruza por PUERTO PON: si el corte tocó
@@ -1075,13 +1144,13 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 # evento aunque el nombre de la colonia esté escrito distinto.
                 pones_afectados = set(mapa_g.get('pones', []))
                 if pones_afectados:
-                    nodo_serie = df_fallas['OLT'].astype(str) + "/" + df_fallas['PON'].astype(str)
+                    nodo_serie = df_fallas_reco['OLT'].astype(str) + "/" + df_fallas_reco['PON'].astype(str)
                     mask_pon_n = nodo_serie.isin(pones_afectados)
                 else:
-                    mask_pon_n = pd.Series(False, index=df_fallas.index)
+                    mask_pon_n = pd.Series(False, index=df_fallas_reco.index)
 
-                mask_fec_n = (df_fallas['FECHA_REF'] >= f_trab_nuevo) & (df_fallas['FECHA_REF'] <= f_trab_nuevo + pd.Timedelta(days=margen_dias_registro))
-                coincid_nuevo = df_fallas[(mask_col_n | mask_pon_n) & mask_fec_n].copy()
+                mask_fec_n = (df_fallas_reco['FECHA_REF'] >= f_trab_nuevo) & (df_fallas_reco['FECHA_REF'] <= f_trab_nuevo + pd.Timedelta(days=margen_dias_registro))
+                coincid_nuevo = df_fallas_reco[(mask_col_n | mask_pon_n) & mask_fec_n].copy()
 
                 clientes_riesgo = mapa_g.get('clientes', 0)
 
@@ -1116,7 +1185,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         f"{c}: **{n}**" for c, n in resumen_por_colonia.items()
                     ))
 
-                    cols_m_n = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO'] if c in coincid_nuevo.columns]
+                    cols_m_n = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO', 'COMENTARIO'] if c in coincid_nuevo.columns]
                     st.dataframe(coincid_nuevo[cols_m_n].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
 
                     st.download_button(
@@ -1156,7 +1225,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 if not cols_aviso:
                     continue
 
-                col_serie = df_fallas['COLONIA'].astype(str).str.upper()
+                col_serie = df_fallas_reco['COLONIA'].astype(str).str.upper()
                 mask_col = col_serie.apply(lambda x: any(ca in x or x in ca for ca in cols_aviso))
 
                 # Cruce adicional por PUERTO PON usando la infraestructura que se
@@ -1165,13 +1234,13 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 # pertenece al evento aunque la colonia venga escrita distinto.
                 pones_guardados = {p.strip() for p in str(av.get('PONES', '')).split(',') if p.strip()}
                 if pones_guardados:
-                    nodo_serie_av = df_fallas['OLT'].astype(str) + "/" + df_fallas['PON'].astype(str)
+                    nodo_serie_av = df_fallas_reco['OLT'].astype(str) + "/" + df_fallas_reco['PON'].astype(str)
                     mask_pon_av = nodo_serie_av.isin(pones_guardados)
                 else:
-                    mask_pon_av = pd.Series(False, index=df_fallas.index)
+                    mask_pon_av = pd.Series(False, index=df_fallas_reco.index)
 
-                mask_fec = (df_fallas['FECHA_REF'] >= f_trab) & (df_fallas['FECHA_REF'] <= f_trab + pd.Timedelta(days=margen_dias))
-                coincidencias = df_fallas[(mask_col | mask_pon_av) & mask_fec]
+                mask_fec = (df_fallas_reco['FECHA_REF'] >= f_trab) & (df_fallas_reco['FECHA_REF'] <= f_trab + pd.Timedelta(days=margen_dias))
+                coincidencias = df_fallas_reco[(mask_col | mask_pon_av) & mask_fec]
 
                 if not coincidencias.empty:
                     pon_afectados = coincidencias[coincidencias['PON'].str.len() > 0]['PON'].nunique()
@@ -1217,7 +1286,7 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         st.markdown("**Órdenes por colonia:** " + " · ".join(f"{c}: **{n}**" for c, n in resumen_col_r.items()))
 
                         st.caption(f"Comunicado: {str(av['TEXTO'])[:250]}")
-                        cols_m = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO'] if c in coincid.columns]
+                        cols_m = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON', 'FECHA_REF', 'ESTADO', 'TECNICO', 'COMENTARIO'] if c in coincid.columns]
                         st.dataframe(coincid[cols_m].sort_values('FECHA_REF'), use_container_width=True, hide_index=True)
 
                         st.download_button(
