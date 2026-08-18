@@ -3296,7 +3296,7 @@ def main():
                             help="Órdenes iniciadas en días previos que aún no se cierran. Su barra empieza al inicio de la jornada de hoy, porque el trabajo real de días anteriores no cabe en esta línea de tiempo."
                         )
 
-                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)
+                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
 
                         # El Gantt representa TRABAJO REALIZADO en la línea de tiempo, así que
                         # una orden solo entra si tiene una hora de inicio real (HORA_INI). Una
@@ -3730,7 +3730,7 @@ def main():
                                 df_tec_hoy = df_monitor_filtrado[df_monitor_filtrado['TECNICO'] == tec]
                                 ordenes_iniciadas_hoy = df_tec_hoy[
                                     df_tec_hoy['HORA_INI'].notna() & 
-                                    (df_tec_hoy['HORA_INI'].dt.date == hoy_date_valor)
+                                    ((df_tec_hoy['HORA_INI'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
                                 ]
                                 if ordenes_iniciadas_hoy.empty:
                                     alertas_9am.append(tec)
@@ -3745,8 +3745,8 @@ def main():
 
                         # 2. Validación de Tiempos Muertos e Inactividad (> 30 Minutos)
                         df_jornada_hoy = df_monitor_filtrado[
-                            ((df_monitor_filtrado['HORA_INI'].dt.date == hoy_date_valor) | 
-                             (df_monitor_filtrado['HORA_LIQ'].dt.date == hoy_date_valor)) &
+                            (((df_monitor_filtrado['HORA_INI'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) | 
+                             ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)) &
                             (df_monitor_filtrado['TECNICO'].notna()) &
                             (df_monitor_filtrado['TECNICO'].astype(str).str.strip() != '')
                         ].copy()
@@ -3794,7 +3794,7 @@ def main():
                                 
                                 tiene_orden_activa = not group[group['HORA_INI'].notnull() & group['HORA_LIQ'].isnull()].empty
                                 if not tiene_orden_activa:
-                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & (group['HORA_LIQ'].dt.date == hoy_date_valor)]
+                                    ordenes_cerradas = group[group['HORA_LIQ'].notnull() & ((group['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)]
                                     if not ordenes_cerradas.empty:
                                         ultima_cerrada = ordenes_cerradas.sort_values(by='HORA_LIQ').iloc[-1]
                                         liq_last = ultima_cerrada.get('HORA_LIQ')
@@ -3860,7 +3860,7 @@ def main():
                                     group_sorted = group.sort_values(by='HORA_INI')
                                     ordenes_ini_hoy = group_sorted[
                                         group_sorted['HORA_INI'].notna() &
-                                        (group_sorted['HORA_INI'].dt.date == hoy_date_valor)
+                                        ((group_sorted['HORA_INI'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
                                     ]
                                     if ordenes_ini_hoy.empty:
                                         continue
