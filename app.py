@@ -2412,9 +2412,14 @@ def main():
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor, key="fecha_archivar_diario")
             
-            mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
-            mask_liq_dia = pd.to_datetime(df_base['HORA_LIQ'], errors='coerce').dt.date == fecha_cal_sel
-            mask_ape_dia = (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & (pd.to_datetime(df_base['FECHA_APE'], errors='coerce').dt.date == fecha_cal_sel)
+            # OJO: HORA_INI/HORA_LIQ/FECHA_APE llegan en UTC; Honduras es UTC-6.
+            # Sin restar las 6h, el corte de "día" quedaba desalineado con el día
+            # calendario real de Honduras y varias órdenes de días anteriores
+            # (sobre todo las de la tarde/noche) no aparecían al seleccionar esa
+            # fecha en el selector -- ver Documentación Técnica, sección 6.
+            mask_ini_dia = (pd.to_datetime(df_base['HORA_INI'], errors='coerce') - pd.Timedelta(hours=6)).dt.date == fecha_cal_sel
+            mask_liq_dia = (pd.to_datetime(df_base['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)).dt.date == fecha_cal_sel
+            mask_ape_dia = (df_base['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)) & ((pd.to_datetime(df_base['FECHA_APE'], errors='coerce') - pd.Timedelta(hours=6)).dt.date == fecha_cal_sel)
             
             df_para_gantt_diario = df_base[mask_ini_dia | mask_liq_dia | mask_ape_dia].copy()
             
@@ -2423,7 +2428,7 @@ def main():
             
             df_para_gantt_diario = df_para_gantt_diario[df_para_gantt_diario['HORA_INI'].notnull()].copy()
             
-            df_cerradas_espejo = df_para_gantt_diario[(df_para_gantt_diario['HORA_LIQ'].dt.date == fecha_cal_sel) & (df_para_gantt_diario['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
+            df_cerradas_espejo = df_para_gantt_diario[((df_para_gantt_diario['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == fecha_cal_sel) & (df_para_gantt_diario['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))].copy()
             df_asignadas_espejo = df_para_gantt_diario[df_para_gantt_diario['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)].copy()
 
             st.metric(f"Total Órdenes Cerradas ({fecha_cal_sel})", len(df_cerradas_espejo))
@@ -2476,7 +2481,9 @@ def main():
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                     # Solo entran órdenes con hora de inicio real (HORA_INI) en el día
                     # seleccionado. Una orden sin HORA_INI está apenas asignada, no trabajada.
-                    mask_ini_dia = pd.to_datetime(df_base['HORA_INI'], errors='coerce').dt.date == fecha_cal_sel
+                    # OJO: HORA_INI llega en UTC; se resta 6h para comparar contra la fecha
+                    # calendario real de Honduras (ver Documentación Técnica, sección 6).
+                    mask_ini_dia = (pd.to_datetime(df_base['HORA_INI'], errors='coerce') - pd.Timedelta(hours=6)).dt.date == fecha_cal_sel
                     df_para_gantt_diario = df_base[mask_ini_dia].copy()
                     # Mismo motivo que en el Gantt en vivo: índice único para que las
                     # asignaciones por máscara del recorte de barras no se crucen.
