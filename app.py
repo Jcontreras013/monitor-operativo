@@ -3592,7 +3592,7 @@ def main():
                             # una orden abierta continúa hasta la hora actual, pero las órdenes
                             # que el técnico inició después se dibujan por encima y quedan
                             # visibles en vez de perderse debajo.
-                            _alto_fig = max(400, len(df_para_gantt_final['TECNICO'].unique()) * 45)
+                            _alto_fig = max(400, len(df_para_gantt_final['TECNICO'].unique()) * 55)
                             _cats_y = sorted(df_para_gantt_final['TECNICO'].dropna().unique().tolist())
 
                             _df_fondo = df_para_gantt_final[df_para_gantt_final['ES_FONDO'] == True]
@@ -3617,9 +3617,21 @@ def main():
 
                                 # Las del fondo se atenúan un poco y no repiten leyenda, para
                                 # que se lean como "sigue en curso" sin competir con las de arriba.
+                                # Además se separan en 2 franjas verticales dentro de la misma
+                                # fila (fondo arriba, frente abajo) en vez de ocupar el mismo
+                                # espacio por completo: si una orden posterior cae exactamente
+                                # en el mismo horario que la que sigue abierta, la de encima ya
+                                # no tapa del todo a la de fondo -- antes desaparecía por completo
+                                # detrás de la barra opaca de arriba (ej. la PLEXISCA que seguía
+                                # abierta se perdía debajo de un INSFIBRA posterior con el mismo rango).
                                 for _tr in _fig_fondo.data:
                                     _tr.showlegend = False
                                     _tr.opacity = 0.55
+                                    _tr.width = 0.8
+                                    _tr.offset = -0.4
+                                for _tr in _fig_frente.data:
+                                    _tr.width = 0.38
+                                    _tr.offset = -0.05
 
                                 fig_gantt = go.Figure(
                                     data=list(_fig_fondo.data) + list(_fig_frente.data),
