@@ -503,7 +503,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     st.warning(f"⚠️ Se muestran {len(df_matriz)} vehículos en la matriz de infractores.")
                                     
                                     cols_estilo = [c for c in df_matriz.columns if c not in [df_matriz.columns[0], df_matriz.columns[1], 'Promedio Vel. (km/h)']]
-                                    styled_df = df_matriz.style.map(lambda x: 'background-color: #ffcccc; color: #b30000; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
+                                    styled_df = df_matriz.style.map(lambda x: 'background-color: rgba(239,68,68,0.15); color: #EF4444; font-weight: bold' if (str(x).replace('.0','').isdigit() and float(x)>0) else '', subset=cols_estilo)
                                     st.dataframe(styled_df, hide_index=True, use_container_width=True)
                                         
                                     st.download_button(
@@ -866,7 +866,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 else:
                                     st.info(f"🔒 Tu usuario ({usuario_actual}) con rol ({rol_actual}) no tiene privilegios para eliminar documentos de flota.")
                                 
-                                st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
+                                st.markdown("<hr style='margin: 0px; padding: 0px; border-top: 1px solid #2D2F39;'>", unsafe_allow_html=True)
                             col_idx += 1
                     else:
                         st.info("No se encontraron registros con esa placa.")

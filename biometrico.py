@@ -377,7 +377,7 @@ def vista_biometrico():
                     st.markdown("### 📊 Consolidado de Asistencia por Departamento")
                     
                     def style_asistencia(val):
-                        color = '#d32f2f' if 'NO MARCÓ' in str(val) else ('#388e3c' if 'VACACIONES' in str(val) else '#1f6feb')
+                        color = '#EF4444' if 'NO MARCÓ' in str(val) else ('#10B981' if 'VACACIONES' in str(val) else '#3B82F6')
                         return f'color: {color}; font-weight: bold'
 
                     cols_a_mostrar = ['Nombre', 'Clasificación', 'Cargo/Área', 'Entrada', 'Asistencia']

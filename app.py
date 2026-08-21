@@ -155,6 +155,132 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
+# DISEÑO MODERNO GLOBAL (misma paleta de siempre, solo se pule la forma)
+# ==============================================================================
+# Paleta única del sistema -- no se introduce ningún color nuevo aquí, solo se
+# reutilizan los que ya existían en las tarjetas y badges de toda la app:
+#   fondo oscuro:  #15171C / #1A1D24      borde/divisor: #2D2F39
+#   texto:         #E2E8F0 / #94A3B8 (tenue)
+#   acento:        #3B82F6 (azul)   éxito: #10B981   alerta: #F59E0B   peligro: #EF4444
+st.markdown("""
+    <style>
+    :root {
+        --mx-bg: #15171C;
+        --mx-surface: #1A1D24;
+        --mx-border: #2D2F39;
+        --mx-text: #E2E8F0;
+        --mx-text-muted: #94A3B8;
+        --mx-accent: #3B82F6;
+        --mx-success: #10B981;
+        --mx-warning: #F59E0B;
+        --mx-danger: #EF4444;
+    }
+
+    /* --- Botones: bordes redondeados, transición suave, realce al pasar el mouse --- */
+    .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
+        border-radius: 10px;
+        border: 1px solid var(--mx-border);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+        font-weight: 600;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+        border-color: var(--mx-accent);
+    }
+    .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {
+        background-color: var(--mx-accent);
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+    }
+
+    /* --- Expanders: look de tarjeta, con sombra sutil --- */
+    [data-testid="stExpander"] {
+        border: 1px solid var(--mx-border);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+    [data-testid="stExpander"] summary {
+        font-weight: 600;
+        transition: background-color 0.12s ease;
+    }
+    [data-testid="stExpander"] summary:hover {
+        background-color: rgba(59, 130, 246, 0.08);
+    }
+
+    /* --- Tabs: pill moderno con indicador de color de acento --- */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 4px;
+        border-bottom: 1px solid var(--mx-border);
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0;
+        padding: 8px 16px;
+        font-weight: 600;
+        transition: background-color 0.12s ease;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: rgba(59, 130, 246, 0.08);
+    }
+    .stTabs [aria-selected="true"] {
+        color: var(--mx-accent) !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        background-color: var(--mx-accent) !important;
+        height: 3px !important;
+        border-radius: 3px;
+    }
+
+    /* --- Tablas / dataframes: contenedor con borde y esquinas redondeadas --- */
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+        border: 1px solid var(--mx-border);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    /* --- Inputs, selects y textareas: bordes consistentes con foco en azul --- */
+    .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea,
+    .stSelectbox [data-baseweb="select"] > div, .stMultiSelect [data-baseweb="select"] > div {
+        border-radius: 8px !important;
+        border-color: var(--mx-border) !important;
+        transition: border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    .stTextInput input:focus, .stNumberInput input:focus, .stDateInput input:focus, .stTextArea textarea:focus {
+        border-color: var(--mx-accent) !important;
+        box-shadow: 0 0 0 1px var(--mx-accent) !important;
+    }
+
+    /* --- Menú lateral de navegación (st.radio usado como pestañas) como pills --- */
+    div[data-testid="stSidebar"] .stRadio [role="radiogroup"] {
+        gap: 4px;
+    }
+    div[data-testid="stSidebar"] .stRadio label {
+        border-radius: 8px;
+        padding: 6px 10px;
+        transition: background-color 0.12s ease;
+    }
+    div[data-testid="stSidebar"] .stRadio label:hover {
+        background-color: rgba(59, 130, 246, 0.1);
+    }
+
+    /* --- Métricas nativas de Streamlit, para que combinen con las tarjetas KPI custom --- */
+    [data-testid="stMetric"] {
+        background: linear-gradient(145deg, var(--mx-surface) 0%, var(--mx-bg) 100%);
+        border: 1px solid var(--mx-border);
+        border-radius: 12px;
+        padding: 12px 16px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.25);
+    }
+
+    /* --- Scrollbar más fino y acorde a la paleta --- */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: var(--mx-bg); }
+    ::-webkit-scrollbar-thumb { background: var(--mx-border); border-radius: 8px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--mx-text-muted); }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
 # CONSERVAR POSICIÓN DE SCROLL ENTRE RERUNS
 # ==============================================================================
 # Streamlit reejecuta todo el script en cada clic (cambio de pestaña, filtro,
@@ -2118,7 +2244,7 @@ def main():
             if not df_reprog.empty:
                 cols_visibles = ['DIAS_RETRASO_REAL', 'NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'COMENTARIO', 'FECHA_APE']
                 cols_finales = [c for c in cols_visibles if c in df_reprog.columns]
-                def highlight_reprog(row): return ['background-color: #1a2a3a; color: #58a6ff; font-weight: bold' if col == 'DIAS_RETRASO_REAL' else '' for col in row.index]
+                def highlight_reprog(row): return ['background-color: #15171C; color: #3B82F6; font-weight: bold' if col == 'DIAS_RETRASO_REAL' else '' for col in row.index]
                 st.dataframe(df_reprog[cols_finales].style.apply(highlight_reprog, axis=1), use_container_width=True, height=600, hide_index=True)
             else: st.success("✅ No hay órdenes reprogramadas para fechas futuras en este momento.")
 
@@ -2343,7 +2469,7 @@ def main():
 
                 st.markdown("<br>", unsafe_allow_html=True)
                 if es_movil:
-                    def highlight_total(row): return ['background-color: #2D3748; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
+                    def highlight_total(row): return ['background-color: #2D2F39; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
                     st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True)
                     st.info("Genera reportes para Dispatch.")
                     buffer = io.BytesIO()
@@ -2358,7 +2484,7 @@ def main():
                 else:
                     col_d1, col_d2 = st.columns([2, 1])
                     with col_d1:
-                        def highlight_total(row): return ['background-color: #2D3748; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
+                        def highlight_total(row): return ['background-color: #2D2F39; color: white; font-weight: bold' if row['Categoría'] == 'TOTAL PENDIENTES' else '' for _ in row.index]
                         st.dataframe(df_dispatch_final.style.apply(highlight_total, axis=1), use_container_width=True, hide_index=True, column_config={"Categoría": st.column_config.TextColumn("CLASIFICACIÓN"), "Asignadas (En Ruta)": st.column_config.NumberColumn("🚗 ASIGNADAS", format="%d"), "Nuevas (Sin Asignar)": st.column_config.NumberColumn("📥 SIN ASIGNAR", format="%d"), "TOTAL GENERAL": st.column_config.NumberColumn("📦 TOTAL", format="%d")})
                     with col_d2:
                         st.info("Genera los reportes para enviar al departamento de Dispatch.")
@@ -2451,7 +2577,7 @@ def main():
             
             def crear_velocimetro_rep(valor, titulo, total_ordenes=0):
                 color_v = "#EF4444" if valor < 60 else ("#F59E0B" if valor < 90 else "#10B981") 
-                if total_ordenes == 0: color_v = "#4B5563"
+                if total_ordenes == 0: color_v = "#94A3B8"
                 fig = go.Figure(go.Pie(values=[valor, max(0, 100 - valor)] if total_ordenes > 0 else [0, 100], labels=['Completado', 'Pendiente'], hole=0.8, marker=dict(colors=[color_v, '#2D2F39']), textinfo='none', hoverinfo='none', direction='clockwise', sort=False))
                 fig.update_layout(showlegend=False, height=160, margin=dict(l=5, r=5, t=30, b=5), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#94A3B8', 'size': 14}}, annotations=[dict(text=f"{valor:.0f}%" if total_ordenes > 0 else "N/A", x=0.5, y=0.5, font_size=24, font_color=color_v, showarrow=False, font_weight="bold")])
                 return fig
@@ -2469,7 +2595,7 @@ def main():
             st.markdown("---")
 
             if not es_movil:
-                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
+                st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                     # Solo entran órdenes con hora de inicio real (HORA_INI) en el día
@@ -3066,7 +3192,7 @@ def main():
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">CAÍDAS (OFFLINE)</div>
                     <div style="color: #EF4444; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{offline_criticos_asignadas}</div>
                 </div>
-                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #A855F7; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
+                <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #94A3B8; flex: 1; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border-top: 1px solid #2D2F39; border-right: 1px solid #2D2F39; border-bottom: 1px solid #2D2F39;">
                     <div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">TOTAL (ASIGNADAS + NO ASIGNADAS)</div>
                     <div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700; margin: 0; line-height: 1.2;">{total_pendientes_general}</div>
                 </div>
@@ -3085,10 +3211,10 @@ def main():
                     def style_dias_apply(row):
                         v = row['Dias']
                         bg_color, font_color = '', 'white'
-                        if v == ">= 7 Dia": bg_color = '#d32f2f'
-                        elif v == "= 4 a 6 Dias": bg_color = '#f57c00'
-                        elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
-                        elif v == "= 0 Dia": bg_color = '#388e3c'
+                        if v == ">= 7 Dia": bg_color = '#EF4444'
+                        elif v == "= 4 a 6 Dias": bg_color = '#F59E0B'
+                        elif v == "= 1 a 3 Dias": bg_color, font_color = '#FCD34D', 'black'
+                        elif v == "= 0 Dia": bg_color = '#10B981'
                         return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                     st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True)
                     st.write(f"**Total General Retraso: {sum_total_asignadas_v}**")
@@ -3104,10 +3230,10 @@ def main():
                         def style_dias_apply(row):
                             v = row['Dias']
                             bg_color, font_color = '', 'white'
-                            if v == ">= 7 Dia": bg_color = '#d32f2f'
-                            elif v == "= 4 a 6 Dias": bg_color = '#f57c00'
-                            elif v == "= 1 a 3 Dias": bg_color, font_color = '#fbc02d', 'black'
-                            elif v == "= 0 Dia": bg_color = '#388e3c'
+                            if v == ">= 7 Dia": bg_color = '#EF4444'
+                            elif v == "= 4 a 6 Dias": bg_color = '#F59E0B'
+                            elif v == "= 1 a 3 Dias": bg_color, font_color = '#FCD34D', 'black'
+                            elif v == "= 0 Dia": bg_color = '#10B981'
                             return [f'background-color: {bg_color}; color: {font_color}; font-weight: bold' if i == 0 else '' for i in range(len(row))]
                         st.dataframe(res_retraso_v.style.apply(style_dias_apply, axis=1), hide_index=True, use_container_width=True, height=178)
                         st.write(f"**Total: {sum_total_asignadas_v}**")
@@ -3188,7 +3314,7 @@ def main():
                         
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
-                st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
+                st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
                 
                 df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
                 
@@ -3239,20 +3365,20 @@ def main():
                         fig.update_layout(
                             showlegend=False, height=150, margin=dict(l=5, r=5, t=30, b=5),
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                            title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 14, 'weight': 'bold'}},
+                            title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#E2E8F0', 'size': 14, 'weight': 'bold'}},
                             annotations=[
                                 dict(text=texto_central, x=0.5, y=0.42, font_size=26, font_color=color_hex, showarrow=False, font_weight="bold"),
-                                dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#6B7280", showarrow=False)
+                                dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#94A3B8", showarrow=False)
                             ]
                         )
                         st.plotly_chart(fig, use_container_width=True, key=f"pie_{key_btn}")
 
                         html_badges = f"""
                         <div style="display:flex; justify-content:center; gap:8px; font-size:11px; margin-top:-15px; margin-bottom:10px;">
-                            <div style="background-color:#fee2e2; color:#b91c1c; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #fca5a5;">
+                            <div style="background-color:rgba(239,68,68,0.15); color:#EF4444; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid rgba(239,68,68,0.4);">
                                 🔴 Mora: {stats['cerr_m']}/{stats['tot_m']} ({stats['pct_m']:.0f}%)
                             </div>
-                            <div style="background-color:#dbeafe; color:#1d4ed8; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid #93c5fd;">
+                            <div style="background-color:rgba(59,130,246,0.15); color:#3B82F6; padding:3px 8px; border-radius:10px; font-weight:bold; border:1px solid rgba(59,130,246,0.4);">
                                 🔵 Hoy: {stats['cerr_h']}/{stats['tot_h']} ({stats['pct_h']:.0f}%)
                             </div>
                         </div>
@@ -3560,7 +3686,7 @@ def main():
                                 + nota_arrastre
                             )
 
-                            st.markdown("<h5 style='text-align: left; color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
+                            st.markdown("<h5 style='text-align: left; color: #3B82F6; border-bottom: 2px solid #3B82F6; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                             
                             colores_solidos = {
                                 "SOPFIBRA": "#d32f2f",         
@@ -4034,7 +4160,7 @@ def main():
                                 for idx, row in df_v_tabla_monitor.iterrows():
                                     color_borde = "#EF4444" if row.get('ES_OFFLINE') else ("#F59E0B" if row.get('ALERTA_TIEMPO') else "#3B82F6")
                                     estado_txt = str(row.get('ESTADO', 'N/D')).upper()
-                                    bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#d32f2f" if estado_txt == "ANULADA" else "#2D3748")
+                                    bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#EF4444" if estado_txt == "ANULADA" else "#2D2F39")
                             
                                     # El link de ubicación GPS solo debe mostrarse cuando el
                                     # técnico YA abrió (inició) la orden, es decir, cuando

@@ -759,10 +759,10 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             fig_ranking.add_hline(
                 y=100.0, 
                 line_dash="dash", 
-                line_color="#F8FAFC", 
+                line_color="#E2E8F0", 
                 annotation_text="Meta SLA (100%)", 
                 annotation_position="top left",
-                annotation_font=dict(color="#F8FAFC", size=10)
+                annotation_font=dict(color="#E2E8F0", size=10)
             )
             
             fig_ranking.update_layout(
@@ -786,7 +786,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                 x='Ordenes', y='TECNICO', color='Segmento', orientation='h',
                 title="📦 Productividad por Técnico (Residencial vs Plex)",
                 text_auto=True,
-                color_discrete_map={'Residencial': '#10B981', 'Plex': '#6366F1'},
+                color_discrete_map={'Residencial': '#10B981', 'Plex': '#3B82F6'},
                 category_orders={'TECNICO': orden_tecs},
                 barmode='stack'
             )
@@ -886,7 +886,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             with tab_vista_time:
                 def color_tiempos(val):
                     if val == 0:
-                        return 'color: #475569'
+                        return 'color: #94A3B8'
                     color = '#10B981' if val < 45 else ('#F59E0B' if val < 90 else '#EF4444')
                     return f'color: {color}; font-weight: bold'
 
@@ -898,7 +898,7 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
             with tab_vista_rend:
                 def color_rendimiento(val):
                     if val == 0:
-                        return 'color: #475569'
+                        return 'color: #94A3B8'
                     color = '#10B981' if val >= 100 else ('#F59E0B' if val >= 80 else '#EF4444')
                     return f'color: {color}; font-weight: bold'
 
@@ -999,11 +999,11 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         if 'ES_NO_PRESENTADO' in df_inc_tec.columns:
                             idx = row.name
                             if idx in df_inc_tec.index and df_inc_tec.loc[idx, 'ES_NO_PRESENTADO']:
-                                return ['background-color: #fee2e2; color: #991b1b'] * len(row)
+                                return ['background-color: rgba(239,68,68,0.15); color: #EF4444'] * len(row)
                         if 'ES_FALTA' in df_inc_tec.columns:
                             idx = row.name
                             if idx in df_inc_tec.index and df_inc_tec.loc[idx, 'ES_FALTA']:
-                                return ['background-color: #fef3c7; color: #92400e'] * len(row)
+                                return ['background-color: rgba(245,158,11,0.15); color: #F59E0B'] * len(row)
                         return [''] * len(row)
 
                     df_mostrar_tec = df_inc_tec[cols_mostrar].reset_index(drop=True)
