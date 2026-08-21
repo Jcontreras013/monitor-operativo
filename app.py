@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import os
@@ -152,6 +153,41 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+# ==============================================================================
+# CONSERVAR POSICIÓN DE SCROLL ENTRE RERUNS
+# ==============================================================================
+# Streamlit reejecuta todo el script en cada clic (cambio de pestaña, filtro,
+# botón, etc.) y por diseño manda el scroll al inicio de la página en cada
+# rerun. Esto se percibe como si la app "se recargara" y te regresara siempre
+# al inicio. Este snippet guarda la posición de scroll de la ventana real
+# (window.parent, porque el componente vive en un iframe) en sessionStorage
+# y la restaura después de cada rerun.
+def _conservar_scroll():
+    components.html(
+        """
+        <script>
+        (function() {
+            const win = window.parent;
+            const key = "monitor_scroll_pos";
+            try {
+                const saved = sessionStorage.getItem(key);
+                if (saved !== null) {
+                    setTimeout(function() { win.scrollTo(0, parseInt(saved, 10)); }, 60);
+                }
+                if (!win.__monitorScrollHooked) {
+                    win.__monitorScrollHooked = true;
+                    win.addEventListener("scroll", function() {
+                        sessionStorage.setItem(key, win.scrollY);
+                    });
+                }
+            } catch (e) { /* best-effort: si el navegador bloquea el acceso, no rompe nada */ }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+_conservar_scroll()
 
 # ==============================================================================
 # SINCROFONIZACIÓN DE DATOS CON LA NUBE
@@ -1544,6 +1580,7 @@ def main():
                         )
                         if ok_almuerzo:
                             st.success(f"✅ Almuerzo de {tec_almuerzo_sel} guardado para el {fecha_almuerzo_sel.strftime('%d/%m/%Y')}.")
+                            st.cache_data.clear()
                         else:
                             st.error("No se pudo guardar el almuerzo. Revisa la conexión con Sheets.")
         st.divider()

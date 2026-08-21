@@ -2593,12 +2593,15 @@ def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin:
         return False
 
 
-def cargar_almuerzos(conn, fecha: str = None) -> pd.DataFrame:
+@st.cache_data(show_spinner=False)
+def cargar_almuerzos(_conn, fecha: str = None) -> pd.DataFrame:
     """
     Carga los registros de almuerzo desde el caché local (cache_almuerzos.json).
     Si se especifica 'fecha' (formato 'YYYY-MM-DD'), filtra solo esa fecha.
     Devuelve un DataFrame vacío si el caché no existe todavía o está vacío.
-    El parámetro 'conn' se mantiene por compatibilidad pero no se usa.
+    El parámetro '_conn' se mantiene por compatibilidad pero no se usa (el guion
+    bajo le indica a st.cache_data que no intente hashearlo).
+    Se invalida llamando a st.cache_data.clear() después de guardar_almuerzo().
     """
     try:
         if not os.path.exists(_CACHE_ALMUERZOS_PATH):
@@ -2661,6 +2664,7 @@ def guardar_orden_manual(num_orden: str, actividad: str, tecnico: str, fecha: st
         return False
 
 
+@st.cache_data(show_spinner=False)
 def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
     """
     Carga las órdenes manuales desde el caché local y las devuelve ya
@@ -2669,6 +2673,7 @@ def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
     para poder concatenarlas directamente a df_base y que aparezcan en el
     Panel Operativo y en el Gantt como cualquier otra orden.
     Si se especifica 'fecha' (formato 'YYYY-MM-DD'), filtra solo esa fecha.
+    Se invalida llamando a st.cache_data.clear() después de guardar_orden_manual().
     """
     try:
         if not os.path.exists(_CACHE_ORDENES_MANUALES_PATH):
@@ -2714,6 +2719,7 @@ def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(show_spinner=False)
 def cargar_catalogo_tecnicos():
     """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""
     path = "personal_tecnico.txt"
