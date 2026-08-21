@@ -185,23 +185,23 @@ def aplicar_estilos_df(df_original_para_estilo):
     def row_styler_logic(fila_v):
         estilos_fila = [''] * len(fila_v)
         if fila_v.get('ES_OFFLINE') == True:
-            if 'NUM' in fila_v.index: estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #9b111e; color: white; font-weight: bold'
+            if 'NUM' in fila_v.index: estilos_fila[fila_v.index.get_loc('NUM')] = 'background-color: #EF4444; color: white; font-weight: bold'
         est_val = str(fila_v.get('ESTADO','')).upper().strip()
         if est_val == 'CERRADA':
             if 'TIEMPO_REAL' in fila_v.index:
                 idx_tr = fila_v.index.get_loc('TIEMPO_REAL')
                 minutos_trabajados = fila_v.get('MINUTOS_CALC', 0)
-                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #4caf50; color: white; font-weight: bold'
-                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #d32f2f; color: white; font-weight: bold'
+                if minutos_trabajados < 60: estilos_fila[idx_tr] = 'background-color: #10B981; color: white; font-weight: bold'
+                elif minutos_trabajados > 119: estilos_fila[idx_tr] = 'background-color: #EF4444; color: white; font-weight: bold'
         if fila_v.get('ALERTA_TIEMPO') == True:
-            if 'HORA_INI' in fila_v.index: estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #ff5722; color: white; font-weight: bold'
+            if 'HORA_INI' in fila_v.index: estilos_fila[fila_v.index.get_loc('HORA_INI')] = 'background-color: #F59E0B; color: white; font-weight: bold'
         if 'DIAS_RETRASO' in fila_v.index:
             idx_dias = fila_v.index.get_loc('DIAS_RETRASO')
             val_dias = fila_v['DIAS_RETRASO']
-            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #d32f2f; color: white; font-weight: bold' 
-            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #f57c00; color: white; font-weight: bold' 
-            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #fbc02d; color: black; font-weight: bold' 
-            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: #388e3c; color: white; font-weight: bold' 
+            if val_dias >= 7: estilos_fila[idx_dias] = 'background-color: #EF4444; color: white; font-weight: bold'
+            elif 4 <= val_dias <= 6: estilos_fila[idx_dias] = 'background-color: #F59E0B; color: white; font-weight: bold'
+            elif 1 <= val_dias <= 3: estilos_fila[idx_dias] = 'background-color: #FCD34D; color: black; font-weight: bold'
+            elif val_dias <= 0: estilos_fila[idx_dias] = 'background-color: #10B981; color: white; font-weight: bold'
         return estilos_fila
 
     if 'NUM' in df_visual_procesado.columns: df_visual_procesado['NUM'] = df_visual_procesado.apply(lambda r: f"⚠️ {r['NUM']}" if r.get('ALERTA_TIEMPO') else r['NUM'], axis=1)
