@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import os
 import tempfile
 import textwrap
@@ -28,12 +28,14 @@ except (ImportError, KeyError, Exception):
 
 # --- IMPORTACIÓN DE HERRAMIENTAS GCS ---
 try:
-    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs
-except ImportError:
-    pass
-
-try:
-    from tools import leer_espejo_gcs, sobrescribir_archivo_gcs, generar_docx_reporte_faltas_individual, NOMBRE_BUCKET_SISTEMA
+    from tools import (
+        leer_espejo_gcs,
+        sobrescribir_archivo_gcs,
+        generar_docx_reporte_faltas_individual,
+        get_honduras_time,
+        safestr,
+        NOMBRE_BUCKET_SISTEMA
+    )
 except ImportError:
     NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"  # respaldo si tools.py no está disponible
 
@@ -188,9 +190,6 @@ def _guardar_indice_repositorio(conn, df):
 # ==============================================================================
 API_KEY_FREEIMAGE = _leer_secreto("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
 CATBOX_USERHASH = _leer_secreto("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
-
-def get_honduras_time():
-    return datetime.now(timezone.utc) - timedelta(hours=6)
 
 @st.cache_data(show_spinner=False)
 def cargar_personal(filepath="personal_tecnico.txt"):
@@ -467,9 +466,9 @@ class MemoPDF(FPDF):
             self.cell(0, 10, f"Pagina {self.page_no()}", align="C")
 
 def sanitizar(texto):
-    import unicodedata
+    """Como safestr, pero devuelve 'N/D' en vez de cadena vacía para valores nulos."""
     if pd.isna(texto) or texto is None: return "N/D"
-    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
+    return safestr(texto)
 
 # ==============================================================================
 # 2. GENERADORES DE DOCUMENTOS DE REPORTES (PDF Y WORD)

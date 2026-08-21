@@ -9,7 +9,7 @@ import numpy as np
 import streamlit as st
 import io
 import json
-from typing import Any, List, Optional, Tuple, Union, Dict
+from typing import Any
 from google.cloud import storage
 from google.oauth2 import service_account
 import requests
@@ -35,19 +35,35 @@ def get_honduras_time() -> datetime:
 # Alias para mantener compatibilidad con las funciones de auditoría
 get_hn_time = get_honduras_time
 
-# === AGREGAR ESTA FUNCIÓN AQUÍ EN TOOLS.PY ===
+ALIAS_TECNICOS_CONOCIDOS = {
+    "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
+    "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+    "JEREMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+    "JERMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+    "JEREMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+    "JERNY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
+    "JERNY MODESTO PADILLA": "JERMI MODESTO PADILLA",
+    "ELIAS MIZAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
+    "ELIAS MISAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
+    "ELIAS MISAEL ALONZO": "ELIAS MISAEL ALONZO SABILLON",
+    "DANIEL EZEQUIEL PONCE GUZMAN": "DANIEL EZEQUIEL GUZMAN PONCE",
+    "NELAON RAMON FERRUFINO LEON": "NELSON RAMON FERRUFINO LEON"
+}
+
 def normalizar_nombre_cruce(texto):
     """
     Normaliza texto eliminando acentos, caracteres invisibles (como el Zero-Width Non-Joiner)
-    y espacios extra para asegurar un cruce de nombres óptimo.
+    y espacios extra para asegurar un cruce de nombres óptimo, y corrige alias conocidos
+    de técnicos cuyo nombre varía entre fuentes de datos.
     """
-    if pd.isnull(texto): 
+    if pd.isnull(texto):
         return ""
     t = str(texto).upper().strip()
     # Limpieza de caracteres invisibles típicos en archivos txt/copias de portales
     t = t.replace('\u200c', '').replace('\u200b', '')
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
-    return ' '.join(t.split())
+    t = ' '.join(t.split())
+    return ALIAS_TECNICOS_CONOCIDOS.get(t, t)
 
 # ==============================================================================
 # REEMPLAZAR ESTAS DOS FUNCIONES EN TOOLS.PY
@@ -884,89 +900,6 @@ def calcular_aporte_meta(row):
     elif re.search('SOP|FALLA|MANT|RECON|TRASLADO', act): return 12.5   
     else: return 12.5   
 
-# ==============================================================================
-# REPORTES DE GERENCIA ORIGINALES
-# ==============================================================================
-def generar_pdf_semanal(df_base, fecha_inicio, fecha_fin):
-    df_sem = df_base[
-        (df_base['HORA_LIQ'].dt.date >= fecha_inicio) & 
-        (df_base['HORA_LIQ'].dt.date <= fecha_fin) &
-        (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-    ].copy()
-    
-    pdf = ReporteGenerencialPDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(84, 98, 143)
-    pdf.set_draw_color(220, 220, 220)
-    pdf.set_fill_color(252, 252, 252)
-    pdf.cell(0, 10, safestr(f" Reporte Analitico Semanal: {fecha_inicio} al {fecha_fin}"), border=1, ln=True, fill=True)
-    pdf.ln(5)
-    
-    pdf.seccion_titulo("Rendimiento Operativo Semanal (Basado en Metas de Cuota)")
-    if not df_sem.empty:
-        df_sem['%_APORTE'] = df_sem.apply(calcular_aporte_meta, axis=1)
-        df_tec = df_sem.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), PORCENTAJE_META=('%_APORTE', 'sum')).reset_index()
-        df_tec['% LOGRO SEMANAL'] = ((df_tec['PORCENTAJE_META'] / 600.0) * 100).round(1)
-        df_tec = df_tec.sort_values(by='% LOGRO SEMANAL', ascending=False)
-        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO SEMANAL']].copy()
-        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO SEMANAL']
-        df_tec_table['% LOGRO SEMANAL'] = df_tec_table['% LOGRO SEMANAL'].astype(str) + '%'
-        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
-        
-        imagenes = generar_graficos_temporales(df_sem)
-        if imagenes and 'pie' in imagenes:
-            pdf.add_page()
-            pdf.seccion_titulo("Distribucion Grafica Semanal")
-            pdf.image(imagenes['pie'], x=60, y=pdf.get_y() + 5, w=90)
-            for path in imagenes.values():
-                try: os.remove(path)
-                except: pass
-    else:
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 6, "Sin datos de ordenes cerradas en este rango de fechas.", ln=True)
-        
-    return finalizar_pdf(pdf)
-
-def generar_pdf_mensual(df_base, mes, anio):
-    df_mes = df_base[
-        (df_base['HORA_LIQ'].dt.month == mes) & 
-        (df_base['HORA_LIQ'].dt.year == anio) &
-        (df_base['ESTADO'].astype(str).str.contains('CERRADA', na=False, case=False))
-    ].copy()
-    
-    pdf = ReporteGenerencialPDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(84, 98, 143)
-    pdf.set_draw_color(220, 220, 220)
-    pdf.set_fill_color(252, 252, 252)
-    meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-    nombre_mes = meses_nombres[mes - 1]
-    pdf.cell(0, 10, safestr(f" Reporte Consolidado Mensual: {nombre_mes} {anio}"), border=1, ln=True, fill=True)
-    pdf.ln(5)
-    
-    pdf.seccion_titulo("Vision Macro Gerencial - Consolidado por Ciudades")
-    if not df_mes.empty:
-        pdf.dibujar_tabla_cerradas_ciudad(df_mes)
-        imagenes = generar_graficos_temporales(df_mes)
-        if imagenes and 'pie' in imagenes:
-            pdf.add_page()
-            pdf.seccion_titulo("Distribucion Grafica Mensual")
-            pdf.image(imagenes['pie'], x=60, y=pdf.get_y() + 5, w=90)
-            for path in imagenes.values():
-                try: os.remove(path)
-                except: pass
-    else:
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 6, "Sin datos de ordenes cerradas registradas para este mes.", ln=True)
-        
-    return finalizar_pdf(pdf)
-
 def generar_pdf_cierre_diario(dfbase, fechatarget):
     dfc = dfbase[
         (dfbase['HORA_LIQ'].dt.date == fechatarget) & 
@@ -1149,98 +1082,6 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
                 try: os.remove(path)
                 except: pass
                 
-    return finalizar_pdf(pdf)
-
-def logica_generar_pdf(dfbase):
-    pdf = ReporteGenerencialPDF()
-    pdf.alias_nb_pages()
-    if 'DIAS_RETRASO' not in dfbase.columns:
-        ahora = pd.Timestamp(datetime.now())
-        dfbase['DIAS_RETRASO'] = (ahora.normalize() - pd.to_datetime(dfbase['FECHA_APE'], errors='coerce').dt.normalize()).dt.days.fillna(0).clip(lower=0).astype(int)
-        
-    def getrango(row):
-        est = str(row.get('ESTADO', '')).upper()
-        dias = row.get('DIAS_RETRASO', 0)
-        if 'ANULADA' in est: return '0. Anulada'
-        if 'CERRADA' not in est: return '6. Pendiente'
-        if dias < 1: return '1. Menos de 1 Día'
-        if 1 <= dias <= 3: return '2. De 1 a 3 Días'
-        if 4 <= dias <= 6: return '3. De 3 a 6 Días'
-        return '4. Más de 6 Días'
-        
-    dfbase['RANGOTIEMPO'] = dfbase.apply(getrango, axis=1)
-    
-    def gettipoorden(row):
-        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
-        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
-        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
-        return 'OTROS'
-        
-    dfbase['TIPOORDEN'] = dfbase.apply(gettipoorden, axis=1)
-    
-    def gettipodetalle(row):
-        txt = (str(row.get('ACTIVIDAD', '')) + " " + str(row.get('COMENTARIO', ''))).upper()
-        if 'RECON' in txt: return 'RECONEXIONES'
-        if 'TRASLADO' in txt: return 'TRASLADOS'
-        if re.search('INS|NUEVA|ADIC|CAMBIO|PLEX|MIGRACI|RECUP', txt): return 'INSTALACION'
-        if re.search('SOP|FALLA|MANT', txt): return 'MANTENIMIENTO'
-        return 'OTROS'
-        
-    dfbase['TIPOACTDETALLE'] = dfbase.apply(gettipodetalle, axis=1)
-    
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_text_color(84, 98, 143)
-    ahorastr = datetime.now().strftime('%d/%m/%Y')
-    pdf.set_draw_color(220, 220, 220)
-    pdf.set_fill_color(252, 252, 252)
-    pdf.cell(0, 10, safestr(f" Reporte Dinamico de Rendimiento de Instalacion y Mantenimiento: {ahorastr}"), border=1, ln=True, fill=True)
-    pdf.ln(5)
-    
-    pdf.seccion_titulo("Rendimiento Operativo (Basado en Metas de Cuota y Complejidad)")
-    if not dfbase.empty:
-        dfbase['%_APORTE'] = dfbase.apply(calcular_aporte_meta, axis=1)
-        df_tec = dfbase.groupby('TECNICO').agg(ORDENES=('NUM', 'count'), PORCENTAJE_META=('%_APORTE', 'sum')).reset_index()
-        
-        df_tec['% LOGRO META'] = df_tec['PORCENTAJE_META'].round(1)
-        df_tec = df_tec.sort_values(by='% LOGRO META', ascending=False)
-        
-        df_tec_table = df_tec[['TECNICO', 'ORDENES', 'PORCENTAJE_META', '% LOGRO META']].copy()
-        df_tec_table.columns = ['TECNICO', 'ORDENES', 'PUNTOS ACUMULADOS', '% LOGRO META']
-        df_tec_table['% LOGRO META'] = df_tec_table['% LOGRO META'].astype(str) + '%'
-        
-        pdf.dibujar_tabla_rendimiento(df_tec_table, anchos=[80, 30, 40, 40], alineaciones=["L", "C", "C", "C"])
-    else:
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 6, "Sin datos disponibles.", ln=True)
-
-    pdf.add_page()
-    pdf.seccion_titulo("Capitulo I - Rangos de Tiempo de Atencion")
-    pdf.ln(2)
-    dfins = dfbase[dfbase['TIPOORDEN'] == 'INSTALACION']
-    pdf.dibujar_tabla_tiempos_rangos("Instalaciones por Rango de Tiempo", "Ciudad", dfins, 'SECTOR', showtotalcol=False)
-    dfmant = dfbase[dfbase['TIPOORDEN'] == 'MANTENIMIENTO']
-    pdf.dibujar_tabla_tiempos_rangos("Mantenimientos por Rango de Tiempo", "Ciudad", dfmant, 'SECTOR', showtotalcol=False)
-    pdf.dibujar_tabla_tiempos_rangos("Rango de Tiempo de Atencion por Tipo de Orden", "Tipo Orden", dfbase, 'TIPOORDEN', showtotalcol=True)
-    
-    pdf.add_page()
-    pdf.dibujar_tabla_cerradas_ciudad(dfbase)
-    
-    imagenes = generar_graficos_temporales(dfbase)
-    if imagenes:
-        pdf.ln(5)
-        pdf.seccion_titulo("Analisis Grafico Operativo")
-        pdf.ln(5)
-        currenty = pdf.get_y()
-        if 'pie' in imagenes:
-            pdf.image(imagenes['pie'], x=15, y=currenty, w=85)
-        if 'bar' in imagenes:
-            pdf.image(imagenes['bar'], x=110, y=currenty, w=90)
-        for path in imagenes.values():
-            try: os.remove(path)
-            except: pass
-            
     return finalizar_pdf(pdf)
 
 def generar_pdf_trimestral_detallado(tabla_produccion, tabla_eficiencia, resumen_jornada):
@@ -2244,20 +2085,6 @@ def read_file_robust(uploaded_file):
 
     return forzar_columnas_unicas(df)
 
-def time_to_sec_robust(t_str):
-    if pd.isnull(t_str) or not str(t_str).strip(): return 0
-    t_str = str(t_str).strip().lower()
-    days = 0
-    if 'dia' in t_str or 'día' in t_str:
-        parts = re.split(r'dias?|días?', t_str)
-        try: days = int(parts[0].strip())
-        except: pass
-        t_str = parts[1].strip() if len(parts) > 1 else "00:00:00"
-    try:
-        h_str, m_str, s_str = t_str.split(':')
-        return days * 86400 + int(h_str) * 3600 + int(m_str) * 60 + int(s_str)
-    except: return 0
-
 def procesar_auditoria_vehiculos(df_input):
     try:
         df = df_input.copy()
@@ -2982,101 +2809,6 @@ def procesar_asistencia_vs_catalogo(df_biometrico, df_catalogo):
     # Retornamos solo Entrada, Clasificación y el Grupo_Tabla invisible
     return resultado[['Nombre', 'Clasificación', 'Cargo/Área', 'Asistencia', 'Entrada', 'Grupo_Tabla']]
 
-def extraer_seguimientos_tecnico_unificado(df_base, tecnico_nombre):
-    import re
-    import pandas as pd
-    from datetime import datetime, timedelta
-    
-    # 1. Obtener fecha actual en Honduras
-    hoy_date = (datetime.utcnow() - timedelta(hours=6)).date()
-    
-    df_limpio = df_base.copy()
-    col_tec = 'TÉCNICO' if 'TÉCNICO' in df_limpio.columns else 'TECNICO'
-    if col_tec not in df_limpio.columns:
-        return pd.DataFrame()
-        
-    tecnico_upper = str(tecnico_nombre).strip().upper()
-    df_limpio[col_tec] = df_limpio[col_tec].fillna('').astype(str).str.strip().str.upper()
-    
-    # --- 2. FILTRAR LA BANDEJA DEL TÉCNICO (Abiertas + Cerradas Hoy) ---
-    mask_vivas = df_limpio['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-    
-    col_liq = 'HORA_LIQ' if 'HORA_LIQ' in df_limpio.columns else 'FECHA LIQUIDADO'
-    if col_liq in df_limpio.columns:
-        df_limpio['_TEMP_LIQ'] = pd.to_datetime(df_limpio[col_liq], format='mixed', dayfirst=True, errors='coerce').dt.date
-    else:
-        df_limpio['_TEMP_LIQ'] = pd.NaT
-        
-    mask_cerradas_hoy = (df_limpio['ESTADO'].astype(str).str.upper() == 'CERRADA') & (df_limpio['_TEMP_LIQ'] == hoy_date)
-    
-    mask_tec = df_limpio[col_tec] == tecnico_upper
-    
-    df_bandeja = df_limpio[mask_tec & (mask_vivas | mask_cerradas_hoy)]
-    ordenes_bandeja = set(df_bandeja['NUM'].dropna().astype(str).unique())
-    mapa_estados = dict(zip(df_bandeja['NUM'].astype(str), df_bandeja['ESTADO'].astype(str).str.upper()))
-    
-    if not ordenes_bandeja:
-        return pd.DataFrame()
-        
-    seguimientos = []
-    patron = r'\*\s*(\d{2}[/-]\d{2}[/-]\d{4}\s+\d{2}:\d{2}:\d{2})\s+(.*?)\s+(agrego el comentario|agrego archivo):\s+(.*?)(?=\* \d{2}[/-]\d{2}[/-]\d{4}|$)'
-    
-    # Pre-calculamos las palabras del nombre del técnico (Ignorando DE, LA)
-    tecnico_words = set(tecnico_upper.split())
-    tecnico_words = {w for w in tecnico_words if len(w) > 2} 
-    
-    for _, row in df_base.iterrows():
-        num_celda = str(row.get('NUM', '')).strip()
-        
-        texto_celda = str(row.get('COMENTARIO', '')) + " " + str(row.get('CONTRATO FÍSICO', row.get('CONTRATO_FISICO', '')))
-        texto_celda = texto_celda.replace('\n', ' ').replace('\r', ' ')
-        
-        id_orden = "".join(filter(str.isdigit, num_celda)) if "SEGUIMIENTO" in num_celda.upper() else num_celda
-        
-        if id_orden in ordenes_bandeja:
-            matches = re.findall(patron, texto_celda, re.IGNORECASE)
-            for match in matches:
-                fecha_hora = match[0].strip()
-                autor = match[1].strip()
-                tipo_accion = match[2].strip().lower()
-                texto_crudo = match[3].strip()
-                
-                # --- NUEVO FILTRO DE IDENTIDAD (Bloqueo a Dispatch) ---
-                autor_limpio = autor.upper().replace('.', ' ')
-                autor_words = set(autor_limpio.split())
-                autor_words = {w for w in autor_words if len(w) > 2}
-                
-                # Exigimos que al menos una palabra del usuario exista en el nombre oficial
-                if len(tecnico_words.intersection(autor_words)) >= 1:
-                    
-                    if "archivo" in tipo_accion:
-                        texto_final = f"📸 Archivo adjunto: {texto_crudo}"
-                    else:
-                        texto_final = texto_crudo
-
-                    seguimientos.append({
-                        'ORDEN': id_orden, 
-                        'ESTADO_ACTUAL': mapa_estados.get(id_orden, 'DESCONOCIDO'),
-                        'FECHA_HORA': fecha_hora, 
-                        'AUTOR': autor, 
-                        'COMENTARIO': texto_final
-                    })
-
-    df_seg = pd.DataFrame(seguimientos)
-    
-    if not df_seg.empty:
-        df_seg = df_seg.drop_duplicates(subset=['FECHA_HORA', 'COMENTARIO'])
-        df_seg['FECHA_DT'] = pd.to_datetime(df_seg['FECHA_HORA'], format='mixed', dayfirst=True, errors='coerce')
-        
-        ordenes_recientes = df_seg.groupby('ORDEN')['FECHA_DT'].max().sort_values(ascending=False)
-        top_3_ordenes = ordenes_recientes.head(3).index.tolist()
-        df_seg = df_seg[df_seg['ORDEN'].isin(top_3_ordenes)]
-        
-        df_final = df_seg.sort_values(by='FECHA_DT', ascending=False).drop(columns=['FECHA_DT'])
-        return df_final
-            
-    return pd.DataFrame()
-
 def generar_pdf_ordenes_totales(df_base, fecha_corte):
     """Genera un PDF con el listado de todas las órdenes PENDIENTES, ordenadas por retraso y con columna Colonia."""
     
@@ -3241,98 +2973,6 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
 # índice de documentos pero NO para recuperar un PDF, Word o Excel. Estas cuatro
 # funciones cubren ese hueco: subir, descargar como bytes, eliminar y listar.
 
-def subir_archivo_binario_gcs(archivo, nombre_bucket, ruta_destino, content_type=None):
-    """
-    Sube un archivo binario (PDF, Word, Excel, imagen...) a GCS conservando su
-    tipo MIME real, para que al descargarlo se abra con la aplicación correcta.
-
-    'archivo' puede ser bytes o un UploadedFile de Streamlit.
-    Devuelve (True, None) si funcionó, o (False, mensaje_de_error) si falló.
-    """
-    try:
-        cliente = obtener_cliente_gcs_nativo()
-        bucket = cliente.bucket(nombre_bucket)
-        blob = bucket.blob(ruta_destino)
-
-        if isinstance(archivo, bytes):
-            datos = archivo
-        else:
-            try:
-                archivo.seek(0)
-            except Exception:
-                pass
-            datos = archivo.read()
-
-        if not datos:
-            return False, "El archivo está vacío o no se pudo leer."
-
-        blob.upload_from_string(datos, content_type=content_type or "application/octet-stream")
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-def descargar_archivo_gcs(nombre_bucket, ruta_archivo):
-    """
-    Descarga un archivo de GCS y devuelve sus bytes crudos, listos para
-    entregarlos con st.download_button. Devuelve None si no existe o falla.
-    """
-    try:
-        cliente = obtener_cliente_gcs_nativo()
-        bucket = cliente.bucket(nombre_bucket)
-        blob = bucket.blob(ruta_archivo)
-        if not blob.exists():
-            return None
-        return blob.download_as_bytes()
-    except Exception as e:
-        print(f"Error al descargar {ruta_archivo} de GCS: {e}")
-        return None
-
-
-def eliminar_archivo_gcs(nombre_bucket, ruta_archivo):
-    """
-    Elimina un archivo de GCS. Devuelve (True, None) o (False, error).
-    Si el archivo ya no existe se considera éxito, para que el índice se pueda
-    limpiar igual y no queden registros huérfanos apuntando a nada.
-    """
-    try:
-        cliente = obtener_cliente_gcs_nativo()
-        bucket = cliente.bucket(nombre_bucket)
-        blob = bucket.blob(ruta_archivo)
-        if blob.exists():
-            blob.delete()
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-def listar_archivos_gcs(nombre_bucket, prefijo=""):
-    """
-    Lista los archivos del bucket bajo un prefijo (carpeta). Devuelve una lista
-    de diccionarios con ruta, nombre, tamaño en KB y fecha de subida.
-    Sirve para reconstruir el repositorio aunque el índice CSV se dañe.
-    """
-    try:
-        cliente = obtener_cliente_gcs_nativo()
-        bucket = cliente.bucket(nombre_bucket)
-        resultados = []
-        for blob in cliente.list_blobs(bucket, prefix=prefijo):
-            if blob.name.endswith('/'):
-                continue
-            resultados.append({
-                "RUTA_GCS": blob.name,
-                "NOMBRE_ARCHIVO": blob.name.split('/')[-1],
-                "TAMANO_KB": round((blob.size or 0) / 1024, 1),
-                "FECHA_SUBIDA": blob.time_created.strftime('%Y-%m-%d %H:%M:%S') if blob.time_created else "",
-            })
-        return resultados
-    except Exception as e:
-        print(f"Error al listar archivos en GCS: {e}")
-        return []
-        
-# ==============================================================================
-# PROCESAMIENTO DE RENDIMIENTO INTEGRAL (ÓRDENES, GPS, EXPEDIENTES)
-# ==============================================================================
 def generar_pdf_rendimiento_integral_360(df_m, df_tipo_ord, df_exp_det):
     pdf = ReporteIntegral360PDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
@@ -4272,8 +3912,6 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
 # ==============================================================================
 # MOTOR DE INVENTARIO Y CONTROL DE CALIDAD (ccalidad.py) - WATI, PDF Y ELIMINACIÓN
 # ==============================================================================
-import urllib.parse
-import requests
 
 def guardar_registro_calidad(conn, data_dict: dict) -> bool:
     """

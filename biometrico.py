@@ -1,11 +1,6 @@
 import pandas as pd
 import streamlit as st
-import re
-from datetime import datetime, timedelta, time
-import io
-import os
-import tempfile
-import unicodedata
+from datetime import datetime, timedelta
 import pdfplumber
 
 from tools import (

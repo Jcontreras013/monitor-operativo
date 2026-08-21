@@ -2,26 +2,17 @@
 streamlit
 extra-streamlit-components
 streamlit-option-menu
-streamlit-js-eval
-
-# --- Nueva API y Servidor ---
-fastapi
-uvicorn
 
 # --- Base de Datos y Procesamiento ---
-oracledb
 pandas
+toml
 
 # --- Excel y Hojas de Cálculo ---
-# (Se mantienen mientras haces la transición a Oracle)
 openpyxl
 xlrd==2.0.1
 st-gsheets-connection
 gspread
 google-cloud-storage
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
 
 # --- Extracción Web y HTML ---
 beautifulsoup4
@@ -35,15 +26,10 @@ matplotlib
 # --- Manejo de PDFs ---
 fpdf2
 pdfplumber
-pymupdf
-reportlab
 python-docx
 
 #--guardado de imagenes--
 requests
-
-
-
 
 pillow
 pytesseract

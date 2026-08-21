@@ -9,8 +9,6 @@ from datetime import datetime, timedelta, time as dt_time
 import re
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
-from streamlit_js_eval import streamlit_js_eval
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 import sys
 import time
 import unicodedata
@@ -26,11 +24,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import expediente
 from login import verificar_autenticacion, mostrar_pantalla_login, mostrar_boton_logout
 from ui_components import (
-    aplicar_estilos_nativos, 
-    mostrar_comentario_cierre, 
-    mostrar_detalle_avance, 
-    aplicar_estilos_df,
-    mostrar_seguimientos_tecnico
+    mostrar_comentario_cierre,
+    mostrar_detalle_avance,
+    aplicar_estilos_df
 )
 
 import settings 
@@ -62,38 +58,30 @@ try:
     import os
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
-        COLUMNS_MAPPING, 
-        es_offline_preciso, 
-        procesar_dataframe_base, 
-        depurar_archivos_en_crudo,
-        depurar_api_con_dispositivos,
-        consultar_api_ordenes,
-        logica_generar_pdf,
+        es_offline_preciso,
+        procesar_dataframe_base,
         generar_pdf_cierre_diario,
-        generar_pdf_semanal,
-        generar_pdf_mensual,
         generar_pdf_trimestral_detallado,
         generar_pdf_primera_orden,
         generar_pdf_pendientes_dispatch,
         get_honduras_time,
-        parse_date_ultra_safe,
         procesar_fechas_seguro,
         generar_pdf_tiempos_muertos,
         generar_pdf_promedio_arranque,
         generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
-        extraer_seguimientos_tecnico_unificado,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
         leer_espejo_gcs,
-        clasificar_materiales,               
+        clasificar_materiales,
         generar_pdf_materiales_mensual,
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
         cargar_catalogo_tecnicos,
         guardar_orden_manual,
-        cargar_ordenes_manuales
+        cargar_ordenes_manuales,
+        NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
     st.error(f"⚠️ Error Crítico de Sistema: No se pudo localizar el archivo 'tools.py'. Detalle: {e}")
@@ -132,42 +120,10 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # figuraba en la lista blanca de arriba (fue justo lo que pasaba con 'ABIERTA').
 ESTADOS_TERMINALES = ['CERRADA', 'ANULADA', 'CANCELADA', 'LIQUIDADA', 'FINALIZADA', 'RECHAZADA']
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR', 'ACTIVARRES', 'DESTEFO']
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
 
 # ==============================================================================
 # FUNCIONES AUXILIARES DE SOPORTE GLOBAL
 # ==============================================================================
-def normalizar_nombre_cruce(texto):
-    """
-    Normaliza texto eliminando acentos, caracteres invisibles (como el Zero-Width Non-Joiner)
-    y espacios extra para asegurar un cruce de nombres óptimo.
-    """
-    if pd.isnull(texto): 
-        return ""
-    t = str(texto).upper().strip()
-    t = t.replace('\u200c', '').replace('\u200b', '')
-    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
-    t = ' '.join(t.split())
-    
-    alias_map = {
-        "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
-        "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
-        "JEREMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
-        "JERMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
-        "JEREMY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
-        "JERNY MODESTO PADILLA CARDONA": "JERMI MODESTO PADILLA CARDONA",
-        "JERNY MODESTO PADILLA": "JERMI MODESTO PADILLA",
-        "ELIAS MIZAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
-        "ELIAS MISAEL SABILLON": "ELIAS MISAEL ALONZO SABILLON",
-        "ELIAS MISAEL ALONZO": "ELIAS MISAEL ALONZO SABILLON",
-        "DANIEL EZEQUIEL PONCE GUZMAN": "DANIEL EZEQUIEL GUZMAN PONCE",
-        "NELAON RAMON FERRUFINO LEON": "NELSON RAMON FERRUFINO LEON"
-    }
-    
-    if t in alias_map:
-        return alias_map[t]
-    return t
-
 def mascara_tecnico_asignado(serie_tecnicos):
     """
     Retorna una serie booleana con True para técnicos asignados válidos
@@ -1720,10 +1676,10 @@ def main():
 
             if file_act_ptr is None or file_disp_ptr is None:
                 if st.session_state.get('df_base') is None:
-                    if os.path.exists("Logotipo monitor.png"):
+                    if os.path.exists("logo_monitor.png"):
                         col1_img, col2_img, col3_img = st.columns([1, 2, 1])
                         with col2_img:
-                            st.image("Logotipo monitor.png", use_container_width=True)
+                            st.image("logo_monitor.png", use_container_width=True)
                     else:
                         st.title("⚡ Monitor Operativo Maxcom PRO")
                     
@@ -1831,10 +1787,10 @@ def main():
             if df_gcs_init is not None and not df_gcs_init.empty:
                 st.session_state.df_base = df_gcs_init
             else:
-                if os.path.exists("Logotipo monitor.png"):
+                if os.path.exists("logo_monitor.png"):
                     col1_img, col2_img, col3_img = st.columns([1, 2, 1])
                     with col2_img:
-                        st.image("Logotipo monitor.png", use_container_width=True)
+                        st.image("logo_monitor.png", use_container_width=True)
                 else:
                     st.title("⚡ Monitor Operativo Maxcom PRO")
 
@@ -3006,8 +2962,8 @@ def main():
             lambda d: ">= 7 Dia" if d >= 7 else ("= 4 a 6 Dias" if d >= 4 else ("= 1 a 3 Dias" if d >= 1 else "= 0 Dia"))
         )
 
-        if os.path.exists("Logotipo monitor.png"):
-            st.image("Logotipo monitor.png", width=400) 
+        if os.path.exists("logo_monitor.png"):
+            st.image("logo_monitor.png", width=400) 
         else:
             st.title("⚡ Monitor Operativo Maxcom")
 
