@@ -1,20 +1,13 @@
 import streamlit as st
 import os
 import tempfile
-import unicodedata
-import pandas as pd
+from tools import safestr
 
 # --- IMPORTACIÓN BLINDADA PARA FPDF2 ---
 try:
     from fpdf import FPDF
 except ImportError:
     st.error("⚠️ Falta la librería FPDF. Asegúrate de que 'fpdf2' esté en tu requirements.txt")
-
-def safestr(texto):
-    """Sanitiza el texto eliminando caracteres especiales que confunden a FPDF2."""
-    if pd.isna(texto) or texto is None: 
-        return ""
-    return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
 # ==============================================================================
 # LÓGICA DE RENDERING DE PDF: ESTILO LIBRO DE TEXTO ILUSTRADO

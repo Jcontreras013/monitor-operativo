@@ -2,12 +2,10 @@ import streamlit as st
 import pandas as pd
 import re
 import requests
-import base64
 import tempfile
 import os
-import io
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 # ==============================================================================
 # IMPORTACIÓN DE FUNCIONES OPERATIVAS Y DE CONFIGURACIÓN DE TOOLS
@@ -16,7 +14,7 @@ try:
     from tools import (
         get_hn_time,
         read_file_robust,
-        time_to_sec_robust,
+        safestr,
         procesar_auditoria_vehiculos,
         procesar_auditoria_semanal,
         procesar_matriz_telemetria,
@@ -33,13 +31,6 @@ except ImportError as e:
 # ==============================================================================
 # MOTOR DE ALMACENAMIENTO: HOSTINGS INMUNES A BLOQUEOS (CATBOX + LITTERBOX)
 # ==============================================================================
-try:
-    from google.cloud import storage as gcs_storage
-    from google.oauth2 import service_account
-    GCS_DISPONIBLE = True
-except ImportError:
-    GCS_DISPONIBLE = False
-
 try:
     from tools import leer_espejo_gcs, sobrescribir_archivo_gcs
 except ImportError:
@@ -101,12 +92,6 @@ def obtener_credenciales_actuales():
                     break
                 
     return rol, user
-
-# --- AUXILIARES DE CONVERSIÓN SEGUROS ---
-def safestr(val):
-    if val is None or pd.isna(val):
-        return ""
-    return str(val).encode('latin-1', 'replace').decode('latin-1')
 
 def normalizar_unidad(v_str):
     if not v_str or pd.isna(v_str):

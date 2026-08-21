@@ -1,35 +1,6 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-
-def get_honduras_time():
-    """Ajusta la hora a UTC-6 internamente para los componentes visuales."""
-    return datetime.utcnow() - timedelta(hours=6)
-
-def aplicar_estilos_nativos():
-    """Inyecta CSS para hacer que Streamlit parezca una App Nativa en Móviles"""
-    hide_st_style = """
-        <style>
-        #MainMenu {visibility: hidden;} 
-        header {visibility: hidden;} 
-        footer {visibility: hidden;} 
-        
-        .block-container {
-            padding-top: 1rem !important; 
-            padding-bottom: 6rem !important; 
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-        }
-        
-        html, body {
-            max-width: 100%;
-            overflow-x: hidden;
-        }
-        </style>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    """
-    st.markdown(hide_st_style, unsafe_allow_html=True)
+from tools import get_honduras_time
 
 @st.dialog("Detalle de Gestión de la Orden")
 def mostrar_comentario_cierre(fila):
@@ -240,38 +211,3 @@ def aplicar_estilos_df(df_original_para_estilo):
     columnas_finales = [c for c in cols_a_mostrar if c in df_visual_procesado.columns]
     return df_visual_procesado[columnas_finales], row_styler_logic
 
-
-
-@st.dialog("Avance en Tiempo Real (Solo Técnico)", width="large")
-def mostrar_seguimientos_tecnico(tecnico, df_seguimientos):
-    st.markdown(f"### 📡 Reportes de Avance: **{tecnico}**")
-    st.caption("ℹ️ *Mostrando exclusivamente los comentarios ingresados por el técnico en sus órdenes activas.*")
-    
-    if df_seguimientos.empty:
-        st.info("⚠️ El técnico no tiene órdenes asignadas en este momento, o aún no ha ingresado ningún comentario de avance en ellas.")
-        if st.button("Cerrar", use_container_width=True): st.rerun()
-        return
-
-    ordenes_activas = df_seguimientos['ORDEN'].unique()
-    
-    for orden in ordenes_activas:
-        st.markdown(f"<h5 style='color: #F59E0B; margin-top: 15px; border-bottom: 2px solid #2D2F39; padding-bottom: 5px;'>⏳ ORDEN EN CURSO N° {orden}</h5>", unsafe_allow_html=True)
-        
-        df_orden = df_seguimientos[df_seguimientos['ORDEN'] == orden]
-        
-        for _, fila in df_orden.iterrows():
-            st.markdown(f"""
-            <div style="background-color: #1A1D24; padding: 12px; border-radius: 6px; margin-bottom: 8px; border-left: 4px solid #10B981;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                    <span style="color: #94A3B8; font-size: 11px;">Registrado por: <b style='color: #10B981;'>{fila['AUTOR']} (Técnico)</b></span>
-                    <span style="color: #3B82F6; font-size: 11px; font-weight: bold;">🕒 {fila['FECHA_HORA']}</span>
-                </div>
-                <div style="color: white; font-size: 14px; margin-top: 5px;">
-                    {fila['COMENTARIO']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Cerrar Panel", use_container_width=True): 
-        st.rerun()
