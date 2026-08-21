@@ -272,11 +272,6 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.25);
     }
 
-    /* --- Scrollbar más fino y acorde a la paleta --- */
-    ::-webkit-scrollbar { width: 10px; height: 10px; }
-    ::-webkit-scrollbar-track { background: var(--mx-bg); }
-    ::-webkit-scrollbar-thumb { background: var(--mx-border); border-radius: 8px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--mx-text-muted); }
     </style>
 """, unsafe_allow_html=True)
 
@@ -2595,7 +2590,7 @@ def main():
             st.markdown("---")
 
             if not es_movil:
-                st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
+                st.markdown("<h4 style='text-align: center; color: #1F2937;'>⏳ Eficiencia y Tiempos Operativos (Gantt Histórico)</h4><br>", unsafe_allow_html=True)
                 
                 with st.expander("⏳ LÍNEA DE TIEMPO OPERATIVA (GANTT)", expanded=False):
                     # Solo entran órdenes con hora de inicio real (HORA_INI) en el día
@@ -3314,7 +3309,7 @@ def main():
                         
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
-                st.markdown("<h4 style='text-align: center; color: #E2E8F0;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
+                st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
                 
                 df_cerradas_hoy_monitor['FECHA_APE_DT'] = pd.to_datetime(df_cerradas_hoy_monitor['FECHA_APE'], errors='coerce')
                 
@@ -3365,7 +3360,7 @@ def main():
                         fig.update_layout(
                             showlegend=False, height=150, margin=dict(l=5, r=5, t=30, b=5),
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                            title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#E2E8F0', 'size': 14, 'weight': 'bold'}},
+                            title={'text': titulo, 'y': 1.0, 'x': 0.5, 'xanchor': 'center', 'yanchor': 'top', 'font': {'color': '#1F2937', 'size': 14, 'weight': 'bold'}},
                             annotations=[
                                 dict(text=texto_central, x=0.5, y=0.42, font_size=26, font_color=color_hex, showarrow=False, font_weight="bold"),
                                 dict(text=subtexto, x=0.5, y=0.68, font_size=11, font_color="#94A3B8", showarrow=False)
