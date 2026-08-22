@@ -3179,11 +3179,22 @@ def main():
                 meses_allan = opciones_periodo_allan[periodo_sel_allan]
                 etiqueta_periodo_allan = periodo_sel_allan if meses_allan is not None else "todo el historial"
 
+                # "Cerrada" se decide SOLO por ESTADO, igual que en el resto del sistema
+                # (ver el Gantt): a veces una orden ya cerrada se queda sin HORA_LIQ
+                # limpio, y exigirlo aquí descartaba órdenes realmente cerradas. Para
+                # el filtro de periodo se usa HORA_LIQ cuando existe, y si no,
+                # FECHA_APE como referencia -- no la fecha de cierre exacta, pero mejor
+                # que perder la orden del conteo por falta de un timestamp de cierre.
+                mask_cerrada_allan = estado_up_allan.str.contains('CERRADA', na=False)
                 hora_liq_allan = pd.to_datetime(df_allan['HORA_LIQ'], errors='coerce') if 'HORA_LIQ' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
-                mask_cerrada_allan = estado_up_allan.str.contains('CERRADA', na=False) & hora_liq_allan.notna()
+                fecha_ape_allan = pd.to_datetime(df_allan['FECHA_APE'], errors='coerce') if 'FECHA_APE' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
+                fecha_ref_allan = hora_liq_allan.fillna(fecha_ape_allan)
                 if meses_allan is not None:
                     corte_allan = pd.Timestamp(get_honduras_time()) - pd.DateOffset(months=meses_allan)
-                    mask_cerrada_allan = mask_cerrada_allan & (hora_liq_allan >= corte_allan)
+                    # Una orden cerrada sin ninguna fecha utilizable se conserva en vez
+                    # de descartarla en silencio -- es mejor mostrarla de más que
+                    # perderla del conteo de "cerradas".
+                    mask_cerrada_allan = mask_cerrada_allan & (fecha_ref_allan.isna() | (fecha_ref_allan >= corte_allan))
                 df_allan_cerradas_periodo = df_allan[mask_cerrada_allan].copy()
 
                 col_al1, col_al2 = st.columns(2)
