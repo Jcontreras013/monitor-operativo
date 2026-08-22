@@ -2646,7 +2646,11 @@ def main():
                         # encima de HORA_LIQ para decidir si sigue realmente abierta, ya que
                         # a veces queda un timestamp provisional en HORA_LIQ antes del cierre
                         # confirmado (ver comentario detallado en el bloque del Gantt en vivo).
-                        mask_estado_vivo_d = df_para_gantt_diario['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                        # El criterio es "no es un estado terminal" -- no la lista blanca corta
+                        # PATRON_ASIGNADAS_VIVA_STR -- para que un estado vivo que no esté en esa
+                        # lista no deje la barra sin estirar hasta el punto de referencia.
+                        _estado_up_d = df_para_gantt_diario['ESTADO'].astype(str).str.upper().str.strip()
+                        mask_estado_vivo_d = ~_estado_up_d.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
                         mask_abierta_d = mask_estado_vivo_d
 
                         df_para_gantt_diario['GANTT_END'] = df_para_gantt_diario['HORA_LIQ']
@@ -3500,8 +3504,13 @@ def main():
                         # reindex() falla con "cannot reindex on an axis with duplicate
                         # labels" y tumbaba el Gantt.
                         if incluir_arrastradas and not df_para_gantt_final.empty:
+                            # Mismo criterio de "no terminal" que mask_viva_gantt/mask_arrastradas
+                            # arriba (no la lista blanca corta PATRON_ASIGNADAS_VIVA_STR), para
+                            # que una orden con un estado vivo que no esté en esa lista no se
+                            # quede sin marcar como arrastrada.
+                            _estado_up_arr = df_para_gantt_final['ESTADO'].astype(str).str.upper().str.strip()
                             df_para_gantt_final['ES_ARRASTRADA'] = (
-                                df_para_gantt_final['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                                ~_estado_up_arr.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
                                 & df_para_gantt_final['HORA_INI'].notna()
                                 & (df_para_gantt_final['HORA_INI'].dt.date < hoy_date_valor)
                             )
@@ -3561,14 +3570,24 @@ def main():
 
                             # Solo se estira la barra hasta la hora actual si la orden está
                             # GENUINAMENTE abierta. El criterio único es el ESTADO: si dice que
-                            # sigue en un estado vivo (PENDIENTE/INICIADA/EN RUTA/etc.), se
-                            # confía en eso por encima de HORA_LIQ -- a veces el sistema deja un
-                            # timestamp provisional en HORA_LIQ antes de que el técnico confirme
-                            # el cierre real, y exigir HORA_LIQ vacío además del ESTADO vivo
-                            # cortaba esas barras antes de tiempo, haciendo que técnicos que
-                            # siguen trabajando ahora mismo se vieran "terminados" en horas
-                            # distintas en vez de todos llegar hasta el mismo punto (ahora).
-                            mask_estado_vivo_barra = df_para_gantt_final['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                            # sigue en un estado vivo, se confía en eso por encima de HORA_LIQ --
+                            # a veces el sistema deja un timestamp provisional en HORA_LIQ antes
+                            # de que el técnico confirme el cierre real, y exigir HORA_LIQ vacío
+                            # además del ESTADO vivo cortaba esas barras antes de tiempo, haciendo
+                            # que técnicos que siguen trabajando ahora mismo se vieran
+                            # "terminados" en horas distintas en vez de todos llegar hasta el
+                            # mismo punto (ahora).
+                            #
+                            # El criterio de "abierta" es el MISMO que decide si la orden entra
+                            # al Gantt (mask_viva_gantt, arriba): "no es un estado terminal".
+                            # Antes esta barra usaba en cambio la lista blanca corta
+                            # PATRON_ASIGNADAS_VIVA_STR -- si Cepheus mandaba un estado que no es
+                            # terminal pero tampoco estaba en esa lista blanca, la orden SÍ entraba
+                            # al Gantt como abierta pero su barra NO se estiraba hasta ahora, y se
+                            # veía "más adelantada" (cerrada de a medias) que las demás órdenes
+                            # realmente abiertas del mismo momento.
+                            _estado_up_barra = df_para_gantt_final['ESTADO'].astype(str).str.upper().str.strip()
+                            mask_estado_vivo_barra = ~_estado_up_barra.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
                             mask_realmente_abierta = mask_estado_vivo_barra
 
                             df_para_gantt_final['GANTT_END'] = df_para_gantt_final['HORA_LIQ']
