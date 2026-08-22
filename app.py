@@ -293,13 +293,16 @@ st.markdown("""
         background-color: rgba(59, 130, 246, 0.1);
     }
 
-    /* --- Métricas nativas de Streamlit, para que combinen con las tarjetas KPI custom --- */
+    /* --- Métricas nativas de Streamlit: tarjeta clara con borde sutil --- */
     [data-testid="stMetric"] {
-        background: linear-gradient(145deg, var(--mx-surface) 0%, var(--mx-bg) 100%);
+        background-color: #FFFFFF;
         border: 1px solid var(--mx-border);
         border-radius: 12px;
         padding: 12px 16px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.25);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+    [data-testid="stMetric"] label, [data-testid="stMetricValue"] {
+        color: #262730 !important;
     }
 
     </style>
