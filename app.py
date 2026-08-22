@@ -3124,12 +3124,12 @@ def main():
         with tab_allan:
             st.subheader("🔧 Recuperos y Cortes — Allan")
             st.caption(
-                "RECUPERAREQUIPO, CORTEADMIN y CORTE no forman parte de la lista blanca "
+                "RETIRAREQUIPO, CORTEADM y CORTEMORA no forman parte de la lista blanca "
                 "general de actividades (ACTIVIDADES_PERMITIDAS), así que esta pestaña usa "
                 "los datos sin ese filtro para poder verlas."
             )
 
-            ACTIVIDADES_ALLAN = ['RECUPERAREQUIPO', 'CORTEADMIN', 'CORTE']
+            ACTIVIDADES_ALLAN = ['RETIRAREQUIPO', 'CORTEADM', 'CORTEMORA']
 
             if 'TECNICO' not in df_base_sin_filtro_actividad.columns or 'ACTIVIDAD' not in df_base_sin_filtro_actividad.columns:
                 df_allan = pd.DataFrame()
@@ -3139,7 +3139,7 @@ def main():
                 df_allan = df_base_sin_filtro_actividad[mask_allan_tec & mask_allan_act].copy()
 
             if df_allan.empty:
-                st.info("No se encontraron órdenes de RECUPERAREQUIPO, CORTEADMIN o CORTE asignadas a un técnico llamado Allan.")
+                st.info("No se encontraron órdenes de RETIRAREQUIPO, CORTEADM o CORTEMORA asignadas a un técnico llamado Allan.")
             else:
                 # Deduplicar por NUM: la misma orden puede aparecer varias veces si se
                 # sincronizó en momentos distintos (por ejemplo, una vez abierta y otra
