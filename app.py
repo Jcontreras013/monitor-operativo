@@ -155,6 +155,36 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
+# FORZAR TEMA CLARO (gana sobre cualquier tema oscuro externo)
+# ==============================================================================
+# base = "light" en .streamlit/config.toml no bastó -- la app seguía viendo
+# oscura, lo que indica que algo por fuera del repo (un ajuste de tema en el
+# dashboard de Streamlit Cloud, o un despliegue viejo en caché) está ganando.
+# Este bloque fuerza el fondo blanco directamente con CSS con !important
+# (los contenedores de Streamlit no traen color inline propio, así que esto
+# es seguro). El color de TEXTO se deja SIN !important a propósito: así,
+# cualquier texto que ya trae su propio color en línea (las tarjetas KPI, los
+# badges, las tablas con semáforo de colores) conserva su color -- el
+# fallback gris oscuro solo entra donde Streamlit no puso ningún color.
+st.markdown("""
+    <style>
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .main {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stHeader"] {
+        background-color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] {
+        background-color: #F0F2F6 !important;
+    }
+    .stApp, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+    .stApp p, .stApp span, .stApp label, .stApp li {
+        color: #262730;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
 # DISEÑO MODERNO GLOBAL (misma paleta de siempre, solo se pule la forma)
 # ==============================================================================
 # Paleta única del sistema -- no se introduce ningún color nuevo aquí, solo se
