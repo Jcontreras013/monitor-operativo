@@ -137,12 +137,21 @@ def _borrar_documento_repositorio(url):
         return False, str(e)
 
 
-def _cargar_indice_repositorio(conn):
-    """Lee el índice de documentos desde Google Sheets."""
+@st.cache_data(show_spinner=False)
+def _cargar_indice_repositorio(_conn):
+    """
+    Lee el índice de documentos desde Google Sheets. Se cachea porque antes
+    se leía con ttl=0 (sin caché) y se llamaba en cada rerun del módulo de
+    Expedientes -- es decir, en cada clic de CUALQUIER selectbox de la
+    sección, no solo al subir un archivo -- lo que disparaba una llamada de
+    red a Sheets por cada clic. Se invalida en _guardar_indice_repositorio().
+    El guion bajo en '_conn' le indica a st.cache_data que no intente
+    hashear la conexión.
+    """
     columnas = ["COLABORADOR", "CARPETA", "NOMBRE_ARCHIVO", "ENLACE", "TIPO",
                 "TAMANO_KB", "DESCRIPCION", "SUBIDO_POR", "FECHA_SUBIDA"]
     try:
-        df = conn.read(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, ttl=0)
+        df = _conn.read(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, ttl=0)
         df = df.dropna(how="all")
     except Exception:
         df = None
@@ -161,9 +170,12 @@ def _guardar_indice_repositorio(conn, df):
     Guarda el índice en Google Sheets. Si la hoja todavía no existe, la crea:
     conn.update() falla con WorksheetNotFound cuando la worksheet no está creada,
     y esa era la causa del error 'No se pudo guardar el índice: RepositorioDocs'.
+    Limpia la caché de _cargar_indice_repositorio al terminar, para que el
+    próximo rerun muestre el índice actualizado en vez del viejo.
     """
     try:
         conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
+        st.cache_data.clear()
         return True
     except Exception:
         pass
@@ -171,6 +183,7 @@ def _guardar_indice_repositorio(conn, df):
     # Segundo intento: crear la hoja y escribir en ella.
     try:
         conn.create(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
+        st.cache_data.clear()
         return True
     except Exception:
         pass
@@ -180,6 +193,7 @@ def _guardar_indice_repositorio(conn, df):
     try:
         conn.create(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO)
         conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
+        st.cache_data.clear()
         return True
     except Exception as e:
         st.error(f"No se pudo guardar el índice en la hoja '{HOJA_REPOSITORIO}': {e}")
