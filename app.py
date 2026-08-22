@@ -2437,13 +2437,14 @@ def main():
         # MENSAJE DE AYUDA DE NAVEGADOR PARA DESCARGAS DE REPORTES
         st.info("💡 **Para Supervisores de Campo (Móvil):** Si estás descargando un reporte en PDF o Excel desde tu celular, asegúrate de haber abierto el monitor operativo en tu navegador nativo (**Chrome o Safari**). Si abres este monitor directamente dentro de un chat de WhatsApp o WATI, las descargas serán bloqueadas por seguridad del dispositivo móvil.")
 
-        tab_diario, tab_pendientes, tab_gerencial, tab_red, tab_biometrico, tab_materiales = st.tabs([
-            "📦 Cierre Diario", 
-            "📋 Pendientes Generales", 
-            "💼 Gerencial (Trimestral)", 
+        tab_diario, tab_pendientes, tab_gerencial, tab_red, tab_biometrico, tab_materiales, tab_allan = st.tabs([
+            "📦 Cierre Diario",
+            "📋 Pendientes Generales",
+            "💼 Gerencial (Trimestral)",
             "🛰️ Análisis de Red (OLT/PON)",
             "⏱️ Biométrico",
-            "🔌 Control de Materiales"
+            "🔌 Control de Materiales",
+            "🔧 Allan (Recuperos/Cortes)"
         ])
 
         with tab_red:
@@ -3120,8 +3121,92 @@ def main():
             else:
                 st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
 
+        with tab_allan:
+            st.subheader("🔧 Recuperos y Cortes — Allan")
+            st.caption(
+                "RECUPERAREQUIPO, CORTEADMIN y CORTE no forman parte de la lista blanca "
+                "general de actividades (ACTIVIDADES_PERMITIDAS), así que esta pestaña usa "
+                "los datos sin ese filtro para poder verlas."
+            )
+
+            ACTIVIDADES_ALLAN = ['RECUPERAREQUIPO', 'CORTEADMIN', 'CORTE']
+
+            if 'TECNICO' not in df_base_sin_filtro_actividad.columns or 'ACTIVIDAD' not in df_base_sin_filtro_actividad.columns:
+                df_allan = pd.DataFrame()
+            else:
+                mask_allan_tec = df_base_sin_filtro_actividad['TECNICO'].astype(str).str.upper().str.contains('ALLAN', na=False)
+                mask_allan_act = df_base_sin_filtro_actividad['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(ACTIVIDADES_ALLAN)
+                df_allan = df_base_sin_filtro_actividad[mask_allan_tec & mask_allan_act].copy()
+
+            if df_allan.empty:
+                st.info("No se encontraron órdenes de RECUPERAREQUIPO, CORTEADMIN o CORTE asignadas a un técnico llamado Allan.")
+            else:
+                # Deduplicar por NUM: la misma orden puede aparecer varias veces si se
+                # sincronizó en momentos distintos (por ejemplo, una vez abierta y otra
+                # ya cerrada). Se conserva la versión con HORA_LIQ más reciente -- y si
+                # ninguna tiene HORA_LIQ (sigue abierta), simplemente la última vista.
+                if 'NUM' in df_allan.columns:
+                    orden_dedup = df_allan['HORA_LIQ'] if 'HORA_LIQ' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
+                    df_allan = (
+                        df_allan.assign(_ORDEN_DEDUP=orden_dedup)
+                        .sort_values(by='_ORDEN_DEDUP', na_position='first')
+                        .drop_duplicates(subset=['NUM'], keep='last')
+                        .drop(columns=['_ORDEN_DEDUP'])
+                    )
+
+                estado_up_allan = df_allan['ESTADO'].astype(str).str.upper().str.strip()
+
+                # "Pendiente" = cualquier estado que no sea terminal (mismo criterio que
+                # el resto del sistema: CERRADA/ANULADA/CANCELADA/LIQUIDADA/FINALIZADA/
+                # RECHAZADA), no una lista blanca corta de estados "vivos" -- así no se
+                # queda ninguna orden fuera del conteo por un estado inesperado.
+                mask_pendiente_allan = ~estado_up_allan.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
+                df_allan_pendientes = df_allan[mask_pendiente_allan].copy()
+
+                hora_liq_allan = pd.to_datetime(df_allan['HORA_LIQ'], errors='coerce') if 'HORA_LIQ' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
+                corte_2m_allan = pd.Timestamp(get_honduras_time()) - pd.DateOffset(months=2)
+                mask_cerrada_allan = estado_up_allan.str.contains('CERRADA', na=False) & hora_liq_allan.notna() & (hora_liq_allan >= corte_2m_allan)
+                df_allan_cerradas_2m = df_allan[mask_cerrada_allan].copy()
+
+                col_al1, col_al2 = st.columns(2)
+                with col_al1:
+                    st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"><div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; text-transform: uppercase;">PENDIENTES</div><div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700;">{len(df_allan_pendientes)}</div></div>""", unsafe_allow_html=True)
+                with col_al2:
+                    st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #10B981; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"><div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; text-transform: uppercase;">CERRADAS (ÚLTIMOS 2 MESES)</div><div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700;">{len(df_allan_cerradas_2m)}</div></div>""", unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("##### Desglose por tipo de actividad")
+                res_pend_allan = df_allan_pendientes['ACTIVIDAD'].value_counts().reindex(ACTIVIDADES_ALLAN, fill_value=0).reset_index()
+                res_pend_allan.columns = ['Actividad', 'Pendientes']
+                res_cerr_allan = df_allan_cerradas_2m['ACTIVIDAD'].value_counts().reindex(ACTIVIDADES_ALLAN, fill_value=0).reset_index()
+                res_cerr_allan.columns = ['Actividad', 'Cerradas (2 meses)']
+                df_desglose_allan = pd.merge(res_pend_allan, res_cerr_allan, on='Actividad', how='outer').fillna(0)
+                df_desglose_allan['Pendientes'] = df_desglose_allan['Pendientes'].astype(int)
+                df_desglose_allan['Cerradas (2 meses)'] = df_desglose_allan['Cerradas (2 meses)'].astype(int)
+                st.dataframe(df_desglose_allan, use_container_width=True, hide_index=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                cols_detalle_allan = ['NUM', 'ACTIVIDAD', 'ESTADO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'FECHA_APE', 'HORA_LIQ']
+                tab_allan_pend, tab_allan_cerr = st.tabs(["⏳ Detalle Pendientes", "✅ Detalle Cerradas (2 meses)"])
+                with tab_allan_pend:
+                    cols_ok_pend = [c for c in cols_detalle_allan if c in df_allan_pendientes.columns]
+                    df_mostrar_pend = df_allan_pendientes[cols_ok_pend].copy()
+                    for col_fecha in ['FECHA_APE', 'HORA_LIQ']:
+                        if col_fecha in df_mostrar_pend.columns:
+                            df_mostrar_pend[col_fecha] = pd.to_datetime(df_mostrar_pend[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+                    st.dataframe(df_mostrar_pend, use_container_width=True, hide_index=True)
+                with tab_allan_cerr:
+                    cols_ok_cerr = [c for c in cols_detalle_allan if c in df_allan_cerradas_2m.columns]
+                    df_mostrar_cerr = df_allan_cerradas_2m[cols_ok_cerr].copy()
+                    if 'HORA_LIQ' in df_mostrar_cerr.columns:
+                        df_mostrar_cerr = df_mostrar_cerr.sort_values(by='HORA_LIQ', ascending=False)
+                    for col_fecha in ['FECHA_APE', 'HORA_LIQ']:
+                        if col_fecha in df_mostrar_cerr.columns:
+                            df_mostrar_cerr[col_fecha] = pd.to_datetime(df_mostrar_cerr[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+                    st.dataframe(df_mostrar_cerr, use_container_width=True, hide_index=True)
+
     # ==============================================================================
-    # 6. MONITOR OPERATIVO EN VIVO 
+    # 6. MONITOR OPERATIVO EN VIVO
     # ==============================================================================        
     if nav_menu_diamante == "⚡ Monitor en Vivo":
         
