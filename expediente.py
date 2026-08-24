@@ -314,7 +314,16 @@ def subir_evidencias_inteligente(file_uploader_obj):
 def es_llegada_tarde(motivo, comentario):
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
-    
+
+    # "Llegada Tardía / Ausencia" es una sola opción del formulario que cubre
+    # dos casos distintos, y el motivo por sí solo siempre contiene la
+    # palabra "AUSENCIA" sin importar cuál de los dos fue -- por eso esta
+    # exclusión mira SOLO el comentario libre, nunca el motivo. Si el
+    # comentario dice explícitamente que fue una ausencia laboral, no debe
+    # contar como llegada tarde (ni para el rubro ni para la reincidencia).
+    if 'AUSENCIA LABORAL' in com_u:
+        return False
+
     EXCL = [
         'ALMUERZO', 'BREAK', 'DESCANSO', 'ORDEN', 'ÓRDEN', 'CIERRE', 
         'CERRADA', 'APERTURA', 'APERTURADA', 'LIQUIDADA', 'LIQUIDACION', 
@@ -440,9 +449,20 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
 
 def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
     motivo_str = str(motivo).upper().strip()
+    com_str = str(comentario).upper().strip()
     clasificacion = clasificar_grave_o_leve(motivo, comentario, n_tardes)
     etiqueta = f"[{clasificacion}]"
     motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").replace("[OTRO]", "").strip()
+
+    # "Llegada Tardía / Ausencia" es una sola opción del formulario de SAC que
+    # cubre dos casos distintos (llegada tarde real vs. ausencia real), así
+    # que ambos quedaban agrupados bajo el mismo rubro sin poder distinguirse.
+    # Cuando el comentario dice explícitamente "ausencia laboral", se
+    # reetiqueta como Otras Incidencias para poder identificar quién llegó
+    # tarde y quién no llegó.
+    if 'AUSENCIA' in motivo_limpio and 'AUSENCIA LABORAL' in com_str:
+        motivo_limpio = "OTRAS INCIDENCIAS"
+
     return f"{etiqueta} {motivo_limpio}"
 
 # ==============================================================================
