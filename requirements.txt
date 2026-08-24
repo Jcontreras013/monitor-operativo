@@ -2,6 +2,7 @@
 streamlit
 extra-streamlit-components
 streamlit-option-menu
+streamlit-aggrid>=0.3.4,<1.0
 
 # --- Base de Datos y Procesamiento ---
 pandas
