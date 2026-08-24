@@ -39,6 +39,13 @@ except ImportError:
     option_menu = None
 
 try:
+    from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+    from st_aggrid.shared import GridUpdateMode
+    HAS_AGGRID = True
+except ImportError:
+    HAS_AGGRID = False
+
+try:
     from auditorv import mostrar_auditoria
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
@@ -342,6 +349,112 @@ def _conservar_scroll():
         height=0,
     )
 _conservar_scroll()
+
+# ==============================================================================
+# TABLA DEL PANEL OPERATIVO CON FILTRO NATIVO POR COLUMNA (AG-GRID)
+# ==============================================================================
+def _mostrar_tabla_panel_aggrid(df_estilo_v):
+    """
+    Renderiza la tabla del Panel Operativo con AG-Grid: cada columna trae su
+    propio menú de filtro/orden (el ícono al pasar el mouse sobre el
+    encabezado), igual que en Excel. Devuelve el NUM de la orden seleccionada
+    (o None si no hay selección) -- el llamador busca la fila completa en
+    df_v_tabla_monitor, porque df_estilo_v solo trae el subconjunto de
+    columnas que se muestran, no todas las que necesita mostrar_comentario_cierre.
+    Puede lanzar una excepción si algo falla; el llamador hace fallback a
+    st.dataframe si eso pasa.
+    """
+    gb = GridOptionsBuilder.from_dataframe(df_estilo_v)
+    gb.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=False)
+    gb.configure_column('ALERTA_TIEMPO', hide=True)
+    if 'MINUTOS_CALC' in df_estilo_v.columns:
+        gb.configure_column('MINUTOS_CALC', hide=True)
+    if 'ES_OFFLINE' in df_estilo_v.columns:
+        gb.configure_column('ES_OFFLINE', headerName='🔴 OFFLINE')
+
+    if 'NUM' in df_estilo_v.columns:
+        gb.configure_column('NUM', cellStyle=JsCode("""
+            function(params) {
+                if (params.data.ES_OFFLINE === true) {
+                    return {backgroundColor: '#EF4444', color: 'white', fontWeight: 'bold'};
+                }
+                return null;
+            }
+        """))
+    if 'TIEMPO_REAL' in df_estilo_v.columns:
+        gb.configure_column('TIEMPO_REAL', cellStyle=JsCode("""
+            function(params) {
+                if (String(params.data.ESTADO).toUpperCase().trim() === 'CERRADA') {
+                    var mins = Number(params.data.MINUTOS_CALC);
+                    if (mins < 60) { return {backgroundColor: '#10B981', color: 'white', fontWeight: 'bold'}; }
+                    if (mins > 119) { return {backgroundColor: '#EF4444', color: 'white', fontWeight: 'bold'}; }
+                }
+                return null;
+            }
+        """))
+    if 'HORA_INI' in df_estilo_v.columns:
+        gb.configure_column('HORA_INI', cellStyle=JsCode("""
+            function(params) {
+                if (params.data.ALERTA_TIEMPO === true) {
+                    return {backgroundColor: '#F59E0B', color: 'white', fontWeight: 'bold'};
+                }
+                return null;
+            }
+        """))
+    if 'DIAS_RETRASO' in df_estilo_v.columns:
+        gb.configure_column('DIAS_RETRASO', cellStyle=JsCode("""
+            function(params) {
+                var v = Number(params.value);
+                if (v >= 7) { return {backgroundColor: '#EF4444', color: 'white', fontWeight: 'bold'}; }
+                if (v >= 4) { return {backgroundColor: '#F59E0B', color: 'white', fontWeight: 'bold'}; }
+                if (v >= 1) { return {backgroundColor: '#FCD34D', color: 'black', fontWeight: 'bold'}; }
+                if (v <= 0) { return {backgroundColor: '#10B981', color: 'white', fontWeight: 'bold'}; }
+                return null;
+            }
+        """))
+    if 'GPS' in df_estilo_v.columns:
+        gb.configure_column('GPS', headerName='UBICACIÓN GPS', cellRenderer=JsCode("""
+            class GpsLinkRenderer {
+                init(params) {
+                    this.eGui = document.createElement('span');
+                    if (params.value) {
+                        this.eGui.innerHTML = '<a href="' + params.value + '" target="_blank">🔍 Ver</a>';
+                    }
+                }
+                getGui() { return this.eGui; }
+            }
+        """))
+    if 'NOMBRE' in df_estilo_v.columns:
+        gb.configure_column('NOMBRE', width=200)
+    if 'COLONIA' in df_estilo_v.columns:
+        gb.configure_column('COLONIA', width=180)
+    if 'COMENTARIO' in df_estilo_v.columns:
+        gb.configure_column('COMENTARIO', width=320)
+
+    gb.configure_selection('single', use_checkbox=False)
+    grid_options = gb.build()
+
+    grid_response = AgGrid(
+        df_estilo_v,
+        gridOptions=grid_options,
+        height=600,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        theme='streamlit',
+        key="table_visual_monitor_desktop_aggrid",
+    )
+
+    seleccion = grid_response['selected_rows'] if 'selected_rows' in grid_response else None
+    if seleccion is None:
+        return None
+    if isinstance(seleccion, pd.DataFrame):
+        if seleccion.empty or 'NUM' not in seleccion.columns:
+            return None
+        return seleccion.iloc[0]['NUM']
+    if isinstance(seleccion, list) and len(seleccion) > 0:
+        return seleccion[0].get('NUM')
+    return None
 
 # ==============================================================================
 # SINCROFONIZACIÓN DE DATOS CON LA NUBE
@@ -4311,35 +4424,6 @@ def main():
                         else:
                             df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) & (df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS))]
 
-                    # === MINI FILTROS DEL PANEL ===
-                    # Filtros rápidos por Técnico/Actividad/Estado/Colonia sobre la
-                    # tabla del panel, aplicados antes de repartirla a las 3 pestañas
-                    # (Panel Operativo, Productividad, Analítica) para que las tres
-                    # queden siempre consistentes con lo filtrado.
-                    if not df_v_tabla_monitor.empty:
-                        col_mf1, col_mf2, col_mf3, col_mf4 = st.columns(4)
-                        with col_mf1:
-                            opciones_mf_tec = sorted(df_v_tabla_monitor['TECNICO'].dropna().unique().tolist()) if 'TECNICO' in df_v_tabla_monitor.columns else []
-                            filtro_mf_tec = st.multiselect("👨‍🔧 Técnico", opciones_mf_tec, key="filtro_mini_panel_tec")
-                        with col_mf2:
-                            opciones_mf_act = sorted(df_v_tabla_monitor['ACTIVIDAD'].dropna().unique().tolist()) if 'ACTIVIDAD' in df_v_tabla_monitor.columns else []
-                            filtro_mf_act = st.multiselect("🛠️ Actividad", opciones_mf_act, key="filtro_mini_panel_act")
-                        with col_mf3:
-                            opciones_mf_est = sorted(df_v_tabla_monitor['ESTADO'].dropna().unique().tolist()) if 'ESTADO' in df_v_tabla_monitor.columns else []
-                            filtro_mf_est = st.multiselect("🚦 Estado", opciones_mf_est, key="filtro_mini_panel_est")
-                        with col_mf4:
-                            opciones_mf_col = sorted(df_v_tabla_monitor['COLONIA'].dropna().unique().tolist()) if 'COLONIA' in df_v_tabla_monitor.columns else []
-                            filtro_mf_col = st.multiselect("📍 Colonia", opciones_mf_col, key="filtro_mini_panel_col")
-
-                        if filtro_mf_tec:
-                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['TECNICO'].isin(filtro_mf_tec)]
-                        if filtro_mf_act:
-                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['ACTIVIDAD'].isin(filtro_mf_act)]
-                        if filtro_mf_est:
-                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['ESTADO'].isin(filtro_mf_est)]
-                        if filtro_mf_col:
-                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['COLONIA'].isin(filtro_mf_col)]
-
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
                     with t_panel_v:
@@ -4408,25 +4492,47 @@ def main():
                                         cols.append("GPS")
                                     df_estilo_v = df_estilo_v[cols]
                         
-                                evento_monitor_diam = st.dataframe(
-                                    df_estilo_v.style.apply(row_styler, axis=1),
-                                    column_config={
-                                        "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
-                                        "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
-                                        "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
-                                        "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                        "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
-                                        "MINUTOS_CALC": None
-                                    }, 
-                                    use_container_width=True, 
-                                    height=600, 
-                                    hide_index=True, 
-                                    on_select="rerun", 
-                                    key="table_visual_monitor_desktop"
-                                )
-                        
-                                if evento_monitor_diam.selection.rows:
-                                    mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
+                                # ALERTA_TIEMPO no forma parte de las columnas visibles de
+                                # aplicar_estilos_df(), pero se necesita para colorear la celda
+                                # HORA_INI -- se agrega como columna oculta solo para eso.
+                                df_estilo_v['ALERTA_TIEMPO'] = df_v_tabla_monitor['ALERTA_TIEMPO'].values if 'ALERTA_TIEMPO' in df_v_tabla_monitor.columns else False
+
+                                fila_seleccionada_v = None
+                                usar_aggrid_v = HAS_AGGRID
+                                if usar_aggrid_v:
+                                    try:
+                                        num_sel_v = _mostrar_tabla_panel_aggrid(df_estilo_v)
+                                        if num_sel_v is not None and 'NUM' in df_v_tabla_monitor.columns:
+                                            match_v = df_v_tabla_monitor[df_v_tabla_monitor['NUM'].astype(str) == str(num_sel_v)]
+                                            if not match_v.empty:
+                                                fila_seleccionada_v = match_v.iloc[0]
+                                    except Exception as e_aggrid:
+                                        st.caption(f"⚠️ No se pudo cargar la tabla con filtros por columna, se muestra la versión estándar. Detalle: {e_aggrid}")
+                                        fila_seleccionada_v = None
+                                        usar_aggrid_v = False
+
+                                if not usar_aggrid_v:
+                                    evento_monitor_diam = st.dataframe(
+                                        df_estilo_v.drop(columns=['ALERTA_TIEMPO'], errors='ignore').style.apply(row_styler, axis=1),
+                                        column_config={
+                                            "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
+                                            "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
+                                            "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
+                                            "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
+                                            "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
+                                            "MINUTOS_CALC": None
+                                        },
+                                        use_container_width=True,
+                                        height=600,
+                                        hide_index=True,
+                                        on_select="rerun",
+                                        key="table_visual_monitor_desktop"
+                                    )
+                                    if evento_monitor_diam.selection.rows:
+                                        fila_seleccionada_v = df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]]
+
+                                if fila_seleccionada_v is not None:
+                                    mostrar_comentario_cierre(fila_seleccionada_v)
                         else:
                             st.warning("No hay registros disponibles para mostrar.")
 
