@@ -230,11 +230,14 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
     }
 
-    /* --- Expanders: look de tarjeta, con sombra sutil --- */
+    /* --- Expanders: look de tarjeta, con sombra sutil ---
+       Sin overflow:hidden -- lo tenía antes para recortar el contenido a las
+       esquinas redondeadas, pero eso también recortaba el scroll horizontal
+       de tablas anchas (como la del Panel Operativo con AG-Grid) que viven
+       dentro de un expander, dejándolas sin poder desplazarse a los lados. */
     [data-testid="stExpander"] {
         border: 1px solid var(--mx-border);
         border-radius: 12px;
-        overflow: hidden;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
     }
     [data-testid="stExpander"] summary {
@@ -431,7 +434,11 @@ def _mostrar_tabla_panel_aggrid(df_estilo_v):
     if 'COMENTARIO' in df_estilo_v.columns:
         gb.configure_column('COMENTARIO', width=320)
 
-    gb.configure_selection('single', use_checkbox=False)
+    # use_checkbox=True: la selección se hace con el checkbox de la primera
+    # columna, no con clic en cualquier parte de la fila -- así se puede
+    # seleccionar texto de una celda para copiarlo sin que se abra el
+    # detalle de la orden por accidente.
+    gb.configure_selection('single', use_checkbox=True)
     grid_options = gb.build()
 
     grid_response = AgGrid(
