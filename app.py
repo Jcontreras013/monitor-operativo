@@ -4306,11 +4306,39 @@ def main():
                                 df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
                             else:
                                 df_v_tabla_monitor = df_solo_asignadas_monitor
-                        elif status_final_btn == "C_HOY": 
+                        elif status_final_btn == "C_HOY":
                             df_v_tabla_monitor = df_cerradas_hoy_monitor
-                        else: 
+                        else:
                             df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) & (df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS))]
-                        
+
+                    # === MINI FILTROS DEL PANEL ===
+                    # Filtros rápidos por Técnico/Actividad/Estado/Colonia sobre la
+                    # tabla del panel, aplicados antes de repartirla a las 3 pestañas
+                    # (Panel Operativo, Productividad, Analítica) para que las tres
+                    # queden siempre consistentes con lo filtrado.
+                    if not df_v_tabla_monitor.empty:
+                        col_mf1, col_mf2, col_mf3, col_mf4 = st.columns(4)
+                        with col_mf1:
+                            opciones_mf_tec = sorted(df_v_tabla_monitor['TECNICO'].dropna().unique().tolist()) if 'TECNICO' in df_v_tabla_monitor.columns else []
+                            filtro_mf_tec = st.multiselect("👨‍🔧 Técnico", opciones_mf_tec, key="filtro_mini_panel_tec")
+                        with col_mf2:
+                            opciones_mf_act = sorted(df_v_tabla_monitor['ACTIVIDAD'].dropna().unique().tolist()) if 'ACTIVIDAD' in df_v_tabla_monitor.columns else []
+                            filtro_mf_act = st.multiselect("🛠️ Actividad", opciones_mf_act, key="filtro_mini_panel_act")
+                        with col_mf3:
+                            opciones_mf_est = sorted(df_v_tabla_monitor['ESTADO'].dropna().unique().tolist()) if 'ESTADO' in df_v_tabla_monitor.columns else []
+                            filtro_mf_est = st.multiselect("🚦 Estado", opciones_mf_est, key="filtro_mini_panel_est")
+                        with col_mf4:
+                            opciones_mf_col = sorted(df_v_tabla_monitor['COLONIA'].dropna().unique().tolist()) if 'COLONIA' in df_v_tabla_monitor.columns else []
+                            filtro_mf_col = st.multiselect("📍 Colonia", opciones_mf_col, key="filtro_mini_panel_col")
+
+                        if filtro_mf_tec:
+                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['TECNICO'].isin(filtro_mf_tec)]
+                        if filtro_mf_act:
+                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['ACTIVIDAD'].isin(filtro_mf_act)]
+                        if filtro_mf_est:
+                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['ESTADO'].isin(filtro_mf_est)]
+                        if filtro_mf_col:
+                            df_v_tabla_monitor = df_v_tabla_monitor[df_v_tabla_monitor['COLONIA'].isin(filtro_mf_col)]
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
             
