@@ -4506,6 +4506,8 @@ def main():
 
                                 fila_seleccionada_v = None
                                 usar_aggrid_v = HAS_AGGRID
+                                if not usar_aggrid_v:
+                                    st.caption("⚠️ El módulo de filtros por columna (streamlit-aggrid) no está instalado en este servidor, se muestra la tabla estándar sin flechas de filtro. Revisa el log de despliegue en Streamlit Cloud.")
                                 if usar_aggrid_v:
                                     try:
                                         num_sel_v = _mostrar_tabla_panel_aggrid(df_estilo_v)
