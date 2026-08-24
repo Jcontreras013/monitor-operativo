@@ -39,6 +39,13 @@ except ImportError:
     option_menu = None
 
 try:
+    from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+    from st_aggrid.shared import GridUpdateMode
+    HAS_AGGRID = True
+except ImportError:
+    HAS_AGGRID = False
+
+try:
     from auditorv import mostrar_auditoria
 except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
@@ -342,6 +349,142 @@ def _conservar_scroll():
         height=0,
     )
 _conservar_scroll()
+
+# ==============================================================================
+# TABLA DEL PANEL OPERATIVO CON FILTRO POR COLUMNA (AG-GRID)
+# ==============================================================================
+def _mostrar_tabla_panel_aggrid(df_estilo_v):
+    """
+    Misma tabla del Panel Operativo, pero con una caja de filtro propia debajo
+    de CADA encabezado de columna. Todo lo demás se conserva igual que en la
+    tabla original: primera columna con el recuadro de selección que abre la
+    ventana de detalle, colores de alerta, link de GPS y desplazamiento
+    horizontal.
+
+    Devuelve el NUM de la orden seleccionada (o None). El llamador busca la
+    fila completa en df_v_tabla_monitor, porque df_estilo_v solo trae el
+    subconjunto de columnas visibles y mostrar_comentario_cierre necesita
+    todas. Si algo falla, lanza excepción y el llamador vuelve a st.dataframe.
+    """
+    df_grid = df_estilo_v.copy()
+
+    # Columna dedicada SOLO para el recuadro de selección, fijada a la
+    # izquierda. Sin ella, streamlit-aggrid mete el recuadro DENTRO de la
+    # primera columna de datos (DIAS_RETRASO), que va coloreada y lo tapa --
+    # ese era el motivo de que pareciera que "se quitó la primera columna".
+    df_grid.insert(0, 'SEL', '')
+
+    gb = GridOptionsBuilder.from_dataframe(df_grid)
+    # floatingFilter=True: la caja de filtro queda SIEMPRE visible bajo cada
+    # encabezado, no escondida detrás de un ícono.
+    gb.configure_default_column(filter=True, sortable=True, resizable=True, floatingFilter=True)
+    gb.configure_column('SEL', headerName='', width=46, minWidth=46, maxWidth=46,
+                        pinned='left', filter=False, sortable=False, resizable=False,
+                        checkboxSelection=True, floatingFilter=False)
+    gb.configure_column('ALERTA_TIEMPO', hide=True)
+    if 'MINUTOS_CALC' in df_grid.columns:
+        gb.configure_column('MINUTOS_CALC', hide=True)
+    if 'ES_OFFLINE' in df_grid.columns:
+        gb.configure_column('ES_OFFLINE', headerName='🔴 OFFLINE')
+
+    if 'NUM' in df_grid.columns:
+        gb.configure_column('NUM', cellStyle=JsCode("""
+            function(params) {
+                if (params.data.ES_OFFLINE === true) {
+                    return {backgroundColor: '#EF4444', color: 'white', fontWeight: 'bold'};
+                }
+                return null;
+            }
+        """))
+    if 'TIEMPO_REAL' in df_grid.columns:
+        gb.configure_column('TIEMPO_REAL', cellStyle=JsCode("""
+            function(params) {
+                if (String(params.data.ESTADO).toUpperCase().trim() === 'CERRADA') {
+                    var mins = Number(params.data.MINUTOS_CALC);
+                    if (mins < 60) { return {backgroundColor: '#10B981', color: 'white', fontWeight: 'bold'}; }
+                    if (mins > 119) { return {backgroundColor: '#EF4444', color: 'white', fontWeight: 'bold'}; }
+                }
+                return null;
+            }
+        """))
+    if 'HORA_INI' in df_grid.columns:
+        gb.configure_column('HORA_INI', cellStyle=JsCode("""
+            function(params) {
+                if (params.data.ALERTA_TIEMPO === true) {
+                    return {backgroundColor: '#F59E0B', color: 'white', fontWeight: 'bold'};
+                }
+                return null;
+            }
+        """))
+    if 'DIAS_RETRASO' in df_grid.columns:
+        gb.configure_column('DIAS_RETRASO', cellStyle=JsCode("""
+            function(params) {
+                var v = Number(params.value);
+                if (v >= 7) { return {backgroundColor: '#EF4444', color: 'white', fontWeight: 'bold'}; }
+                if (v >= 4) { return {backgroundColor: '#F59E0B', color: 'white', fontWeight: 'bold'}; }
+                if (v >= 1) { return {backgroundColor: '#FCD34D', color: 'black', fontWeight: 'bold'}; }
+                if (v <= 0) { return {backgroundColor: '#10B981', color: 'white', fontWeight: 'bold'}; }
+                return null;
+            }
+        """))
+    if 'GPS' in df_grid.columns:
+        gb.configure_column('GPS', headerName='UBICACIÓN GPS', width=130, cellRenderer=JsCode("""
+            class GpsLinkRenderer {
+                init(params) {
+                    this.eGui = document.createElement('span');
+                    if (params.value) {
+                        this.eGui.innerHTML = '<a href="' + params.value + '" target="_blank">🔍 Ver</a>';
+                    }
+                }
+                getGui() { return this.eGui; }
+            }
+        """))
+    if 'NOMBRE' in df_grid.columns:
+        gb.configure_column('NOMBRE', width=200)
+    if 'COLONIA' in df_grid.columns:
+        gb.configure_column('COLONIA', width=180)
+    if 'COMENTARIO' in df_grid.columns:
+        gb.configure_column('COMENTARIO', width=320)
+
+    gb.configure_selection('single', use_checkbox=True)
+    grid_options = gb.build()
+
+    # #gridToolBar es una franja de 30px que streamlit-aggrid dibuja ARRIBA de
+    # la tabla: empuja todo hacia abajo y deja la barra de desplazamiento
+    # horizontal FUERA del alto del iframe, o sea invisible e inalcanzable.
+    # Ocultarla devuelve esos 30px y la barra vuelve a quedar dentro. Se fuerza
+    # además que la barra se vea siempre, sin depender del scroll superpuesto
+    # del navegador.
+    css_grid = {
+        "#gridToolBar": {"display": "none !important"},
+        ".ag-body-horizontal-scroll-viewport::-webkit-scrollbar": {"height": "12px !important"},
+        ".ag-body-horizontal-scroll-viewport::-webkit-scrollbar-thumb": {
+            "background": "#94A3B8 !important", "border-radius": "6px !important"
+        },
+    }
+
+    grid_response = AgGrid(
+        df_grid,
+        gridOptions=grid_options,
+        height=600,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        theme='streamlit',
+        custom_css=css_grid,
+        key="table_visual_monitor_desktop_aggrid",
+    )
+
+    seleccion = grid_response['selected_rows'] if 'selected_rows' in grid_response else None
+    if seleccion is None:
+        return None
+    if isinstance(seleccion, pd.DataFrame):
+        if seleccion.empty or 'NUM' not in seleccion.columns:
+            return None
+        return seleccion.iloc[0]['NUM']
+    if isinstance(seleccion, list) and len(seleccion) > 0:
+        return seleccion[0].get('NUM')
+    return None
 
 # ==============================================================================
 # SINCROFONIZACIÓN DE DATOS CON LA NUBE
@@ -4380,25 +4523,47 @@ def main():
                                         cols.append("GPS")
                                     df_estilo_v = df_estilo_v[cols]
                         
-                                evento_monitor_diam = st.dataframe(
-                                    df_estilo_v.style.apply(row_styler, axis=1),
-                                    column_config={
-                                        "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
-                                        "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
-                                        "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
-                                        "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                        "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
-                                        "MINUTOS_CALC": None
-                                    }, 
-                                    use_container_width=True, 
-                                    height=600, 
-                                    hide_index=True, 
-                                    on_select="rerun", 
-                                    key="table_visual_monitor_desktop"
-                                )
-                        
-                                if evento_monitor_diam.selection.rows:
-                                    mostrar_comentario_cierre(df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]])
+                                # ALERTA_TIEMPO no viene entre las columnas visibles de
+                                # aplicar_estilos_df(), pero se necesita para pintar la
+                                # celda HORA_INI: se agrega como columna oculta.
+                                df_estilo_v['ALERTA_TIEMPO'] = df_v_tabla_monitor['ALERTA_TIEMPO'].values if 'ALERTA_TIEMPO' in df_v_tabla_monitor.columns else False
+
+                                fila_seleccionada_v = None
+                                usar_aggrid_v = HAS_AGGRID
+                                if usar_aggrid_v:
+                                    try:
+                                        num_sel_v = _mostrar_tabla_panel_aggrid(df_estilo_v)
+                                        if num_sel_v is not None and 'NUM' in df_v_tabla_monitor.columns:
+                                            match_v = df_v_tabla_monitor[df_v_tabla_monitor['NUM'].astype(str) == str(num_sel_v)]
+                                            if not match_v.empty:
+                                                fila_seleccionada_v = match_v.iloc[0]
+                                    except Exception as e_aggrid:
+                                        st.caption(f"⚠️ No se pudo cargar la tabla con filtros por columna, se muestra la versión estándar. Detalle: {e_aggrid}")
+                                        fila_seleccionada_v = None
+                                        usar_aggrid_v = False
+
+                                if not usar_aggrid_v:
+                                    evento_monitor_diam = st.dataframe(
+                                        df_estilo_v.drop(columns=['ALERTA_TIEMPO'], errors='ignore').style.apply(row_styler, axis=1),
+                                        column_config={
+                                            "GPS": st.column_config.LinkColumn("UBICACIÓN GPS", display_text="🔍 Ver"),
+                                            "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
+                                            "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
+                                            "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
+                                            "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
+                                            "MINUTOS_CALC": None
+                                        },
+                                        use_container_width=True,
+                                        height=600,
+                                        hide_index=True,
+                                        on_select="rerun",
+                                        key="table_visual_monitor_desktop"
+                                    )
+                                    if evento_monitor_diam.selection.rows:
+                                        fila_seleccionada_v = df_v_tabla_monitor.iloc[evento_monitor_diam.selection.rows[0]]
+
+                                if fila_seleccionada_v is not None:
+                                    mostrar_comentario_cierre(fila_seleccionada_v)
                         else:
                             st.warning("No hay registros disponibles para mostrar.")
 
