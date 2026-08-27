@@ -1907,11 +1907,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 type="primary"
                             )
                         else:
+                            # Sin st.rerun(): el botón de descarga se dibuja aquí
+                            # mismo. Antes se recargaba toda la página para poder
+                            # mostrarlo, y esa recarga completa es la que dejaba
+                            # al usuario de vuelta al inicio del módulo.
                             if st.button("📄 Preparar PDF", key=f"btn_pdf_{tab_id}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
                                     st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar)
                                     st.session_state['estado_pdf_actual'] = id_estado_pdf
-                                    st.rerun()
+                                st.download_button(
+                                    label="⬇️ Descargar PDF",
+                                    data=st.session_state['pdf_bytes_listo'],
+                                    file_name=nombre_archivo_pdf,
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    type="primary",
+                                    key=f"dl_pdf_directo_{tab_id}"
+                                )
 
                 with c_b_docx:
                     if not df_mostrar.empty:
@@ -1934,11 +1946,21 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     type="primary"
                                 )
                             else:
+                                # Igual que el PDF: se dibuja la descarga en el
+                                # acto, sin recargar la página completa.
                                 if st.button("📝 Preparar Word", key=f"btn_docx_{tab_id}", use_container_width=True):
                                     with st.spinner("Generando Word (.docx)..."):
                                         st.session_state['docx_bytes_listo'] = generar_docx_consolidado(df_mostrar)
                                         st.session_state['estado_docx_actual'] = id_estado_docx
-                                        st.rerun()
+                                    st.download_button(
+                                        label="⬇️ Descargar Word",
+                                        data=st.session_state['docx_bytes_listo'],
+                                        file_name=nombre_archivo_docx,
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        use_container_width=True,
+                                        type="primary",
+                                        key=f"dl_docx_directo_{tab_id}"
+                                    )
                         else:
                             st.button("📝 Word Desactivado", disabled=True, help="Agrega 'python-docx' a requirements.txt para habilitar descargas en Word", use_container_width=True, key=f"btn_docx_disabled_{tab_id}")
 
