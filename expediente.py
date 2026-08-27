@@ -253,6 +253,19 @@ def cargar_personal_admin(filepath="personal_sac.txt"):
     except:
         return {}
 
+def extraer_departamento(nombre_etiquetado):
+    """
+    Los colaboradores administrativos se guardan como "NOMBRE (DEPARTAMENTO)".
+    Devuelve el departamento en mayúsculas y sin acentos ("ADMINISTRACION"),
+    o "SIN ÁREA" si el registro no trae etiqueta.
+    """
+    m = re.search(r'\(([^)]*)\)\s*$', str(nombre_etiquetado))
+    if not m:
+        return "SIN ÁREA"
+    dep = m.group(1).strip().upper()
+    dep = unicodedata.normalize('NFKD', dep).encode('ascii', 'ignore').decode('ascii')
+    return " ".join(dep.split()) or "SIN ÁREA"
+
 # ==============================================================================
 # MOTOR AUXILIAR DE SUBIDA A NUBE (CATBOX PARA PDF / FREEIMAGE PARA IMÁGENES)
 # ==============================================================================
@@ -311,17 +324,56 @@ def subir_evidencias_inteligente(file_uploader_obj):
 # ==============================================================================
 # MOTOR DE CLASIFICACIÓN INTELIGENTE DE INCIDENCIAS (EXCLUSIÓN DE ÓRDENES)
 # ==============================================================================
+# Motivos oficiales, separados: llegar tarde y no presentarse son dos faltas
+# distintas y deben contarse por separado en KPIs y reportes.
+MOTIVO_LLEGADA_TARDE = "LLEGADA TARDÍA"
+MOTIVO_AUSENCIA = "AUSENCIA LABORAL"
+
+def es_ausencia_laboral(motivo, comentario):
+    """
+    True si el registro es una AUSENCIA (no se presentó) y no una llegada tarde.
+
+    Hoy el formulario ofrece los dos motivos por separado, así que basta con
+    leer el motivo. Pero los registros viejos se guardaron con el motivo
+    combinado "LLEGADA TARDÍA / AUSENCIA", que no distingue cuál de los dos
+    fue: en ese caso la única pista está en el comentario libre.
+    """
+    motivo_u = str(motivo).upper().strip()
+    com_u = str(comentario).upper().strip()
+
+    tiene_tarde = 'TARD' in motivo_u
+    tiene_ausencia = 'AUSENCIA' in motivo_u or 'INASISTENCIA' in motivo_u
+
+    if tiene_ausencia and not tiene_tarde:
+        return True
+    if tiene_tarde and not tiene_ausencia:
+        return False
+    if tiene_tarde and tiene_ausencia:
+        # Motivo combinado antiguo: decide el comentario.
+        return 'AUSENCIA' in com_u or 'INASISTENCIA' in com_u
+    return 'AUSENCIA LABORAL' in com_u
+
+def normalizar_motivo(motivo, comentario):
+    """
+    Devuelve el motivo ya separado en sus dos categorías reales cuando se
+    trata del antiguo "LLEGADA TARDÍA / AUSENCIA". Cualquier otro motivo se
+    devuelve tal cual. Así los registros históricos aparecen divididos igual
+    que los nuevos en KPIs, tablas y reportes.
+    """
+    motivo_u = str(motivo).upper().strip()
+    tiene_tarde = 'TARD' in motivo_u
+    tiene_ausencia = 'AUSENCIA' in motivo_u or 'INASISTENCIA' in motivo_u
+    if tiene_tarde and tiene_ausencia:
+        return MOTIVO_AUSENCIA if es_ausencia_laboral(motivo, comentario) else MOTIVO_LLEGADA_TARDE
+    return motivo_u
+
 def es_llegada_tarde(motivo, comentario):
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
 
-    # "Llegada Tardía / Ausencia" es una sola opción del formulario que cubre
-    # dos casos distintos, y el motivo por sí solo siempre contiene la
-    # palabra "AUSENCIA" sin importar cuál de los dos fue -- por eso esta
-    # exclusión mira SOLO el comentario libre, nunca el motivo. Si el
-    # comentario dice explícitamente que fue una ausencia laboral, no debe
-    # contar como llegada tarde (ni para el rubro ni para la reincidencia).
-    if 'AUSENCIA LABORAL' in com_u:
+    # Una ausencia nunca cuenta como llegada tarde: ni para el rubro ni para
+    # la reincidencia que promueve a GRAVE.
+    if es_ausencia_laboral(motivo, comentario):
         return False
 
     EXCL = [
@@ -413,6 +465,12 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
             return 'GRAVE'
         return 'LEVE'
 
+    # 4b. AUSENCIA LABORAL. Las ausencias sin aviso o sin justificación ya
+    # salieron como GRAVE en los combos de arriba; el resto queda LEVE en vez
+    # de caer en 'OTRO', que no dice nada.
+    if es_ausencia_laboral(motivo, comentario):
+        return 'LEVE'
+
     # 5. ACCIONES LEVES
     palabras_leves = [
         'ALMUERZO EXCEDIDO', 'HORA ALMUERZO', 'HORA DE ALMUERZO',
@@ -454,14 +512,10 @@ def asignar_rubro_automatico(motivo, comentario, n_tardes=0):
     etiqueta = f"[{clasificacion}]"
     motivo_limpio = motivo_str.replace("[GRAVE]", "").replace("[LEVE]", "").replace("[OTRO]", "").strip()
 
-    # "Llegada Tardía / Ausencia" es una sola opción del formulario de SAC que
-    # cubre dos casos distintos (llegada tarde real vs. ausencia real), así
-    # que ambos quedaban agrupados bajo el mismo rubro sin poder distinguirse.
-    # Cuando el comentario dice explícitamente "ausencia laboral", se
-    # reetiqueta como Otras Incidencias para poder identificar quién llegó
-    # tarde y quién no llegó.
-    if 'AUSENCIA' in motivo_limpio and 'AUSENCIA LABORAL' in com_str:
-        motivo_limpio = "OTRAS INCIDENCIAS"
+    # Llegada tarde y ausencia son dos rubros distintos: si el registro trae
+    # el motivo combinado antiguo, se separa aquí para que cada uno cuente en
+    # su propia categoría.
+    motivo_limpio = normalizar_motivo(motivo_limpio, com_str)
 
     return f"{etiqueta} {motivo_limpio}"
 
@@ -1686,6 +1740,15 @@ def mostrar_modulo_expedientes(conn, df_base):
                     st.rerun()
             
             if not df_mostrar.empty:
+                # Los registros viejos se guardaron con el motivo combinado
+                # "LLEGADA TARDÍA / AUSENCIA". Se separan aquí, en un solo
+                # punto, para que KPIs, tabla, filtros y reportes vean las dos
+                # categorías por igual.
+                df_mostrar = df_mostrar.copy()
+                df_mostrar['TIPO_FALTA'] = df_mostrar.apply(
+                    lambda r: normalizar_motivo(r['TIPO_FALTA'], r['COMENTARIO']), axis=1
+                )
+
                 with st.container():
                     col1, col2, col3 = st.columns(3)
                     with col1:
@@ -1694,7 +1757,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                         hoy = get_honduras_time().date()
                         rango_fechas = st.date_input("📅 Rango de Fechas:", value=(hoy - timedelta(days=60), hoy), key=f"filtro_fec_{tab_id}")
                     with col3:
-                        filtro_tipo = st.selectbox("📋 Tipo de Registro:", options=["Todos los Tipos", "Llamado de Atención", "Incidencia Médica"], key=f"filtro_tip_{tab_id}")
+                        filtro_tipo = st.selectbox(
+                            "📋 Tipo de Registro:",
+                            options=["Todos los Tipos", "Llamado de Atención",
+                                     "Llegada Tardía", "Ausencia Laboral", "Incidencia Médica"],
+                            key=f"filtro_tip_{tab_id}"
+                        )
 
                 if filtro_nombre != "VER TODOS":
                     df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
@@ -1716,6 +1784,10 @@ def mostrar_modulo_expedientes(conn, df_base):
                 
                 if filtro_tipo == "Incidencia Médica":
                     df_mostrar = df_mostrar[df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
+                elif filtro_tipo == "Llegada Tardía":
+                    df_mostrar = df_mostrar[df_mostrar.apply(lambda r: es_llegada_tarde(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)]
+                elif filtro_tipo == "Ausencia Laboral":
+                    df_mostrar = df_mostrar[df_mostrar.apply(lambda r: es_ausencia_laboral(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)]
                 elif filtro_tipo == "Llamado de Atención":
                     df_mostrar = df_mostrar[~df_mostrar['TIPO_FALTA'].str.upper().isin(["INCIDENCIA MÉDICA", "INCIDENCIA MEDICA"])]
 
@@ -1835,11 +1907,23 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 type="primary"
                             )
                         else:
+                            # Sin st.rerun(): el botón de descarga se dibuja aquí
+                            # mismo. Antes se recargaba toda la página para poder
+                            # mostrarlo, y esa recarga completa es la que dejaba
+                            # al usuario de vuelta al inicio del módulo.
                             if st.button("📄 Preparar PDF", key=f"btn_pdf_{tab_id}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
                                     st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar)
                                     st.session_state['estado_pdf_actual'] = id_estado_pdf
-                                    st.rerun()
+                                st.download_button(
+                                    label="⬇️ Descargar PDF",
+                                    data=st.session_state['pdf_bytes_listo'],
+                                    file_name=nombre_archivo_pdf,
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    type="primary",
+                                    key=f"dl_pdf_directo_{tab_id}"
+                                )
 
                 with c_b_docx:
                     if not df_mostrar.empty:
@@ -1862,11 +1946,21 @@ def mostrar_modulo_expedientes(conn, df_base):
                                     type="primary"
                                 )
                             else:
+                                # Igual que el PDF: se dibuja la descarga en el
+                                # acto, sin recargar la página completa.
                                 if st.button("📝 Preparar Word", key=f"btn_docx_{tab_id}", use_container_width=True):
                                     with st.spinner("Generando Word (.docx)..."):
                                         st.session_state['docx_bytes_listo'] = generar_docx_consolidado(df_mostrar)
                                         st.session_state['estado_docx_actual'] = id_estado_docx
-                                        st.rerun()
+                                    st.download_button(
+                                        label="⬇️ Descargar Word",
+                                        data=st.session_state['docx_bytes_listo'],
+                                        file_name=nombre_archivo_docx,
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        use_container_width=True,
+                                        type="primary",
+                                        key=f"dl_docx_directo_{tab_id}"
+                                    )
                         else:
                             st.button("📝 Word Desactivado", disabled=True, help="Agrega 'python-docx' a requirements.txt para habilitar descargas en Word", use_container_width=True, key=f"btn_docx_disabled_{tab_id}")
 
@@ -2097,9 +2191,12 @@ def mostrar_modulo_expedientes(conn, df_base):
                     else:
                         nombre_admin = st.selectbox("👤 Colaborador:", opciones_nombres_admin, key="sel_nombre_admin")
                         
+                    # Llegada tarde y ausencia van SEPARADAS: son dos faltas
+                    # distintas y antes compartían una sola opción, lo que hacía
+                    # imposible saber quién llegó tarde y quién no se presentó.
                     tipo_falta_admin_base = st.selectbox("📄 Tipo de Registro / Incidencia:", [
-                        "Llamado de Atención Verbal", "Amonestación Escrita", 
-                        "Llegada Tardía / Ausencia", "Incidencia Médica", 
+                        "Llamado de Atención Verbal", "Amonestación Escrita",
+                        "Llegada Tardía", "Ausencia Laboral", "Incidencia Médica",
                         "Felicitación / Mérito", "Curriculum / Contrato", "Otro"
                     ], key="sel_falta_admin")
                     
@@ -2187,8 +2284,38 @@ def mostrar_modulo_expedientes(conn, df_base):
                 es_admin_mask = df_view_admin['TECNICO'].str.contains(r'\(.*\)$', regex=True, na=False)
                 df_admin_tab = df_view_admin[es_admin_mask].copy()
                 df_admin_tab = df_admin_tab[~df_admin_tab['TECNICO'].isin(['', 'NAN', 'NONE', 'NULL', 'NAT', 'UNDEFINED'])]
-                
-                generar_vista_historial(df_admin_tab, "Administración, SAC y Ventas", "adm")
+
+                # SAC, Bodega, Administración, Ventas y demás áreas comparten
+                # esta pestaña, pero cada una es un departamento distinto y el
+                # reporte debe poder sacarse por separado, no todo revuelto.
+                df_admin_tab['DEPARTAMENTO'] = df_admin_tab['TECNICO'].apply(extraer_departamento)
+                areas_presentes = sorted(df_admin_tab['DEPARTAMENTO'].unique().tolist())
+
+                area_sel = st.selectbox(
+                    "🏢 Área para el historial y el reporte:",
+                    options=["TODAS LAS ÁREAS"] + areas_presentes,
+                    key="filtro_area_admin",
+                    help="Elige un área para que el historial, los KPIs y el PDF/Word salgan solo de ese departamento."
+                )
+
+                if area_sel != "TODAS LAS ÁREAS":
+                    df_admin_tab = df_admin_tab[df_admin_tab['DEPARTAMENTO'] == area_sel]
+                    titulo_area = area_sel.title()
+                    id_area = re.sub(r'[^A-Z0-9]+', '_', area_sel).strip('_').lower()
+                else:
+                    titulo_area = "Todas las Áreas Administrativas"
+                    id_area = "todas"
+                    with st.expander("📊 Registros por área", expanded=False):
+                        resumen_areas = (
+                            df_admin_tab['DEPARTAMENTO'].value_counts()
+                            .rename_axis('Área').reset_index(name='Registros')
+                        )
+                        st.dataframe(resumen_areas, hide_index=True, use_container_width=True)
+
+                if df_admin_tab.empty:
+                    st.info(f"💡 No hay registros para el área **{area_sel}**.")
+                else:
+                    generar_vista_historial(df_admin_tab, titulo_area, f"adm_{id_area}")
 
     # ==========================================================================
     # PESTAÑA 3: REPOSITORIO DOCUMENTAL (solo usuarios autorizados)

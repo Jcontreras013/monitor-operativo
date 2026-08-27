@@ -329,20 +329,50 @@ def _conservar_scroll():
         """
         <script>
         (function() {
-            const win = window.parent;
-            const key = "monitor_scroll_pos";
-            try {
-                const saved = sessionStorage.getItem(key);
-                if (saved !== null) {
-                    setTimeout(function() { win.scrollTo(0, parseInt(saved, 10)); }, 60);
+            // OJO: en Streamlit la ventana NO es la que hace scroll -- quien
+            // scrollea es <section data-testid="stMain">. La versión anterior
+            // guardaba window.scrollY (siempre 0) y llamaba a window.scrollTo,
+            // así que nunca guardó ni restauró nada.
+            var win = window.parent;
+            var doc = win.document;
+            var KEY = "monitor_scroll_pos";
+
+            function getScroller() {
+                return doc.querySelector('[data-testid="stMain"]')
+                    || doc.querySelector('section.main')
+                    || doc.scrollingElement;
+            }
+            function hook(el) {
+                if (!el || el.__monitorScrollHooked) return;
+                el.__monitorScrollHooked = true;
+                el.addEventListener('scroll', function() {
+                    try { win.sessionStorage.setItem(KEY, el.scrollTop); } catch (e) {}
+                }, { passive: true });
+            }
+
+            // El contenedor puede no existir todavía cuando corre este script,
+            // y su altura crece mientras Streamlit pinta: se reintenta un rato
+            // corto hasta poder restaurar la posición.
+            var restored = false, tries = 0;
+            var timer = win.setInterval(function() {
+                tries++;
+                var el = getScroller();
+                if (el) {
+                    hook(el);
+                    if (!restored) {
+                        var saved = null;
+                        try { saved = win.sessionStorage.getItem(KEY); } catch (e) {}
+                        var y = (saved === null) ? 0 : parseInt(saved, 10);
+                        if (!y || y <= 0) {
+                            restored = true;
+                        } else if (el.scrollHeight > el.clientHeight + 5) {
+                            el.scrollTop = y;
+                            if (Math.abs(el.scrollTop - y) < 30) restored = true;
+                        }
+                    }
                 }
-                if (!win.__monitorScrollHooked) {
-                    win.__monitorScrollHooked = true;
-                    win.addEventListener("scroll", function() {
-                        sessionStorage.setItem(key, win.scrollY);
-                    });
-                }
-            } catch (e) { /* best-effort: si el navegador bloquea el acceso, no rompe nada */ }
+                if (restored || tries > 25) win.clearInterval(timer);
+            }, 80);
         })();
         </script>
         """,
