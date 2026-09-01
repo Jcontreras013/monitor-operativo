@@ -4090,8 +4090,25 @@ def main():
                         # columna HORA_INI viene vacía (madrugada, o filtros muy restrictivos),
                         # comparar con "<" sobre datetime lanza TypeError y tumbaría todo el
                         # Gantt; con dtype object la comparación se resuelve fila por fila.
+                        # El -6h NO es una conversión de zona horaria: las horas ya vienen
+                        # en hora local (ALERTA_TIEMPO las compara directamente contra
+                        # get_honduras_time(), y si fueran UTC toda orden abierta pasaría
+                        # de los 120 minutos al instante). Lo que hace es definir el DÍA
+                        # OPERATIVO, que arranca a las 6:00: un cierre de las 02:00
+                        # pertenece a la jornada anterior, no a la que apenas empieza.
+                        #
+                        # Se le aplica a HORA_INI igual que a HORA_LIQ tres líneas más
+                        # arriba, y que en los otros 12 lugares del archivo donde se
+                        # decide a qué día pertenece una orden. Antes solo HORA_LIQ lo
+                        # llevaba: una orden iniciada a las 02:00 contaba como de HOY,
+                        # pero su cierre contaba como de AYER.
+                        #
+                        # OJO: esto es solo para agrupar por día. GANTT_START sigue
+                        # usando HORA_INI sin tocar, porque el eje del gráfico se dibuja
+                        # en hora local real.
                         _fechas_ini = pd.to_datetime(df_monitor_filtrado['HORA_INI'], errors='coerce')
-                        _solo_fecha_ini = _fechas_ini.dt.date.astype(object)
+                        _fechas_ini_jornada = _fechas_ini - pd.Timedelta(hours=6)
+                        _solo_fecha_ini = _fechas_ini_jornada.dt.date.astype(object)
 
                         mask_hora_ini_hoy = _solo_fecha_ini == hoy_date_valor
                         mask_abiertas_gantt = mask_viva_gantt & mask_hora_ini_hoy
@@ -4130,10 +4147,14 @@ def main():
                             # que una orden con un estado vivo que no esté en esa lista no se
                             # quede sin marcar como arrastrada.
                             _estado_up_arr = df_para_gantt_final['ESTADO'].astype(str).str.upper().str.strip()
+                            # Mismo día operativo (-6h) que usa mask_arrastradas arriba. Sin
+                            # esto, una orden podía entrar al Gantt COMO arrastrada y luego no
+                            # quedar MARCADA como tal, así que su barra no se recortaba al
+                            # inicio de la jornada y estiraba el eje días hacia atrás.
                             df_para_gantt_final['ES_ARRASTRADA'] = (
                                 ~_estado_up_arr.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
                                 & df_para_gantt_final['HORA_INI'].notna()
-                                & (df_para_gantt_final['HORA_INI'].dt.date < hoy_date_valor)
+                                & ((df_para_gantt_final['HORA_INI'] - pd.Timedelta(hours=6)).dt.date < hoy_date_valor)
                             )
                         else:
                             df_para_gantt_final['ES_ARRASTRADA'] = False
