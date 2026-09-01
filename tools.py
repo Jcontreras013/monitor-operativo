@@ -144,13 +144,23 @@ COLUMNS_MAPPING = {
     # Infraestructura de red (FTTH). Permite ubicar en qué nodo se concentran
     # los cortes y atenuaciones, en vez de verlos como incidentes sueltos.
     'OLT': ['OLT', 'NOMBRE OLT', 'NOMBREOLT', 'EQUIPO OLT', 'OLT NAME'],
-    'PON': ['PON', 'PUERTO PON', 'PUERTOPON', 'PON PORT', 'PUERTO', 'SPLITTER', 'TARJETA/PUERTO']
+    'PON': ['PON', 'PUERTO PON', 'PUERTOPON', 'PON PORT', 'PUERTO', 'SPLITTER', 'TARJETA/PUERTO'],
+    # Cierre de la orden. Son DOS campos distintos y ambos los llena el técnico
+    # al liquidar: la razón de cierre (catálogo) y el comentario libre. Antes no
+    # se importaban, así que todo el análisis se hacía con COMENTARIO, que es el
+    # de APERTURA (lo que reportó el cliente), no lo que el técnico encontró.
+    'RAZON_CIERRE_SOP': ['RAZON CIERRE', 'RAZÓN CIERRE', 'RAZONCIERRE', 'RAZON DE CIERRE',
+                         'RAZÓN DE CIERRE', 'RAZON_CIERRE', 'MOTIVO CIERRE', 'MOTIVO DE CIERRE',
+                         'RAZON CIERRE SOP'],
+    'COMENTARIO_CIERRE': ['COMENTARIO DE CIERRE', 'COMENTARIO CIERRE', 'COMENTARIOCIERRE',
+                          'COMENTARIO_CIERRE', 'OBSERVACION CIERRE', 'OBSERVACIONES CIERRE',
+                          'COMENTARIO TECNICO', 'COMENTARIO DEL TECNICO']
 }
 
 COLUMNAS_VITALES_SISTEMA = [
     'HORA_INI', 'HORA_LIQ', 'TECNICO', 'ACTIVIDAD', 'FECHA_APE',
     'ESTADO', 'SECTOR', 'COLONIA', 'NUM', 'CLIENTE', 'NOMBRE', 'COMENTARIO', 'MX', 'GPS',
-    'OLT', 'PON'
+    'OLT', 'PON', 'RAZON_CIERRE_SOP', 'COMENTARIO_CIERRE'
 ]
 
 PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|SITIO|VIAJANDO|CAMINO|LLEGADA'
@@ -1881,6 +1891,102 @@ def es_offline_preciso(comentario):
     # CORRECCIÓN: Dejamos estrictamente términos de equipo caído
     keywordsfalla = ['OFFLINE', 'OFF LINE', 'LOS RED', 'PON ROJO', 'LOS EN ROJO', 'EQUIPO OFFLINE', 'ONU OFFLINE', 'ONT OFFLINE']
     return any(word in txt for word in keywordsfalla)
+
+# ==============================================================================
+# DIAGNÓSTICO DE OFFLINE: CAUSA RAÍZ SEGÚN EL CIERRE DEL TÉCNICO
+# ==============================================================================
+# ES_OFFLINE dice CUÁNTOS equipos están caídos, pero nunca POR QUÉ: se calcula
+# con el comentario de APERTURA (lo que reportó el cliente). La causa real solo
+# aparece en el cierre -- razón de cierre + comentario del técnico. Aquí se
+# traduce ese texto libre a una causa comparable entre órdenes.
+#
+# El orden IMPORTA: gana la primera causa que coincide, así que va de lo más
+# específico y excluyente (lo que ni siquiera fue una falla real) a lo más
+# genérico. Si se reordena, cambian los conteos.
+CAUSAS_OFFLINE = [
+    # No fue una falla de red: el equipo estaba bien cuando llegó el técnico.
+    ("✅ Falso positivo (estaba en línea)", [
+        "ESTABA ONLINE", "ESTABA EN LINEA", "YA ESTABA ARRIBA", "YA ESTABA NAVEGANDO",
+        "SIN FALLA", "NO HAY FALLA", "NO SE ENCONTRO FALLA", "NO PRESENTA FALLA",
+        "NAVEGANDO BIEN", "TODO BIEN", "TODO OK", "SIN NOVEDAD", "FALSA ALARMA",
+        "NO REPORTA FALLA", "CLIENTE NO REPORTA",
+    ]),
+    # Tampoco es falla técnica: el servicio está cortado por cobranza.
+    ("💰 Corte administrativo / mora", [
+        "MORA", "CORTE ADMINISTRATIVO", "FALTA DE PAGO", "SUSPENDIDO POR PAGO",
+        "CORTE POR MORA", "SUSPENSION", "SUSPENDIDO", "NO HA PAGADO", "PENDIENTE DE PAGO",
+    ]),
+    # Daño físico causado desde afuera: no es del cliente ni del técnico.
+    # OJO: nada de "QUEMA" suelto aquí -- se comía "ONU QUEMADA POR RAYO", que
+    # es equipo del cliente, no daño externo.
+    ("🌪️ Daño externo / corte de fibra", [
+        "RECO", "PODA", "PODARON", "POSTE", "CAMBIO DE POSTE", "OBRA", "EXCAVACION",
+        "ACCIDENTE", "CHOQUE", "CARRO", "VANDALISMO", "ROBO DE CABLE", "ROBARON",
+        "FIBRA CORTADA", "CORTARON LA FIBRA", "CABLE CORTADO", "ARBOL", "RAMA",
+        "INCENDIO", "DERRUMBE",
+    ]),
+    # Va ANTES de "nivel óptico" a propósito: sus frases son más específicas y
+    # si no, "MAL EMPALME" caía en atenuación por el simple "EMPALME", tapando
+    # justo el dato más accionable (retrabajo por instalación mal hecha).
+    ("🔁 Instalación deficiente / retrabajo", [
+        "MALA INSTALACION", "MAL EMPALME", "MAL INSTALADO", "INSTALACION DEFICIENTE",
+        "REINSTALACION", "MAL CONECTORIZADO", "TRABAJO MAL HECHO",
+    ]),
+    ("🔌 Energía / sin corriente", [
+        "SIN ENERGIA", "SIN LUZ", "SIN CORRIENTE", "APAGON", "BREAKER", "BATERIA",
+        "UPS", "NO TIENE CORRIENTE", "FALLA ELECTRICA", "ENEE", "TOMACORRIENTE",
+        "TOMA DE CORRIENTE", "REGULADOR",
+    ]),
+    ("⚡ Equipo del cliente (ONU/ONT)", [
+        "ONU DANADA", "ONT DANADA", "ONU QUEMADA", "ONT QUEMADA", "EQUIPO QUEMADO",
+        "RAYO", "DESCARGA", "CAMBIO DE ONU", "CAMBIO DE ONT", "CAMBIO DE EQUIPO",
+        "EQUIPO DESCONECTADO", "CLIENTE DESCONECTO", "DESCONECTO EL EQUIPO",
+        "FUENTE DANADA", "ADAPTADOR", "EQUIPO DANADO", "QUEMADA", "QUEMADO",
+    ]),
+    ("🛰️ Falla de red / OLT", [
+        "OLT", "TARJETA", "PUERTO PON", "PON DANADO", "SPLITTER", "NODO",
+        "CAIDA MASIVA", "MASIVO", "TODA LA ZONA", "VARIOS CLIENTES",
+    ]),
+    # El cajón técnico más genérico va de último: casi cualquier reparación
+    # menciona niveles o fibra, así que si va antes se traga a las demás.
+    ("🔬 Nivel óptico / atenuación", [
+        "ATENUACION", "ATENUADO", "NIVEL BAJO", "NIVELES", "RXPOWER", "POTENCIA",
+        "CONECTOR SUCIO", "LIMPIEZA DE CONECTOR", "LIMPIEZA DE FIBRA", "EMPALME",
+        "CURVATURA", "DOBLEZ", "DOBLADA", "PATCHCORD", "PIGTAIL", "FUSION",
+    ]),
+    # Sin "REAGENDA"/"REPROGRAMA": describen el resultado, no la causa, y se
+    # llevaban órdenes que sí traían causa real ("se reagenda por fibra cortada").
+    ("🚪 No hubo acceso al cliente", [
+        "NO HABIA NADIE", "CLIENTE AUSENTE", "NO ATENDIO", "CASA CERRADA",
+        "NO CONTESTA", "NO PERMITIO", "PERRO",
+    ]),
+]
+
+def clasificar_causa_offline(razon_cierre, comentario_cierre, comentario_apertura=""):
+    """
+    Traduce el cierre del técnico a una causa raíz comparable.
+
+    Devuelve (causa, evidencia). La EVIDENCIA son las palabras exactas que
+    dispararon la clasificación: sin eso nadie puede auditar el número y basta
+    un falso positivo para que se desconfíe de todo el módulo.
+
+    Se leen los dos campos de cierre y, como último recurso, el comentario de
+    apertura -- pero ese último solo describe el síntoma reportado, así que
+    sirve de poco y por eso la cobertura se mide aparte.
+    """
+    partes = [str(razon_cierre or ""), str(comentario_cierre or ""), str(comentario_apertura or "")]
+    texto = " ".join(p for p in partes if p.upper().strip() not in ("", "NAN", "NONE", "N/D"))
+    texto = unicodedata.normalize('NFKD', texto).encode('ascii', 'ignore').decode('ascii').upper()
+
+    if not texto.strip():
+        return ("❓ Sin comentario de cierre", "")
+
+    for causa, claves in CAUSAS_OFFLINE:
+        encontradas = [k for k in claves if k in texto]
+        if encontradas:
+            return (causa, ", ".join(sorted(set(encontradas))))
+
+    return ("❓ Sin clasificar", "")
 
 def depurar_archivos_en_crudo(fileactividades, filedispositivos):
     try:
