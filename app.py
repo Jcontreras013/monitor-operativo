@@ -1752,6 +1752,110 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
             "obligatorio al cerrar la orden."
         )
 
+    with st.expander("📖 ¿Qué significa cada número? (léelo una vez)", expanded=False):
+        st.markdown("""
+**Soportes analizados** — cuántas averías de fibra se atendieron en el periodo. Es el universo del que sale todo lo demás.
+
+**Cobertura del diagnóstico** — de cada 100 órdenes, en cuántas el técnico escribió algo en el cierre que permita saber qué pasó.
+Si dice 90%, casi todo está explicado. Si dice 40%, más de la mitad de las órdenes se cerraron sin decir qué se encontró:
+ahí el problema no es el análisis, es lo que se escribe al cerrar.
+
+**Falsos positivos** — el técnico llegó y el equipo estaba funcionando. No había falla. Es un viaje que no correspondía.
+
+**Causa** — qué encontró el técnico. Salen de lo que él mismo escribió al cerrar; el sistema solo las agrupa para poder contarlas.
+
+**Reincidencia** — un mismo cliente que reporta varias veces en el periodo. No son varios problemas: es uno solo que no se ha resuelto de raíz.
+
+**Evidencia** — las palabras exactas del cierre que hicieron que el sistema clasificara así esa orden. Sirve para revisar si se equivocó.
+        """)
+
+    # ---------------- Lectura en palabras ----------------
+    # El tablero por sí solo obliga a traducirlo en cada reunión. Aquí el módulo
+    # redacta sus propias conclusiones con los números del periodo, para poder
+    # leerlas tal cual sin tener que interpretar gráficos en vivo.
+    df_reincidencia = pd.DataFrame()
+    if 'CLIENTE' in df.columns:
+        _cli = df[~df['CLIENTE'].astype(str).isin(['', 'N/D', 'NAN', '0'])]
+        if not _cli.empty:
+            df_reincidencia = _cli.groupby('CLIENTE').agg(
+                VECES=('NUM', 'count'),
+                NOMBRE=('NOMBRE', 'first'),
+                COLONIA=('COLONIA', 'first'),
+                OLT=('OLT', 'first'),
+                PON=('PON', 'first'),
+                CAUSAS=('CAUSA', lambda s: " | ".join(sorted(set(s)))),
+            ).reset_index()
+            df_reincidencia = df_reincidencia[df_reincidencia['VECES'] > 1].sort_values('VECES', ascending=False)
+
+    df_no_falla = df[df['CAUSA'].str.startswith(("✅", "💰", "🚪"))]
+
+    causas_reales = df[~df['CAUSA'].str.startswith("❓")]['CAUSA']
+    causa_top, causa_top_n = ("", 0)
+    if not causas_reales.empty:
+        causa_top = causas_reales.value_counts().index[0]
+        causa_top_n = int(causas_reales.value_counts().iloc[0])
+
+    # Nodo con una sola causa dominante: eso es un daño puntual, no casos sueltos.
+    nodo_dominante = None
+    if (df['OLT'].str.strip() != "").any():
+        _t = pd.crosstab(df.loc[df['OLT'].str.strip() != "", 'OLT'].str.strip().str.upper(),
+                         df.loc[df['OLT'].str.strip() != "", 'CAUSA'])
+        for _olt, _fila in _t.iterrows():
+            _tot = int(_fila.sum())
+            if _tot < 4:
+                continue
+            _causa = _fila.idxmax()
+            _val = int(_fila.max())
+            if _val / _tot >= 0.6 and not str(_causa).startswith(("✅", "💰", "🚪")):
+                nodo_dominante = (_olt, _val, _tot, _causa)
+                break
+
+    frases = []
+    frases.append(f"En los últimos {dias} días se atendieron {total:,} averías de fibra.")
+
+    if not df_no_falla.empty:
+        pct = 100 * len(df_no_falla) / total
+        frases.append(
+            f"De esas, {len(df_no_falla):,} ({pct:.0f}%) no eran una falla de red: el equipo estaba "
+            f"funcionando, el servicio estaba cortado por mora, o no se pudo entrar a la casa. "
+            f"Averías reales del periodo: {total - len(df_no_falla):,}."
+        )
+
+    if causa_top:
+        pct_c = 100 * causa_top_n / total
+        frases.append(
+            f"La causa más frecuente fue {causa_top.strip()}, con {causa_top_n:,} órdenes ({pct_c:.0f}% del total)."
+        )
+
+    if nodo_dominante:
+        _olt, _val, _tot, _causa = nodo_dominante
+        frases.append(
+            f"En {_olt}, {_val} de sus {_tot} órdenes son por {_causa.strip()}. "
+            f"Cuando una sola causa explica la mayoría de un equipo, casi siempre es un daño puntual "
+            f"y se arregla una vez, en lugar de mandar un técnico por cada cliente."
+        )
+
+    if not df_reincidencia.empty:
+        _extra = int(df_reincidencia['VECES'].sum() - len(df_reincidencia))
+        frases.append(
+            f"{len(df_reincidencia):,} clientes reportaron más de una vez, lo que generó {_extra:,} visitas repetidas. "
+            f"No son casos nuevos: es el mismo problema volviendo."
+        )
+
+    frases.append(
+        f"El diagnóstico cubre el {cobertura:.0f}% de los cierres"
+        + ("." if cobertura >= 60 else
+           ", así que el resto de las cifras describen solo esa parte. Para subirlo hay que exigir "
+           "que el técnico escriba qué encontró al cerrar la orden.")
+    )
+
+    st.markdown("#### 🗣️ Lectura del periodo")
+    st.caption("Redactado con los números de arriba. Se puede leer tal cual en una reunión o copiar a un correo.")
+    st.info("\n\n".join(f"- {f}" for f in frases))
+
+    with st.expander("📋 Copiar este resumen como texto"):
+        st.code("\n".join(f"- {f}" for f in frases), language=None)
+
     st.markdown("---")
 
     t_causa, t_red, t_reinc, t_detalle = st.tabs([
@@ -1823,27 +1927,19 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
             "Un mismo cliente que cae varias veces es UN problema crónico contado muchas "
             "veces. Resolverlo de raíz baja el conteo de offline sin tocar nada más."
         )
-        if 'CLIENTE' not in df.columns:
-            st.info("No hay columna CLIENTE para medir reincidencia.")
+        if df_reincidencia.empty:
+            st.success("✅ Ningún cliente repitió soporte en el periodo.")
         else:
-            df_cli = df[~df['CLIENTE'].astype(str).isin(['', 'N/D', 'NAN', '0'])]
-            rein = df_cli.groupby('CLIENTE').agg(
-                VECES=('NUM', 'count'),
-                NOMBRE=('NOMBRE', 'first'),
-                COLONIA=('COLONIA', 'first'),
-                OLT=('OLT', 'first'),
-                PON=('PON', 'first'),
-                CAUSAS=('CAUSA', lambda s: " | ".join(sorted(set(s)))),
-            ).reset_index()
-            rein = rein[rein['VECES'] > 1].sort_values('VECES', ascending=False)
-
-            if rein.empty:
-                st.success("✅ Ningún cliente repitió soporte en el periodo.")
-            else:
-                visitas_extra = int(rein['VECES'].sum() - len(rein))
-                st.metric("🔁 Visitas repetidas evitables", f"{visitas_extra:,}",
-                          help="Órdenes que son repetición de un caso ya atendido del mismo cliente.")
-                st.dataframe(rein, hide_index=True, use_container_width=True, height=320)
+            visitas_extra = int(df_reincidencia['VECES'].sum() - len(df_reincidencia))
+            st.metric("🔁 Visitas repetidas evitables", f"{visitas_extra:,}",
+                      help="Órdenes que son repetición de un caso ya atendido del mismo cliente.")
+            st.markdown(
+                f"**Cómo se explica:** *{len(df_reincidencia)} clientes volvieron a reportar en el periodo. "
+                f"Eso generó {visitas_extra} visitas que no eran casos nuevos, sino el mismo problema "
+                f"que no quedó resuelto la primera vez.*"
+            )
+            st.caption("La columna CAUSAS muestra qué se le encontró en cada visita: si siempre es la misma, no se atacó la raíz.")
+            st.dataframe(df_reincidencia, hide_index=True, use_container_width=True, height=320)
 
     # ---------------- 4. Detalle auditable ----------------
     with t_detalle:
