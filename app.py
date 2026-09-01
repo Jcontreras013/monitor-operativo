@@ -67,6 +67,7 @@ try:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from tools import (
         es_offline_preciso,
+        clasificar_causa_offline,
         procesar_dataframe_base,
         generar_pdf_cierre_diario,
         generar_pdf_trimestral_detallado,
@@ -611,7 +612,7 @@ def sincronizar_datos_nube(conn):
                     mask_vivas = df_nube['ESTADO'].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
                     df_nube = df_nube[(df_nube['HORA_LIQ'] >= fecha_limite_7d) | (df_nube['FECHA_APE'] >= fecha_limite_7d) | (df_nube['HORA_LIQ'].isna()) | mask_vivas].copy()
 
-                cols_orden_ideal = ['DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'SOP', 'RAZON_CIERRE_SOP', 'SEGMENTO', 'ALERTA_TIEMPO']
+                cols_orden_ideal = ['DIAS_RETRASO', 'NUM', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE', 'COLONIA', 'TECNICO', 'HORA_INI', 'HORA_LIQ', 'TIEMPO_REAL', 'ESTADO', 'COMENTARIO', 'ES_OFFLINE', 'SOP', 'RAZON_CIERRE_SOP', 'COMENTARIO_CIERRE', 'SEGMENTO', 'ALERTA_TIEMPO']
                 cols_presentes = [c for c in cols_orden_ideal if c in df_nube.columns]
                 cols_restantes = [c for c in df_nube.columns if c not in cols_presentes]
                 df_nube = df_nube[cols_presentes + cols_restantes]
@@ -1659,6 +1660,220 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 )
 
 
+# ==============================================================================
+# DIAGNÓSTICO DE OFFLINE: POR QUÉ SE CAEN, NO SOLO CUÁNTOS
+# ==============================================================================
+def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
+    """
+    Responde POR QUÉ aparecen tantos offline, cruzando la causa que reportó el
+    técnico al cerrar contra la red, el cliente y el tiempo.
+
+    Es el complemento del análisis OLT/PON: aquel dice DÓNDE se concentran las
+    caídas, este dice POR QUÉ. La diferencia clave está en qué texto se lee:
+    ES_OFFLINE se calcula con el comentario de APERTURA (lo que reportó el
+    cliente), mientras que la causa real solo aparece en el cierre.
+    """
+    st.subheader("🔬 Diagnóstico de Offline (Causa Raíz)")
+
+    tiene_razon = 'RAZON_CIERRE_SOP' in df_base_activa.columns
+    tiene_com_cierre = 'COMENTARIO_CIERRE' in df_base_activa.columns
+
+    if not tiene_razon and not tiene_com_cierre:
+        st.warning(
+            "No se encontraron las columnas de cierre en los datos cargados.\n\n"
+            "El sistema busca los encabezados **Razón cierre** y **Comentario de cierre**. "
+            "Sin ellos solo se puede leer el comentario de apertura, que describe el "
+            "síntoma reportado por el cliente y no la causa que halló el técnico."
+        )
+
+    df = df_base_activa.copy()
+    for c in ['RAZON_CIERRE_SOP', 'COMENTARIO_CIERRE', 'COMENTARIO', 'OLT', 'PON']:
+        if c not in df.columns:
+            df[c] = ""
+        df[c] = df[c].fillna("").astype(str)
+
+    # Universo: soportes de fibra, que es donde vive el offline. Las
+    # instalaciones no son fallas y meterlas desvirtúa todo el diagnóstico.
+    act = df['ACTIVIDAD'].astype(str).str.upper()
+    mask_sop = act.str.contains(r'SOP\s*FIBRA|SOP_FIBRA|SOP', regex=True, na=False)
+    mask_falsos = act.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True, na=False)
+    df = df[mask_sop & ~mask_falsos].copy()
+
+    if df.empty:
+        st.info("No hay soportes de fibra en el rango de datos cargado.")
+        return
+
+    col_f1, col_f2 = st.columns([1, 2])
+    with col_f1:
+        dias = st.selectbox("Periodo a analizar:", [7, 15, 30, 60, 90], index=2, key="diag_off_dias")
+    with col_f2:
+        st.caption(
+            "Se analizan los soportes de fibra del periodo. La causa se toma del cierre "
+            "del técnico (razón de cierre + comentario de cierre)."
+        )
+
+    ref = pd.to_datetime(df['FECHA_APE'], errors='coerce')
+    ref = ref.fillna(pd.to_datetime(df['HORA_INI'], errors='coerce'))
+    df['FECHA_REF'] = ref
+    df = df[df['FECHA_REF'] >= (pd.Timestamp(hoy_date_valor) - pd.Timedelta(days=dias))].copy()
+
+    if df.empty:
+        st.info(f"No hay soportes de fibra en los últimos {dias} días.")
+        return
+
+    # ---------------- Clasificación de causa ----------------
+    resultado = df.apply(
+        lambda r: clasificar_causa_offline(r['RAZON_CIERRE_SOP'], r['COMENTARIO_CIERRE'], r['COMENTARIO']),
+        axis=1
+    )
+    df['CAUSA'] = [x[0] for x in resultado]
+    df['EVIDENCIA'] = [x[1] for x in resultado]
+
+    total = len(df)
+    sin_clasificar = int(df['CAUSA'].str.startswith("❓").sum())
+    cobertura = 100.0 * (total - sin_clasificar) / total if total else 0.0
+
+    # La cobertura es el dato más importante del módulo: si es baja, el problema
+    # no es de análisis sino de captura, y hay que atacarlo antes de creerle a
+    # cualquier porcentaje de abajo.
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🔎 Soportes analizados", f"{total:,}")
+    c2.metric("🧭 Cobertura del diagnóstico", f"{cobertura:.0f}%",
+              help="Porcentaje de órdenes cuyo cierre permitió identificar una causa.")
+    falsos_pos = int((df['CAUSA'].str.startswith("✅")).sum())
+    c3.metric("✅ Falsos positivos", f"{falsos_pos:,}",
+              help="Órdenes donde el técnico encontró el equipo en línea: visita sin falla real.")
+
+    if cobertura < 60:
+        st.warning(
+            f"⚠️ Solo el **{cobertura:.0f}%** de los cierres permite identificar una causa. "
+            "Los porcentajes de abajo describen únicamente esa parte, no el total. "
+            "La mejora aquí no es más analítica sino captura: un catálogo de causas "
+            "obligatorio al cerrar la orden."
+        )
+
+    st.markdown("---")
+
+    t_causa, t_red, t_reinc, t_detalle = st.tabs([
+        "🎯 Causas", "🛰️ Causa × Red", "🔁 Reincidencia", "📋 Detalle auditable"
+    ])
+
+    # ---------------- 1. Ranking de causas ----------------
+    with t_causa:
+        st.caption(
+            "Qué está produciendo las caídas. Ojo con las dos primeras categorías: "
+            "'falso positivo' y 'corte administrativo' NO son fallas de red, así que "
+            "inflan el conteo de offline sin ser un problema técnico."
+        )
+        resumen = df['CAUSA'].value_counts().reset_index()
+        resumen.columns = ['Causa', 'Órdenes']
+        resumen['% del total'] = (100 * resumen['Órdenes'] / total).round(1)
+
+        cg1, cg2 = st.columns([3, 2])
+        with cg1:
+            fig = px.bar(resumen.sort_values('Órdenes'), x='Órdenes', y='Causa',
+                         orientation='h', height=380, text='Órdenes')
+            fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), yaxis_title="", xaxis_title="")
+            st.plotly_chart(fig, use_container_width=True)
+        with cg2:
+            st.dataframe(resumen, hide_index=True, use_container_width=True, height=380)
+
+        no_falla = df[df['CAUSA'].str.startswith(("✅", "💰", "🚪"))]
+        if not no_falla.empty:
+            pct_no_falla = 100 * len(no_falla) / total
+            st.info(
+                f"📉 **{len(no_falla)} de {total} órdenes ({pct_no_falla:.0f}%) no fueron una falla de red**: "
+                "equipo en línea, corte por mora o sin acceso al cliente. Descontándolas, "
+                f"las averías reales del periodo son **{total - len(no_falla)}**."
+            )
+
+    # ---------------- 2. Causa cruzada con la red ----------------
+    with t_red:
+        st.caption(
+            "Si una causa se concentra en una OLT o un puerto PON, el problema es de "
+            "infraestructura y se resuelve una vez, en vez de despachar un técnico por cliente."
+        )
+        df_red = df[df['OLT'].str.strip() != ""].copy()
+        if df_red.empty:
+            st.info("Ninguna orden del periodo trae OLT registrada.")
+        else:
+            tabla = pd.crosstab(df_red['OLT'].str.strip().str.upper(), df_red['CAUSA'])
+            tabla['TOTAL'] = tabla.sum(axis=1)
+            tabla = tabla.sort_values('TOTAL', ascending=False)
+            st.dataframe(tabla, use_container_width=True, height=320)
+
+            # Un nodo donde UNA sola causa explica casi todo es un daño concreto,
+            # no mala suerte repartida.
+            avisos = []
+            for olt, fila in tabla.iterrows():
+                tot = fila['TOTAL']
+                if tot < 4:
+                    continue
+                sin_total = fila.drop('TOTAL')
+                causa_top = sin_total.idxmax()
+                val = sin_total.max()
+                if val / tot >= 0.6 and not str(causa_top).startswith(("✅", "💰", "🚪")):
+                    avisos.append(f"**{olt}**: {val} de {tot} órdenes son *{causa_top}*")
+            if avisos:
+                st.warning("🎯 Nodos con una causa dominante:\n\n- " + "\n- ".join(avisos))
+
+    # ---------------- 3. Reincidencia por cliente ----------------
+    with t_reinc:
+        st.caption(
+            "Un mismo cliente que cae varias veces es UN problema crónico contado muchas "
+            "veces. Resolverlo de raíz baja el conteo de offline sin tocar nada más."
+        )
+        if 'CLIENTE' not in df.columns:
+            st.info("No hay columna CLIENTE para medir reincidencia.")
+        else:
+            df_cli = df[~df['CLIENTE'].astype(str).isin(['', 'N/D', 'NAN', '0'])]
+            rein = df_cli.groupby('CLIENTE').agg(
+                VECES=('NUM', 'count'),
+                NOMBRE=('NOMBRE', 'first'),
+                COLONIA=('COLONIA', 'first'),
+                OLT=('OLT', 'first'),
+                PON=('PON', 'first'),
+                CAUSAS=('CAUSA', lambda s: " | ".join(sorted(set(s)))),
+            ).reset_index()
+            rein = rein[rein['VECES'] > 1].sort_values('VECES', ascending=False)
+
+            if rein.empty:
+                st.success("✅ Ningún cliente repitió soporte en el periodo.")
+            else:
+                visitas_extra = int(rein['VECES'].sum() - len(rein))
+                st.metric("🔁 Visitas repetidas evitables", f"{visitas_extra:,}",
+                          help="Órdenes que son repetición de un caso ya atendido del mismo cliente.")
+                st.dataframe(rein, hide_index=True, use_container_width=True, height=320)
+
+    # ---------------- 4. Detalle auditable ----------------
+    with t_detalle:
+        st.caption(
+            "La columna EVIDENCIA muestra exactamente qué palabras del cierre "
+            "dispararon cada clasificación, para poder corregir el criterio si algo se clasificó mal."
+        )
+        causas_sel = st.multiselect(
+            "Filtrar por causa:",
+            options=sorted(df['CAUSA'].unique().tolist()),
+            key="diag_off_causa_sel"
+        )
+        df_det = df[df['CAUSA'].isin(causas_sel)] if causas_sel else df
+
+        cols_det = [c for c in ['NUM', 'FECHA_REF', 'CLIENTE', 'NOMBRE', 'COLONIA', 'OLT', 'PON',
+                                'TECNICO', 'ESTADO', 'CAUSA', 'EVIDENCIA',
+                                'RAZON_CIERRE_SOP', 'COMENTARIO_CIERRE', 'COMENTARIO']
+                    if c in df_det.columns]
+        st.dataframe(df_det[cols_det].sort_values('FECHA_REF', ascending=False),
+                     hide_index=True, use_container_width=True, height=380)
+
+        st.download_button(
+            "📥 Descargar diagnóstico (CSV)",
+            data=df_det[cols_det].to_csv(index=False).encode('utf-8'),
+            file_name=f"diagnostico_offline_{dias}d.csv",
+            mime="text/csv",
+            key="dl_diag_offline"
+        )
+
+
 def main():
     settings.inicializar_configuracion() 
 
@@ -2610,11 +2825,12 @@ def main():
         # MENSAJE DE AYUDA DE NAVEGADOR PARA DESCARGAS DE REPORTES
         st.info("💡 **Para Supervisores de Campo (Móvil):** Si estás descargando un reporte en PDF o Excel desde tu celular, asegúrate de haber abierto el monitor operativo en tu navegador nativo (**Chrome o Safari**). Si abres este monitor directamente dentro de un chat de WhatsApp o WATI, las descargas serán bloqueadas por seguridad del dispositivo móvil.")
 
-        tab_diario, tab_pendientes, tab_gerencial, tab_red, tab_biometrico, tab_materiales, tab_allan = st.tabs([
+        tab_diario, tab_pendientes, tab_gerencial, tab_red, tab_diag_off, tab_biometrico, tab_materiales, tab_allan = st.tabs([
             "📦 Cierre Diario",
             "📋 Pendientes Generales",
             "💼 Gerencial (Trimestral)",
             "🛰️ Análisis de Red (OLT/PON)",
+            "🔬 Diagnóstico de Offline",
             "⏱️ Biométrico",
             "🔌 Control de Materiales",
             "🔧 Allan (Recuperos/Cortes)"
@@ -2622,6 +2838,9 @@ def main():
 
         with tab_red:
             mostrar_analisis_red(df_base_activa, hoy_date_valor, conn)
+
+        with tab_diag_off:
+            mostrar_diagnostico_offline(df_base_activa, hoy_date_valor)
 
         with tab_pendientes:
             st.subheader("📋 Resumen de Pendientes Generales")
