@@ -128,6 +128,11 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # trabajo vivo. Esto evita que una orden desaparezca solo porque su estado no
 # figuraba en la lista blanca de arriba (fue justo lo que pasaba con 'ABIERTA').
 ESTADOS_TERMINALES = ['CERRADA', 'ANULADA', 'CANCELADA', 'LIQUIDADA', 'FINALIZADA', 'RECHAZADA']
+
+# Subconjunto de los terminales en los que SÍ hubo trabajo del técnico. Se separan
+# de ANULADA/CANCELADA/RECHAZADA, donde nunca hubo visita. El Gantt dibuja trabajo
+# realizado, así que estos deben aparecer y los otros no.
+ESTADOS_TRABAJO_HECHO = ['CERRADA', 'LIQUIDADA', 'FINALIZADA']
 ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECNICA', 'ACTUALIZARDATOSTECNICOS', 'ACTUALIZARSENSOR', 'ACTIVARRES', 'DESTEFO']
 
 # ==============================================================================
@@ -4049,7 +4054,22 @@ def main():
                             help="Órdenes iniciadas en días previos que aún no se cierran. Su barra empieza al inicio de la jornada de hoy, porque el trabajo real de días anteriores no cabe en esta línea de tiempo."
                         )
 
-                        mask_cerradas_gantt = (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
+                        # El estado se normaliza UNA sola vez y se reutiliza en las dos
+                        # máscaras de abajo. Antes esta comparación era exacta
+                        # (== 'CERRADA') y sobre el estado SIN recortar, mientras que la
+                        # máscara de "viva" sí recortaba y usaba contains. Esa asimetría
+                        # abría un agujero: un estado como "CERRADA " (con espacio, cosa
+                        # que este export produce -- ver la corrección de espacios en SOP
+                        # FIBRA más arriba) no calificaba como cerrada NI como viva, así
+                        # que la orden se caía del Gantt sin dejar rastro. Lo mismo pasaba
+                        # con LIQUIDADA y FINALIZADA, que son trabajo hecho igual que
+                        # CERRADA pero no coincidían con la comparación exacta.
+                        _estado_up = df_monitor_filtrado['ESTADO'].astype(str).str.upper().str.strip()
+
+                        mask_cerradas_gantt = (
+                            _estado_up.str.contains('|'.join(ESTADOS_TRABAJO_HECHO), na=False, regex=True)
+                            & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor)
+                        )
 
                         # El Gantt representa TRABAJO REALIZADO en la línea de tiempo, así que
                         # una orden solo entra si tiene una hora de inicio real (HORA_INI). Una
@@ -4064,7 +4084,6 @@ def main():
                         # hora de inicio real. Invertir el criterio elimina esa clase de fallo
                         # para siempre: no hay que adivinar todos los nombres de estado, solo
                         # los pocos que significan "terminada".
-                        _estado_up = df_monitor_filtrado['ESTADO'].astype(str).str.upper().str.strip()
                         mask_viva_gantt = ~_estado_up.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
 
                         # La serie de fechas se calcula UNA vez y como objeto. Si toda la
