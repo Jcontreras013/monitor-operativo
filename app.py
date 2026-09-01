@@ -51,11 +51,6 @@ except ImportError:
     st.error("⚠️ Falta el archivo 'auditorv.py'. Asegúrate de crearlo en la misma carpeta para ver la Auditoría de Vehículos.")
 
 try:
-    import biometrico
-except ImportError:
-    st.error("⚠️ Falta el archivo 'biometrico.py'. Asegúrate de crearlo en la misma carpeta para ver el reporte Biométrico.")
-
-try:
     import ccalidad
 except ImportError:
     st.error("⚠️ Falta el archivo 'ccalidad.py'. Asegúrate de crearlo en la misma carpeta para ver el módulo de Control de Calidad.")
@@ -68,22 +63,17 @@ try:
     from tools import (
         es_offline_preciso,
         clasificar_causa_offline,
-        procesar_dataframe_base,
         generar_pdf_cierre_diario,
-        generar_pdf_trimestral_detallado,
         generar_pdf_primera_orden,
         generar_pdf_pendientes_dispatch,
         get_honduras_time,
         procesar_fechas_seguro,
         generar_pdf_tiempos_muertos,
         generar_pdf_promedio_arranque,
-        generar_tablas_gerenciales,
         cargar_y_limpiar_crudos_diamante_monitor,
         generar_pdf_ordenes_totales,
         sobrescribir_archivo_gcs,
         leer_espejo_gcs,
-        clasificar_materiales,
-        generar_pdf_materiales_mensual,
         normalizar_nombre_cruce,
         guardar_almuerzo,
         cargar_almuerzos,
@@ -2949,15 +2939,11 @@ def main():
         # MENSAJE DE AYUDA DE NAVEGADOR PARA DESCARGAS DE REPORTES
         st.info("💡 **Para Supervisores de Campo (Móvil):** Si estás descargando un reporte en PDF o Excel desde tu celular, asegúrate de haber abierto el monitor operativo en tu navegador nativo (**Chrome o Safari**). Si abres este monitor directamente dentro de un chat de WhatsApp o WATI, las descargas serán bloqueadas por seguridad del dispositivo móvil.")
 
-        tab_diario, tab_pendientes, tab_gerencial, tab_red, tab_diag_off, tab_biometrico, tab_materiales, tab_allan = st.tabs([
+        tab_diario, tab_pendientes, tab_red, tab_diag_off = st.tabs([
             "📦 Cierre Diario",
             "📋 Pendientes Generales",
-            "💼 Gerencial (Trimestral)",
             "🛰️ Análisis de Red (OLT/PON)",
-            "🔬 Diagnóstico de Offline",
-            "⏱️ Biométrico",
-            "🔌 Control de Materiales",
-            "🔧 Allan (Recuperos/Cortes)"
+            "🔬 Diagnóstico de Offline"
         ])
 
         with tab_red:
@@ -3044,34 +3030,6 @@ def main():
                         if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF Generado", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_dispatch_desktop")
             else: st.success("🎉 No hay órdenes pendientes registradas. ¡Operación limpia!")
 
-        with tab_biometrico:
-            try: biometrico.vista_biometrico()
-            except Exception as e: st.error(f"Error al cargar la vista del biométrico: {e}")
-
-        with tab_gerencial:
-            st.subheader("📊 Reporte Gerencial Unificado")
-            archivo_gerencial = st.file_uploader("📂 Subir Reporte de Actividades (Excel/CSV)", type=['xlsx', 'csv'], key="uploader_gerencial")
-            if archivo_gerencial:
-                with st.spinner("⏳ Analizando datos, cruzando tablas y calculando jornadas..."):
-                    try:
-                        if archivo_gerencial.name.endswith('.csv'): df_raw = pd.read_csv(archivo_gerencial)
-                        else: df_raw = pd.read_excel(archivo_gerencial)
-                        df_limpio = procesar_dataframe_base(df_raw)
-                        tabla_prod, tabla_efi, res_jornada = generar_tablas_gerenciales(df_limpio)
-                        df_merge_1 = pd.merge(tabla_prod, tabla_efi, on=['TECNICO', 'ACTIVIDAD'], how='left')
-                        df_maestra = pd.merge(df_merge_1, res_jornada, on='TECNICO', how='left')
-                        df_maestra = df_maestra.rename(columns={'TECNICO': 'Técnico', 'Dias_Laborados': 'Días Trabajados', 'Promedio_Horas_Dia': 'Hrs / Día', 'ACTIVIDAD': 'Actividad', 'Cantidad': 'Volumen', 'Participacion_%': '% del Total', 'Promedio_Minutos': 'Min. Promedio'})
-                        df_maestra = df_maestra[['Técnico', 'Días Trabajados', 'Hrs / Día', 'Actividad', 'Volumen', '% del Total', 'Min. Promedio']]
-                        st.success("✅ Datos processed y unificados correctamente.")
-                        ordenes_con_error = df_maestra['Min. Promedio'].isna().sum()
-                        if ordenes_con_error > 0: st.warning(f"⚠️ Se detectaron {ordenes_con_error} órdenes con errores de tiempo.")
-                        st.dataframe(df_maestra, use_container_width=True, hide_index=True)
-                        st.markdown("---")
-                        if st.button("🚀 GENERAR PDF GERENCIAL COMPLETO", use_container_width=True, type="primary", key="btn_generar_pdf_gerencial"):
-                            with st.spinner("Dibujando secciones por técnico..."): st.session_state['pdf_gerencial'] = generar_pdf_trimestral_detallado(tabla_prod, tabla_efi, res_jornada)
-                        if 'pdf_gerencial' in st.session_state: st.download_button(label="📥 Descargar Reporte PDF", data=st.session_state['pdf_gerencial'], file_name=f"Reporte_Gerencial_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_gerencial")
-                    except Exception as e: st.error(f"❌ Ocurrió un error procesando el reporte: {e}")
-        
         with tab_diario:
             st.subheader("📦 Archivo de Cierre de Jornada")
             fecha_cal_sel = st.date_input("Seleccione Fecha a Archivar:", value=hoy_date_valor, key="fecha_archivar_diario")
@@ -3495,260 +3453,6 @@ def main():
             if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_cierre")
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
-
-        with tab_materiales:
-            st.subheader("🔌 Control de Materiales e Inventario (Equipos y Acometidas)")
-            st.caption("Reporte histórico completo de cambios de equipos terminales (ONT/ONU/CPE) y reemplazos de cable acometida (Drop).")
-            
-            col_sel1, col_sel2 = st.columns(2)
-            with col_sel1:
-                meses_nombres = [
-                    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
-                    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
-                ]
-                mes_seleccionado = st.selectbox("📅 Seleccione el Mes:", meses_nombres, index=get_honduras_time().month - 1, key="materiales_mes_sel")
-                numero_mes = meses_nombres.index(mes_seleccionado) + 1
-            with col_sel2:
-                anio_seleccionado = st.selectbox("📅 Seleccione el Año:", [2025, 2026, 2027], index=1, key="materiales_anio_sel")
-
-            if 'df_materiales_master' not in st.session_state:
-                with st.spinner("📥 Cargando base histórica completa para inventario..."):
-                    try:
-                        df_m_master = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-                        if df_m_master is None or df_m_master.empty:
-                            if conn is not None:
-                                df_m_master = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-                        
-                        if df_m_master is not None and not df_m_master.empty:
-                            df_m_master.columns = df_m_master.columns.str.upper().str.strip()
-                            st.session_state['df_materiales_master'] = df_m_master
-                        else:
-                            st.session_state['df_materiales_master'] = df_base.copy()
-                    except Exception as e:
-                        st.session_state['df_materiales_master'] = df_base.copy()
-
-            df_m = st.session_state.get('df_materiales_master', df_base).copy()
-
-            df_m['FECHA_REPORTE'] = pd.to_datetime(df_m['HORA_LIQ'], dayfirst=True, errors='coerce')
-            df_m['FECHA_REPORTE'] = df_m['FECHA_REPORTE'].fillna(pd.to_datetime(df_m['FECHA_APE'], dayfirst=True, errors='coerce'))
-            df_m = df_m[df_m['FECHA_REPORTE'].notna()]
-            
-            df_m_filtrado = df_m[
-                (df_m['FECHA_REPORTE'].dt.month == numero_mes) & 
-                (df_m['FECHA_REPORTE'].dt.year == anio_seleccionado)
-            ].copy()
-            
-            if not df_m_filtrado.empty:
-                act_upper = df_m_filtrado['ACTIVIDAD'].astype(str).str.upper().str.strip()
-                mask_actividades_sop = act_upper.str.contains("SOP", na=False) | (act_upper == "CEQUI")
-                df_m_filtrado = df_m_filtrado[mask_actividades_sop].copy()
-            
-            if not df_m_filtrado.empty:
-                mask_validos = ~df_m_filtrado['TECNICO'].astype(str).str.upper().str.contains("LILIAN|WILFREDO", na=False)
-                df_m_filtrado = df_m_filtrado[mask_validos].copy()
-            
-            if not df_m_filtrado.empty:
-                df_m_filtrado['CLASIF_MATERIAL'] = df_m_filtrado.apply(clasificar_materiales, axis=1)
-                
-                df_equipos = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_EQUIPO']
-                df_acometidas = df_m_filtrado[df_m_filtrado['CLASIF_MATERIAL'] == 'CAMBIO_ACOMETIDA']
-                
-                total_equipos = len(df_equipos)
-                total_acometidas = len(df_acometidas)
-                
-                col_k1, col_k2 = st.columns(2)
-                with col_k1:
-                    st.markdown(f"""
-                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #3B82F6; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
-                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🔌 CAMBIOS DE EQUIPO (ONT/ONU/CPE)</div>
-                        <div style="color: #3B82F6; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_equipos}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with col_k2:
-                    st.markdown(f"""
-                    <div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #2D2F39;">
-                        <div style="color: #94A3B8; font-size: 0.85rem; font-weight: bold; text-transform: uppercase;">🎗️ REEMPLAZOS DE ACOMETIDA (DROP)</div>
-                        <div style="color: #F59E0B; font-size: 2.5rem; font-weight: bold; margin-top: 5px;">{total_acometidas}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown("### 📊 Desglose de Cambios por Técnico")
-                
-                if total_equipos > 0:
-                    eq_tech = df_equipos.groupby('TECNICO').size().reset_index(name='Equipos Cambiados')
-                else:
-                    eq_tech = pd.DataFrame(columns=['TECNICO', 'Equipos Cambiados'])
-                    
-                if total_acometidas > 0:
-                    ac_tech = df_acometidas.groupby('TECNICO').size().reset_index(name='Acometidas Cambiadas')
-                else:
-                    ac_tech = pd.DataFrame(columns=['TECNICO', 'Acometidas Cambiadas'])
-                    
-                tech_summary = pd.merge(eq_tech, ac_tech, on='TECNICO', how='outer').fillna(0)
-                tech_summary['Equipos Cambiados'] = tech_summary['Equipos Cambiados'].astype(int)
-                tech_summary['Acometidas Cambiadas'] = tech_summary['Acometidas Cambiadas'].astype(int)
-                tech_summary['Total Intervenciones'] = tech_summary['Equipos Cambiados'] + tech_summary['Acometidas Cambiadas']
-                
-                tech_summary = tech_summary[tech_summary['Total Intervenciones'] > 0]
-                tech_summary = tech_summary.sort_values(by='Total Intervenciones', ascending=False)
-                
-                st.dataframe(
-                    tech_summary, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "TECNICO": st.column_config.TextColumn("👨‍🔧 Técnico"),
-                        "Equipos Cambiados": st.column_config.NumberColumn("🔌 Equipos Cambiados", format="%d"),
-                        "Acometidas Cambiadas": st.column_config.NumberColumn("🎗️ Acometidas Cambiadas", format="%d"),
-                        "Total Intervenciones": st.column_config.NumberColumn("📦 Total General", format="%d")
-                    }
-                )
-                
-                st.markdown("### 📥 Descargar Reporte en Formato PDF")
-                
-                if st.button(f"📄 GENERAR REPORTE PDF ({mes_seleccionado} {anio_seleccionado})", use_container_width=True, type="primary", key="btn_generar_pdf_materiales"):
-                    with st.spinner("Dibujando celdas y empaquetando reporte..."):
-                        st.session_state['pdf_materiales_cargado'] = generar_pdf_materiales_mensual(
-                            df_equipos, 
-                            df_acometidas, 
-                            tech_summary, 
-                            mes_seleccionado, 
-                            anio_seleccionado
-                        )
-                
-                if 'pdf_materiales_cargado' in st.session_state and st.session_state['pdf_materiales_cargado'] is not None:
-                    st.download_button(
-                        label=f"📥 Descargar Reporte en PDF",
-                        data=st.session_state['pdf_materiales_cargado'],
-                        file_name=f"Reporte_Materiales_{mes_seleccionado}_{anio_seleccionado}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True,
-                        key="btn_descargar_pdf_materiales"
-                    )
-                
-                with st.expander("🔍 Ver Vista Previa del Detalle de Transacciones"):
-                    df_view_table = pd.concat([df_equipos, df_acometidas]).sort_values(by='FECHA_REPORTE')
-                    if not df_view_table.empty:
-                        df_view_table['FECHA_REPORTE'] = df_view_table['FECHA_REPORTE'].dt.strftime('%d/%m/%Y %H:%M')
-                        df_view_table = df_view_table[['NUM', 'CLIENTE', 'TECNICO', 'COMENTARIO', 'FECHA_REPORTE']]
-                        df_view_table.columns = ['Orden', 'Cliente', 'Técnico', 'Comentario de Cierre', 'Fecha']
-                    st.dataframe(df_view_table, use_container_width=True, hide_index=True)
-            else:
-                st.warning(f"⚠️ No se encontraron transacciones u órdenes procesadas para el mes de {mes_seleccionado} {anio_seleccionado}.")
-
-        with tab_allan:
-            st.subheader("🔧 Recuperos y Cortes — Allan")
-            st.caption(
-                "RETIRAREQUIPO, CORTEADM y CORTEMORA no forman parte de la lista blanca "
-                "general de actividades (ACTIVIDADES_PERMITIDAS), así que esta pestaña usa "
-                "los datos sin ese filtro para poder verlas."
-            )
-
-            ACTIVIDADES_ALLAN = ['RETIRAREQUIPO', 'CORTEADM', 'CORTEMORA']
-
-            if 'TECNICO' not in df_base_sin_filtro_actividad.columns or 'ACTIVIDAD' not in df_base_sin_filtro_actividad.columns:
-                df_allan = pd.DataFrame()
-            else:
-                mask_allan_tec = df_base_sin_filtro_actividad['TECNICO'].astype(str).str.upper().str.contains('ALLAN', na=False)
-                mask_allan_act = df_base_sin_filtro_actividad['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(ACTIVIDADES_ALLAN)
-                df_allan = df_base_sin_filtro_actividad[mask_allan_tec & mask_allan_act].copy()
-
-            if df_allan.empty:
-                st.info("No se encontraron órdenes de RETIRAREQUIPO, CORTEADM o CORTEMORA asignadas a un técnico llamado Allan.")
-            else:
-                # Deduplicar por NUM: la misma orden puede aparecer varias veces si se
-                # sincronizó en momentos distintos (por ejemplo, una vez abierta y otra
-                # ya cerrada). Se conserva la versión con HORA_LIQ más reciente -- y si
-                # ninguna tiene HORA_LIQ (sigue abierta), simplemente la última vista.
-                if 'NUM' in df_allan.columns:
-                    orden_dedup = df_allan['HORA_LIQ'] if 'HORA_LIQ' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
-                    df_allan = (
-                        df_allan.assign(_ORDEN_DEDUP=orden_dedup)
-                        .sort_values(by='_ORDEN_DEDUP', na_position='first')
-                        .drop_duplicates(subset=['NUM'], keep='last')
-                        .drop(columns=['_ORDEN_DEDUP'])
-                    )
-
-                estado_up_allan = df_allan['ESTADO'].astype(str).str.upper().str.strip()
-
-                # "Pendiente" = cualquier estado que no sea terminal (mismo criterio que
-                # el resto del sistema: CERRADA/ANULADA/CANCELADA/LIQUIDADA/FINALIZADA/
-                # RECHAZADA), no una lista blanca corta de estados "vivos" -- así no se
-                # queda ninguna orden fuera del conteo por un estado inesperado.
-                mask_pendiente_allan = ~estado_up_allan.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True)
-                df_allan_pendientes = df_allan[mask_pendiente_allan].copy()
-
-                opciones_periodo_allan = {
-                    "Último mes": 1,
-                    "Últimos 2 meses": 2,
-                    "Últimos 3 meses": 3,
-                    "Últimos 6 meses": 6,
-                    "Todo el historial disponible": None,
-                }
-                periodo_sel_allan = st.selectbox(
-                    "Periodo de cierre a mostrar:",
-                    options=list(opciones_periodo_allan.keys()),
-                    index=2,
-                    key="sel_periodo_allan",
-                )
-                meses_allan = opciones_periodo_allan[periodo_sel_allan]
-                etiqueta_periodo_allan = periodo_sel_allan if meses_allan is not None else "todo el historial"
-
-                # "Cerrada" se decide SOLO por ESTADO, igual que en el resto del sistema
-                # (ver el Gantt): a veces una orden ya cerrada se queda sin HORA_LIQ
-                # limpio, y exigirlo aquí descartaba órdenes realmente cerradas. Para
-                # el filtro de periodo se usa HORA_LIQ cuando existe, y si no,
-                # FECHA_APE como referencia -- no la fecha de cierre exacta, pero mejor
-                # que perder la orden del conteo por falta de un timestamp de cierre.
-                mask_cerrada_allan = estado_up_allan.str.contains('CERRADA', na=False)
-                hora_liq_allan = pd.to_datetime(df_allan['HORA_LIQ'], errors='coerce') if 'HORA_LIQ' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
-                fecha_ape_allan = pd.to_datetime(df_allan['FECHA_APE'], errors='coerce') if 'FECHA_APE' in df_allan.columns else pd.Series(pd.NaT, index=df_allan.index)
-                fecha_ref_allan = hora_liq_allan.fillna(fecha_ape_allan)
-                if meses_allan is not None:
-                    corte_allan = pd.Timestamp(get_honduras_time()) - pd.DateOffset(months=meses_allan)
-                    # Una orden cerrada sin ninguna fecha utilizable se conserva en vez
-                    # de descartarla en silencio -- es mejor mostrarla de más que
-                    # perderla del conteo de "cerradas".
-                    mask_cerrada_allan = mask_cerrada_allan & (fecha_ref_allan.isna() | (fecha_ref_allan >= corte_allan))
-                df_allan_cerradas_periodo = df_allan[mask_cerrada_allan].copy()
-
-                col_al1, col_al2 = st.columns(2)
-                with col_al1:
-                    st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #F59E0B; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"><div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; text-transform: uppercase;">PENDIENTES</div><div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700;">{len(df_allan_pendientes)}</div></div>""", unsafe_allow_html=True)
-                with col_al2:
-                    st.markdown(f"""<div style="background: linear-gradient(145deg, #1A1D24 0%, #15171C 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #10B981; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"><div style="color: #94A3B8; font-size: 0.85rem; font-weight: 600; text-transform: uppercase;">CERRADAS ({etiqueta_periodo_allan.upper()})</div><div style="color: #FFFFFF; font-size: 2.2rem; font-weight: 700;">{len(df_allan_cerradas_periodo)}</div></div>""", unsafe_allow_html=True)
-
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown("##### Desglose por tipo de actividad")
-                res_pend_allan = df_allan_pendientes['ACTIVIDAD'].value_counts().reindex(ACTIVIDADES_ALLAN, fill_value=0).reset_index()
-                res_pend_allan.columns = ['Actividad', 'Pendientes']
-                res_cerr_allan = df_allan_cerradas_periodo['ACTIVIDAD'].value_counts().reindex(ACTIVIDADES_ALLAN, fill_value=0).reset_index()
-                res_cerr_allan.columns = ['Actividad', f'Cerradas ({etiqueta_periodo_allan})']
-                df_desglose_allan = pd.merge(res_pend_allan, res_cerr_allan, on='Actividad', how='outer').fillna(0)
-                df_desglose_allan['Pendientes'] = df_desglose_allan['Pendientes'].astype(int)
-                df_desglose_allan[f'Cerradas ({etiqueta_periodo_allan})'] = df_desglose_allan[f'Cerradas ({etiqueta_periodo_allan})'].astype(int)
-                st.dataframe(df_desglose_allan, use_container_width=True, hide_index=True)
-
-                st.markdown("<br>", unsafe_allow_html=True)
-                cols_detalle_allan = ['NUM', 'ACTIVIDAD', 'ESTADO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'COMENTARIO', 'FECHA_APE', 'HORA_LIQ']
-                tab_allan_pend, tab_allan_cerr = st.tabs(["⏳ Detalle Pendientes", f"✅ Detalle Cerradas ({etiqueta_periodo_allan})"])
-                with tab_allan_pend:
-                    cols_ok_pend = [c for c in cols_detalle_allan if c in df_allan_pendientes.columns]
-                    df_mostrar_pend = df_allan_pendientes[cols_ok_pend].copy()
-                    for col_fecha in ['FECHA_APE', 'HORA_LIQ']:
-                        if col_fecha in df_mostrar_pend.columns:
-                            df_mostrar_pend[col_fecha] = pd.to_datetime(df_mostrar_pend[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
-                    st.dataframe(df_mostrar_pend, use_container_width=True, hide_index=True)
-                with tab_allan_cerr:
-                    cols_ok_cerr = [c for c in cols_detalle_allan if c in df_allan_cerradas_periodo.columns]
-                    df_mostrar_cerr = df_allan_cerradas_periodo[cols_ok_cerr].copy()
-                    if 'HORA_LIQ' in df_mostrar_cerr.columns:
-                        df_mostrar_cerr = df_mostrar_cerr.sort_values(by='HORA_LIQ', ascending=False)
-                    for col_fecha in ['FECHA_APE', 'HORA_LIQ']:
-                        if col_fecha in df_mostrar_cerr.columns:
-                            df_mostrar_cerr[col_fecha] = pd.to_datetime(df_mostrar_cerr[col_fecha], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
-                    st.dataframe(df_mostrar_cerr, use_container_width=True, hide_index=True)
 
     # ==============================================================================
     # 6. MONITOR OPERATIVO EN VIVO
