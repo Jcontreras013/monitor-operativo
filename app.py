@@ -1979,8 +1979,20 @@ def main():
     settings.inicializar_configuracion() 
 
     rol_usuario = st.session_state.get('rol_actual', 'monitoreo')
-    es_admin = (str(rol_usuario).strip().lower() == 'admin')
-    es_admin_o_supervisor = str(rol_usuario).strip().lower() in ['admin', 'jefe']
+
+    # El rol viene de st.secrets tal como lo escribió una persona, así que puede
+    # llegar como "Jefe", "JEFE" o " jefe ". TODA comparación de permisos debe
+    # hacerse contra esta versión normalizada.
+    #
+    # Antes convivían dos criterios: es_admin/es_admin_o_supervisor sí
+    # normalizaban, pero el menú comparaba el rol EN CRUDO contra
+    # ['admin', 'jefe']. Con el rol escrito "Jefe" eso dejaba al usuario en un
+    # estado a medias: contaba como supervisor para los formularios, pero el
+    # menú lo trataba como usuario raso y le escondía Reportes, Expedientes,
+    # Configuración y Auditoría.
+    rol_norm = str(rol_usuario).strip().lower()
+    es_admin = (rol_norm == 'admin')
+    es_admin_o_supervisor = rol_norm in ['admin', 'jefe']
     
     # Se fuerza es_movil a False para unificar la interfaz de escritorio en todos los roles
     es_movil = False
@@ -1991,7 +2003,7 @@ def main():
         st.error("Error al inicializar la conexión con Google Sheets.")
         conn = None
 
-    if str(rol_usuario).strip().lower() == 'llamados':
+    if rol_norm == 'llamados':
         expediente.mostrar_modulo_expedientes(conn, pd.DataFrame())
         mostrar_boton_logout() 
         st.stop() 
@@ -2017,7 +2029,7 @@ def main():
         
         st.markdown('<div class="bottom-menu-container">', unsafe_allow_html=True)
         
-        if rol_usuario in ['admin', 'jefe']:
+        if es_admin_o_supervisor:
             selected_nav = option_menu(
                 menu_title=None,
                 options=["Monitor", "Reportes", "Vehículos", "Más"],
@@ -2062,7 +2074,7 @@ def main():
         st.session_state['nav_menu_diamante'] = nav_menu_diamante
     else:
         # Definición segura de las opciones según el rol
-        if rol_usuario in ['admin', 'jefe']:
+        if es_admin_o_supervisor:
             opciones_menu = ["⚡ Monitor en Vivo", "📊 Centro de Reportes", "🏅 Control Calidad", "📅 Reprog / No Inst", "🚙 Auditoría Vehículos", "⚙️ Configuración", "📁 Expedientes"]
         else:
             opciones_menu = ["⚡ Monitor en Vivo", "🏅 Control Calidad"]
@@ -2075,7 +2087,7 @@ def main():
             default_index = 0
 
         with sidebar_top:
-            if rol_usuario in ['admin', 'jefe']: 
+            if es_admin_o_supervisor: 
                 nav_menu_diamante = st.radio(
                     "MENÚ DE CONTROL:", 
                     opciones_menu, 
