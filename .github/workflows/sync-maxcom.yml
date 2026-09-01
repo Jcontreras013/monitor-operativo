@@ -1,27 +1,29 @@
 name: Sincronizar con cablecolor/MAXCOM
 
-# Replica en cablecolor/MAXCOM todo lo que entra a main de este repositorio.
+# Deja cablecolor/MAXCOM IDÉNTICO a este repositorio: sobrescribe su rama main
+# con la de aquí, descartando el código anterior. Corre solo en cada merge a
+# main, y también a mano desde la pestaña Actions.
 #
-# Requiere el secreto MAXCOM_SYNC_TOKEN: un token de GitHub con permiso de
-# ESCRITURA sobre cablecolor/MAXCOM. Se crea en
-# Settings -> Secrets and variables -> Actions de ESTE repositorio.
+# Requiere el secreto MAXCOM_SYNC_TOKEN: un token con permiso de ESCRITURA
+# sobre cablecolor/MAXCOM. Se crea en este repositorio, en
+# Settings -> Secrets and variables -> Actions.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      forzar:
-        description: "Sobrescribir MAXCOM. DESTRUCTIVO: descarta cualquier commit que exista solo allá."
-        type: boolean
-        default: false
+
+# Dos sincronizaciones a la vez podrían dejar MAXCOM con la versión más
+# vieja de las dos. Se encolan y la última en entrar es la que manda.
+concurrency:
+  group: sync-maxcom
+  cancel-in-progress: false
 
 jobs:
   sincronizar:
     runs-on: ubuntu-latest
     # Este archivo también se copia a MAXCOM al sincronizar. Sin esta guarda,
-    # allá se dispararía solo e intentaría sincronizarse consigo mismo,
-    # fallando por falta del secreto y dejando ejecuciones en rojo.
+    # allá se dispararía solo e intentaría sobrescribirse a sí mismo.
     if: github.repository == 'Jcontreras013/monitor-operativo'
 
     steps:
@@ -31,10 +33,9 @@ jobs:
           # Sin el historial completo el push se rechaza por shallow.
           fetch-depth: 0
 
-      - name: Empujar a cablecolor/MAXCOM
+      - name: Sobrescribir cablecolor/MAXCOM
         env:
           TOKEN: ${{ secrets.MAXCOM_SYNC_TOKEN }}
-          FORZAR: ${{ github.event.inputs.forzar }}
         run: |
           set -euo pipefail
 
@@ -44,26 +45,31 @@ jobs:
           fi
 
           # La URL lleva el token, así que NO se guarda como remoto con nombre
-          # ni se imprime: se usa una sola vez y queda solo en memoria.
+          # ni se imprime: se usa dentro del paso y no queda escrita en disco.
           DESTINO="https://x-access-token:${TOKEN}@github.com/cablecolor/MAXCOM.git"
 
-          if [ "${FORZAR:-false}" = "true" ]; then
-            echo "⚠️ Empuje FORZADO solicitado manualmente: se sobrescribe main de MAXCOM."
-            git push --force "$DESTINO" HEAD:main
-            echo "✅ MAXCOM quedó idéntico a este repositorio."
-            exit 0
+          # --- Respaldo de un nivel -------------------------------------
+          # Antes de borrar, se conserva lo que MAXCOM tenía en main dentro de
+          # la rama 'respaldo-antes-de-sync'. Se reemplaza en cada corrida, así
+          # que guarda SIEMPRE la versión inmediatamente anterior y no se
+          # acumulan ramas. Es la red para el caso de que alguien haya editado
+          # algo directo en MAXCOM sin avisar.
+          # El '+' del refspec permite traer main aunque haya sido reescrito en
+          # una sincronización anterior. En Actions cada corrida arranca limpia,
+          # pero sin el '+' esto falla si el ref ya existe localmente.
+          if git fetch "$DESTINO" +main:refs/remotes/maxcom/main 2>/dev/null; then
+            echo "Guardando el estado actual de MAXCOM en 'respaldo-antes-de-sync'..."
+            git push --force "$DESTINO" refs/remotes/maxcom/main:refs/heads/respaldo-antes-de-sync
+            echo "Respaldo listo."
+          else
+            echo "MAXCOM no tiene rama main todavía (repo vacío o recién creado): no hay nada que respaldar."
           fi
 
-          if git push "$DESTINO" HEAD:main; then
-            echo "✅ Cambios replicados en cablecolor/MAXCOM."
-          else
-            echo "::error::GitHub rechazó el push."
-            echo "Causa habitual: MAXCOM tiene commits propios, o los dos repos"
-            echo "nacieron por separado y no comparten historial."
-            echo ""
-            echo "Qué hacer: revisa en MAXCOM si hay algo que valga la pena conservar."
-            echo "Si no lo hay, corre este mismo workflow a mano desde la pestaña Actions"
-            echo "activando la casilla 'forzar', UNA sola vez, para alinear los dos repos."
-            echo "A partir de ahí los push normales ya funcionan solos."
-            exit 1
-          fi
+          # --- Sobrescritura --------------------------------------------
+          # --force porque los dos repos pueden no compartir historial: es
+          # justamente lo pedido, que el código viejo de MAXCOM se descarte.
+          echo "Sobrescribiendo main de MAXCOM con el código de este repositorio..."
+          git push --force "$DESTINO" HEAD:main
+
+          echo "✅ cablecolor/MAXCOM quedó idéntico a Jcontreras013/monitor-operativo."
+          echo "   El código anterior de MAXCOM quedó en la rama 'respaldo-antes-de-sync'."
