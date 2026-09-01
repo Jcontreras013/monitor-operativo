@@ -2158,7 +2158,15 @@ def main():
                             hora_liq=hora_liq_orden_manual_txt.strip(),
                             registrado_por=st.session_state.get('usuario_actual', rol_usuario)
                         )
-                        if ok_orden_manual:
+                        if ok_orden_manual == "SOLO_LOCAL":
+                            # Se guardó, pero sin copia en la nube: al próximo
+                            # redespliegue el disco se borra y la orden se pierde.
+                            st.warning(
+                                f"⚠️ Orden {num_orden_manual.strip()} guardada, pero NO se pudo respaldar en la nube. "
+                                "Va a desaparecer si la app se reinicia. Volvé a guardarla más tarde."
+                            )
+                            st.cache_data.clear()
+                        elif ok_orden_manual:
                             st.success(f"✅ Orden {num_orden_manual.strip()} guardada manualmente para {tec_orden_manual_sel}.")
                             st.cache_data.clear()
                         else:
@@ -2606,8 +2614,11 @@ def main():
                 df_ordenes_manuales = df_ordenes_manuales[~df_ordenes_manuales['NUM'].astype(str).str.strip().isin(nums_ya_reales)]
             if not df_ordenes_manuales.empty:
                 df_base = pd.concat([df_base, df_ordenes_manuales], ignore_index=True)
-    except Exception:
-        pass
+    except Exception as e_manuales:
+        # Antes esto era un 'except: pass'. Si algo fallaba al cargar las
+        # órdenes manuales, desaparecían sin una sola señal y no había forma de
+        # saber por qué -- justo el síntoma que se reportó. Ahora se avisa.
+        st.warning(f"⚠️ No se pudieron integrar las órdenes manuales: {e_manuales}")
     
     # === FILTRADO AVANZADO DE FALSOS OFFLINE USANDO TELEMETRÍA REAL FTTX ===
     col_olt_info = None

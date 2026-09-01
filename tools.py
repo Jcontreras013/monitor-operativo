@@ -2662,6 +2662,9 @@ def generar_pdf_telemetria_matriz(df_matriz, limite_vel):
 # ==============================================================================
 _CACHE_ALMUERZOS_PATH = "cache_almuerzos.json"
 _CACHE_ORDENES_MANUALES_PATH = "cache_ordenes_manuales.json"
+# Copia durable en GCS. El JSON de arriba es solo un caché de arranque rápido:
+# vive en el disco efímero de Streamlit Cloud y no sobrevive a un redespliegue.
+_ARCHIVO_ORDENES_MANUALES_GCS = "ordenes_manuales.csv"
 
 def guardar_almuerzo(conn, tecnico: str, fecha: str, hora_inicio: str, hora_fin: str, registrado_por: str = "") -> bool:
     """
@@ -2764,6 +2767,19 @@ def guardar_orden_manual(num_orden: str, actividad: str, tecnico: str, fecha: st
 
         with open(_CACHE_ORDENES_MANUALES_PATH, "w", encoding="utf-8") as f:
             json.dump(registros, f, ensure_ascii=False)
+
+        # Además del archivo local, se sube una copia a GCS. El disco de
+        # Streamlit Cloud es EFÍMERO: se borra en cada redespliegue y cuando el
+        # contenedor se recicla por inactividad, así que guardar solo en local
+        # hacía que las órdenes manuales desaparecieran solas al rato.
+        # Si GCS falla, la orden ya quedó en local y la función no miente:
+        # devuelve el estado real para que la interfaz lo pueda advertir.
+        try:
+            sobrescribir_archivo_gcs(pd.DataFrame(registros), NOMBRE_BUCKET_SISTEMA, _ARCHIVO_ORDENES_MANUALES_GCS)
+        except Exception as e_gcs:
+            print(f"Orden manual guardada en local pero NO en GCS: {e_gcs}")
+            return "SOLO_LOCAL"
+
         return True
     except Exception as e:
         print(f"Error en guardar_orden_manual: {e}")
@@ -2782,14 +2798,39 @@ def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
     Se invalida llamando a st.cache_data.clear() después de guardar_orden_manual().
     """
     try:
-        if not os.path.exists(_CACHE_ORDENES_MANUALES_PATH):
-            return pd.DataFrame()
-        with open(_CACHE_ORDENES_MANUALES_PATH, "r", encoding="utf-8") as f:
-            registros = json.load(f)
+        registros = []
+        if os.path.exists(_CACHE_ORDENES_MANUALES_PATH):
+            try:
+                with open(_CACHE_ORDENES_MANUALES_PATH, "r", encoding="utf-8") as f:
+                    registros = json.load(f)
+            except Exception:
+                registros = []
+
+        # Se recupera lo guardado en GCS y se fusiona con lo local. Tras un
+        # redespliegue el archivo local no existe, y sin este rescate todas las
+        # órdenes manuales cargadas antes se perdían sin dejar rastro.
+        # Ante un mismo NUM gana lo LOCAL, que es lo que acaba de escribir esta
+        # misma sesión y por lo tanto es más reciente que la copia subida.
+        try:
+            df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, _ARCHIVO_ORDENES_MANUALES_GCS)
+            if df_gcs is not None and not df_gcs.empty:
+                nums_locales = {str(r.get("NUM", "")).strip() for r in registros}
+                for reg_nube in df_gcs.to_dict("records"):
+                    if str(reg_nube.get("NUM", "")).strip() not in nums_locales:
+                        registros.append(reg_nube)
+        except Exception as e_gcs:
+            print(f"No se pudieron recuperar las órdenes manuales de GCS: {e_gcs}")
+
         if not registros:
             return pd.DataFrame()
 
         df = pd.DataFrame(registros)
+        # Los registros que vienen de GCS pueden traer NaN donde el JSON local
+        # tiene cadenas vacías; se uniforman para que el resto del cálculo no
+        # tenga que distinguir de dónde salió cada fila.
+        for _c in ['HORA_LIQ', 'REGISTRADO_POR']:
+            if _c in df.columns:
+                df[_c] = df[_c].fillna("").astype(str).replace("nan", "")
         if fecha:
             df = df[df['FECHA'].astype(str) == str(fecha)].copy()
         if df.empty:
