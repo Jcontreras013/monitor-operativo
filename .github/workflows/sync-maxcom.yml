@@ -1,0 +1,69 @@
+name: Sincronizar con cablecolor/MAXCOM
+
+# Replica en cablecolor/MAXCOM todo lo que entra a main de este repositorio.
+#
+# Requiere el secreto MAXCOM_SYNC_TOKEN: un token de GitHub con permiso de
+# ESCRITURA sobre cablecolor/MAXCOM. Se crea en
+# Settings -> Secrets and variables -> Actions de ESTE repositorio.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      forzar:
+        description: "Sobrescribir MAXCOM. DESTRUCTIVO: descarta cualquier commit que exista solo allá."
+        type: boolean
+        default: false
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    # Este archivo también se copia a MAXCOM al sincronizar. Sin esta guarda,
+    # allá se dispararía solo e intentaría sincronizarse consigo mismo,
+    # fallando por falta del secreto y dejando ejecuciones en rojo.
+    if: github.repository == 'Jcontreras013/monitor-operativo'
+
+    steps:
+      - name: Descargar el historial completo
+        uses: actions/checkout@v4
+        with:
+          # Sin el historial completo el push se rechaza por shallow.
+          fetch-depth: 0
+
+      - name: Empujar a cablecolor/MAXCOM
+        env:
+          TOKEN: ${{ secrets.MAXCOM_SYNC_TOKEN }}
+          FORZAR: ${{ github.event.inputs.forzar }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::Falta el secreto MAXCOM_SYNC_TOKEN. Créalo en Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          # La URL lleva el token, así que NO se guarda como remoto con nombre
+          # ni se imprime: se usa una sola vez y queda solo en memoria.
+          DESTINO="https://x-access-token:${TOKEN}@github.com/cablecolor/MAXCOM.git"
+
+          if [ "${FORZAR:-false}" = "true" ]; then
+            echo "⚠️ Empuje FORZADO solicitado manualmente: se sobrescribe main de MAXCOM."
+            git push --force "$DESTINO" HEAD:main
+            echo "✅ MAXCOM quedó idéntico a este repositorio."
+            exit 0
+          fi
+
+          if git push "$DESTINO" HEAD:main; then
+            echo "✅ Cambios replicados en cablecolor/MAXCOM."
+          else
+            echo "::error::GitHub rechazó el push."
+            echo "Causa habitual: MAXCOM tiene commits propios, o los dos repos"
+            echo "nacieron por separado y no comparten historial."
+            echo ""
+            echo "Qué hacer: revisa en MAXCOM si hay algo que valga la pena conservar."
+            echo "Si no lo hay, corre este mismo workflow a mano desde la pestaña Actions"
+            echo "activando la casilla 'forzar', UNA sola vez, para alinear los dos repos."
+            echo "A partir de ahí los push normales ya funcionan solos."
+            exit 1
+          fi
