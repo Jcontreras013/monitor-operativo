@@ -1981,6 +1981,264 @@ ahí el problema no es el análisis, es lo que se escribe al cerrar.
         )
 
 
+# ==============================================================================
+# ANÁLISIS CRUZADO: TODAS LAS ÓRDENES, NO SOLO LAS OFFLINE
+# ==============================================================================
+def _grupo_actividad(actividad):
+    """
+    Agrupa la actividad en las tres familias que de verdad se comparan entre sí.
+    Las averías, las instalaciones y los traslados tienen tiempos y tasas de
+    éxito tan distintos que promediarlos juntos no dice nada.
+    """
+    a = str(actividad).upper().strip()
+    if 'SOP' in a:
+        return 'Avería / Soporte'
+    if any(k in a for k in ('INS', 'CEQUI', 'TVADICIONAL')):
+        return 'Instalación'
+    if 'TRASLADO' in a:
+        return 'Traslado'
+    return 'Otros'
+
+
+def mostrar_analisis_cruzado(df_base_activa, hoy_date_valor):
+    """
+    Analiza TODAS las órdenes, no solo las de fibra caída.
+
+    El Diagnóstico de Offline solo mira SOPFIBRA, así que hay un cruce que le
+    resulta imposible: el de una instalación con el soporte que vino después.
+    Ese cruce necesita las dos familias de actividad al mismo tiempo, y es el
+    que revela el retrabajo -- clientes que vuelven a reportar a los pocos días
+    de haber sido instalados.
+    """
+    st.subheader("🔀 Análisis Cruzado (Todas las Órdenes)")
+
+    df = df_base_activa.copy()
+    for c in ['TECNICO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'ESTADO']:
+        if c not in df.columns:
+            df[c] = ""
+        df[c] = df[c].fillna("").astype(str)
+
+    c_f1, c_f2 = st.columns([1, 2])
+    with c_f1:
+        dias_x = st.selectbox("Periodo a analizar:", [7, 15, 30, 60, 90], index=2, key="cruz_dias")
+    with c_f2:
+        st.caption(
+            "Aquí entran TODAS las actividades: averías, instalaciones, traslados y demás. "
+            "Es la vista para comparar familias de trabajo entre sí."
+        )
+
+    ref = pd.to_datetime(df['FECHA_APE'], errors='coerce')
+    ref = ref.fillna(pd.to_datetime(df['HORA_INI'], errors='coerce'))
+    df['FECHA_REF'] = ref
+    df = df[df['FECHA_REF'] >= (pd.Timestamp(hoy_date_valor) - pd.Timedelta(days=dias_x))].copy()
+
+    if df.empty:
+        st.info(f"No hay órdenes en los últimos {dias_x} días.")
+        return
+
+    df['GRUPO'] = df['ACTIVIDAD'].apply(_grupo_actividad)
+    _estado_x = df['ESTADO'].str.upper().str.strip()
+    df['CERRADA'] = _estado_x.str.contains('|'.join(ESTADOS_TRABAJO_HECHO), na=False, regex=True)
+    df['ANULADA'] = _estado_x.str.contains('ANULADA|CANCELADA|RECHAZADA', na=False, regex=True)
+
+    total_x = len(df)
+    cerradas_x = int(df['CERRADA'].sum())
+    anuladas_x = int(df['ANULADA'].sum())
+    abiertas_x = total_x - cerradas_x - anuladas_x
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("📦 Órdenes del periodo", f"{total_x:,}")
+    m2.metric("✅ Cerradas", f"{cerradas_x:,}", f"{100*cerradas_x/total_x:.0f}%" if total_x else "—")
+    m3.metric("❌ Anuladas", f"{anuladas_x:,}", f"{100*anuladas_x/total_x:.0f}%" if total_x else "—")
+    m4.metric("⏳ Todavía abiertas", f"{abiertas_x:,}")
+
+    st.markdown("---")
+
+    t_mix, t_retra, t_reinc, t_tec, t_det = st.tabs([
+        "📊 Mix de trabajo", "🔁 Instalación → Soporte", "👥 Reincidencia",
+        "🧰 Por técnico", "📋 Detalle"
+    ])
+
+    # ---------------- Mix de trabajo ----------------
+    with t_mix:
+        st.caption("En qué se va el trabajo del periodo y qué tan bien termina cada familia de actividad.")
+
+        resumen_x = df.groupby('GRUPO').agg(
+            ORDENES=('NUM', 'count'),
+            CERRADAS=('CERRADA', 'sum'),
+            ANULADAS=('ANULADA', 'sum'),
+        ).reset_index()
+        resumen_x['% del total'] = (100 * resumen_x['ORDENES'] / total_x).round(1)
+        resumen_x['% anuladas'] = (100 * resumen_x['ANULADAS'] / resumen_x['ORDENES']).round(1)
+        resumen_x = resumen_x.sort_values('ORDENES', ascending=False)
+
+        cg1, cg2 = st.columns([3, 2])
+        with cg1:
+            fig_x = px.bar(resumen_x.sort_values('ORDENES'), x='ORDENES', y='GRUPO',
+                           orientation='h', height=280, text='ORDENES')
+            fig_x.update_layout(margin=dict(t=10, b=10, l=10, r=10), yaxis_title="", xaxis_title="")
+            st.plotly_chart(fig_x, use_container_width=True)
+        with cg2:
+            st.dataframe(resumen_x, hide_index=True, use_container_width=True, height=280)
+
+        st.markdown("**Detalle por actividad**")
+        det_act = df.groupby('ACTIVIDAD').agg(
+            ORDENES=('NUM', 'count'),
+            ANULADAS=('ANULADA', 'sum'),
+        ).reset_index().sort_values('ORDENES', ascending=False)
+        det_act['% anuladas'] = (100 * det_act['ANULADAS'] / det_act['ORDENES']).round(1)
+        st.dataframe(det_act, hide_index=True, use_container_width=True, height=260)
+
+    # ---------------- Instalación seguida de soporte ----------------
+    with t_retra:
+        st.caption(
+            "El cruce que solo se puede hacer teniendo todas las órdenes: clientes que "
+            "recibieron una instalación y volvieron a reportar poco después. Una avería a "
+            "los pocos días de instalar rara vez es casualidad."
+        )
+        ventana = st.slider("Días entre la instalación y el soporte:", 3, 60, 30, key="cruz_ventana")
+
+        instalaciones = df[(df['GRUPO'] == 'Instalación') & df['FECHA_REF'].notna()]
+        soportes = df[(df['GRUPO'] == 'Avería / Soporte') & df['FECHA_REF'].notna()]
+        cli_validos = ~df['CLIENTE'].isin(['', 'N/D', 'NAN', '0'])
+
+        instalaciones = instalaciones[cli_validos.reindex(instalaciones.index, fill_value=False)]
+        soportes = soportes[cli_validos.reindex(soportes.index, fill_value=False)]
+
+        if instalaciones.empty or soportes.empty:
+            st.info("No hay instalaciones y soportes suficientes en el periodo para cruzar.")
+        else:
+            cruce = instalaciones.merge(
+                soportes, on='CLIENTE', suffixes=('_INS', '_SOP')
+            )
+            cruce['DIAS'] = (cruce['FECHA_REF_SOP'] - cruce['FECHA_REF_INS']).dt.days
+            cruce = cruce[(cruce['DIAS'] >= 0) & (cruce['DIAS'] <= ventana)]
+
+            if cruce.empty:
+                st.success(f"✅ Ningún cliente instalado volvió a reportar dentro de {ventana} días.")
+            else:
+                # Se conserva el soporte MÁS CERCANO a la instalación: si un cliente
+                # reportó tres veces, el caso es uno solo, no tres.
+                cruce = cruce.sort_values('DIAS').drop_duplicates(subset=['CLIENTE', 'NUM_INS'])
+
+                pct_retra = 100 * cruce['CLIENTE'].nunique() / max(instalaciones['CLIENTE'].nunique(), 1)
+                r1, r2 = st.columns(2)
+                r1.metric("🔁 Clientes que volvieron a reportar", f"{cruce['CLIENTE'].nunique():,}")
+                r2.metric("Sobre el total instalado", f"{pct_retra:.1f}%",
+                          help="Porcentaje de los clientes instalados en el periodo que generaron un soporte después.")
+
+                st.warning(
+                    f"⚠️ **{cruce['CLIENTE'].nunique()} clientes** volvieron a reportar dentro de "
+                    f"{ventana} días de haber sido instalados. Mediana: **{int(cruce['DIAS'].median())} días** "
+                    "entre la instalación y la avería."
+                )
+
+                st.markdown("**Por técnico que instaló**")
+                por_inst = cruce.groupby('TECNICO_INS').agg(
+                    CASOS=('CLIENTE', 'nunique'),
+                    DIAS_PROMEDIO=('DIAS', 'mean'),
+                ).reset_index().sort_values('CASOS', ascending=False)
+                por_inst['DIAS_PROMEDIO'] = por_inst['DIAS_PROMEDIO'].round(1)
+                por_inst.columns = ['Técnico que instaló', 'Casos', 'Días promedio hasta la avería']
+                st.dataframe(por_inst, hide_index=True, use_container_width=True, height=260)
+
+                st.markdown("**Casos**")
+                cols_cruce = ['CLIENTE', 'NOMBRE_INS', 'COLONIA_INS', 'NUM_INS', 'ACTIVIDAD_INS',
+                              'TECNICO_INS', 'FECHA_REF_INS', 'DIAS', 'NUM_SOP', 'ACTIVIDAD_SOP',
+                              'TECNICO_SOP', 'FECHA_REF_SOP']
+                cols_cruce = [c for c in cols_cruce if c in cruce.columns]
+                st.dataframe(cruce[cols_cruce].sort_values('DIAS'),
+                             hide_index=True, use_container_width=True, height=300)
+
+                st.download_button(
+                    "📥 Descargar casos de retrabajo (CSV)",
+                    data=cruce[cols_cruce].to_csv(index=False).encode('utf-8'),
+                    file_name=f"retrabajo_instalacion_{ventana}d.csv",
+                    mime="text/csv",
+                    key="dl_cruz_retrabajo"
+                )
+
+    # ---------------- Reincidencia general ----------------
+    with t_reinc:
+        st.caption(
+            "Clientes con más de una orden en el periodo, sin importar la actividad. "
+            "La columna ACTIVIDADES muestra si son trabajos distintos o el mismo problema repetido."
+        )
+        df_cli_x = df[~df['CLIENTE'].isin(['', 'N/D', 'NAN', '0'])]
+        if df_cli_x.empty:
+            st.info("No hay órdenes con cliente identificado en el periodo.")
+        else:
+            rein_x = df_cli_x.groupby('CLIENTE').agg(
+                ORDENES=('NUM', 'count'),
+                NOMBRE=('NOMBRE', 'first'),
+                COLONIA=('COLONIA', 'first'),
+                ACTIVIDADES=('ACTIVIDAD', lambda s: " · ".join(sorted(set(s)))),
+                GRUPOS=('GRUPO', lambda s: " · ".join(sorted(set(s)))),
+            ).reset_index()
+            rein_x = rein_x[rein_x['ORDENES'] > 1].sort_values('ORDENES', ascending=False)
+
+            if rein_x.empty:
+                st.success("✅ Ningún cliente tuvo más de una orden en el periodo.")
+            else:
+                visitas_extra_x = int(rein_x['ORDENES'].sum() - len(rein_x))
+                st.metric("🔁 Visitas repetidas", f"{visitas_extra_x:,}",
+                          help="Órdenes que son la segunda o posterior visita al mismo cliente.")
+                st.dataframe(rein_x, hide_index=True, use_container_width=True, height=320)
+
+    # ---------------- Por técnico ----------------
+    with t_tec:
+        st.caption(
+            "Volumen y resultado por técnico. El tiempo promedio se calcula solo sobre "
+            "órdenes cerradas y se separa por familia, porque una instalación y una avería "
+            "no son comparables entre sí."
+        )
+        df_tec_x = df[mascara_tecnico_asignado(df['TECNICO'])]
+        if df_tec_x.empty:
+            st.info("No hay órdenes con técnico asignado en el periodo.")
+        else:
+            grupo_sel = st.selectbox(
+                "Familia de actividad:",
+                ["Todas"] + sorted(df_tec_x['GRUPO'].unique().tolist()),
+                key="cruz_grupo_tec"
+            )
+            df_t = df_tec_x if grupo_sel == "Todas" else df_tec_x[df_tec_x['GRUPO'] == grupo_sel]
+
+            agg_tec = {'ORDENES': ('NUM', 'count'), 'CERRADAS': ('CERRADA', 'sum'), 'ANULADAS': ('ANULADA', 'sum')}
+            if 'MINUTOS_CALC' in df_t.columns:
+                df_t = df_t.copy()
+                # Solo las cerradas tienen duración real; en las abiertas el dato no existe.
+                df_t['MIN_CERRADAS'] = pd.to_numeric(df_t['MINUTOS_CALC'], errors='coerce').where(df_t['CERRADA'])
+                agg_tec['MIN_PROMEDIO'] = ('MIN_CERRADAS', 'mean')
+
+            tabla_tec = df_t.groupby('TECNICO').agg(**agg_tec).reset_index()
+            tabla_tec['% anuladas'] = (100 * tabla_tec['ANULADAS'] / tabla_tec['ORDENES']).round(1)
+            if 'MIN_PROMEDIO' in tabla_tec.columns:
+                tabla_tec['MIN_PROMEDIO'] = tabla_tec['MIN_PROMEDIO'].round(0)
+            tabla_tec = tabla_tec.sort_values('ORDENES', ascending=False)
+            st.dataframe(tabla_tec, hide_index=True, use_container_width=True, height=380)
+
+    # ---------------- Detalle ----------------
+    with t_det:
+        grupos_sel = st.multiselect("Filtrar por familia:", options=sorted(df['GRUPO'].unique().tolist()),
+                                    key="cruz_grupo_det")
+        df_dx = df[df['GRUPO'].isin(grupos_sel)] if grupos_sel else df
+
+        cols_x = [c for c in ['NUM', 'FECHA_REF', 'GRUPO', 'ACTIVIDAD', 'CLIENTE', 'NOMBRE',
+                              'COLONIA', 'OLT', 'PON', 'TECNICO', 'ESTADO', 'TIEMPO_REAL',
+                              'RAZON_CIERRE_SOP', 'COMENTARIO_CIERRE', 'COMENTARIO']
+                  if c in df_dx.columns]
+        st.dataframe(df_dx[cols_x].sort_values('FECHA_REF', ascending=False),
+                     hide_index=True, use_container_width=True, height=400)
+
+        st.download_button(
+            "📥 Descargar todas las órdenes (CSV)",
+            data=df_dx[cols_x].to_csv(index=False).encode('utf-8'),
+            file_name=f"analisis_cruzado_{dias_x}d.csv",
+            mime="text/csv",
+            key="dl_cruz_detalle"
+        )
+
+
 def main():
     settings.inicializar_configuracion() 
 
@@ -2955,12 +3213,16 @@ def main():
         # MENSAJE DE AYUDA DE NAVEGADOR PARA DESCARGAS DE REPORTES
         st.info("💡 **Para Supervisores de Campo (Móvil):** Si estás descargando un reporte en PDF o Excel desde tu celular, asegúrate de haber abierto el monitor operativo en tu navegador nativo (**Chrome o Safari**). Si abres este monitor directamente dentro de un chat de WhatsApp o WATI, las descargas serán bloqueadas por seguridad del dispositivo móvil.")
 
-        tab_diario, tab_pendientes, tab_red, tab_diag_off = st.tabs([
+        tab_diario, tab_pendientes, tab_red, tab_diag_off, tab_cruzado = st.tabs([
             "📦 Cierre Diario",
             "📋 Pendientes Generales",
             "🛰️ Análisis de Red (OLT/PON)",
-            "🔬 Diagnóstico de Offline"
+            "🔬 Diagnóstico de Offline",
+            "🔀 Análisis Cruzado"
         ])
+
+        with tab_cruzado:
+            mostrar_analisis_cruzado(df_base_activa, hoy_date_valor)
 
         with tab_red:
             mostrar_analisis_red(df_base_activa, hoy_date_valor, conn)
