@@ -1692,10 +1692,25 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
     act = df['ACTIVIDAD'].astype(str).str.upper()
     mask_sop = act.str.contains(r'SOP\s*FIBRA|SOP_FIBRA|SOP', regex=True, na=False)
     mask_falsos = act.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True, na=False)
-    df = df[mask_sop & ~mask_falsos].copy()
+
+    # SOLO ÓRDENES YA CERRADAS.
+    #
+    # Este módulo lee la causa que el técnico escribió AL CERRAR. Una orden
+    # pendiente todavía no tiene cierre, así que por definición no puede
+    # tener causa: entraba como "Sin clasificar" y arrastraba la cobertura
+    # hacia abajo, haciendo parecer que los técnicos no documentan cuando en
+    # realidad esas órdenes ni siquiera se han atendido.
+    #
+    # Se excluyen también las que no tienen técnico asignado: son órdenes que
+    # nadie ha trabajado, no casos sin documentar.
+    _estado_diag = df['ESTADO'].astype(str).str.upper().str.strip()
+    mask_cerradas = _estado_diag.str.contains('|'.join(ESTADOS_TRABAJO_HECHO), na=False, regex=True)
+    mask_con_tecnico = mascara_tecnico_asignado(df['TECNICO'])
+
+    df = df[mask_sop & ~mask_falsos & mask_cerradas & mask_con_tecnico].copy()
 
     if df.empty:
-        st.info("No hay soportes de fibra en el rango de datos cargado.")
+        st.info("No hay soportes de fibra cerrados en el rango de datos cargado.")
         return
 
     col_f1, col_f2 = st.columns([1, 2])
@@ -1703,8 +1718,9 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
         dias = st.selectbox("Periodo a analizar:", [7, 15, 30, 60, 90], index=2, key="diag_off_dias")
     with col_f2:
         st.caption(
-            "Se analizan los soportes de fibra del periodo. La causa se toma del cierre "
-            "del técnico (razón de cierre + comentario de cierre)."
+            "Se analizan solo los soportes de fibra YA CERRADOS del periodo, porque la causa "
+            "se toma del cierre del técnico (razón de cierre + comentario de cierre). "
+            "Las órdenes pendientes o sin técnico asignado no entran."
         )
 
     ref = pd.to_datetime(df['FECHA_APE'], errors='coerce')
@@ -1713,7 +1729,7 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
     df = df[df['FECHA_REF'] >= (pd.Timestamp(hoy_date_valor) - pd.Timedelta(days=dias))].copy()
 
     if df.empty:
-        st.info(f"No hay soportes de fibra en los últimos {dias} días.")
+        st.info(f"No hay soportes de fibra cerrados en los últimos {dias} días.")
         return
 
     # ---------------- Clasificación de causa ----------------
@@ -1732,7 +1748,7 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
     # no es de análisis sino de captura, y hay que atacarlo antes de creerle a
     # cualquier porcentaje de abajo.
     c1, c2, c3 = st.columns(3)
-    c1.metric("🔎 Soportes analizados", f"{total:,}")
+    c1.metric("🔎 Soportes cerrados", f"{total:,}")
     c2.metric("🧭 Cobertura del diagnóstico", f"{cobertura:.0f}%",
               help="Porcentaje de órdenes cuyo cierre permitió identificar una causa.")
     falsos_pos = int((df['CAUSA'].str.startswith("✅")).sum())
@@ -1749,7 +1765,7 @@ def mostrar_diagnostico_offline(df_base_activa, hoy_date_valor):
 
     with st.expander("📖 ¿Qué significa cada número? (léelo una vez)", expanded=False):
         st.markdown("""
-**Soportes analizados** — cuántas averías de fibra se atendieron en el periodo. Es el universo del que sale todo lo demás.
+**Soportes cerrados** — cuántas averías de fibra se cerraron en el periodo. Solo entran las ya cerradas: una orden pendiente todavía no tiene cierre, así que no puede tener causa.
 
 **Cobertura del diagnóstico** — de cada 100 órdenes, en cuántas el técnico escribió algo en el cierre que permita saber qué pasó.
 Si dice 90%, casi todo está explicado. Si dice 40%, más de la mitad de las órdenes se cerraron sin decir qué se encontró:
