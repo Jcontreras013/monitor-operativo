@@ -266,6 +266,31 @@ def extraer_departamento(nombre_etiquetado):
     dep = unicodedata.normalize('NFKD', dep).encode('ascii', 'ignore').decode('ascii')
     return " ".join(dep.split()) or "SIN ÁREA"
 
+def extraer_hora_falta(comentario, fecha_registro):
+    """
+    Extrae la hora de falta del comentario. Busca patrones HH:MM o HH.MM.
+    Si no encuentra hora en el comentario, devuelve una hora por defecto.
+
+    Args:
+        comentario (str): Texto del comentario que puede contener la hora
+        fecha_registro (str): Fecha de registro (como respaldo)
+
+    Returns:
+        str: Hora en formato HH:MM, o "N/D" si no se encuentra
+    """
+    if not comentario:
+        return "N/D"
+
+    comentario = str(comentario).upper().strip()
+
+    # Buscar patrón HH:MM o HH.MM
+    match = re.search(r'(\d{1,2}[:.]?\d{2})\s*(AM|PM|A\.M|P\.M)?', comentario)
+    if match:
+        hora_texto = match.group(1).replace('.', ':')
+        return hora_texto
+
+    return "N/D"
+
 # ==============================================================================
 # MOTOR AUXILIAR DE SUBIDA A NUBE (CATBOX PARA PDF / FREEIMAGE PARA IMÁGENES)
 # ==============================================================================
