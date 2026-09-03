@@ -2493,6 +2493,11 @@ def main():
                     hora_liq_om_valida = (hora_liq_orden_manual_txt.strip() == "") or re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', hora_liq_orden_manual_txt.strip())
                     if not num_orden_manual.strip():
                         st.warning("Ingresa el número de orden.")
+                    elif not num_orden_manual.strip().isdigit():
+                        # El pipeline (más abajo) fuerza la columna NUM a numérica: un
+                        # número con letras o símbolos se convierte en 'N/D' y la orden
+                        # nunca se refleja en el monitor. Se rechaza aquí con un aviso claro.
+                        st.warning("El número de orden debe ser solo dígitos (sin letras, guiones ni espacios). Con otro formato la orden no se refleja en el monitor.")
                     elif not tec_orden_manual_sel:
                         st.warning("Selecciona o escribe un técnico.")
                     elif not hora_ini_om_valida:
@@ -2522,6 +2527,25 @@ def main():
                             st.cache_data.clear()
                         else:
                             st.error("No se pudo guardar la orden manual.")
+
+                # Verificación: lista las órdenes manuales realmente almacenadas, para
+                # confirmar que el guardado funcionó sin depender de los filtros del
+                # monitor. Si una orden aparece aquí pero no en el monitor, el problema
+                # es de filtro (fecha/técnico/vista), no del guardado.
+                try:
+                    df_om_guardadas = cargar_ordenes_manuales()
+                    if df_om_guardadas is not None and not df_om_guardadas.empty:
+                        st.markdown("**Órdenes manuales almacenadas actualmente:**")
+                        _cols_om = [c for c in ['NUM', 'ACTIVIDAD', 'TECNICO', 'FECHA_APE', 'ESTADO', 'ORIGEN'] if c in df_om_guardadas.columns]
+                        _df_om_ver = df_om_guardadas[_cols_om].copy()
+                        if 'FECHA_APE' in _df_om_ver.columns:
+                            _df_om_ver['FECHA_APE'] = pd.to_datetime(_df_om_ver['FECHA_APE'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
+                        st.dataframe(_df_om_ver, hide_index=True, use_container_width=True)
+                        st.caption("Si tu orden aparece aquí pero NO en el monitor, revisa que la FECHA y el TÉCNICO coincidan con la vista/filtros que estás mirando.")
+                    else:
+                        st.info("Todavía no hay órdenes manuales almacenadas.")
+                except Exception as _e_om_list:
+                    st.caption(f"No se pudo listar las órdenes manuales guardadas: {_e_om_list}")
         st.divider()
 
         if es_admin_o_supervisor:
