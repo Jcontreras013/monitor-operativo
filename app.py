@@ -3641,7 +3641,7 @@ def main():
                 st.markdown("### 📊 Desglose de Producción")
                 if es_movil: cs_col, ci_col = st.columns(2)
                 else: cs_col, ci_col, cp_col, co_col = st.columns(4)
-                
+
                 with cs_col:
                     st.write("**SOP**")
                     df_sop = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('SOP|FALLA|MANT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
@@ -3665,18 +3665,28 @@ def main():
                         st.dataframe(df_ins_grouped, hide_index=True, use_container_width=True)
                         st.write(f"**Total: {df_ins_grouped['Cant'].sum()}**")
                     else: st.write("Sin datos")
-                
+
                 if es_movil: cp_col, co_col = st.columns(2)
 
                 with cp_col:
                     st.write("**Plex**")
-                    df_plex = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('PLEX|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
+                    df_plex = df_cerradas_espejo[df_cerradas_espejo['ACTIVIDAD'].astype(str).str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT', na=False, case=False)]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_plex, hide_index=True, use_container_width=True)
                     st.write(f"**Total: {df_plex['Cant'].sum()}**")
+
+                    # Debug info: show total count in df_para_gantt_diario for comparison
+                    with st.expander("🔍 Debug: Total PLEX en el período"):
+                        df_plex_total = df_para_gantt_diario[df_para_gantt_diario['ACTIVIDAD'].astype(str).str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT', na=False, case=False)]
+                        st.write(f"Total PLEX en período seleccionado: {len(df_plex_total)}")
+                        plex_por_estado = df_plex_total['ESTADO'].value_counts()
+                        st.write("Distribución por estado:")
+                        st.bar_chart(plex_por_estado)
+                        st.write(plex_por_estado)
+
                 with co_col:
                     st.write("**Otros**")
                     txt_otr_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
-                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEX|PEXTERNO|SPLITTEROPT|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
+                    mask_otros_c = ~txt_otr_c.str.contains('SOP|MANT|INS|PLEXISCA|PLEX|PEXTERNO|SPLITTEROPT|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP', na=False)
                     df_otros = df_cerradas_espejo[mask_otros_c]['ACTIVIDAD'].value_counts().reset_index(name='Cant')
                     st.dataframe(df_otros, hide_index=True, use_container_width=True)
                     st.write(f"**Total: {df_otros['Cant'].sum()}**")
