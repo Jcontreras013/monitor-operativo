@@ -268,26 +268,43 @@ def extraer_departamento(nombre_etiquetado):
 
 def extraer_hora_falta(comentario, fecha_registro):
     """
-    Extrae la hora de falta del comentario. Busca patrones HH:MM o HH.MM.
-    Si no encuentra hora en el comentario, devuelve una hora por defecto.
+    Devuelve la hora en que ocurrió la falta para autocompletar el reporte Word.
+
+    Primero busca una hora escrita dentro del COMENTARIO (por ejemplo
+    "llegó a las 8:30 am"). Si el comentario no menciona ninguna hora, usa como
+    respaldo la hora del FECHA_REGISTRO, que se guarda con el formato
+    "DD/MM/YYYY HH:MM:SS" (ver línea de guardado con get_honduras_time()).
 
     Args:
-        comentario (str): Texto del comentario que puede contener la hora
-        fecha_registro (str): Fecha de registro (como respaldo)
+        comentario (str): Texto libre del registro; puede contener la hora.
+        fecha_registro (str): Sello de registro "DD/MM/YYYY HH:MM:SS".
 
     Returns:
-        str: Hora en formato HH:MM, o "N/D" si no se encuentra
+        str: Hora en formato "HH:MM" (24h), o "N/D" si no se puede determinar.
     """
-    if not comentario:
-        return "N/D"
+    # 1. Intentar leer una hora escrita a mano en el comentario.
+    if comentario:
+        texto = str(comentario).upper()
+        # Acepta 8:30, 08.30, 8:30AM, 14:05, etc. Exige el separador ':' o '.'
+        # para no confundir números sueltos (como un número de orden) con horas.
+        m = re.search(r'\b(\d{1,2})[:.](\d{2})\s*(A\.?M\.?|P\.?M\.?)?', texto)
+        if m:
+            hora = int(m.group(1))
+            minuto = m.group(2)
+            sufijo = (m.group(3) or "").replace(".", "")
+            # Convertir de 12h a 24h si viene con AM/PM.
+            if sufijo == "PM" and hora < 12:
+                hora += 12
+            elif sufijo == "AM" and hora == 12:
+                hora = 0
+            if 0 <= hora <= 23:
+                return f"{hora:02d}:{minuto}"
 
-    comentario = str(comentario).upper().strip()
-
-    # Buscar patrón HH:MM o HH.MM
-    match = re.search(r'(\d{1,2}[:.]?\d{2})\s*(AM|PM|A\.M|P\.M)?', comentario)
-    if match:
-        hora_texto = match.group(1).replace('.', ':')
-        return hora_texto
+    # 2. Respaldo: extraer la hora del sello de registro "DD/MM/YYYY HH:MM:SS".
+    if fecha_registro:
+        m = re.search(r'(\d{1,2}):(\d{2})', str(fecha_registro))
+        if m:
+            return f"{int(m.group(1)):02d}:{m.group(2)}"
 
     return "N/D"
 
