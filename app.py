@@ -2000,6 +2000,30 @@ def _grupo_actividad(actividad):
     return 'Otros'
 
 
+# Qué causas de cierre apuntan de verdad a la instalación cuando un cliente
+# recién instalado vuelve a reportar. Sin esta distinción, la tabla de retrabajo
+# le carga al instalador TODOS los casos, incluido el carro que tumbó el poste
+# cinco días después: eso no es retrabajo, es coincidencia.
+#
+# Criterio deliberadamente CONSERVADOR: ante la duda, no se culpa a nadie.
+# "Equipo del cliente" queda fuera aunque a veces sea una ONU defectuosa
+# entregada al instalar, porque el clasificador no distingue eso de un rayo.
+CAUSAS_ATRIBUIBLES_INSTALACION = [
+    "🔁 Instalación deficiente / retrabajo",
+    "🔬 Nivel óptico / atenuación",
+]
+
+
+def _atribucion_retrabajo(causa):
+    """Reparte cada caso de retrabajo en tres cajas honestas."""
+    c = str(causa)
+    if c in CAUSAS_ATRIBUIBLES_INSTALACION:
+        return "🔴 Atribuible a la instalación"
+    if c.startswith("❓"):
+        return "⚪ Sin determinar"
+    return "🟢 Ajena a la instalación"
+
+
 def mostrar_analisis_cruzado(df_base_activa, hoy_date_valor):
     """
     Analiza TODAS las órdenes, no solo las de fibra caída.
@@ -2013,7 +2037,8 @@ def mostrar_analisis_cruzado(df_base_activa, hoy_date_valor):
     st.subheader("🔀 Análisis Cruzado (Todas las Órdenes)")
 
     df = df_base_activa.copy()
-    for c in ['TECNICO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'ESTADO']:
+    for c in ['TECNICO', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'ESTADO',
+              'RAZON_CIERRE_SOP', 'COMENTARIO_CIERRE', 'COMENTARIO']:
         if c not in df.columns:
             df[c] = ""
         df[c] = df[c].fillna("").astype(str)
@@ -2121,34 +2146,84 @@ def mostrar_analisis_cruzado(df_base_activa, hoy_date_valor):
                 # reportó tres veces, el caso es uno solo, no tres.
                 cruce = cruce.sort_values('DIAS').drop_duplicates(subset=['CLIENTE', 'NUM_INS'])
 
-                pct_retra = 100 * cruce['CLIENTE'].nunique() / max(instalaciones['CLIENTE'].nunique(), 1)
-                r1, r2 = st.columns(2)
-                r1.metric("🔁 Clientes que volvieron a reportar", f"{cruce['CLIENTE'].nunique():,}")
-                r2.metric("Sobre el total instalado", f"{pct_retra:.1f}%",
-                          help="Porcentaje de los clientes instalados en el periodo que generaron un soporte después.")
-
-                st.warning(
-                    f"⚠️ **{cruce['CLIENTE'].nunique()} clientes** volvieron a reportar dentro de "
-                    f"{ventana} días de haber sido instalados. Mediana: **{int(cruce['DIAS'].median())} días** "
-                    "entre la instalación y la avería."
+                # === CRUCE CON EL DIAGNÓSTICO DE OFFLINE ===
+                # Se clasifica la causa del SOPORTE con el mismo motor del módulo de
+                # offline. Sin esto la tabla le carga al instalador todos los casos,
+                # incluido el corte de fibra que provocó un tercero. Con la causa se
+                # separa el retrabajo real del que solo coincidió en el tiempo.
+                _res_cruce = cruce.apply(
+                    lambda r: clasificar_causa_offline(
+                        r.get('RAZON_CIERRE_SOP_SOP', ''),
+                        r.get('COMENTARIO_CIERRE_SOP', ''),
+                        r.get('COMENTARIO_SOP', '')
+                    ), axis=1
                 )
+                cruce['CAUSA'] = [x[0] for x in _res_cruce]
+                cruce['EVIDENCIA'] = [x[1] for x in _res_cruce]
+                cruce['ATRIBUCION'] = cruce['CAUSA'].apply(_atribucion_retrabajo)
+
+                n_total_cruce = cruce['CLIENTE'].nunique()
+                n_atrib = cruce[cruce['ATRIBUCION'].str.startswith("🔴")]['CLIENTE'].nunique()
+                n_ajeno = cruce[cruce['ATRIBUCION'].str.startswith("🟢")]['CLIENTE'].nunique()
+                n_indet = cruce[cruce['ATRIBUCION'].str.startswith("⚪")]['CLIENTE'].nunique()
+
+                pct_retra = 100 * n_total_cruce / max(instalaciones['CLIENTE'].nunique(), 1)
+
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric("🔁 Volvieron a reportar", f"{n_total_cruce:,}", f"{pct_retra:.1f}% de lo instalado")
+                r2.metric("🔴 Por la instalación", f"{n_atrib:,}",
+                          help="El técnico encontró algo que apunta al trabajo de instalación.")
+                r3.metric("🟢 Ajeno al instalador", f"{n_ajeno:,}",
+                          help="Daño externo, energía, mora, equipo del cliente: coincidió en el tiempo, nada más.")
+                r4.metric("⚪ Sin determinar", f"{n_indet:,}",
+                          help="El cierre no dice qué se encontró, así que no se puede atribuir.")
+
+                if n_atrib:
+                    st.error(
+                        f"🔴 **{n_atrib} de {n_total_cruce} casos apuntan a la instalación.** "
+                        f"El resto volvió a reportar por causas ajenas o sin cierre documentado. "
+                        f"Mediana general: **{int(cruce['DIAS'].median())} días** entre instalar y la avería."
+                    )
+                else:
+                    st.success(
+                        f"✅ Ninguno de los {n_total_cruce} casos apunta a la instalación: "
+                        "las averías posteriores fueron por causas ajenas al instalador."
+                    )
+
+                st.markdown("**Cómo se reparten los casos**")
+                rep = cruce.groupby(['ATRIBUCION', 'CAUSA'])['CLIENTE'].nunique().reset_index()
+                rep.columns = ['Atribución', 'Causa que halló el técnico', 'Clientes']
+                rep = rep.sort_values(['Atribución', 'Clientes'], ascending=[True, False])
+                st.dataframe(rep, hide_index=True, use_container_width=True, height=260)
 
                 st.markdown("**Por técnico que instaló**")
+                st.caption(
+                    "La columna que importa es 'Atribuibles': son los casos donde el cierre del "
+                    "técnico apunta al trabajo de instalación. El total incluye causas ajenas."
+                )
+                cruce['_ES_ATRIB'] = cruce['ATRIBUCION'].str.startswith("🔴")
                 por_inst = cruce.groupby('TECNICO_INS').agg(
                     CASOS=('CLIENTE', 'nunique'),
+                    ATRIBUIBLES=('_ES_ATRIB', 'sum'),
                     DIAS_PROMEDIO=('DIAS', 'mean'),
-                ).reset_index().sort_values('CASOS', ascending=False)
+                ).reset_index()
                 por_inst['DIAS_PROMEDIO'] = por_inst['DIAS_PROMEDIO'].round(1)
-                por_inst.columns = ['Técnico que instaló', 'Casos', 'Días promedio hasta la avería']
+                por_inst = por_inst.sort_values(['ATRIBUIBLES', 'CASOS'], ascending=False)
+                por_inst.columns = ['Técnico que instaló', 'Casos totales', 'Atribuibles', 'Días promedio']
                 st.dataframe(por_inst, hide_index=True, use_container_width=True, height=260)
 
                 st.markdown("**Casos**")
-                cols_cruce = ['CLIENTE', 'NOMBRE_INS', 'COLONIA_INS', 'NUM_INS', 'ACTIVIDAD_INS',
-                              'TECNICO_INS', 'FECHA_REF_INS', 'DIAS', 'NUM_SOP', 'ACTIVIDAD_SOP',
-                              'TECNICO_SOP', 'FECHA_REF_SOP']
-                cols_cruce = [c for c in cols_cruce if c in cruce.columns]
-                st.dataframe(cruce[cols_cruce].sort_values('DIAS'),
+                solo_atrib = st.checkbox("Ver solo los atribuibles a la instalación", value=False,
+                                         key="cruz_solo_atrib")
+                cruce_vista = cruce[cruce['_ES_ATRIB']] if solo_atrib else cruce
+
+                cols_cruce = ['CLIENTE', 'NOMBRE_INS', 'COLONIA_INS', 'ATRIBUCION', 'CAUSA', 'EVIDENCIA',
+                              'NUM_INS', 'ACTIVIDAD_INS', 'TECNICO_INS', 'FECHA_REF_INS', 'DIAS',
+                              'NUM_SOP', 'TECNICO_SOP', 'FECHA_REF_SOP']
+                cols_cruce = [c for c in cols_cruce if c in cruce_vista.columns]
+                st.dataframe(cruce_vista[cols_cruce].sort_values('DIAS'),
                              hide_index=True, use_container_width=True, height=300)
+                cruce = cruce_vista
 
                 st.download_button(
                     "📥 Descargar casos de retrabajo (CSV)",
