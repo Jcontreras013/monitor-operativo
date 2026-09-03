@@ -3574,9 +3574,11 @@ def main():
                         )
 
                         colores_solidos = {
-                            "SOPFIBRA": "#d32f2f",         
-                            "SOP": "#d32f2f",                
-                            "INSFIBRA": "#1976d2",         
+                            "SOPFIBRA": "#d32f2f",
+                            "SOPFIBRACORP": "#880e4f",
+                            "SOPCORP": "#ad1457",
+                            "SOP": "#d32f2f",
+                            "INSFIBRA": "#1976d2",
                             "INSFIBRACORP": "#0d47a1",     
                             "PEXTERNO": "#f57c00",         
                             "PLEXISCA": "#e65100",         
@@ -4472,9 +4474,11 @@ def main():
                             st.markdown("<h5 style='text-align: left; color: #3B82F6; border-bottom: 2px solid #3B82F6; padding-bottom: 5px;'>👨‍🔧 Productividad Diaria (Actividades Aperturadas Hoy)</h5>", unsafe_allow_html=True)
                             
                             colores_solidos = {
-                                "SOPFIBRA": "#d32f2f",         
-                                "SOP": "#d32f2f",                
-                                "INSFIBRA": "#1976d2",         
+                                "SOPFIBRA": "#d32f2f",
+                                "SOPFIBRACORP": "#880e4f",
+                                "SOPCORP": "#ad1457",
+                                "SOP": "#d32f2f",
+                                "INSFIBRA": "#1976d2",
                                 "INSFIBRACORP": "#0d47a1",     
                                 "PEXTERNO": "#f57c00",         
                                 "PLEXISCA": "#e65100",         
