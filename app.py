@@ -3674,15 +3674,6 @@ def main():
                     st.dataframe(df_plex, hide_index=True, use_container_width=True)
                     st.write(f"**Total: {df_plex['Cant'].sum()}**")
 
-                    # Debug info: show total count in df_para_gantt_diario for comparison
-                    with st.expander("🔍 Debug: Total PLEX en el período"):
-                        df_plex_total = df_para_gantt_diario[df_para_gantt_diario['ACTIVIDAD'].astype(str).str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT', na=False, case=False)]
-                        st.write(f"Total PLEX en período seleccionado: {len(df_plex_total)}")
-                        plex_por_estado = df_plex_total['ESTADO'].value_counts()
-                        st.write("Distribución por estado:")
-                        st.bar_chart(plex_por_estado)
-                        st.write(plex_por_estado)
-
                 with co_col:
                     st.write("**Otros**")
                     txt_otr_c = df_cerradas_espejo['ACTIVIDAD'].astype(str).str.upper() + " " + df_cerradas_espejo['COMENTARIO'].astype(str).str.upper()
@@ -3974,7 +3965,15 @@ def main():
                     com = str(r.get('COMENTARIO', '')).upper()
                     txt = act + " " + com
                     is_off = r.get('ES_OFFLINE', False)
-                    if not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
+                    # PLEX (planta externa) se clasifica SOLO por la ACTIVIDAD, nunca por el
+                    # comentario. Antes, un PEXTERNO/SPLITTEROPT cuyo comentario mencionara
+                    # "instalación", "nueva", "falla", etc. se fugaba a INS o SOP por el match
+                    # sobre txt (actividad + comentario) de las ramas de abajo, y por eso el
+                    # conteo de PEXTERNO salía incompleto (5 en vez de 11). Al atraparlos aquí
+                    # primero, todas las órdenes PLEX quedan contadas juntas en "Otros".
+                    if re.search("PEXTERNO|SPLITTEROPT|PLEXISCA", act):
+                        g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
+                    elif not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
                         g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
                     elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
                         g_tab_list.append("INS")
