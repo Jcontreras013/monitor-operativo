@@ -4033,12 +4033,17 @@ def main():
                         st.write(f"**Total: {df_ins.shape[0]}**")
 
                     with col_t4:
-                        st.caption("⚙️ Otros")
-                        df_otros = df_tablero[df_tablero['G_TAB'] == 'OTROS']
-                        res_otr = df_otros['SUB_TAB'].value_counts().reset_index()
-                        res_otr.columns = ['Otros', 'Cant']
-                        st.dataframe(res_otr.head(8), hide_index=True, use_container_width=True, height=178)
-                        st.write(f"**Total: {df_otros.shape[0]}**")
+                        st.caption("🏢 Plex (Asignadas)")
+                        # Área PLEX: SOLO las actividades PEXTERNO, SPLITTEROPT y
+                        # PLEXISCA, filtradas por su ACTIVIDAD (no por comentario), y
+                        # SOLO las que ya tienen técnico asignado (pendientes asignadas).
+                        mask_plex_area = df_tablero['ACTIVIDAD'].astype(str).str.upper().str.contains('PEXTERNO|SPLITTEROPT|PLEXISCA', na=False, regex=True)
+                        mask_plex_asignadas = mascara_tecnico_asignado(df_tablero['TECNICO'])
+                        df_plex_area = df_tablero[mask_plex_area & mask_plex_asignadas]
+                        res_plex = df_plex_area['ACTIVIDAD'].value_counts().reset_index()
+                        res_plex.columns = ['Plex', 'Cant']
+                        st.dataframe(res_plex, hide_index=True, use_container_width=True, height=178)
+                        st.write(f"**Total: {df_plex_area.shape[0]}**")
                         
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
