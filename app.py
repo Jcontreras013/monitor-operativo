@@ -80,6 +80,7 @@ try:
         cargar_catalogo_tecnicos,
         guardar_orden_manual,
         cargar_ordenes_manuales,
+        borrar_orden_manual,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
@@ -2542,6 +2543,27 @@ def main():
                             _df_om_ver['FECHA_APE'] = pd.to_datetime(_df_om_ver['FECHA_APE'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
                         st.dataframe(_df_om_ver, hide_index=True, use_container_width=True)
                         st.caption("Si tu orden aparece aquí pero NO en el monitor, revisa que la FECHA y el TÉCNICO coincidan con la vista/filtros que estás mirando.")
+
+                        # Borrado: una orden manual GANA sobre la versión real del mismo
+                        # NUM. Cuando la real ya llega bien por la API, se borra la manual
+                        # aquí para dejar de sobrescribirla.
+                        _nums_om = df_om_guardadas['NUM'].astype(str).tolist()
+                        _col_del1, _col_del2 = st.columns([2, 1])
+                        with _col_del1:
+                            _num_om_borrar = st.selectbox("Borrar una orden manual (por NÚM):", options=_nums_om, key="sel_borrar_orden_manual")
+                        with _col_del2:
+                            st.write("")
+                            if st.button("🗑️ Borrar", use_container_width=True, key="btn_borrar_orden_manual"):
+                                _res_del = borrar_orden_manual(_num_om_borrar)
+                                if _res_del == "SOLO_LOCAL":
+                                    st.warning(f"Orden {_num_om_borrar} borrada localmente, pero NO en la nube. Puede reaparecer tras un reinicio.")
+                                    st.cache_data.clear()
+                                elif _res_del:
+                                    st.success(f"Orden manual {_num_om_borrar} borrada. La versión real (si existe) volverá a mostrarse.")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudo borrar la orden manual.")
                     else:
                         st.info("Todavía no hay órdenes manuales almacenadas.")
                 except Exception as _e_om_list:
@@ -2979,16 +3001,24 @@ def main():
 
     # === INTEGRACIÓN DE ÓRDENES MANUALES ===
     # Se agregan las órdenes cargadas manualmente (para cuando la API falla y
-    # una orden real no se refleja). Si la orden real ya llegó después por la
-    # API/Sheets (mismo NUM), se descarta la versión manual para no duplicar.
+    # una orden real no se refleja).
+    #
+    # La orden manual es una CORRECCIÓN deliberada del supervisor, así que GANA
+    # sobre la versión real del mismo NUM. Antes se descartaba la manual cuando
+    # el NUM ya existía en df_base; pero cuando esa versión real llega incompleta
+    # (por ejemplo sin HORA_INI, o con día equivocado) no se dibuja en el Gantt,
+    # y al tirar la manual el operador no veía NADA -- exactamente el síntoma
+    # reportado: "dice que se agregó pero no aparece en el Gantt". Ahora se quita
+    # la versión real colisionada y se conserva la manual, que trae los datos que
+    # el supervisor capturó a mano. Para volver a la versión real, se borra la
+    # orden manual desde su propio panel.
     try:
         df_ordenes_manuales = cargar_ordenes_manuales()
         if df_ordenes_manuales is not None and not df_ordenes_manuales.empty:
             if 'NUM' in df_base.columns:
-                nums_ya_reales = set(df_base['NUM'].astype(str).str.strip())
-                df_ordenes_manuales = df_ordenes_manuales[~df_ordenes_manuales['NUM'].astype(str).str.strip().isin(nums_ya_reales)]
-            if not df_ordenes_manuales.empty:
-                df_base = pd.concat([df_base, df_ordenes_manuales], ignore_index=True)
+                nums_manuales = set(df_ordenes_manuales['NUM'].astype(str).str.strip())
+                df_base = df_base[~df_base['NUM'].astype(str).str.strip().isin(nums_manuales)].copy()
+            df_base = pd.concat([df_base, df_ordenes_manuales], ignore_index=True)
     except Exception as e_manuales:
         # Antes esto era un 'except: pass'. Si algo fallaba al cargar las
         # órdenes manuales, desaparecían sin una sola señal y no había forma de

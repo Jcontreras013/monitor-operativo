@@ -2786,6 +2786,43 @@ def guardar_orden_manual(num_orden: str, actividad: str, tecnico: str, fecha: st
         return False
 
 
+def borrar_orden_manual(num_orden: str) -> bool:
+    """
+    Elimina una orden manual (por NUM) del caché local y de la copia en GCS.
+    Se usa cuando la orden real ya llegó bien por la API y la versión manual
+    (que ahora tiene prioridad sobre la real) debe dejar de sobrescribirla.
+    Devuelve True si quedó eliminada, False si hubo un error.
+    """
+    try:
+        num_norm = str(num_orden).strip()
+
+        registros = []
+        if os.path.exists(_CACHE_ORDENES_MANUALES_PATH):
+            try:
+                with open(_CACHE_ORDENES_MANUALES_PATH, "r", encoding="utf-8") as f:
+                    registros = json.load(f)
+            except Exception:
+                registros = []
+
+        registros = [r for r in registros if str(r.get("NUM", "")).strip() != num_norm]
+
+        with open(_CACHE_ORDENES_MANUALES_PATH, "w", encoding="utf-8") as f:
+            json.dump(registros, f, ensure_ascii=False)
+
+        # Se refleja el borrado también en GCS para que no reaparezca tras un
+        # redespliegue (donde el disco local se pierde y solo queda la nube).
+        try:
+            sobrescribir_archivo_gcs(pd.DataFrame(registros), NOMBRE_BUCKET_SISTEMA, _ARCHIVO_ORDENES_MANUALES_GCS)
+        except Exception as e_gcs:
+            print(f"Orden manual borrada en local pero NO en GCS: {e_gcs}")
+            return "SOLO_LOCAL"
+
+        return True
+    except Exception as e:
+        print(f"Error en borrar_orden_manual: {e}")
+        return False
+
+
 @st.cache_data(show_spinner=False)
 def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
     """
