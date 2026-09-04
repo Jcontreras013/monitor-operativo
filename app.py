@@ -30,7 +30,8 @@ from ui_components import (
     aplicar_estilos_df
 )
 
-import settings 
+import settings
+from clasificador import clasificar_tablero
 
 try:
     from streamlit_option_menu import option_menu
@@ -4017,34 +4018,16 @@ def main():
                 g_tab_list = []
                 sub_tab_list = []
                 for idx, r in df_todas_pendientes_monitor.iterrows():
-                    act = str(r.get('ACTIVIDAD', '')).upper()
-                    com = str(r.get('COMENTARIO', '')).upper()
-                    txt = act + " " + com
-                    is_off = r.get('ES_OFFLINE', False)
-                    # PLEX (planta externa) se clasifica SOLO por la ACTIVIDAD, nunca por el
-                    # comentario. Antes, un PEXTERNO/SPLITTEROPT cuyo comentario mencionara
-                    # "instalación", "nueva", "falla", etc. se fugaba a INS o SOP por el match
-                    # sobre txt (actividad + comentario) de las ramas de abajo, y por eso el
-                    # conteo de PEXTERNO salía incompleto (5 en vez de 11). Al atraparlos aquí
-                    # primero, todas las órdenes PLEX quedan contadas juntas en "Otros".
-                    if re.search("PEXTERNO|SPLITTEROPT|PLEXISCA", act):
-                        g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
-                    elif not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
-                        g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
-                    elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
-                        g_tab_list.append("INS")
-                        if re.search("ADIC", txt): sub_tab_list.append("Adición")
-                        elif re.search("CAMBIO|MIGRACI", txt): sub_tab_list.append("Cambio / Migración")
-                        elif re.search("RECUP", txt): sub_tab_list.append("Recuperado")
-                        else: sub_tab_list.append("Nueva")
-                    else:
-                        g_tab_list.append("SOP")
-                        if is_off: sub_tab_list.append("ONT/ONU Offline")
-                        elif re.search("NIVEL|DB", com): sub_tab_list.append("Niveles alterados")
-                        elif re.search("FIBRA|FTTH", act): sub_tab_list.append("FTTH / FIBRA")
-                        elif re.search("NAV|INTERNET", act): sub_tab_list.append("Navegación / Internet")
-                        elif re.search("TV|CABLE", act): sub_tab_list.append("Sin señal de TV")
-                        else: sub_tab_list.append("SOP General")
+                    # Clasificación centralizada (ver clasificador.py y sus pruebas).
+                    # Toda la lógica de PLEX/INS/SOP vive en un solo lugar para que no
+                    # vuelva a desincronizarse entre vistas.
+                    grupo, subtipo = clasificar_tablero(
+                        r.get('ACTIVIDAD', ''),
+                        r.get('COMENTARIO', ''),
+                        es_offline=bool(r.get('ES_OFFLINE', False))
+                    )
+                    g_tab_list.append(grupo)
+                    sub_tab_list.append(subtipo)
                         
                 df_tablero = df_todas_pendientes_monitor.copy()
                 df_tablero['G_TAB'] = g_tab_list
