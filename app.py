@@ -3922,7 +3922,7 @@ def main():
         # actividades internas como ACTEFO/ACTIVARRES (que no son visitas técnicas
         # reales al cliente) no deben mostrarse ni inflar el contador de "Cerradas Hoy".
         mask_actividad_valida_cerr = df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS)
-        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.upper() == 'CERRADA') & mask_actividad_valida_cerr
+        mask_cerradas_hoy = (df_monitor_filtrado['HORA_LIQ_CLEAN'].dt.date == hoy_date_valor) & (df_monitor_filtrado['ESTADO'].astype(str).str.strip().str.upper() == 'CERRADA') & mask_actividad_valida_cerr
         df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
     
@@ -4992,18 +4992,21 @@ def main():
 
                     status_final_btn = st.session_state.st_btn_v_active
 
-                    if check_ordenes_totales:
-                        df_v_tabla_monitor = df_todas_pendientes_monitor 
+                    # El toggle "Órdenes Totales Pendientes" solo aplica a la vista de
+                    # PENDIENTES. Antes sobrescribía SIEMPRE la tabla, así que con el
+                    # toggle activo los botones "Cerradas Hoy" y "Anuladas Hoy" quedaban
+                    # ignorados y seguían mostrando pendientes. Ahora el botón manda.
+                    if status_final_btn == "PENDIENTE":
+                        if check_ordenes_totales:
+                            df_v_tabla_monitor = df_todas_pendientes_monitor
+                        elif check_criticos_diamante:
+                            df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
+                        else:
+                            df_v_tabla_monitor = df_solo_asignadas_monitor
+                    elif status_final_btn == "C_HOY":
+                        df_v_tabla_monitor = df_cerradas_hoy_monitor
                     else:
-                        if status_final_btn == "PENDIENTE": 
-                            if check_criticos_diamante:
-                                df_v_tabla_monitor = df_todas_pendientes_monitor[df_todas_pendientes_monitor['ES_OFFLINE'] == True]
-                            else:
-                                df_v_tabla_monitor = df_solo_asignadas_monitor
-                        elif status_final_btn == "C_HOY": 
-                            df_v_tabla_monitor = df_cerradas_hoy_monitor
-                        else: 
-                            df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) & (df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS))]
+                        df_v_tabla_monitor = df_monitor_filtrado[(df_monitor_filtrado['ESTADO'].astype(str).str.contains('ANULADA', na=False, case=False)) & ((df_monitor_filtrado['HORA_LIQ'] - pd.Timedelta(hours=6)).dt.date == hoy_date_valor) & (df_monitor_filtrado['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_GANTT_PERMITIDAS))]
                         
 
                     t_panel_v, t_graphs_v, t_analitica_v = st.tabs(["📋 PANEL OPERATIVO", "📊 PRODUCTIVIDAD", "📈 ANALÍTICA"])
