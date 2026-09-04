@@ -30,7 +30,9 @@ from ui_components import (
     aplicar_estilos_df
 )
 
-import settings 
+import settings
+from clasificador import clasificar_tablero
+from calidad import reporte_calidad_datos
 
 try:
     from streamlit_option_menu import option_menu
@@ -2682,7 +2684,7 @@ def main():
             if archivo_fttx:
                 try:
                     with open("cache_fttx.tmp", "wb") as f: f.write(archivo_fttx.getvalue())
-                except: pass
+                except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
 
             if btn_actualizar_fttx:
                 if archivo_fttx is None:
@@ -2727,7 +2729,7 @@ def main():
                 try:
                     with open("cache_fttx.tmp", "rb") as f: file_disp_ptr = f.read()
                     st.info("🕒 **Modo Caché Activo:** Se cargó automáticamente el último archivo FTTX guardado.")
-                except: pass
+                except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
 
     # ==============================================================================
     # 2. CARGA Y PROCESAMIENTO DE DATOS (MIGRADO A GCS CON API INTEGRADA)
@@ -3048,11 +3050,11 @@ def main():
                 rx_match = re.search(r'\brx:\s*(-?\d+\.?\d*)', t)
                 if rx_match:
                     try: dbm_real = float(rx_match.group(1)) / 100.0
-                    except: pass
+                    except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
                 rxpower_match = re.search(r'rxpower:\s*(-?\d+\.?\d*)', t)
                 if rxpower_match:
                     try: dbm_real = float(rxpower_match.group(1)) / 1000.0
-                    except: pass
+                    except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
                 if dbm_real is not None:
                     if dbm_real <= -30:
                         return False
@@ -4017,34 +4019,16 @@ def main():
                 g_tab_list = []
                 sub_tab_list = []
                 for idx, r in df_todas_pendientes_monitor.iterrows():
-                    act = str(r.get('ACTIVIDAD', '')).upper()
-                    com = str(r.get('COMENTARIO', '')).upper()
-                    txt = act + " " + com
-                    is_off = r.get('ES_OFFLINE', False)
-                    # PLEX (planta externa) se clasifica SOLO por la ACTIVIDAD, nunca por el
-                    # comentario. Antes, un PEXTERNO/SPLITTEROPT cuyo comentario mencionara
-                    # "instalación", "nueva", "falla", etc. se fugaba a INS o SOP por el match
-                    # sobre txt (actividad + comentario) de las ramas de abajo, y por eso el
-                    # conteo de PEXTERNO salía incompleto (5 en vez de 11). Al atraparlos aquí
-                    # primero, todas las órdenes PLEX quedan contadas juntas en "Otros".
-                    if re.search("PEXTERNO|SPLITTEROPT|PLEXISCA", act):
-                        g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
-                    elif not re.search("SOP|FALLA|MANT|INS|ADIC|CAMBIO|MIGRACI|NUEVA|RECUP", txt):
-                        g_tab_list.append("OTROS"); sub_tab_list.append(act if act != "" else "N/A")
-                    elif re.search("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", txt) and not re.search("SOP|FALLA|MANT", act):
-                        g_tab_list.append("INS")
-                        if re.search("ADIC", txt): sub_tab_list.append("Adición")
-                        elif re.search("CAMBIO|MIGRACI", txt): sub_tab_list.append("Cambio / Migración")
-                        elif re.search("RECUP", txt): sub_tab_list.append("Recuperado")
-                        else: sub_tab_list.append("Nueva")
-                    else:
-                        g_tab_list.append("SOP")
-                        if is_off: sub_tab_list.append("ONT/ONU Offline")
-                        elif re.search("NIVEL|DB", com): sub_tab_list.append("Niveles alterados")
-                        elif re.search("FIBRA|FTTH", act): sub_tab_list.append("FTTH / FIBRA")
-                        elif re.search("NAV|INTERNET", act): sub_tab_list.append("Navegación / Internet")
-                        elif re.search("TV|CABLE", act): sub_tab_list.append("Sin señal de TV")
-                        else: sub_tab_list.append("SOP General")
+                    # Clasificación centralizada (ver clasificador.py y sus pruebas).
+                    # Toda la lógica de PLEX/INS/SOP vive en un solo lugar para que no
+                    # vuelva a desincronizarse entre vistas.
+                    grupo, subtipo = clasificar_tablero(
+                        r.get('ACTIVIDAD', ''),
+                        r.get('COMENTARIO', ''),
+                        es_offline=bool(r.get('ES_OFFLINE', False))
+                    )
+                    g_tab_list.append(grupo)
+                    sub_tab_list.append(subtipo)
                         
                 df_tablero = df_todas_pendientes_monitor.copy()
                 df_tablero['G_TAB'] = g_tab_list
@@ -4101,6 +4085,36 @@ def main():
                         st.dataframe(res_plex, hide_index=True, use_container_width=True, height=178)
                         st.write(f"**Total: {df_plex_area.shape[0]}**")
                         
+        # === PANEL DE CALIDAD DE DATOS ===
+        # Detecta lo que hace que una orden "no aparezca" o se cuente mal:
+        # vivas sin hora de inicio, NUM duplicados y vivas sin técnico. Todo va
+        # envuelto para que un fallo aquí nunca tumbe el monitor.
+        try:
+            _rep_cal = reporte_calidad_datos(df_base_activa)
+            _tot_cal = _rep_cal['totales']
+            _hay_problemas = sum(_tot_cal.values()) > 0
+            _titulo_cal = "🩺 Calidad de Datos" + (f" — ⚠️ {sum(_tot_cal.values())} incidencias" if _hay_problemas else " — ✅ sin incidencias")
+            with st.expander(_titulo_cal, expanded=False):
+                _cq1, _cq2, _cq3 = st.columns(3)
+                _cq1.metric("Vivas sin hora de inicio", _tot_cal['vivas_sin_hora_inicio'])
+                _cq2.metric("NUM duplicados", _tot_cal['num_duplicados'])
+                _cq3.metric("Vivas sin técnico", _tot_cal['vivas_sin_tecnico'])
+                st.caption("Estas condiciones explican por qué una orden puede no dibujarse en el Gantt o contarse mal. Revísalas si algo 'no aparece'.")
+                _cols_cal = [c for c in ['NUM', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'HORA_INI', 'COLONIA'] if c in df_base_activa.columns]
+                if _tot_cal['vivas_sin_hora_inicio'] > 0:
+                    st.markdown("**Órdenes vivas sin hora de inicio** (no se dibujan en el Gantt):")
+                    st.dataframe(_rep_cal['vivas_sin_hora_inicio'][_cols_cal], hide_index=True, use_container_width=True)
+                if _tot_cal['num_duplicados'] > 0:
+                    st.markdown("**NUM duplicados** (una versión puede tapar a la otra):")
+                    st.dataframe(_rep_cal['num_duplicados'][_cols_cal].sort_values('NUM'), hide_index=True, use_container_width=True)
+                if _tot_cal['vivas_sin_tecnico'] > 0:
+                    st.markdown("**Órdenes vivas sin técnico asignado**:")
+                    st.dataframe(_rep_cal['vivas_sin_tecnico'][_cols_cal], hide_index=True, use_container_width=True)
+                if not _hay_problemas:
+                    st.success("No se detectaron incidencias de calidad de datos.")
+        except Exception as _e_cal:
+            print(f"[monitor] Panel de calidad de datos falló: {_e_cal}")
+
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
