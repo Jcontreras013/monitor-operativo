@@ -35,6 +35,10 @@ def get_honduras_time() -> datetime:
 # Alias para mantener compatibilidad con las funciones de auditoría
 get_hn_time = get_honduras_time
 
+# El día operativo vive en fechas.py (módulo sin dependencias pesadas, para
+# poder probarlo aislado). Se re-exporta aquí por comodidad de importación.
+from fechas import a_dia_operativo, HORAS_DIA_OPERATIVO  # noqa: E402,F401
+
 ALIAS_TECNICOS_CONOCIDOS = {
     "JOSUE MIGUEL SAUCEDA": "JOSE MIGUEL SAUCEDA",
     "JERMY MODESTO PADILLA": "JERMI MODESTO PADILLA",
@@ -602,7 +606,7 @@ class ReporteGenerencialPDF(FPDF):
                         elif pct >= 80: fillr, fillg, fillb = 169, 208, 142 
                         elif pct >= 50: fillr, fillg, fillb = 255, 230, 153 
                         elif pct >= 0: fillr, fillg, fillb = 244, 176, 132 
-                    except: pass
+                    except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
                     
                 if df.columns[i] == 'BONO MIXTO':
                     if valstr != '+0.0%':
@@ -820,7 +824,7 @@ def finalizar_pdf(pdfobj):
         with open(tmppath, "rb") as f: return f.read()
     finally:
         try: os.remove(tmppath)
-        except: pass
+        except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
 
 def generar_graficos_temporales(dfbase):
     paths = {}
@@ -1034,7 +1038,7 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
         for path in [path_resi, path_plex, path_global]:
             if path:
                 try: os.remove(path)
-                except: pass
+                except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
         
         pdf.add_page()
         pdf.seccion_titulo("Tiempos de Atencion (Antiguedad de Ordenes Liquidadas)")
@@ -1090,7 +1094,7 @@ def generar_pdf_cierre_diario(dfbase, fechatarget):
             pdf.image(imagenes['pie'], x=60, y=pdf.get_y() + 5, w=90)
             for path in imagenes.values():
                 try: os.remove(path)
-                except: pass
+                except Exception as _e: print(f"[aviso] fallo ignorado (revisar): {_e}")
                 
     return finalizar_pdf(pdf)
 
