@@ -32,7 +32,6 @@ from ui_components import (
 
 import settings
 from clasificador import clasificar_tablero
-from calidad import reporte_calidad_datos
 
 try:
     from streamlit_option_menu import option_menu
@@ -4085,36 +4084,6 @@ def main():
                         st.dataframe(res_plex, hide_index=True, use_container_width=True, height=178)
                         st.write(f"**Total: {df_plex_area.shape[0]}**")
                         
-        # === PANEL DE CALIDAD DE DATOS ===
-        # Detecta lo que hace que una orden "no aparezca" o se cuente mal:
-        # vivas sin hora de inicio, NUM duplicados y vivas sin técnico. Todo va
-        # envuelto para que un fallo aquí nunca tumbe el monitor.
-        try:
-            _rep_cal = reporte_calidad_datos(df_base_activa)
-            _tot_cal = _rep_cal['totales']
-            _hay_problemas = sum(_tot_cal.values()) > 0
-            _titulo_cal = "🩺 Calidad de Datos" + (f" — ⚠️ {sum(_tot_cal.values())} incidencias" if _hay_problemas else " — ✅ sin incidencias")
-            with st.expander(_titulo_cal, expanded=False):
-                _cq1, _cq2, _cq3 = st.columns(3)
-                _cq1.metric("Vivas sin hora de inicio", _tot_cal['vivas_sin_hora_inicio'])
-                _cq2.metric("NUM duplicados", _tot_cal['num_duplicados'])
-                _cq3.metric("Vivas sin técnico", _tot_cal['vivas_sin_tecnico'])
-                st.caption("Estas condiciones explican por qué una orden puede no dibujarse en el Gantt o contarse mal. Revísalas si algo 'no aparece'.")
-                _cols_cal = [c for c in ['NUM', 'ACTIVIDAD', 'TECNICO', 'ESTADO', 'HORA_INI', 'COLONIA'] if c in df_base_activa.columns]
-                if _tot_cal['vivas_sin_hora_inicio'] > 0:
-                    st.markdown("**Órdenes vivas sin hora de inicio** (no se dibujan en el Gantt):")
-                    st.dataframe(_rep_cal['vivas_sin_hora_inicio'][_cols_cal], hide_index=True, use_container_width=True)
-                if _tot_cal['num_duplicados'] > 0:
-                    st.markdown("**NUM duplicados** (una versión puede tapar a la otra):")
-                    st.dataframe(_rep_cal['num_duplicados'][_cols_cal].sort_values('NUM'), hide_index=True, use_container_width=True)
-                if _tot_cal['vivas_sin_tecnico'] > 0:
-                    st.markdown("**Órdenes vivas sin técnico asignado**:")
-                    st.dataframe(_rep_cal['vivas_sin_tecnico'][_cols_cal], hide_index=True, use_container_width=True)
-                if not _hay_problemas:
-                    st.success("No se detectaron incidencias de calidad de datos.")
-        except Exception as _e_cal:
-            print(f"[monitor] Panel de calidad de datos falló: {_e_cal}")
-
         if st.session_state.get('config_ver_consolidado', True):
             with st.expander("📊 CONSOLIDADO POR SEGMENTO (MORA VS AL DÍA)", expanded=True):
                 st.markdown("<h4 style='text-align: center; color: #1F2937;'>Avance Operativo Detallado</h4><br>", unsafe_allow_html=True)
