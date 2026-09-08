@@ -109,15 +109,15 @@ def mostrar_modulo_calidad(conn, df_base):
             "📋 Histórico y Reportes"
         ]
     elif usuario == "sac":
+        # La encuesta por WhatsApp (WATI) se omite: es un servicio de paga.
         tabs_to_render = [
-            "📞 Registrar Gestión de Llamada", 
-            "💬 Enviar Encuesta WhatsApp", 
+            "📞 Registrar Gestión de Llamada",
             "📋 Histórico y Reportes"
         ]
     else:
+        # La encuesta por WhatsApp (WATI) se omite: es un servicio de paga.
         tabs_to_render = [
-            "📞 Registrar Gestión de Llamada", 
-            "💬 Enviar Encuesta WhatsApp", 
+            "📞 Registrar Gestión de Llamada",
             "🚙 Auditoría de Campo (Operaciones)",
             "📋 Histórico y Reportes"
         ]
@@ -165,7 +165,7 @@ def mostrar_modulo_calidad(conn, df_base):
                         p1_puntualidad = st.radio("1. Puntualidad del técnico", escala_estrellas, index=4, horizontal=True, key="p1_puntualidad_radio")
                         p2_presentacion = st.radio("2. Presentación y trato del técnico", escala_estrellas, index=4, horizontal=True, key="p2_presentacion_radio")
                         p3_claridad = st.radio("3. Claridad en la explicación del trabajo realizado", escala_estrellas, index=4, horizontal=True, key="p3_claridad_radio")
-                        p4_tv_ccveo = st.radio("4. Explicación sobre el servicio de TV Cable y CCVEO", escala_estrellas, index=4, horizontal=True, key="p4_tv_ccveo_radio")
+                        p4_tv_ccveo = st.radio("4. Explicación sobre el servicio de TV Cable y CCVEO", escala_estrellas + ["No aplica"], index=4, horizontal=True, key="p4_tv_ccveo_radio")
                         p5_calidad = st.radio("5. Calidad del servicio (instalación/mantenimiento)", escala_estrellas, index=4, horizontal=True, key="p5_calidad_radio")
                         p6_limpieza = st.radio("6. Estado en que dejó el área de trabajo", escala_estrellas, index=4, horizontal=True, key="p6_limpieza_radio")
                         p7_satisfaccion = st.radio("7. Nivel de satisfacción general con la visita", escala_estrellas, index=4, horizontal=True, key="p7_satisfaccion_radio")
@@ -206,7 +206,7 @@ def mostrar_modulo_calidad(conn, df_base):
                             "P1_PUNTUALIDAD": int(p1_puntualidad[0]),
                             "P2_PRESENTACION_TRATO": int(p2_presentacion[0]),
                             "P3_CLARIDAD_EXPLICACION": int(p3_claridad[0]),
-                            "P4_EXPLICACION_TV_CCVEO": int(p4_tv_ccveo[0]),
+                            "P4_EXPLICACION_TV_CCVEO": ("N/A" if p4_tv_ccveo == "No aplica" else int(p4_tv_ccveo[0])),
                             "P5_CALIDAD_SERVICIO": int(p5_calidad[0]),
                             "P6_LIMPIEZA_TRABAJO": int(p6_limpieza[0]),
                             "P7_SATISFACCION_GENERAL": int(p7_satisfaccion[0]),
@@ -228,10 +228,29 @@ def mostrar_modulo_calidad(conn, df_base):
                     # Flujo de llamada fallida (No contestó)
                     form_falla = st.form(key="form_falla_llamada_erronea")
                     with form_falla:
-                        st.markdown("### ⚠️ Registro de Intento de Llamada Fallida")
-                        st.info(f"Se registrará una constancia de llamada fallida para la orden ORD-{num_orden} asignada a {tecnico}.")
+                        st.markdown("### ⚠️ Registro de Gestión sin Encuesta Completada")
+                        st.info(f"Se registrará una constancia de gestión para la orden ORD-{num_orden} asignada a {tecnico}.")
+
+                        resultado_gestion = st.selectbox(
+                            "Resultado de la gestión:",
+                            [
+                                "Cliente no desea participar",
+                                "Responsable no disponible",
+                                "Llamada reprogramada",
+                                "Número equivocado",
+                                "Sin respuesta después de dos intentos",
+                                "Requiere seguimiento",
+                            ],
+                            key="resultado_gestion_select"
+                        )
                         observaciones_falla = st.text_area("Detalle de la gestión (Buzón, apagado, etc.):", value=f"Se llamó al cliente. Estado: {contesto}.", key="obs_falla_input")
-                        submit_falla = st.form_submit_button("💾 Registrar Intento Fallido")
+
+                        st.markdown("#### 🔁 Datos de Seguimiento (si aplica)")
+                        ticket_seguimiento = st.text_input("Número de ticket o gestión asociada:", key="ticket_seg_input")
+                        responsable_seguimiento = st.text_input("Responsable del seguimiento:", key="resp_seg_input")
+                        fecha_limite_seguimiento = st.date_input("Fecha límite del seguimiento:", value=get_honduras_time().date() + timedelta(days=2), key="fecha_lim_seg_input")
+
+                        submit_falla = st.form_submit_button("💾 Registrar Gestión")
                         
                     if submit_falla:
                         datos_falla = {
@@ -252,11 +271,15 @@ def mostrar_modulo_calidad(conn, df_base):
                             "P6_LIMPIEZA_TRABAJO": "N/A",
                             "P7_SATISFACCION_GENERAL": "N/A",
                             
-                            "MEJORAS_OPCIONAL": "Llamada no contestada",
+                            "MEJORAS_OPCIONAL": observaciones_falla if observaciones_falla.strip() else "Sin detalle",
                             "ACEPTACION_DIGITAL": "N/A",
                             "HORA_CIERRE_SERVICIO": "N/A",
-                            "APROBACION_INTERNA": "Servicio no aprobado – requiere seguimiento",
-                            "METODO_AUDITORIA": f"Intento Fallido - {contesto}"
+                            "RESULTADO_GESTION": resultado_gestion,
+                            "TICKET_SEGUIMIENTO": ticket_seguimiento if ticket_seguimiento.strip() else "N/A",
+                            "RESPONSABLE_SEGUIMIENTO": responsable_seguimiento if responsable_seguimiento.strip() else "N/A",
+                            "FECHA_LIMITE_SEGUIMIENTO": fecha_limite_seguimiento.strftime('%Y-%m-%d'),
+                            "APROBACION_INTERNA": ("Servicio no aprobado – requiere seguimiento" if resultado_gestion == "Requiere seguimiento" else "Sin encuesta completada"),
+                            "METODO_AUDITORIA": f"Gestión sin encuesta - {resultado_gestion}"
                         }
                         
                         exito = guardar_registro_calidad(conn, datos_falla)
@@ -482,7 +505,46 @@ def mostrar_modulo_calidad(conn, df_base):
                     else:
                         cols_mostrar = [c for c in df_filtered.columns if c not in ['FECHA_DT']]
                         st.dataframe(df_filtered[cols_mostrar], use_container_width=True, hide_index=True)
-                        
+
+                        # --- INDICADOR OFICIAL CSAT (solo encuesta de satisfacción) ---
+                        # CSAT = clientes que calificaron 4 o 5 en la pregunta 7 (satisfacción
+                        # general) / total de respuestas válidas * 100. Las otras 6 preguntas
+                        # se usan como diagnóstico para ver qué parte de la visita mejorar.
+                        if hoja_target == "Calidad" and 'P7_SATISFACCION_GENERAL' in df_filtered.columns:
+                            p7 = pd.to_numeric(df_filtered['P7_SATISFACCION_GENERAL'], errors='coerce').dropna()
+                            validas = int(len(p7))
+                            top = int((p7 >= 4).sum())
+                            csat = (top / validas * 100) if validas > 0 else 0.0
+
+                            st.markdown("#### 📊 Indicador Oficial de Satisfacción (CSAT)")
+                            cE1, cE2, cE3 = st.columns(3)
+                            cE1.metric("CSAT (P7: 4 o 5)", f"{csat:.0f}%")
+                            cE2.metric("Respuestas válidas", validas)
+                            cE3.metric("Calificaron 4 o 5", top)
+                            st.caption("CSAT = clientes que calificaron 4 o 5 en la pregunta 7 (satisfacción general) ÷ total de respuestas válidas × 100. Solo cuentan las encuestas contestadas.")
+
+                            diag = {
+                                'P1_PUNTUALIDAD': '1. Puntualidad',
+                                'P2_PRESENTACION_TRATO': '2. Presentación / Trato',
+                                'P3_CLARIDAD_EXPLICACION': '3. Claridad de explicación',
+                                'P4_EXPLICACION_TV_CCVEO': '4. TV Cable / CCVEO',
+                                'P5_CALIDAD_SERVICIO': '5. Calidad del servicio',
+                                'P6_LIMPIEZA_TRABAJO': '6. Limpieza del área',
+                            }
+                            filas_diag = []
+                            for col_p, etiqueta in diag.items():
+                                if col_p in df_filtered.columns:
+                                    serie = pd.to_numeric(df_filtered[col_p], errors='coerce').dropna()
+                                    if len(serie) > 0:
+                                        filas_diag.append({
+                                            'Indicador de diagnóstico': etiqueta,
+                                            'Promedio (1-5)': round(float(serie.mean()), 2),
+                                            'Respuestas': int(len(serie)),
+                                        })
+                            if filas_diag:
+                                st.markdown("**Indicadores de diagnóstico** (para identificar qué parte de la visita mejorar):")
+                                st.dataframe(pd.DataFrame(filas_diag), hide_index=True, use_container_width=True)
+
                         st.markdown("---")
                         
                         st.markdown("#### 📥 Exportación de Reporte en PDF")
