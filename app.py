@@ -65,6 +65,7 @@ try:
         es_offline_preciso,
         clasificar_causa_offline,
         generar_pdf_cierre_diario,
+        generar_pdf_cerradas_detalle,
         generar_pdf_primera_orden,
         generar_pdf_pendientes_dispatch,
         get_honduras_time,
@@ -3862,6 +3863,13 @@ def main():
             if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary", key="btn_generar_pdf_cierre_diario"):
                 with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
             if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_cierre")
+
+            # Detalle por hora de las cerradas (NUM, hora de cierre, técnico, actividad, cliente, colonia).
+            if st.button("🕒 GENERAR PDF DE CERRADAS (DETALLE POR HORA)", use_container_width=True, key="btn_generar_pdf_cerradas_detalle"):
+                with st.spinner("Preparando detalle de cerradas..."):
+                    st.session_state['pdf_cerradas_det'] = generar_pdf_cerradas_detalle(df_cerradas_espejo, fecha_cal_sel)
+            if 'pdf_cerradas_det' in st.session_state:
+                st.download_button("📥 Descargar Cerradas Detalle (PDF)", data=st.session_state['pdf_cerradas_det'], file_name=f"Cerradas_Detalle_{fecha_cal_sel}.pdf", mime="application/pdf", use_container_width=True, key="btn_descargar_pdf_cerradas_detalle")
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 
