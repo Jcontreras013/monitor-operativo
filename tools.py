@@ -3108,12 +3108,16 @@ def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
     """
     df = df_cerradas.copy() if df_cerradas is not None else pd.DataFrame()
 
-    # Hora de cierre en horario local de Honduras (los timestamps llegan en UTC,
-    # igual que en el resto del monitor se les resta 6h para el día operativo).
+    # Horas de inicio y cierre en horario local de Honduras (los timestamps llegan
+    # en UTC, igual que en el resto del monitor se les resta 6h para el día operativo).
     if 'HORA_LIQ' in df.columns:
         df['_LIQ_LOCAL'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
     else:
         df['_LIQ_LOCAL'] = pd.NaT
+    if 'HORA_INI' in df.columns:
+        df['_INI_LOCAL'] = pd.to_datetime(df['HORA_INI'], errors='coerce') - pd.Timedelta(hours=6)
+    else:
+        df['_INI_LOCAL'] = pd.NaT
     df = df.sort_values(by='_LIQ_LOCAL', na_position='last')
 
     pdf = ReporteGenerencialPDF()
@@ -3131,9 +3135,9 @@ def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
 
     pdf.seccion_titulo(f"Listado de Cerradas ({len(df)} Órdenes)")
 
-    # Anchos: Hora(18) Orden(20) Cliente(20) Tecnico(40) Actividad(46) Colonia(46) = 190mm
-    w = [18, 20, 20, 40, 46, 46]
-    encabezados = ["Hora", "Orden", "Cliente", "Tecnico", "Actividad", "Colonia"]
+    # Anchos: HIni(16) HCierre(16) Orden(20) Cliente(18) Tecnico(36) Actividad(44) Colonia(40) = 190mm
+    w = [16, 16, 20, 18, 36, 44, 40]
+    encabezados = ["H. Inicio", "H. Cierre", "Orden", "Cliente", "Tecnico", "Actividad", "Colonia"]
 
     def _encabezado():
         pdf.set_fill_color(240, 240, 240)
@@ -3157,21 +3161,24 @@ def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
             pdf.add_page()
             _encabezado()
 
+        ini_local = row.get('_INI_LOCAL')
         liq_local = row.get('_LIQ_LOCAL')
-        hora = liq_local.strftime('%H:%M') if pd.notnull(liq_local) else "--:--"
+        hora_ini = ini_local.strftime('%H:%M') if pd.notnull(ini_local) else "--:--"
+        hora_liq = liq_local.strftime('%H:%M') if pd.notnull(liq_local) else "--:--"
         num = safestr(str(row.get('NUM', 'N/D')))
         cliente = safestr(str(row.get('CLIENTE', 'N/D')))
         tec_raw = str(row.get('TECNICO', ''))
-        tec = "SIN ASIGNAR" if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:25]
-        act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:30]
-        colonia = safestr(str(row.get('COLONIA', 'N/D')))[:32]
+        tec = "SIN ASIGNAR" if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:23]
+        act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:28]
+        colonia = safestr(str(row.get('COLONIA', 'N/D')))[:28]
 
-        pdf.cell(w[0], 5, hora, border=1, align="C")
-        pdf.cell(w[1], 5, num, border=1, align="C")
-        pdf.cell(w[2], 5, cliente, border=1, align="C")
-        pdf.cell(w[3], 5, tec, border=1, align="L")
-        pdf.cell(w[4], 5, act, border=1, align="L")
-        pdf.cell(w[5], 5, colonia, border=1, align="L")
+        pdf.cell(w[0], 5, hora_ini, border=1, align="C")
+        pdf.cell(w[1], 5, hora_liq, border=1, align="C")
+        pdf.cell(w[2], 5, num, border=1, align="C")
+        pdf.cell(w[3], 5, cliente, border=1, align="C")
+        pdf.cell(w[4], 5, tec, border=1, align="L")
+        pdf.cell(w[5], 5, act, border=1, align="L")
+        pdf.cell(w[6], 5, colonia, border=1, align="L")
         pdf.ln()
 
     return finalizar_pdf(pdf)
