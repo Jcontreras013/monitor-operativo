@@ -4938,26 +4938,30 @@ def main():
             st.markdown("---")
             if st.session_state.get('config_ver_checkpoint', True):
                 with st.expander("🎛️ PANEL DE CONTROL Y ANÁLISIS DETALLADO", expanded=True):
-                    if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL": 
+                    if 'st_btn_v_active' not in st.session_state or st.session_state.st_btn_v_active == "CONSOL":
                         st.session_state.st_btn_v_active = "PENDIENTE"
-                        
+
+                    # Los botones usan on_click (callback). Streamlit corre el callback
+                    # ANTES de reejecutar, así el panel se recalcula UNA sola vez por clic.
+                    # Antes cada botón hacía además un 'st.rerun()' explícito, que provocaba
+                    # una SEGUNDA reejecución completa de toda la app (recarga + reproceso de
+                    # ~12 mil filas + Gantt + tablero) -- por eso "tardaba una vida". El
+                    # resaltado del botón queda correcto porque el estado ya está actualizado
+                    # cuando se vuelven a dibujar.
+                    def _set_btn_v(val):
+                        st.session_state.st_btn_v_active = val
+
                     if es_movil:
                         st.write("Filtros:")
-                        if st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary", key="btn_panel_v_pend_mob"): 
-                            st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
+                        st.button("⏳ ASIGNADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary", key="btn_panel_v_pend_mob", on_click=_set_btn_v, args=("PENDIENTE",))
                         col_m1, col_m2 = st.columns(2)
-                        if col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary", key="btn_panel_v_cerr_mob"): 
-                            st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                        if col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary", key="btn_panel_v_anul_mob"): 
-                            st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
+                        col_m1.button("✅ CERRADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary", key="btn_panel_v_cerr_mob", on_click=_set_btn_v, args=("C_HOY",))
+                        col_m2.button("❌ ANULADAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary", key="btn_panel_v_anul_mob", on_click=_set_btn_v, args=("A_HOY",))
                     else:
                         col_bt1_v, col_bt2_v, col_bt3_v = st.columns(3)
-                        if col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary", key="btn_panel_v_pend_desk"): 
-                            st.session_state.st_btn_v_active = "PENDIENTE"; st.rerun()
-                        if col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary", key="btn_panel_v_cerr_desk"): 
-                            st.session_state.st_btn_v_active = "C_HOY"; st.rerun()
-                        if col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary", key="btn_panel_v_anul_desk"): 
-                            st.session_state.st_btn_v_active = "A_HOY"; st.rerun()
+                        col_bt1_v.button("⏳ ASIGNADAS ACTIVAS", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "PENDIENTE" else "secondary", key="btn_panel_v_pend_desk", on_click=_set_btn_v, args=("PENDIENTE",))
+                        col_bt2_v.button("✅ CERRADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "C_HOY" else "secondary", key="btn_panel_v_cerr_desk", on_click=_set_btn_v, args=("C_HOY",))
+                        col_bt3_v.button("❌ ANULADAS HOY", use_container_width=True, type="primary" if st.session_state.st_btn_v_active == "A_HOY" else "secondary", key="btn_panel_v_anul_desk", on_click=_set_btn_v, args=("A_HOY",))
 
                     status_final_btn = st.session_state.st_btn_v_active
 
