@@ -3096,7 +3096,84 @@ def generar_pdf_ordenes_totales(df_base, fecha_corte):
         pdf.cell(w[4], 5, act, border=1, align="L")
         pdf.cell(w[5], 5, colonia, border=1, align="L") # Imprimimos Colonia
         pdf.ln()
-        
+
+    return finalizar_pdf(pdf)
+
+
+def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
+    """
+    PDF con el DETALLE de las órdenes CERRADAS del día, ordenadas por hora de
+    cierre. Incluye hora de cierre (horario Honduras), número de orden, técnico,
+    actividad, cliente y colonia -- lo que se ve en el monitor.
+    """
+    df = df_cerradas.copy() if df_cerradas is not None else pd.DataFrame()
+
+    # Hora de cierre en horario local de Honduras (los timestamps llegan en UTC,
+    # igual que en el resto del monitor se les resta 6h para el día operativo).
+    if 'HORA_LIQ' in df.columns:
+        df['_LIQ_LOCAL'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
+    else:
+        df['_LIQ_LOCAL'] = pd.NaT
+    df = df.sort_values(by='_LIQ_LOCAL', na_position='last')
+
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("REPORTE DE ORDENES CERRADAS (DETALLE)"), border=0, ln=True, align="C")
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Cierres del Día: {fecha_corte.strftime('%d/%m/%Y')}"), ln=True, align="C")
+    pdf.ln(5)
+
+    pdf.seccion_titulo(f"Listado de Cerradas ({len(df)} Órdenes)")
+
+    # Anchos: Hora(18) Orden(20) Cliente(20) Tecnico(40) Actividad(46) Colonia(46) = 190mm
+    w = [18, 20, 20, 40, 46, 46]
+    encabezados = ["Hora", "Orden", "Cliente", "Tecnico", "Actividad", "Colonia"]
+
+    def _encabezado():
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_text_color(50, 50, 50)
+        pdf.set_font("Helvetica", "B", 7)
+        for i, h in enumerate(encabezados):
+            pdf.cell(w[i], 6, h, border=1, align="C", fill=True)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 6)
+        pdf.set_text_color(0, 0, 0)
+
+    _encabezado()
+
+    if df.empty:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 8, safestr("No hay ordenes cerradas para esta fecha."), border=1, ln=True, align="C")
+        return finalizar_pdf(pdf)
+
+    for _, row in df.iterrows():
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            _encabezado()
+
+        liq_local = row.get('_LIQ_LOCAL')
+        hora = liq_local.strftime('%H:%M') if pd.notnull(liq_local) else "--:--"
+        num = safestr(str(row.get('NUM', 'N/D')))
+        cliente = safestr(str(row.get('CLIENTE', 'N/D')))
+        tec_raw = str(row.get('TECNICO', ''))
+        tec = "SIN ASIGNAR" if pd.isna(tec_raw) or tec_raw.strip().upper() in ['NONE', 'NAN', 'N/D', 'NULL', ''] else safestr(tec_raw)[:25]
+        act = safestr(str(row.get('ACTIVIDAD', 'N/D')))[:30]
+        colonia = safestr(str(row.get('COLONIA', 'N/D')))[:32]
+
+        pdf.cell(w[0], 5, hora, border=1, align="C")
+        pdf.cell(w[1], 5, num, border=1, align="C")
+        pdf.cell(w[2], 5, cliente, border=1, align="C")
+        pdf.cell(w[3], 5, tec, border=1, align="L")
+        pdf.cell(w[4], 5, act, border=1, align="L")
+        pdf.cell(w[5], 5, colonia, border=1, align="L")
+        pdf.ln()
+
     return finalizar_pdf(pdf)
 
 
