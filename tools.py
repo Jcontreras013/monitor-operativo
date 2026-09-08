@@ -3108,14 +3108,16 @@ def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
     """
     df = df_cerradas.copy() if df_cerradas is not None else pd.DataFrame()
 
-    # Horas de inicio y cierre en horario local de Honduras (los timestamps llegan
-    # en UTC, igual que en el resto del monitor se les resta 6h para el día operativo).
+    # Se muestran las horas TAL CUAL las presenta el monitor: en ui_components.py
+    # (aplicar_estilos_df) HORA_INI/HORA_LIQ se formatean con strftime directo, SIN
+    # restar 6h. El -6h solo se usa para agrupar por día operativo, no para mostrar.
+    # Restarlo aquí desalineaba el reporte 6 horas respecto a lo que ve el usuario.
     if 'HORA_LIQ' in df.columns:
-        df['_LIQ_LOCAL'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce') - pd.Timedelta(hours=6)
+        df['_LIQ_LOCAL'] = pd.to_datetime(df['HORA_LIQ'], errors='coerce')
     else:
         df['_LIQ_LOCAL'] = pd.NaT
     if 'HORA_INI' in df.columns:
-        df['_INI_LOCAL'] = pd.to_datetime(df['HORA_INI'], errors='coerce') - pd.Timedelta(hours=6)
+        df['_INI_LOCAL'] = pd.to_datetime(df['HORA_INI'], errors='coerce')
     else:
         df['_INI_LOCAL'] = pd.NaT
     df = df.sort_values(by='_LIQ_LOCAL', na_position='last')
