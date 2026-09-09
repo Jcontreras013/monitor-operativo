@@ -203,7 +203,13 @@ def _guardar_indice_repositorio(conn, df):
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = _leer_secreto("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-CATBOX_USERHASH = _leer_secreto("catbox_userhash", "327c87ffe7f915a6d1ec367ee") # Tu userhash integrado de forma nativa [3]
+# Sin userhash configurado, Catbox sube los archivos de forma anónima (nadie
+# puede administrarlos después, pero tampoco expone la cuenta de nadie). Antes
+# había un userhash real harcodeado acá como valor por defecto -- este
+# repositorio es público, así que quedaba expuesto para cualquiera. Configurar
+# uno propio en st.secrets["catbox_userhash"] si hace falta poder borrar/listar
+# los archivos subidos desde la cuenta de Catbox.
+CATBOX_USERHASH = _leer_secreto("catbox_userhash", "")
 
 @st.cache_data(show_spinner=False)
 def cargar_personal(filepath="personal_tecnico.txt"):
