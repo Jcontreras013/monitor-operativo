@@ -412,9 +412,22 @@ ACTIVIDADES_BASURA = ['ACTUALIZACIONDATOS', 'ACTUALIZACIOFW', 'ACTUALIZAINFOTECN
 def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
     api_config = st.secrets.get("cepheus_api", {})
     base_url = api_config.get("url")
-    auth_user = api_config.get("usuario", "monitorISCA")
-    auth_pass = api_config.get("contrasena", "SV#8xgE4U#")
-    
+    auth_user = api_config.get("usuario")
+    auth_pass = api_config.get("contrasena")
+
+    # Sin credenciales configuradas en st.secrets no hay forma segura de
+    # consultar Cepheus. Antes había un usuario/contraseña de respaldo
+    # hardcodeado aquí mismo -- quedaba expuesto en el repo (que es público)
+    # y enmascaraba un secrets.toml mal configurado en vez de avisarlo. Esa
+    # credencial debe rotarse en Cepheus/IT si aún no se ha hecho; no
+    # reintroducir ningún valor por defecto real en el código.
+    if not base_url or not auth_user or not auth_pass:
+        print(
+            "  -> [-] Falta configurar cepheus_api (url/usuario/contrasena) en "
+            "st.secrets. No se consulta la API sin credenciales explícitas."
+        )
+        return pd.DataFrame()
+
     usuarios_autorizados = api_config.get("usuarios_consulta", [])
     if isinstance(usuarios_autorizados, str):
         usuarios_autorizados = [usuarios_autorizados]
