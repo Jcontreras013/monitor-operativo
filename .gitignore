@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# Enlaces de rastreo GPS en vivo (SkyTrack) -- no deben volver a subirse al
+# repo (es público): cada uno destapa la ubicación en tiempo real de un
+# vehículo/técnico sin login. Guardarlos fuera del repo (Google Sheets,
+# secrets, o la BD de Operaciones una vez migrado).
+gps.txt
