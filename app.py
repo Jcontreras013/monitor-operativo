@@ -520,11 +520,22 @@ def _mostrar_tabla_panel_aggrid(df_estilo_v):
 # ==============================================================================
 def sincronizar_datos_nube(conn):
     try:
-        with st.spinner("☁️ Descargando historial desde GCS (Alta Velocidad)..."):
-            df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-            
-            if df_nube is None or df_nube.empty:
+        with st.spinner("☁️ Descargando historial desde Google Sheets (fuente al día)..."):
+            # Se lee PRIMERO el Google Sheet, que es la fuente fresca y confiable: el
+            # robot-monitor lo actualiza en cada ciclo y esa escritura casi nunca falla.
+            # El respaldo en GCS (historial_maestro.csv) queda como PLAN B, solo si el
+            # Sheet no responde. Antes se leia GCS primero, y cuando su escritura fallaba
+            # (marcada como "error menor" en sync_job.py) la app mostraba datos viejos
+            # aunque el Sheet estuviera al dia.
+            df_nube = None
+            try:
                 df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+            except Exception as _e_sheet:
+                print(f"[aviso] No se pudo leer Google Sheets, se usara el respaldo GCS: {_e_sheet}")
+                df_nube = None
+
+            if df_nube is None or df_nube.empty:
+                df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
                 
             if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
