@@ -3136,7 +3136,12 @@ def main():
         mask_falsos_c = act_upper_c.str.contains('PLEXISCA|PEXTERNO|SPLITTEROPT|PLEX|INS|NUEVA|ADIC|CAMBIO|RECU|TVADICIONAL|MIGRACI', regex=True)
         mask_est_abierto_c = est_upper_c != 'CERRADA'
         mask_com_off_c = com_upper_c.str.contains("ONU OFFLINE|OFF LINE|OFFLINE|LOS EN ROJO|PON ROJO", regex=True)
-        mask_precisa_c = com_upper_c.apply(es_offline_preciso)
+        # Vectorizado: antes era .apply(es_offline_preciso) fila-por-fila sobre ~12k
+        # filas en CADA rerun (uno de los cuellos de botella de la lentitud). Mismo
+        # criterio: una palabra de 'solucionado' anula una de 'caido'.
+        _pat_off_falla = 'OFFLINE|OFF LINE|LOS RED|PON ROJO|LOS EN ROJO|EQUIPO OFFLINE|ONU OFFLINE|ONT OFFLINE'
+        _pat_off_sol = 'OK|LISTO|RECUPERADO|SOLUCIONADO|NAVEGA|YA QUEDO|ARRIBA|FUNCIONAL|ONLINE'
+        mask_precisa_c = com_upper_c.str.contains(_pat_off_falla, regex=True, na=False) & ~com_upper_c.str.contains(_pat_off_sol, regex=True, na=False)
         
         df_base_activa['ES_OFFLINE'] = (mask_est_abierto_c & mask_sop_c & ~mask_falsos_c & (mask_com_off_c | mask_precisa_c))
         
@@ -5018,9 +5023,10 @@ def main():
                                     # ubicación GPS asociada a un trabajo en curso.
                                     # Se utiliza target="_self" para forzar la apertura directa en la app de mapas (Google Maps, Waze, etc.)
                                     # evitando los bloqueos de ventanas emergentes en navegadores de celular.
-                                    hora_ini_row_gps = row.get('HORA_INI')
-                                    orden_ya_abierta_gps = pd.notnull(hora_ini_row_gps) and str(hora_ini_row_gps).strip() not in ("", "---", "NaT", "None")
-                                    show_gps_mobile = row.get('GPS') if orden_ya_abierta_gps else None
+                                    # GPS visible siempre que exista (ubicacion de destino),
+                                    # sin exigir que la orden ya se haya iniciado.
+                                    _gps_val = row.get('GPS')
+                                    show_gps_mobile = _gps_val if (pd.notnull(_gps_val) and str(_gps_val).strip() not in ("", "---", "NaT", "None")) else None
                                     gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_self" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
                             
                                     st.markdown(f"""
@@ -5053,11 +5059,12 @@ def main():
                                 # HORA_INI tiene un valor real (no "---"/vacío). Antes de
                                 # eso no existe una ubicación asociada a un trabajo en curso.
                                 if "GPS" in df_v_tabla_monitor.columns:
-                                    if "HORA_INI" in df_v_tabla_monitor.columns:
-                                        mask_orden_abierta_gps = df_v_tabla_monitor["HORA_INI"].notna()
-                                        df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].where(mask_orden_abierta_gps, "").fillna("")
-                                    else:
-                                        df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
+                                    # Se muestra el GPS SIEMPRE que la orden traiga ubicacion,
+                                    # incluso si aun no se ha iniciado (HORA_INI vacio). Es la
+                                    # ubicacion de destino y sirve para dispatch/ruteo antes de
+                                    # que el tecnico arranque. Antes se ocultaba hasta iniciar,
+                                    # por eso no se veia en 'Asignadas Activas' (pendientes).
+                                    df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
                             
                                     cols = list(df_estilo_v.columns)
                                     if "GPS" in cols:
