@@ -528,9 +528,11 @@ def sincronizar_datos_nube(conn):
             # (marcada como "error menor" en sync_job.py) la app mostraba datos viejos
             # aunque el Sheet estuviera al dia.
             df_nube = None
+            _err_sheet_txt = None
             try:
                 df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
             except Exception as _e_sheet:
+                _err_sheet_txt = str(_e_sheet)
                 print(f"[aviso] No se pudo leer Google Sheets, se usara el respaldo GCS: {_e_sheet}")
                 df_nube = None
 
@@ -544,6 +546,12 @@ def sincronizar_datos_nube(conn):
             # "'NoneType' object has no attribute 'columns'" en vez de avisar con claridad.
             if df_nube is None:
                 st.error("❌ No se pudo leer ni Google Sheets ni el respaldo en GCS. Verifica la conexión e intenta de nuevo.")
+                # Se muestra el error REAL de la lectura del Sheet (antes solo se
+                # imprimia a un log de servidor que el usuario no ve). Sin esto,
+                # cada vez que falla hay que pedirle a alguien con acceso a los
+                # logs de Streamlit Cloud que lo revise a ciegas.
+                if _err_sheet_txt:
+                    st.caption(f"Detalle técnico (lectura de Google Sheets): {_err_sheet_txt}")
                 import time
                 time.sleep(3)
                 return
