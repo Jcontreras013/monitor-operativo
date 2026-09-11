@@ -159,8 +159,34 @@ def ejecutar_sincronizacion_background():
     # 7. CARGA EN GOOGLE SHEETS
     try:
         valores_actualizar = [df_final.columns.values.tolist()] + df_final.values.tolist()
-        worksheet.clear()
+        filas_nuevas = len(valores_actualizar)
+        columnas_nuevas = len(df_final.columns)
+
+        # Dimensiones de la hoja ANTES de escribir, para poder recortar el
+        # sobrante DESPUES de que los datos nuevos ya quedaron confirmados.
+        filas_previas = worksheet.row_count
+        columnas_previas = worksheet.col_count
+
+        # ORDEN CRITICO: se escribe primero, se recorta el sobrante despues --
+        # NUNCA al reves. Antes se hacia worksheet.clear() ANTES de escribir los
+        # datos nuevos: si update() fallaba por cualquier motivo despues del
+        # clear() (cuota excedida, timeout de red, dato invalido), Sheet1
+        # quedaba COMPLETAMENTE VACIA hasta el siguiente ciclo exitoso -- que es
+        # exactamente el sintoma detectado en produccion (hoja en blanco, sin
+        # encabezados ni datos). Escribiendo primero, un fallo aqui deja los
+        # datos del ciclo ANTERIOR intactos en vez de borrarlos a ciegas.
         worksheet.update(values=valores_actualizar, range_name='A1')
+
+        # Se recorta solo el sobrante de la version anterior (si tenia mas
+        # filas o columnas que la nueva), para que no queden filas viejas
+        # colgando debajo de los datos frescos. Si esto llega a fallar, los
+        # datos nuevos YA quedaron escritos -- no se pierde nada.
+        try:
+            if filas_previas > filas_nuevas or columnas_previas > columnas_nuevas:
+                worksheet.resize(rows=filas_nuevas, cols=columnas_nuevas)
+        except Exception as e_recorte:
+            print(f"[!] Aviso: no se pudo recortar el sobrante de la hoja anterior (los datos nuevos ya quedaron escritos): {e_recorte}")
+
         print("[+] Carga exitosa: Google Sheets actualizado correctamente.")
     except Exception as e_write:
         print(f"[-] Fallo al intentar escribir en Google Sheets: {e_write}")
