@@ -536,7 +536,18 @@ def sincronizar_datos_nube(conn):
 
             if df_nube is None or df_nube.empty:
                 df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-                
+
+            # Si tanto el Sheet como el respaldo GCS fallaron, df_nube queda en None.
+            # Todo el codigo de mas abajo (a partir de "if 'EMPRESA' in df_nube.columns")
+            # esta FUERA del guard "if df_nube is not None" -- corre siempre, asumiendo
+            # que df_nube ya es un DataFrame -- y sin esta salvaguarda eso revienta con
+            # "'NoneType' object has no attribute 'columns'" en vez de avisar con claridad.
+            if df_nube is None:
+                st.error("❌ No se pudo leer ni Google Sheets ni el respaldo en GCS. Verifica la conexión e intenta de nuevo.")
+                import time
+                time.sleep(3)
+                return
+
             if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
