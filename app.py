@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, time as dt_time
 import re
+import difflib
 from streamlit_gsheets import GSheetsConnection
 import matplotlib.pyplot as plt
 import sys
@@ -139,6 +140,68 @@ def mascara_tecnico_asignado(serie_tecnicos):
     s = serie_tecnicos.fillna('').astype(str).str.strip().str.upper()
     valores_invalidos = {'', 'NONE', 'NAN', 'N/D', 'NULL', '0'}
     return ~s.isin(valores_invalidos)
+
+
+def resolver_tecnico_por_similitud(nombre_tecleado, nombres_existentes):
+    """
+    Busca, entre los técnicos que YA aparecen en las órdenes reales
+    (df_base['TECNICO']), uno cuyo nombre coincida o sea muy similar al
+    nombre ingresado/seleccionado para una orden manual. Si lo encuentra,
+    devuelve el nombre EXACTO tal como aparece en las órdenes reales, para
+    que el Gantt lo agrupe en la MISMA fila (vía normalizar_nombre_cruce);
+    si no encuentra nada parecido, devuelve el nombre original sin tocar.
+
+    Resuelve el caso reportado: el catálogo de técnicos ofrece "EDY
+    FLORENTINO GUZMAN" (sin apellido) pero las órdenes reales de Cepheus
+    traen "EDY FLORENTINO GUZMAN PEREZ" -- sin este cruce, la orden manual
+    creaba una fila nueva en el Gantt en vez de unirse a la del técnico real.
+
+    Devuelve (nombre_a_guardar, nombre_detectado_o_None). El segundo valor
+    es distinto de None solo cuando hubo una sustitución, para poder avisar
+    al usuario qué nombre se usó en su lugar.
+    """
+    if not nombre_tecleado or not nombres_existentes:
+        return nombre_tecleado, None
+
+    norm_tecleado = normalizar_nombre_cruce(nombre_tecleado)
+    if not norm_tecleado:
+        return nombre_tecleado, None
+
+    # Mapa normalizado -> primer nombre real (tal como aparece en las órdenes)
+    # que produjo esa forma normalizada.
+    mapa_norm = {}
+    for n in nombres_existentes:
+        norm_n = normalizar_nombre_cruce(n)
+        if norm_n and norm_n not in mapa_norm:
+            mapa_norm[norm_n] = n
+
+    # 1) Coincidencia exacta tras normalizar (acentos/espacios/alias ya resueltos).
+    if norm_tecleado in mapa_norm:
+        nombre_real = mapa_norm[norm_tecleado]
+        return nombre_real, (nombre_real if nombre_real != nombre_tecleado else None)
+
+    # 2) Nombre incompleto de un lado: todas las palabras del más corto
+    # aparecen, en el mismo orden, al inicio del más largo (ej. falta un
+    # apellido). Evita falsos positivos entre técnicos distintos que solo
+    # comparten el primer nombre.
+    tokens_tecleado = norm_tecleado.split()
+    for norm_n, nombre_real in mapa_norm.items():
+        tokens_n = norm_n.split()
+        if len(tokens_tecleado) <= len(tokens_n):
+            mas_corto, mas_largo = tokens_tecleado, tokens_n
+        else:
+            mas_corto, mas_largo = tokens_n, tokens_tecleado
+        if len(mas_corto) >= 2 and mas_largo[:len(mas_corto)] == mas_corto:
+            return nombre_real, nombre_real
+
+    # 3) Similitud aproximada (typos, letras de más/menos). Umbral alto para
+    # no confundir a dos técnicos distintos con nombres parecidos.
+    coincidencias = difflib.get_close_matches(norm_tecleado, list(mapa_norm.keys()), n=1, cutoff=0.88)
+    if coincidencias:
+        nombre_real = mapa_norm[coincidencias[0]]
+        return nombre_real, nombre_real
+
+    return nombre_tecleado, None
 
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ
@@ -2538,10 +2601,25 @@ def main():
                     elif not hora_liq_om_valida:
                         st.warning("La hora liquidada debe tener formato HH:MM en 24 horas (ej. 14:30), o dejarse vacía si la orden sigue abierta.")
                     else:
+                        # Se busca coincidencia con los técnicos que YA aparecen en las
+                        # órdenes reales (el catálogo de "Técnico Principal" puede traer
+                        # un nombre distinto -- ej. sin apellido -- al de Cepheus). Sin
+                        # esto, la orden manual creaba una fila nueva en el Gantt en vez
+                        # de unirse a la del técnico real.
+                        _df_base_tecs = st.session_state.get('df_base')
+                        _nombres_tecs_reales = (
+                            _df_base_tecs['TECNICO'].dropna().unique().tolist()
+                            if _df_base_tecs is not None and 'TECNICO' in _df_base_tecs.columns
+                            else []
+                        )
+                        tec_a_guardar, _tec_detectado = resolver_tecnico_por_similitud(tec_orden_manual_sel, _nombres_tecs_reales)
+                        if _tec_detectado:
+                            st.info(f"🔎 Se detectó que '{tec_orden_manual_sel}' coincide con el técnico '{_tec_detectado}' ya existente en las órdenes. Se usará ese nombre para que la orden se una en la misma fila del Gantt.")
+
                         ok_orden_manual = guardar_orden_manual(
                             num_orden=num_orden_manual.strip(),
                             actividad=actividad_manual_sel,
-                            tecnico=tec_orden_manual_sel,
+                            tecnico=tec_a_guardar,
                             fecha=fecha_orden_manual_sel.strftime('%Y-%m-%d'),
                             hora_inicio=hora_ini_orden_manual_txt.strip(),
                             hora_liq=hora_liq_orden_manual_txt.strip(),
@@ -2556,7 +2634,7 @@ def main():
                             )
                             st.cache_data.clear()
                         elif ok_orden_manual:
-                            st.success(f"✅ Orden {num_orden_manual.strip()} guardada manualmente para {tec_orden_manual_sel}.")
+                            st.success(f"✅ Orden {num_orden_manual.strip()} guardada manualmente para {tec_a_guardar}.")
                             st.cache_data.clear()
                         else:
                             st.error("No se pudo guardar la orden manual.")
