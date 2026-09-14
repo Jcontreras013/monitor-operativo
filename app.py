@@ -481,7 +481,23 @@ def _mostrar_tabla_panel_aggrid(df_estilo_v):
     if 'MINUTOS_CALC' in df_grid.columns:
         gb.configure_column('MINUTOS_CALC', hide=True)
     if 'ES_OFFLINE' in df_grid.columns:
-        gb.configure_column('ES_OFFLINE', headerName='🔴 OFFLINE')
+        gb.configure_column('ES_OFFLINE', headerName='🔴 OFFLINE', width=95)
+
+    # Anchos por defecto para las columnas que NO se configuran explícitamente
+    # más abajo (NOMBRE, COLONIA, GPS, COMENTARIO). Sin esto, GridOptionsBuilder
+    # les deja el ancho por defecto de ag-Grid (~200px) aunque el contenido sea
+    # corto (una hora, un estado, un número), lo que obligaba a hacer scroll
+    # horizontal para llegar a columnas como OLT/PON. Las columnas siguen
+    # siendo redimensionables a mano (resizable=True arriba); esto solo cambia
+    # el ancho con el que abren.
+    _anchos_columnas_panel = {
+        'DIAS_RETRASO': 90, 'NUM': 95, 'HORA_INI': 85, 'HORA_LIQ': 85,
+        'TIEMPO_REAL': 90, 'ESTADO': 110, 'TECNICO': 170, 'ACTIVIDAD': 110,
+        'MOTIVO': 150, 'CLIENTE': 100, 'OLT': 110, 'PON': 90,
+    }
+    for _col_ancho, _ancho in _anchos_columnas_panel.items():
+        if _col_ancho in df_grid.columns:
+            gb.configure_column(_col_ancho, width=_ancho)
 
     if 'NUM' in df_grid.columns:
         gb.configure_column('NUM', cellStyle=JsCode("""
