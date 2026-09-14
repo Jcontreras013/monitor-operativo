@@ -87,6 +87,7 @@ try:
         guardar_gps_tecnico,
         cargar_gps_tecnicos,
         borrar_gps_tecnico,
+        COLUMNAS_VITALES_SISTEMA,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
@@ -629,6 +630,19 @@ def sincronizar_datos_nube(conn):
                 if 'SUSCRIPTOR' in df_nube.columns and 'NOMBRE' not in df_nube.columns: df_nube.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
                 elif 'NOMBRE CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns: df_nube.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
                 elif 'NOMBRE_CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns: df_nube.rename(columns={'NOMBRE_CLIENTE': 'NOMBRE'}, inplace=True)
+
+                # sync_job.py reescribe TODA la hoja Sheet1 (encabezados incluidos) en
+                # cada ciclo, según las columnas que haya traído Cepheus esa vez. Si un
+                # ciclo no trajo OLT/PON, la columna desaparece de Sheet1 por completo
+                # hasta el siguiente ciclo que sí las traiga -- y sin esto, esa ausencia
+                # se colaba tal cual hasta la tabla (encabezado OLT/PON completamente
+                # ausente, no solo vacío). La otra vía de carga (subida de archivo por
+                # admin, vía procesar_dataframe_base) ya tenía esta misma garantía; aquí
+                # faltaba. Se rellena con "N/D" -- igual que ya se hace en esa otra vía --
+                # para que la columna siempre exista, aunque el dato no haya llegado hoy.
+                for _colv in COLUMNAS_VITALES_SISTEMA:
+                    if _colv not in df_nube.columns:
+                        df_nube[_colv] = "N/D"
 
                 if 'ACTIVIDAD' in df_nube.columns:
                     mask_basura_sync = df_nube['ACTIVIDAD'].astype(str).str.strip().str.upper().isin(ACTIVIDADES_BASURA)
