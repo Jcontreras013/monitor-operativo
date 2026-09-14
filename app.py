@@ -3198,14 +3198,28 @@ def main():
         texto_g = act_upper_global + " " + com_up_g
 
         cond_off = df_base.get('ES_OFFLINE', pd.Series([False]*len(df_base))) == True
+
+        # El motivo "📦 Instalación / Cambio" mezclaba en un solo bucket Nueva,
+        # Adición, Cambio/Migración y Recuperado -- imposible distinguir de un
+        # vistazo qué es cada orden. Se separa en 4 subtipos, con la MISMA
+        # prioridad que ya usa clasificador.subtipo_instalacion() (Adición >
+        # Cambio/Migración > Recuperado > Nueva) para que quede consistente con
+        # el resto de la app. cond_ins_nueva cierra el paraguas: es todo lo que
+        # cae dentro de la familia "instalación" pero no matcheó ninguna de las
+        # tres anteriores.
         cond_ins = texto_g.str.contains("INS|NUEVA|ADIC|CAMBIO|MIGRACI|RECUP", regex=True)
+        cond_ins_adic = cond_ins & texto_g.str.contains("ADIC", regex=True)
+        cond_ins_cambio = cond_ins & ~cond_ins_adic & texto_g.str.contains("CAMBIO|MIGRACI", regex=True)
+        cond_ins_recup = cond_ins & ~cond_ins_adic & ~cond_ins_cambio & texto_g.str.contains("RECUP", regex=True)
+        cond_ins_nueva = cond_ins & ~cond_ins_adic & ~cond_ins_cambio & ~cond_ins_recup
+
         cond_niv = texto_g.str.contains("NIVEL|DB|POTENCIA|ATENU", regex=True)
         cond_tv  = texto_g.str.contains("TV|CABLE|SEÑAL", regex=True)
         cond_nav = texto_g.str.contains("NAV|INTERNET|LENT", regex=True)
 
         df_base['MOTIVO'] = np.select(
-            [cond_off, cond_ins, cond_niv, cond_tv, cond_nav],
-            ["🔴 Offline / Caída", "📦 Instalación / Cambio", "⚡ Niveles Alterados", "📺 Falla de TV", "🌐 Lentitud / Navegación"],
+            [cond_off, cond_ins_adic, cond_ins_cambio, cond_ins_recup, cond_ins_nueva, cond_niv, cond_tv, cond_nav],
+            ["🔴 Offline / Caída", "➕ Adición", "🔄 Cambio / Migración", "♻️ Recuperado", "🆕 Instalación Nueva", "⚡ Niveles Alterados", "📺 Falla de TV", "🌐 Lentitud / Navegación"],
             default="🔧 Mantenimiento General"
         )
 
