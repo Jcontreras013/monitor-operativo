@@ -3173,6 +3173,16 @@ def main():
                 
             df_base['GPS'] = df_base['TECNICO_NORM'].apply(buscar_enlace_gps)
             df_base.drop(columns=['TECNICO_NORM'], errors='ignore', inplace=True)
+
+            # El enlace de rastreo GPS es la ubicación EN VIVO del técnico, así
+            # que solo tiene sentido mostrarlo mientras la orden sigue abierta
+            # (PENDIENTE/ASIGNADA/EN RUTA/etc., el mismo patrón "viva" que ya
+            # se usa en el resto del monitor). En una orden ya CERRADA o
+            # ANULADA esa ubicación ya no representa nada del trabajo, así que
+            # se oculta el enlace en vez de mostrar un rastreo obsoleto.
+            if 'ESTADO' in df_base.columns:
+                _mask_orden_abierta_gps = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+                df_base.loc[~_mask_orden_abierta_gps, 'GPS'] = ""
         else:
             df_base['GPS'] = ""
             
@@ -5250,14 +5260,13 @@ def main():
                                     estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                                     bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#EF4444" if estado_txt == "ANULADA" else "#2D2F39")
                             
-                                    # El link de ubicación GPS solo debe mostrarse cuando el
-                                    # técnico YA abrió (inició) la orden, es decir, cuando
-                                    # HORA_INI tiene un valor real. Antes de eso no hay una
-                                    # ubicación GPS asociada a un trabajo en curso.
+                                    # El link de ubicación GPS ya viene vacío desde df_base si
+                                    # la orden no está abierta (ver el filtro por ESTADO junto
+                                    # al mapeo de GPS por técnico, más arriba): solo se llena
+                                    # mientras la orden sigue viva (PENDIENTE/ASIGNADA/EN
+                                    # RUTA/etc.), nunca en una ya CERRADA o ANULADA.
                                     # Se utiliza target="_self" para forzar la apertura directa en la app de mapas (Google Maps, Waze, etc.)
                                     # evitando los bloqueos de ventanas emergentes en navegadores de celular.
-                                    # GPS visible siempre que exista (ubicacion de destino),
-                                    # sin exigir que la orden ya se haya iniciado.
                                     _gps_val = row.get('GPS')
                                     show_gps_mobile = _gps_val if (pd.notnull(_gps_val) and str(_gps_val).strip() not in ("", "---", "NaT", "None")) else None
                                     gps_link_html = f'<br>📍 <a href="{row.get("GPS")}" target="_self" style="color: #3B82F6; font-weight: bold; text-decoration: none;">UBICACIÓN GPS ↗</a>' if show_gps_mobile else ""
@@ -5287,16 +5296,14 @@ def main():
                                 df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
                                 # === CONTROL DE COLUMNA GPS ===
-                                # El link de ubicación GPS solo debe mostrarse cuando el
-                                # técnico YA abrió (inició) la orden, es decir, cuando
-                                # HORA_INI tiene un valor real (no "---"/vacío). Antes de
-                                # eso no existe una ubicación asociada a un trabajo en curso.
+                                # df_v_tabla_monitor["GPS"] ya viene vacío para las órdenes que
+                                # no están abiertas (filtro por ESTADO aplicado sobre df_base,
+                                # más arriba), así que aquí solo se refleja esa columna tal
+                                # cual: el enlace se ve mientras la orden sigue viva
+                                # (PENDIENTE/ASIGNADA/EN RUTA/etc., sirve para dispatch/ruteo
+                                # antes de que el técnico arranque) y desaparece en cuanto
+                                # queda CERRADA o ANULADA.
                                 if "GPS" in df_v_tabla_monitor.columns:
-                                    # Se muestra el GPS SIEMPRE que la orden traiga ubicacion,
-                                    # incluso si aun no se ha iniciado (HORA_INI vacio). Es la
-                                    # ubicacion de destino y sirve para dispatch/ruteo antes de
-                                    # que el tecnico arranque. Antes se ocultaba hasta iniciar,
-                                    # por eso no se veia en 'Asignadas Activas' (pendientes).
                                     df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
                             
                                     cols = list(df_estilo_v.columns)
