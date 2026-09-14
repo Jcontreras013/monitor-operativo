@@ -481,7 +481,11 @@ def _mostrar_tabla_panel_aggrid(df_estilo_v):
     if 'MINUTOS_CALC' in df_grid.columns:
         gb.configure_column('MINUTOS_CALC', hide=True)
     if 'ES_OFFLINE' in df_grid.columns:
-        gb.configure_column('ES_OFFLINE', headerName='🔴 OFFLINE', width=95)
+        # Se oculta como columna propia (ya no se ve el checkbox "🔴 OFFLINE"),
+        # pero el dato sigue viajando en la fila: el cellStyle de NUM de abajo
+        # sigue leyendo params.data.ES_OFFLINE para pintarlo de rojo cuando la
+        # orden está offline, así que no se puede quitar del todo del grid.
+        gb.configure_column('ES_OFFLINE', hide=True)
 
     # Anchos por defecto para las columnas que NO se configuran explícitamente
     # más abajo (NOMBRE, COLONIA, GPS, COMENTARIO). Sin esto, GridOptionsBuilder
@@ -5373,7 +5377,10 @@ def main():
                                             "NOMBRE": st.column_config.TextColumn("NOMBRE", width="medium"),
                                             "COLONIA": st.column_config.TextColumn("COLONIA", width="medium"),
                                             "COMENTARIO": st.column_config.TextColumn("COMENTARIO", width="large"),
-                                            "ES_OFFLINE": st.column_config.CheckboxColumn("🔴 OFFLINE"),
+                                            # Oculta (igual que MINUTOS_CALC): el dato lo sigue usando
+                                            # row_styler para pintar de rojo la fila offline, pero ya
+                                            # no se muestra como columna propia.
+                                            "ES_OFFLINE": None,
                                             "MINUTOS_CALC": None
                                         },
                                         use_container_width=True,
