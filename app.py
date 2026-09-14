@@ -3066,14 +3066,23 @@ def main():
     except Exception:
         pass
 
-    # Migración automática de una sola vez: si el almacén nuevo (GCS) está
-    # vacío pero todavía queda un gps.txt en el disco de esta sesión (por
-    # ejemplo recién restaurado), se importan sus enlaces al almacén nuevo
-    # para no perder la función durante la transición. Tras la primera
-    # migración exitosa gps_map deja de estar vacío, así que esto no se
-    # repite en las siguientes recargas.
-    if not gps_map and os.path.exists("gps.txt"):
+    # Migración automática y AUTORREPARABLE: por cada técnico de gps.txt que
+    # todavía no aparezca en el almacén nuevo (GCS), se guarda de nuevo.
+    #
+    # Antes esto se hacía "una sola vez" (solo si gps_map estaba vacío), pero
+    # guardar_gps_tecnico() puede fallar al escribir en GCS y dejar ese
+    # registro SOLO en el caché local (efímero). Cada redeploy de la app
+    # (cada push a main -- y en esta sesión hubo varios seguidos) reinicia
+    # ese disco local, así que cualquier técnico cuya escritura a GCS
+    # hubiera fallado esa vez se perdía PARA SIEMPRE, aunque la migración ya
+    # se hubiera "completado" antes. Eso explica que solo sobrevivieran unos
+    # pocos técnicos tras varios redespliegues aunque al principio los 27
+    # sí llegaron a verse. Ahora se reintenta cada carga, por técnico
+    # faltante, así que un fallo puntual de GCS se autocorrige en la
+    # siguiente vez que alguien abra el monitor.
+    if os.path.exists("gps.txt"):
         try:
+            _gps_migro_algo = False
             with open("gps.txt", "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
@@ -3085,9 +3094,13 @@ def main():
                         g_placa = parts[1].strip()
                         g_name = parts[2].strip().rstrip(".")
                         if g_url and g_name:
-                            guardar_gps_tecnico(g_name, g_placa, g_url, registrado_por="migracion_automatica_gps_txt")
-                            gps_map[normalizar_nombre_cruce(g_name)] = g_url
-            st.cache_data.clear()
+                            g_name_norm = normalizar_nombre_cruce(g_name)
+                            if g_name_norm not in gps_map:
+                                guardar_gps_tecnico(g_name, g_placa, g_url, registrado_por="migracion_automatica_gps_txt")
+                                gps_map[g_name_norm] = g_url
+                                _gps_migro_algo = True
+            if _gps_migro_algo:
+                st.cache_data.clear()
         except Exception:
             pass
 
@@ -3123,45 +3136,6 @@ def main():
                 return ""
                 
             df_base['GPS'] = df_base['TECNICO_NORM'].apply(buscar_enlace_gps)
-
-            # Diagnóstico (solo admin/jefe): varios técnicos con enlace GPS
-            # guardado seguían sin mostrar el link en el Panel Operativo pese
-            # a tener orden iniciada, y en pruebas aisladas el cruce de
-            # nombres SÍ funciona con los nombres tal como están en gps.txt --
-            # así que la única forma de ver qué nombre exacto trae Cepheus en
-            # vivo (y por qué no cruza) es mostrarlo aquí mismo, con datos
-            # reales. Compara cada técnico sin coincidencia contra el nombre
-            # más parecido ya guardado, para distinguir "no está registrado"
-            # de "está registrado pero con una diferencia de ortografía".
-            if es_admin_o_supervisor and gps_map:
-                try:
-                    _diag_gps_base = df_base[(df_base['GPS'] == "") & (df_base['TECNICO_NORM'] != "")]
-                    _diag_gps_base = _diag_gps_base[['TECNICO', 'TECNICO_NORM']].drop_duplicates(subset=['TECNICO_NORM'])
-                    if not _diag_gps_base.empty:
-                        _filas_diag_gps = []
-                        for _, _fila_diag in _diag_gps_base.iterrows():
-                            _cands_diag = difflib.get_close_matches(_fila_diag['TECNICO_NORM'], list(gps_map.keys()), n=1, cutoff=0.0)
-                            _mejor_diag = _cands_diag[0] if _cands_diag else ""
-                            _ratio_diag = difflib.SequenceMatcher(None, _fila_diag['TECNICO_NORM'], _mejor_diag).ratio() if _mejor_diag else 0.0
-                            _filas_diag_gps.append({
-                                "TECNICO (en vivo, Cepheus)": _fila_diag['TECNICO'],
-                                "Nombre normalizado": _fila_diag['TECNICO_NORM'],
-                                "Más parecido guardado en GPS": _mejor_diag,
-                                "Similitud": round(_ratio_diag, 2),
-                            })
-                        with st.expander(f"🔍 Diagnóstico GPS: {len(_filas_diag_gps)} técnico(s) sin enlace", expanded=False):
-                            st.caption(
-                                "Solo visible para admin/jefe. Si la similitud es alta (≥0.85) pero no llegó al "
-                                "umbral (0.88), hay una diferencia de ortografía puntual entre el nombre en vivo "
-                                "y el guardado. Si es baja, ese técnico simplemente no tiene enlace GPS registrado."
-                            )
-                            st.dataframe(
-                                pd.DataFrame(_filas_diag_gps).sort_values("Similitud", ascending=False),
-                                hide_index=True, use_container_width=True
-                            )
-                except Exception:
-                    pass
-
             df_base.drop(columns=['TECNICO_NORM'], errors='ignore', inplace=True)
         else:
             df_base['GPS'] = ""
