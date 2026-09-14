@@ -3123,6 +3123,45 @@ def main():
                 return ""
                 
             df_base['GPS'] = df_base['TECNICO_NORM'].apply(buscar_enlace_gps)
+
+            # Diagnóstico (solo admin/jefe): varios técnicos con enlace GPS
+            # guardado seguían sin mostrar el link en el Panel Operativo pese
+            # a tener orden iniciada, y en pruebas aisladas el cruce de
+            # nombres SÍ funciona con los nombres tal como están en gps.txt --
+            # así que la única forma de ver qué nombre exacto trae Cepheus en
+            # vivo (y por qué no cruza) es mostrarlo aquí mismo, con datos
+            # reales. Compara cada técnico sin coincidencia contra el nombre
+            # más parecido ya guardado, para distinguir "no está registrado"
+            # de "está registrado pero con una diferencia de ortografía".
+            if es_admin_o_supervisor and gps_map:
+                try:
+                    _diag_gps_base = df_base[(df_base['GPS'] == "") & (df_base['TECNICO_NORM'] != "")]
+                    _diag_gps_base = _diag_gps_base[['TECNICO', 'TECNICO_NORM']].drop_duplicates(subset=['TECNICO_NORM'])
+                    if not _diag_gps_base.empty:
+                        _filas_diag_gps = []
+                        for _, _fila_diag in _diag_gps_base.iterrows():
+                            _cands_diag = difflib.get_close_matches(_fila_diag['TECNICO_NORM'], list(gps_map.keys()), n=1, cutoff=0.0)
+                            _mejor_diag = _cands_diag[0] if _cands_diag else ""
+                            _ratio_diag = difflib.SequenceMatcher(None, _fila_diag['TECNICO_NORM'], _mejor_diag).ratio() if _mejor_diag else 0.0
+                            _filas_diag_gps.append({
+                                "TECNICO (en vivo, Cepheus)": _fila_diag['TECNICO'],
+                                "Nombre normalizado": _fila_diag['TECNICO_NORM'],
+                                "Más parecido guardado en GPS": _mejor_diag,
+                                "Similitud": round(_ratio_diag, 2),
+                            })
+                        with st.expander(f"🔍 Diagnóstico GPS: {len(_filas_diag_gps)} técnico(s) sin enlace", expanded=False):
+                            st.caption(
+                                "Solo visible para admin/jefe. Si la similitud es alta (≥0.85) pero no llegó al "
+                                "umbral (0.88), hay una diferencia de ortografía puntual entre el nombre en vivo "
+                                "y el guardado. Si es baja, ese técnico simplemente no tiene enlace GPS registrado."
+                            )
+                            st.dataframe(
+                                pd.DataFrame(_filas_diag_gps).sort_values("Similitud", ascending=False),
+                                hide_index=True, use_container_width=True
+                            )
+                except Exception:
+                    pass
+
             df_base.drop(columns=['TECNICO_NORM'], errors='ignore', inplace=True)
         else:
             df_base['GPS'] = ""
