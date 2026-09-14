@@ -499,6 +499,12 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
         ('FALTA', 'RESPETO'),
         ('RESPETO', 'COMPAÑERO'), ('RESPETO', 'SUPERVISOR'),
         ('ORDENES', 'PENDIENTES'), ('ÓRDENES', 'PENDIENTES'),
+        # Orden(es) no atendida(s): "ORDEN" ya cubre el plural "ORDENES" como
+        # substring, así que basta un par acentuado/no acentuado por variante.
+        ('ORDEN', 'NO ATENDIDA'), ('ÓRDEN', 'NO ATENDIDA'),
+        ('ORDEN', 'SIN ATENDER'), ('ÓRDEN', 'SIN ATENDER'),
+        ('ORDEN', 'NO ATENDIO'), ('ÓRDEN', 'NO ATENDIO'),
+        ('ORDEN', 'NO ATENDIÓ'), ('ÓRDEN', 'NO ATENDIÓ'),
         ('AUSENCIA', 'AVISO'), ('AUSENCIA', 'JUSTIF'),
         ('INASISTENCIA', 'AVISO'), ('INASISTENCIA', 'JUSTIF'),
         ('IRRESPETO', 'COMPAÑERO'), ('IRRESPETO', 'SUPERVISOR'),
