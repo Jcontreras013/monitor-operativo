@@ -2920,6 +2920,131 @@ def cargar_ordenes_manuales(fecha: str = None) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# ==============================================================================
+# ENLACES DE RASTREO GPS POR TÉCNICO (reemplaza al gps.txt commiteado)
+# ==============================================================================
+# gps.txt vivía como archivo en el repo -- que es PÚBLICO -- exponiendo los 27
+# enlaces de rastreo en vivo (sin login) de cada técnico a cualquiera en
+# internet. Mismo patrón que las órdenes manuales: caché local (JSON, se pierde
+# en cada redespliegue por el disco efímero de Streamlit Cloud) + respaldo en
+# GCS (privado, es lo que persiste de verdad). Se edita desde un formulario en
+# la app, sin tocar código ni el repo.
+_CACHE_GPS_TECNICOS_PATH = "cache_gps_tecnicos.json"
+_ARCHIVO_GPS_TECNICOS_GCS = "gps_tecnicos.csv"
+
+
+def guardar_gps_tecnico(tecnico: str, placa: str, url: str, registrado_por: str = "") -> bool:
+    """
+    Guarda (o actualiza, si ya existe ese técnico) su enlace de rastreo GPS.
+    """
+    try:
+        tec_norm = str(tecnico).strip().upper()
+        if not tec_norm or not str(url).strip():
+            return False
+
+        registros = []
+        if os.path.exists(_CACHE_GPS_TECNICOS_PATH):
+            try:
+                with open(_CACHE_GPS_TECNICOS_PATH, "r", encoding="utf-8") as f:
+                    registros = json.load(f)
+            except Exception:
+                registros = []
+
+        # Si ya existe un enlace para este técnico, se reemplaza (no se duplica).
+        registros = [r for r in registros if str(r.get("TECNICO", "")).strip().upper() != tec_norm]
+        registros.append({
+            "URL": str(url).strip(),
+            "PLACA": str(placa).strip(),
+            "TECNICO": tec_norm,
+            "REGISTRADO_POR": str(registrado_por),
+        })
+
+        with open(_CACHE_GPS_TECNICOS_PATH, "w", encoding="utf-8") as f:
+            json.dump(registros, f, ensure_ascii=False)
+
+        try:
+            sobrescribir_archivo_gcs(pd.DataFrame(registros), NOMBRE_BUCKET_SISTEMA, _ARCHIVO_GPS_TECNICOS_GCS)
+        except Exception as e_gcs:
+            print(f"GPS de técnico guardado en local pero NO en GCS: {e_gcs}")
+            return "SOLO_LOCAL"
+
+        return True
+    except Exception as e:
+        print(f"Error en guardar_gps_tecnico: {e}")
+        return False
+
+
+def borrar_gps_tecnico(tecnico: str) -> bool:
+    """Elimina el enlace de rastreo GPS guardado para un técnico."""
+    try:
+        tec_norm = str(tecnico).strip().upper()
+
+        registros = []
+        if os.path.exists(_CACHE_GPS_TECNICOS_PATH):
+            try:
+                with open(_CACHE_GPS_TECNICOS_PATH, "r", encoding="utf-8") as f:
+                    registros = json.load(f)
+            except Exception:
+                registros = []
+
+        registros = [r for r in registros if str(r.get("TECNICO", "")).strip().upper() != tec_norm]
+
+        with open(_CACHE_GPS_TECNICOS_PATH, "w", encoding="utf-8") as f:
+            json.dump(registros, f, ensure_ascii=False)
+
+        try:
+            sobrescribir_archivo_gcs(pd.DataFrame(registros), NOMBRE_BUCKET_SISTEMA, _ARCHIVO_GPS_TECNICOS_GCS)
+        except Exception as e_gcs:
+            print(f"GPS de técnico borrado en local pero NO en GCS: {e_gcs}")
+            return "SOLO_LOCAL"
+
+        return True
+    except Exception as e:
+        print(f"Error en borrar_gps_tecnico: {e}")
+        return False
+
+
+@st.cache_data(show_spinner=False)
+def cargar_gps_tecnicos() -> pd.DataFrame:
+    """
+    Carga el mapeo técnico -> enlace de rastreo GPS. Igual que
+    cargar_ordenes_manuales: fusiona el caché local con el respaldo de GCS
+    (ante un mismo técnico gana lo LOCAL, más reciente). Se invalida llamando
+    a st.cache_data.clear() después de guardar/borrar.
+    """
+    try:
+        registros = []
+        if os.path.exists(_CACHE_GPS_TECNICOS_PATH):
+            try:
+                with open(_CACHE_GPS_TECNICOS_PATH, "r", encoding="utf-8") as f:
+                    registros = json.load(f)
+            except Exception:
+                registros = []
+
+        try:
+            df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, _ARCHIVO_GPS_TECNICOS_GCS)
+            if df_gcs is not None and not df_gcs.empty:
+                tecs_locales = {str(r.get("TECNICO", "")).strip().upper() for r in registros}
+                for reg_nube in df_gcs.to_dict("records"):
+                    if str(reg_nube.get("TECNICO", "")).strip().upper() not in tecs_locales:
+                        registros.append(reg_nube)
+        except Exception as e_gcs:
+            print(f"No se pudieron recuperar los GPS de técnicos de GCS: {e_gcs}")
+
+        if not registros:
+            return pd.DataFrame(columns=["URL", "PLACA", "TECNICO"])
+
+        df = pd.DataFrame(registros)
+        for _c in ["URL", "PLACA", "TECNICO"]:
+            if _c not in df.columns:
+                df[_c] = ""
+            df[_c] = df[_c].fillna("").astype(str).replace("nan", "")
+        return df
+    except Exception as e:
+        print(f"Error en cargar_gps_tecnicos: {e}")
+        return pd.DataFrame(columns=["URL", "PLACA", "TECNICO"])
+
+
 @st.cache_data(show_spinner=False)
 def cargar_catalogo_tecnicos():
     """Lee y clasifica el archivo personal_tecnico.txt según reglas de MaxCom."""

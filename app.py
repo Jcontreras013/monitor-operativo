@@ -84,6 +84,9 @@ try:
         guardar_orden_manual,
         cargar_ordenes_manuales,
         borrar_orden_manual,
+        guardar_gps_tecnico,
+        cargar_gps_tecnicos,
+        borrar_gps_tecnico,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
@@ -2681,6 +2684,86 @@ def main():
         st.divider()
 
         if es_admin_o_supervisor:
+            st.markdown("### 📍 Enlace GPS por Técnico")
+            with st.expander("Agregar, editar o quitar el enlace de rastreo GPS de un técnico", expanded=False):
+                st.caption(
+                    "Reemplaza al antiguo archivo gps.txt: estos enlaces ahora se guardan en GCS "
+                    "(privado), no en el repositorio (que es público)."
+                )
+
+                lista_tecs_gps = []
+                try:
+                    df_cat_tecs_gps = cargar_catalogo_tecnicos()
+                    if df_cat_tecs_gps is not None and not df_cat_tecs_gps.empty:
+                        lista_tecs_gps = sorted(
+                            df_cat_tecs_gps[df_cat_tecs_gps['Clasificación'] == 'TÉCNICO PRINCIPAL']['Nombre'].dropna().unique().tolist()
+                        )
+                except Exception:
+                    pass
+
+                if lista_tecs_gps:
+                    tec_gps_sel = st.selectbox("Técnico", options=lista_tecs_gps, key="sel_tec_gps")
+                else:
+                    tec_gps_sel = st.text_input("Técnico (nombre exacto)", key="input_tec_gps")
+
+                placa_gps_txt = st.text_input("Placa del vehículo (opcional)", key="input_placa_gps")
+                url_gps_txt = st.text_input("Enlace de rastreo GPS (URL)", key="input_url_gps", placeholder="https://...")
+
+                if st.button("💾 Guardar Enlace GPS", use_container_width=True, key="btn_guardar_gps"):
+                    if not tec_gps_sel:
+                        st.warning("Selecciona o escribe un técnico.")
+                    elif not url_gps_txt.strip():
+                        st.warning("Ingresa el enlace de rastreo GPS.")
+                    else:
+                        ok_gps = guardar_gps_tecnico(
+                            tecnico=tec_gps_sel,
+                            placa=placa_gps_txt.strip(),
+                            url=url_gps_txt.strip(),
+                            registrado_por=st.session_state.get('usuario_actual', rol_usuario)
+                        )
+                        if ok_gps == "SOLO_LOCAL":
+                            st.warning(
+                                f"⚠️ Enlace GPS de {tec_gps_sel} guardado, pero NO se pudo respaldar en la nube. "
+                                "Va a desaparecer si la app se reinicia. Volvé a guardarlo más tarde."
+                            )
+                            st.cache_data.clear()
+                        elif ok_gps:
+                            st.success(f"✅ Enlace GPS de {tec_gps_sel} guardado.")
+                            st.cache_data.clear()
+                        else:
+                            st.error("No se pudo guardar el enlace GPS.")
+
+                # Verificación: lista los enlaces GPS realmente almacenados.
+                try:
+                    df_gps_guardados = cargar_gps_tecnicos()
+                    if df_gps_guardados is not None and not df_gps_guardados.empty:
+                        st.markdown("**Enlaces GPS almacenados actualmente:**")
+                        st.dataframe(df_gps_guardados[['TECNICO', 'PLACA', 'URL']], hide_index=True, use_container_width=True)
+
+                        _tecs_gps_borrar = df_gps_guardados['TECNICO'].astype(str).tolist()
+                        _col_gdel1, _col_gdel2 = st.columns([2, 1])
+                        with _col_gdel1:
+                            _tec_gps_borrar = st.selectbox("Quitar el enlace GPS de:", options=_tecs_gps_borrar, key="sel_borrar_gps")
+                        with _col_gdel2:
+                            st.write("")
+                            if st.button("🗑️ Quitar", use_container_width=True, key="btn_borrar_gps"):
+                                _res_del_gps = borrar_gps_tecnico(_tec_gps_borrar)
+                                if _res_del_gps == "SOLO_LOCAL":
+                                    st.warning(f"Enlace de {_tec_gps_borrar} quitado localmente, pero NO en la nube. Puede reaparecer tras un reinicio.")
+                                    st.cache_data.clear()
+                                elif _res_del_gps:
+                                    st.success(f"Enlace GPS de {_tec_gps_borrar} eliminado.")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudo quitar el enlace GPS.")
+                    else:
+                        st.info("Todavía no hay enlaces GPS almacenados.")
+                except Exception as _e_gps_list:
+                    st.caption(f"No se pudo listar los enlaces GPS guardados: {_e_gps_list}")
+        st.divider()
+
+        if es_admin_o_supervisor:
             st.markdown("### 🍽️ Registrar Almuerzo")
             with st.expander("Ingresar hora de almuerzo de un técnico", expanded=False):
                 lista_tecs_almuerzo = []
@@ -3012,10 +3095,31 @@ def main():
     df_base = st.session_state.df_base.copy()
 
     # ==============================================================================
-    # EXTRACCIÓN Y MAPEO DINÁMICO DEL ARCHIVO GPS.TXT
+    # MAPEO DE ENLACES GPS POR TÉCNICO (desde GCS, editable en "⚙️ Configuración")
     # ==============================================================================
+    # Antes se leía gps.txt, un archivo commiteado al repo -- que es PÚBLICO --
+    # exponiendo los 27 enlaces de rastreo en vivo (sin login) de cada técnico a
+    # cualquiera en internet. Ahora se lee desde GCS (privado), vía
+    # cargar_gps_tecnicos(), con el mismo patrón que las órdenes manuales.
     gps_map = {}
-    if os.path.exists("gps.txt"):
+    try:
+        df_gps_tecnicos = cargar_gps_tecnicos()
+        if df_gps_tecnicos is not None and not df_gps_tecnicos.empty:
+            for _, _row_gps in df_gps_tecnicos.iterrows():
+                _g_name = str(_row_gps.get('TECNICO', '')).strip()
+                _g_url = str(_row_gps.get('URL', '')).strip()
+                if _g_name and _g_url:
+                    gps_map[normalizar_nombre_cruce(_g_name)] = _g_url
+    except Exception:
+        pass
+
+    # Migración automática de una sola vez: si el almacén nuevo (GCS) está
+    # vacío pero todavía queda un gps.txt en el disco de esta sesión (por
+    # ejemplo recién restaurado), se importan sus enlaces al almacén nuevo
+    # para no perder la función durante la transición. Tras la primera
+    # migración exitosa gps_map deja de estar vacío, así que esto no se
+    # repite en las siguientes recargas.
+    if not gps_map and os.path.exists("gps.txt"):
         try:
             with open("gps.txt", "r", encoding="utf-8") as f:
                 for line in f:
@@ -3025,11 +3129,15 @@ def main():
                     parts = line.split(",")
                     if len(parts) >= 3:
                         g_url = parts[0].strip()
+                        g_placa = parts[1].strip()
                         g_name = parts[2].strip().rstrip(".")
-                        gps_map[normalizar_nombre_cruce(g_name)] = g_url
-        except Exception as e:
+                        if g_url and g_name:
+                            guardar_gps_tecnico(g_name, g_placa, g_url, registrado_por="migracion_automatica_gps_txt")
+                            gps_map[normalizar_nombre_cruce(g_name)] = g_url
+            st.cache_data.clear()
+        except Exception:
             pass
-    
+
     if not df_base.empty:
         if 'TECNICO' in df_base.columns:
             df_base['TECNICO'] = df_base['TECNICO'].astype(str).str.strip().str.upper()
