@@ -3173,16 +3173,6 @@ def main():
                 
             df_base['GPS'] = df_base['TECNICO_NORM'].apply(buscar_enlace_gps)
             df_base.drop(columns=['TECNICO_NORM'], errors='ignore', inplace=True)
-
-            # El enlace de rastreo GPS es la ubicación EN VIVO del técnico, así
-            # que solo tiene sentido mostrarlo mientras la orden sigue abierta
-            # (PENDIENTE/ASIGNADA/EN RUTA/etc., el mismo patrón "viva" que ya
-            # se usa en el resto del monitor). En una orden ya CERRADA o
-            # ANULADA esa ubicación ya no representa nada del trabajo, así que
-            # se oculta el enlace en vez de mostrar un rastreo obsoleto.
-            if 'ESTADO' in df_base.columns:
-                _mask_orden_abierta_gps = df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
-                df_base.loc[~_mask_orden_abierta_gps, 'GPS'] = ""
         else:
             df_base['GPS'] = ""
             
@@ -3240,6 +3230,19 @@ def main():
         df_base = pd.concat([df_validos, df_invalidos]).drop(columns=['SORT_DATE', 'ES_VIVA'], errors='ignore')
 
     df_base = procesar_fechas_seguro(df_base, ['HORA_INI', 'HORA_LIQ', 'FECHA_APE'], columnas_sin_asumir_hoy=['HORA_LIQ', 'FECHA_APE'])
+
+    # El enlace de rastreo GPS es la ubicación EN VIVO del técnico, así que solo
+    # tiene sentido mostrarlo mientras el técnico YA inició la orden en campo
+    # (HORA_INI con un valor real) y esa orden sigue abierta (todavía no quedó
+    # CERRADA/ANULADA). Se hace aquí, después de procesar_fechas_seguro, porque
+    # antes HORA_INI todavía no era una fecha real con la que comparar -- hacerlo
+    # antes dejaba el enlace visible en órdenes apenas asignadas (sin iniciar) y
+    # ausente en órdenes ya en curso, que es justo el síntoma reportado.
+    if 'GPS' in df_base.columns and 'HORA_INI' in df_base.columns:
+        _mask_gps_iniciada = df_base['HORA_INI'].notna()
+        if 'ESTADO' in df_base.columns:
+            _mask_gps_iniciada &= df_base['ESTADO'].astype(str).str.upper().str.contains(PATRON_ASIGNADAS_VIVA_STR, na=False, case=False)
+        df_base.loc[~_mask_gps_iniciada, 'GPS'] = ""
 
     # === INTEGRACIÓN DE ÓRDENES MANUALES ===
     # Se agregan las órdenes cargadas manualmente (para cuando la API falla y
@@ -5260,11 +5263,11 @@ def main():
                                     estado_txt = str(row.get('ESTADO', 'N/D')).upper()
                                     bg_estado = "#10B981" if estado_txt == "CERRADA" else ("#EF4444" if estado_txt == "ANULADA" else "#2D2F39")
                             
-                                    # El link de ubicación GPS ya viene vacío desde df_base si
-                                    # la orden no está abierta (ver el filtro por ESTADO junto
-                                    # al mapeo de GPS por técnico, más arriba): solo se llena
-                                    # mientras la orden sigue viva (PENDIENTE/ASIGNADA/EN
-                                    # RUTA/etc.), nunca en una ya CERRADA o ANULADA.
+                                    # El link de ubicación GPS ya viene vacío desde df_base si el
+                                    # técnico no ha iniciado la orden (HORA_INI real) o si ya no
+                                    # está abierta (ver el filtro por HORA_INI + ESTADO justo
+                                    # después de procesar_fechas_seguro, más arriba): solo se
+                                    # llena mientras el técnico está trabajando en ella en vivo.
                                     # Se utiliza target="_self" para forzar la apertura directa en la app de mapas (Google Maps, Waze, etc.)
                                     # evitando los bloqueos de ventanas emergentes en navegadores de celular.
                                     _gps_val = row.get('GPS')
@@ -5296,13 +5299,12 @@ def main():
                                 df_estilo_v, row_styler = aplicar_estilos_df(df_v_tabla_monitor)
                         
                                 # === CONTROL DE COLUMNA GPS ===
-                                # df_v_tabla_monitor["GPS"] ya viene vacío para las órdenes que
-                                # no están abiertas (filtro por ESTADO aplicado sobre df_base,
-                                # más arriba), así que aquí solo se refleja esa columna tal
-                                # cual: el enlace se ve mientras la orden sigue viva
-                                # (PENDIENTE/ASIGNADA/EN RUTA/etc., sirve para dispatch/ruteo
-                                # antes de que el técnico arranque) y desaparece en cuanto
-                                # queda CERRADA o ANULADA.
+                                # df_v_tabla_monitor["GPS"] ya viene vacío para las órdenes sin
+                                # HORA_INI real o que ya no están abiertas (filtro por HORA_INI
+                                # + ESTADO aplicado sobre df_base, más arriba), así que aquí
+                                # solo se refleja esa columna tal cual: el enlace se ve mientras
+                                # el técnico ya inició la orden y sigue trabajándola, y
+                                # desaparece antes de iniciar o en cuanto queda CERRADA/ANULADA.
                                 if "GPS" in df_v_tabla_monitor.columns:
                                     df_estilo_v["GPS"] = df_v_tabla_monitor["GPS"].fillna("")
                             
