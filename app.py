@@ -3169,6 +3169,18 @@ def main():
                         return url
                     if words_tec.issubset(words_gps) and len(words_tec) >= 2:
                         return url
+                # El enlace GPS se teclea a mano en "Enlace GPS por Técnico" y el
+                # nombre que trae Cepheus viene de otra fuente -- con los 27
+                # técnicos migrados desde gps.txt confirmados en el almacén, la
+                # mayoría seguía sin mostrar el link porque un typo o variación
+                # de ortografía (ej. "JOSUE" vs "JOSE") rompe tanto la igualdad
+                # exacta como la comparación por subconjunto de palabras de
+                # arriba. Se agrega el mismo fallback por similitud aproximada
+                # (difflib) que ya usa resolver_tecnico_por_similitud() para las
+                # órdenes manuales, con el mismo umbral de 0.88.
+                coincidencias_gps = difflib.get_close_matches(tecnico_norm, list(gps_map.keys()), n=1, cutoff=0.88)
+                if coincidencias_gps:
+                    return gps_map[coincidencias_gps[0]]
                 return ""
                 
             df_base['GPS'] = df_base['TECNICO_NORM'].apply(buscar_enlace_gps)
