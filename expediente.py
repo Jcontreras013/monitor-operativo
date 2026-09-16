@@ -321,14 +321,20 @@ def extraer_hora_falta(comentario, fecha_registro):
 # ==============================================================================
 def subir_archivo_catbox(file_bytes, file_name):
     """
-    Sube cualquier tipo de archivo (especialmente PDFs) a Catbox.moe
-    utilizando el userhash del usuario para guardarlo en su cuenta [3].
+    Sube cualquier tipo de archivo a Catbox.moe. Si hay un userhash
+    configurado en st.secrets, el archivo queda en esa cuenta; si no,
+    se sube de forma anónima.
     """
     url = "https://catbox.moe/user/api.php"
-    payload = {
-        "reqtype": "fileupload",
-        "userhash": CATBOX_USERHASH
-    }
+    payload = {"reqtype": "fileupload"}
+    # La API de Catbox distingue entre "no mandar userhash" (sube anónimo,
+    # sin error) y "mandar userhash vacío o inválido" (responde 412 "Invalid
+    # uploader"). Antes siempre se mandaba la clave, así que sin un
+    # catbox_userhash configurado en st.secrets TODA subida fallaba -- solo
+    # no se notaba porque las imágenes normalmente se iban por Freeimage y
+    # nadie había intentado subir un PDF sin ese secreto configurado.
+    if CATBOX_USERHASH:
+        payload["userhash"] = CATBOX_USERHASH
     files = {
         "fileToUpload": (file_name, file_bytes)
     }
