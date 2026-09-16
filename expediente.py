@@ -34,6 +34,8 @@ try:
         generar_docx_reporte_faltas_individual,
         get_honduras_time,
         safestr,
+        cargar_auditorias_fibra,
+        marcar_auditoria_fibra_convertida,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError:
@@ -1820,7 +1822,26 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                 if filtro_nombre != "VER TODOS":
                     df_mostrar = df_mostrar[df_mostrar['TECNICO'] == filtro_nombre]
-                
+
+                    # Dentro del expediente de un técnico específico se muestran
+                    # también (de solo lectura) sus auditorías de fibra en campo
+                    # de Miguel, para que el supervisor tenga el contexto completo
+                    # al revisar a esa persona.
+                    if tab_id == "tec":
+                        try:
+                            df_fibra_tec = cargar_auditorias_fibra(conn)
+                        except Exception:
+                            df_fibra_tec = pd.DataFrame()
+                        if not df_fibra_tec.empty and 'TECNICO' in df_fibra_tec.columns:
+                            df_fibra_tec = df_fibra_tec[df_fibra_tec['TECNICO'].astype(str) == filtro_nombre]
+                            if not df_fibra_tec.empty:
+                                with st.expander(f"🧵 Auditorías de Fibra en Campo de {filtro_nombre} ({len(df_fibra_tec)})", expanded=False):
+                                    cols_fibra_ver = [c for c in [
+                                        'FECHA_AUDITORIA', 'ORDEN_NUM', 'RUTA_ACOMETIDA', 'METRAJE',
+                                        'VINETA', 'EVALUACION_TRABAJO', 'COMENTARIOS', 'IMAGENES_URLS'
+                                    ] if c in df_fibra_tec.columns]
+                                    st.dataframe(df_fibra_tec[cols_fibra_ver], hide_index=True, use_container_width=True)
+
                 if isinstance(rango_fechas, (list, tuple)) and len(rango_fechas) == 2:
                     fecha_inicio, fecha_fin = rango_fechas
                     def parsear_fecha(f_str):
@@ -2116,16 +2137,77 @@ def mostrar_modulo_expedientes(conn, df_base):
     # PESTAÑA 1: OPERACIONES (TÉCNICOS)
     # ==========================================================================
     with tab_tecnicos:
+        lista_nombres = cargar_personal("personal_tecnico.txt")
+
+        # --------------------------------------------------------------------
+        # AUDITORÍAS DE FIBRA (MIGUEL) CON TRABAJO DEFICIENTE, PENDIENTES DE
+        # CONVERTIR EN FALTA
+        # --------------------------------------------------------------------
+        # Cuando Miguel marca una auditoría de fibra como "Deficiente / Mal
+        # trabajo", debe poder jalarse esa información para el llamado de
+        # atención correspondiente, sin tener que volver a escribir a mano lo
+        # que ya quedó documentado en la auditoría.
+        try:
+            df_fibra_todas = cargar_auditorias_fibra(conn)
+        except Exception:
+            df_fibra_todas = pd.DataFrame()
+
+        if not df_fibra_todas.empty and 'EVALUACION_TRABAJO' in df_fibra_todas.columns:
+            if 'CONVERTIDO_A_FALTA' not in df_fibra_todas.columns:
+                df_fibra_todas['CONVERTIDO_A_FALTA'] = ""
+            df_fibra_pendientes = df_fibra_todas[
+                (df_fibra_todas['EVALUACION_TRABAJO'].astype(str).str.strip() == 'Deficiente / Mal trabajo') &
+                (df_fibra_todas['CONVERTIDO_A_FALTA'].astype(str).str.strip().str.upper() != 'SI')
+            ].copy()
+
+            if not df_fibra_pendientes.empty:
+                with st.expander(f"🧵 Auditorías de Fibra con trabajo deficiente pendientes de revisar ({len(df_fibra_pendientes)})", expanded=True):
+                    st.caption("Registradas por Miguel en Control de Calidad → Auditoría de Fibra en Campo. Revisa el comentario y, si corresponde, regístralo como falta.")
+                    for _idx_fibra, _fila_fibra in df_fibra_pendientes.iterrows():
+                        _orden_f = str(_fila_fibra.get('ORDEN_NUM', 'N/D'))
+                        _fecha_f = str(_fila_fibra.get('FECHA_AUDITORIA', 'N/D'))
+                        _tec_f = str(_fila_fibra.get('TECNICO', 'N/D'))
+                        _key_f = f"{_orden_f}_{_idx_fibra}"
+
+                        st.markdown(f"**ORD-{_orden_f}** · {_tec_f} · {_fecha_f}")
+                        st.caption(
+                            f"Ruta: {_fila_fibra.get('RUTA_ACOMETIDA', 'N/D')} | "
+                            f"Metraje: {_fila_fibra.get('METRAJE', 'N/D')} | "
+                            f"Viñeta: {_fila_fibra.get('VINETA', 'N/D')}"
+                        )
+                        st.write(f"💬 {_fila_fibra.get('COMENTARIOS', 'Sin comentario.')}")
+                        _urls_f = str(_fila_fibra.get('IMAGENES_URLS', '')).strip()
+                        if _urls_f and _urls_f.lower() not in ('nan', 'none'):
+                            st.caption(f"📷 Imágenes: {_urls_f}")
+
+                        if st.button("📌 Registrar como falta", key=f"btn_falta_fibra_{_key_f}"):
+                            # El técnico de la auditoría de fibra viene del nombre en
+                            # vivo de Cepheus, que no siempre coincide letra a letra
+                            # con personal_tecnico.txt (el mismo tipo de diferencia de
+                            # ortografía que ya se vio con los enlaces GPS). Si hay un
+                            # match exacto se preselecciona; si no, queda en "---" y el
+                            # supervisor lo elige a mano, pero el resto del formulario
+                            # (motivo y comentario) ya queda listo.
+                            st.session_state['sel_falta'] = "Trabajo Deficiente (Auditoría de Fibra)"
+                            st.session_state['sel_colab'] = _tec_f if _tec_f in lista_nombres else "---"
+                            st.session_state['txt_comentario'] = (
+                                f"[Auditoría de Fibra ORD-{_orden_f}, {_fecha_f}] {_fila_fibra.get('COMENTARIOS', '')}"
+                            )
+                            marcar_auditoria_fibra_convertida(conn, _orden_f, _fecha_f)
+                            st.success("Formulario de falta pre-llenado más abajo. Completa y guarda.")
+                            time.sleep(1)
+                            st.rerun()
+                        st.markdown("---")
+
         with st.expander("➕ Crear Nuevo Registro - Operaciones", expanded=True):
             st.info(f"✍️ Supervisor registrando: **{supervisor_actual}**")
-            
+
             c1, c2 = st.columns(2)
             with c1:
-                lista_nombres = cargar_personal("personal_tecnico.txt")
-                
                 tipo_falta_base = st.selectbox("🚫 Motivo:", [
-                    "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta", 
-                    "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes", "Otro"
+                    "Exceso de Velocidad", "Llegada Tarde", "Abandono de Ruta",
+                    "Mala Documentación", "Incidencia Médica", "Reco / Cambio de Postes",
+                    "Trabajo Deficiente (Auditoría de Fibra)", "Otro"
                 ], key="sel_falta")
                 
                 if tipo_falta_base == "Reco / Cambio de Postes":
