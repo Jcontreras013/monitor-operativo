@@ -53,61 +53,60 @@ def mostrar_modulo_calidad(conn, df_base):
         return
 
     # ==============================================================================
-    # DOS BUSCADORES INDEPENDIENTES (INICIAN COMPLETAMENTE EN BLANCO)
+    # UN SOLO BUSCADOR, POR TEXTO LIBRE (NUM, CLIENTE o NOMBRE, en cualquier orden)
     # ==============================================================================
+    # El cuadro de búsqueda NATIVO de un st.selectbox de Streamlit solo filtra
+    # desde el INICIO del texto de cada opción -- por eso combinar NUM/cliente/
+    # nombre en una sola etiqueta siempre dejaba a alguno de los tres sin poder
+    # buscarse según cuál quedara primero (ya se probaron ambos órdenes). Para
+    # buscar por cualquiera de los tres datos desde una sola barra hay que
+    # dejar de depender de ese filtro nativo: aquí se usa un st.text_input y el
+    # filtrado se hace a mano con .str.contains(), que sí encuentra el texto
+    # en cualquier posición (número de orden, número de cliente o nombre).
     row_sel = None
 
-    # TRES buscadores independientes, cada uno sobre un solo campo. Antes había
-    # un único buscador de cliente con una etiqueta combinada ("NOMBRE (ID)" o
-    # "ID - NOMBRE"), pero el cuadro de búsqueda de Streamlit filtra desde el
-    # INICIO del texto de cada opción, no en cualquier parte -- así que
-    # combinar los dos datos en un solo campo siempre dejaba a uno de los dos
-    # sin poder buscarse (si el nombre iba primero, no se podía buscar por
-    # número, y viceversa). Separarlos en dos buscadores propios resuelve
-    # ambos casos a la vez: a veces solo se sabe el nombre, a veces solo el
-    # número de cliente.
-    col_sel1, col_sel2, col_sel3 = st.columns(3)
-    with col_sel1:
-        lista_ordenes = sorted(df_evaluables['NUM'].dropna().astype(str).unique().tolist())
-        num_seleccionado = st.selectbox(
-            "🔍 Buscar por Número de Orden (NUM):",
-            options=lista_ordenes,
-            index=None,
-            placeholder="Escriba o seleccione una orden...",
-            key="calidad_num_search"
-        )
+    busqueda_libre = st.text_input(
+        "🔍 Buscar por Número de Orden, Número de Cliente o Nombre:",
+        placeholder="Escriba cualquiera de los tres...",
+        key="calidad_busqueda_libre"
+    )
 
-    with col_sel2:
-        lista_nombres_cli = sorted(df_evaluables['NOMBRE'].fillna('N/D').astype(str).unique().tolist())
-        nombre_seleccionado = st.selectbox(
-            "👤 Buscar por Nombre de Cliente:",
-            options=lista_nombres_cli,
-            index=None,
-            placeholder="Escriba o seleccione un nombre...",
-            key="calidad_nombre_search"
+    if busqueda_libre and busqueda_libre.strip():
+        q = busqueda_libre.strip().upper()
+        mask_busqueda = (
+            df_evaluables['NUM'].astype(str).str.upper().str.contains(q, na=False, regex=False) |
+            df_evaluables['CLIENTE'].astype(str).str.upper().str.contains(q, na=False, regex=False) |
+            df_evaluables['NOMBRE'].fillna('').astype(str).str.upper().str.contains(q, na=False, regex=False)
         )
+        df_resultados = df_evaluables[mask_busqueda].copy()
 
-    with col_sel3:
-        lista_clientes_id = sorted(df_evaluables['CLIENTE'].dropna().astype(str).unique().tolist())
-        cliente_id_seleccionado = st.selectbox(
-            "🔢 Buscar por Número de Cliente:",
-            options=lista_clientes_id,
-            index=None,
-            placeholder="Escriba o seleccione un número...",
-            key="calidad_cliente_id_search"
-        )
+        if df_resultados.empty:
+            st.warning(f"⚠️ No se encontró ninguna orden, cliente o nombre que coincida con \"{busqueda_libre}\".")
+        else:
+            df_resultados['OPCION_BUSQUEDA'] = (
+                "ORD-" + df_resultados['NUM'].astype(str) + " | " +
+                df_resultados['CLIENTE'].astype(str) + " - " +
+                df_resultados['NOMBRE'].fillna('N/D').astype(str)
+            )
+            opciones_resultado = sorted(df_resultados['OPCION_BUSQUEDA'].unique().tolist())
 
-    # Identificar la orden correspondiente según el buscador que haya utilizado el usuario
-    if num_seleccionado is not None:
-        row_sel = df_evaluables[df_evaluables['NUM'].astype(str) == num_seleccionado].iloc[0]
-    elif nombre_seleccionado is not None:
-        row_sel = df_evaluables[df_evaluables['NOMBRE'].fillna('N/D').astype(str) == nombre_seleccionado].iloc[0]
-    elif cliente_id_seleccionado is not None:
-        row_sel = df_evaluables[df_evaluables['CLIENTE'].astype(str) == cliente_id_seleccionado].iloc[0]
+            if len(opciones_resultado) == 1:
+                opcion_elegida = opciones_resultado[0]
+                st.caption(f"✅ Coincidencia única: {opcion_elegida}")
+            else:
+                opcion_elegida = st.selectbox(
+                    f"Se encontraron {len(opciones_resultado)} coincidencias, elige una:",
+                    options=opciones_resultado,
+                    index=None,
+                    key="calidad_busqueda_resultado"
+                )
+
+            if opcion_elegida is not None:
+                row_sel = df_resultados[df_resultados['OPCION_BUSQUEDA'] == opcion_elegida].iloc[0]
 
     # Si no se ha realizado ninguna selección, mostramos la pantalla limpia
     if row_sel is None:
-        st.info("💡 Por favor, busque y seleccione una orden o un cliente en los buscadores de arriba para comenzar con la auditoría.")
+        st.info("💡 Por favor, busque una orden, un cliente o un nombre arriba para comenzar con la auditoría.")
         return
 
     # Cargar variables de la orden una vez seleccionada
