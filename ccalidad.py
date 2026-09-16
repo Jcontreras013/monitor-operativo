@@ -57,36 +57,53 @@ def mostrar_modulo_calidad(conn, df_base):
     # ==============================================================================
     row_sel = None
 
-    col_sel1, col_sel2 = st.columns(2)
+    # TRES buscadores independientes, cada uno sobre un solo campo. Antes había
+    # un único buscador de cliente con una etiqueta combinada ("NOMBRE (ID)" o
+    # "ID - NOMBRE"), pero el cuadro de búsqueda de Streamlit filtra desde el
+    # INICIO del texto de cada opción, no en cualquier parte -- así que
+    # combinar los dos datos en un solo campo siempre dejaba a uno de los dos
+    # sin poder buscarse (si el nombre iba primero, no se podía buscar por
+    # número, y viceversa). Separarlos en dos buscadores propios resuelve
+    # ambos casos a la vez: a veces solo se sabe el nombre, a veces solo el
+    # número de cliente.
+    col_sel1, col_sel2, col_sel3 = st.columns(3)
     with col_sel1:
         lista_ordenes = sorted(df_evaluables['NUM'].dropna().astype(str).unique().tolist())
         num_seleccionado = st.selectbox(
-            "🔍 Buscar por Número de Orden (NUM):", 
-            options=lista_ordenes, 
-            index=None, 
+            "🔍 Buscar por Número de Orden (NUM):",
+            options=lista_ordenes,
+            index=None,
             placeholder="Escriba o seleccione una orden...",
             key="calidad_num_search"
         )
-        
+
     with col_sel2:
-        # El número de cliente va PRIMERO en la etiqueta (antes iba al final,
-        # entre paréntesis) para que teclear el número de cliente lo
-        # encuentre de una vez, igual que ya funciona el buscador por NUM.
-        df_evaluables['CLIENTE_LABEL'] = df_evaluables['CLIENTE'].astype(str) + " - " + df_evaluables['NOMBRE'].fillna('N/D').astype(str)
-        lista_clientes = sorted(df_evaluables['CLIENTE_LABEL'].unique().tolist())
-        cliente_seleccionado = st.selectbox(
-            "👤 Buscar por Número de Cliente / Nombre:",
-            options=lista_clientes,
+        lista_nombres_cli = sorted(df_evaluables['NOMBRE'].fillna('N/D').astype(str).unique().tolist())
+        nombre_seleccionado = st.selectbox(
+            "👤 Buscar por Nombre de Cliente:",
+            options=lista_nombres_cli,
             index=None,
-            placeholder="Escriba o seleccione un cliente...",
-            key="calidad_cliente_search"
+            placeholder="Escriba o seleccione un nombre...",
+            key="calidad_nombre_search"
+        )
+
+    with col_sel3:
+        lista_clientes_id = sorted(df_evaluables['CLIENTE'].dropna().astype(str).unique().tolist())
+        cliente_id_seleccionado = st.selectbox(
+            "🔢 Buscar por Número de Cliente:",
+            options=lista_clientes_id,
+            index=None,
+            placeholder="Escriba o seleccione un número...",
+            key="calidad_cliente_id_search"
         )
 
     # Identificar la orden correspondiente según el buscador que haya utilizado el usuario
     if num_seleccionado is not None:
         row_sel = df_evaluables[df_evaluables['NUM'].astype(str) == num_seleccionado].iloc[0]
-    elif cliente_seleccionado is not None:
-        row_sel = df_evaluables[df_evaluables['CLIENTE_LABEL'] == cliente_seleccionado].iloc[0]
+    elif nombre_seleccionado is not None:
+        row_sel = df_evaluables[df_evaluables['NOMBRE'].fillna('N/D').astype(str) == nombre_seleccionado].iloc[0]
+    elif cliente_id_seleccionado is not None:
+        row_sel = df_evaluables[df_evaluables['CLIENTE'].astype(str) == cliente_id_seleccionado].iloc[0]
 
     # Si no se ha realizado ninguna selección, mostramos la pantalla limpia
     if row_sel is None:
