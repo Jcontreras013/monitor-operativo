@@ -69,13 +69,15 @@ def mostrar_modulo_calidad(conn, df_base):
         )
         
     with col_sel2:
-        # Generar una etiqueta limpia: Nombre del Cliente (Código ID)
-        df_evaluables['CLIENTE_LABEL'] = df_evaluables['NOMBRE'].fillna('N/D').astype(str) + " (" + df_evaluables['CLIENTE'].astype(str) + ")"
+        # El número de cliente va PRIMERO en la etiqueta (antes iba al final,
+        # entre paréntesis) para que teclear el número de cliente lo
+        # encuentre de una vez, igual que ya funciona el buscador por NUM.
+        df_evaluables['CLIENTE_LABEL'] = df_evaluables['CLIENTE'].astype(str) + " - " + df_evaluables['NOMBRE'].fillna('N/D').astype(str)
         lista_clientes = sorted(df_evaluables['CLIENTE_LABEL'].unique().tolist())
         cliente_seleccionado = st.selectbox(
-            "👤 Buscar por Cliente (Nombre / ID):", 
-            options=lista_clientes, 
-            index=None, 
+            "👤 Buscar por Número de Cliente / Nombre:",
+            options=lista_clientes,
+            index=None,
             placeholder="Escriba o seleccione un cliente...",
             key="calidad_cliente_search"
         )
