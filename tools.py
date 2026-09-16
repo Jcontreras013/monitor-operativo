@@ -4585,13 +4585,19 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
 # AUDITORÍA DE CAMPO: GESTIÓN DE OPERACIONES E INSTALACIONES (ccalidad.py)
 # ==============================================================================
 
+_HOJAS_AUDITORIA_CAMPO = {
+    "operaciones": ("Operaciones", "operaciones_maestro.csv"),
+    "instalaciones": ("Instalaciones", "instalaciones_maestro.csv"),
+    "fibra": ("Auditoria_Fibra", "auditoria_fibra_maestro.csv"),
+}
+
+
 def guardar_auditoria_campo(conn, data_dict: dict, tipo: str) -> bool:
     """
-    Guarda registros de auditoría de campo (operaciones o instalaciones)
+    Guarda registros de auditoría de campo (operaciones, instalaciones o fibra)
     en Google Sheets y realiza una copia de respaldo en GCS de forma segura.
     """
-    worksheet_name = "Operaciones" if tipo == "operaciones" else "Instalaciones"
-    filename_gcs = "operaciones_maestro.csv" if tipo == "operaciones" else "instalaciones_maestro.csv"
+    worksheet_name, filename_gcs = _HOJAS_AUDITORIA_CAMPO.get(tipo, _HOJAS_AUDITORIA_CAMPO["instalaciones"])
     
     try:
         df_new = pd.DataFrame([data_dict])
@@ -4630,12 +4636,11 @@ def guardar_auditoria_campo(conn, data_dict: dict, tipo: str) -> bool:
 
 def eliminar_registro_campo(conn, ticket: str, fecha_gestion: str, tipo: str) -> bool:
     """
-    Elimina un registro específico de auditoría de campo (operaciones o instalaciones)
-    en Google Sheets y realiza la copia de respaldo en GCS.
+    Elimina un registro específico de auditoría de campo (operaciones, instalaciones
+    o fibra) en Google Sheets y realiza la copia de respaldo en GCS.
     """
-    worksheet_name = "Operaciones" if tipo == "operaciones" else "Instalaciones"
-    filename_gcs = "operaciones_maestro.csv" if tipo == "operaciones" else "instalaciones_maestro.csv"
-    
+    worksheet_name, filename_gcs = _HOJAS_AUDITORIA_CAMPO.get(tipo, _HOJAS_AUDITORIA_CAMPO["instalaciones"])
+
     try:
         # 1. Leer GCS y filtrar fila a eliminar
         df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, filename_gcs)
@@ -4664,6 +4669,63 @@ def eliminar_registro_campo(conn, ticket: str, fecha_gestion: str, tipo: str) ->
         print(f"Error al eliminar registro de campo: {e}")
         return False
 
+
+def cargar_auditorias_fibra(conn) -> pd.DataFrame:
+    """
+    Lee la pestaña 'Auditoria_Fibra' de Google Sheets (auditorías de fibra en
+    campo de Miguel), con el respaldo en GCS como plan B -- mismo patrón de
+    lectura que usa el Histórico de ccalidad.py para Calidad/Operaciones/
+    Instalaciones. La usan tanto el Histórico de ccalidad.py como el cruce
+    con Expedientes, para no duplicar la lectura en los dos archivos.
+    """
+    df = None
+    try:
+        if conn is not None:
+            df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria_Fibra", ttl=0)
+    except Exception:
+        df = None
+    if df is None or df.empty:
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "auditoria_fibra_maestro.csv")
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df.columns = df.columns.astype(str).str.upper().str.strip()
+    return df
+
+
+def marcar_auditoria_fibra_convertida(conn, orden_num: str, fecha_auditoria: str) -> bool:
+    """
+    Marca una auditoría de fibra (identificada por ORDEN_NUM + FECHA_AUDITORIA)
+    como ya convertida a falta en Expedientes (CONVERTIDO_A_FALTA = SI), para
+    que el botón "Registrar como falta" no la vuelva a ofrecer una vez usada.
+    """
+    try:
+        df_gcs = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "auditoria_fibra_maestro.csv")
+        if df_gcs is not None and not df_gcs.empty:
+            df_gcs.columns = df_gcs.columns.astype(str).str.upper().str.strip()
+            if 'CONVERTIDO_A_FALTA' not in df_gcs.columns:
+                df_gcs['CONVERTIDO_A_FALTA'] = ""
+            mask_gcs = (df_gcs['ORDEN_NUM'].astype(str) == str(orden_num)) & (df_gcs['FECHA_AUDITORIA'].astype(str) == str(fecha_auditoria))
+            df_gcs.loc[mask_gcs, 'CONVERTIDO_A_FALTA'] = "SI"
+            sobrescribir_archivo_gcs(df_gcs, NOMBRE_BUCKET_SISTEMA, "auditoria_fibra_maestro.csv")
+
+        if conn is not None:
+            try:
+                df_sheets = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria_Fibra", ttl=0)
+                if df_sheets is not None and not df_sheets.empty:
+                    df_sheets.columns = df_sheets.columns.astype(str).str.upper().str.strip()
+                    if 'CONVERTIDO_A_FALTA' not in df_sheets.columns:
+                        df_sheets['CONVERTIDO_A_FALTA'] = ""
+                    mask_sheets = (df_sheets['ORDEN_NUM'].astype(str) == str(orden_num)) & (df_sheets['FECHA_AUDITORIA'].astype(str) == str(fecha_auditoria))
+                    df_sheets.loc[mask_sheets, 'CONVERTIDO_A_FALTA'] = "SI"
+                    conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Auditoria_Fibra", data=df_sheets)
+            except Exception as e_sheet:
+                print(f"Error al marcar auditoría de fibra convertida en Sheets: {e_sheet}")
+        return True
+    except Exception as e:
+        print(f"Error en marcar_auditoria_fibra_convertida: {e}")
+        return False
+
+
 def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
     """
     Genera un reporte PDF gerencial detallado de las auditorías de campo filtradas (Operaciones o Instalaciones).
@@ -4674,7 +4736,12 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
     
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
-    titulo_rep = "REPORTE GERENCIAL: AUDITORÍA DE OPERACIONES" if tipo == "operaciones" else "REPORTE GERENCIAL: AUDITORÍA DE INSTALACIONES (INSFIBRA)"
+    if tipo == "operaciones":
+        titulo_rep = "REPORTE GERENCIAL: AUDITORÍA DE OPERACIONES"
+    elif tipo == "fibra":
+        titulo_rep = "REPORTE GERENCIAL: AUDITORÍA DE FIBRA EN CAMPO"
+    else:
+        titulo_rep = "REPORTE GERENCIAL: AUDITORÍA DE INSTALACIONES (INSFIBRA)"
     pdf.cell(0, 10, safestr(titulo_rep), ln=True, align="C")
     
     pdf.set_font("Helvetica", "", 10)
@@ -4726,13 +4793,13 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
             pdf.cell(w[4], 6, safestr(str(row.get('MUFA', ''))), border=1, align="C")
             pdf.cell(w[5], 6, safestr(str(row.get('ESTETICA', ''))), border=1, align="C")
             pdf.ln()
-    else:
-        w = [20, 20, 45, 30, 25, 25, 25]
-        headers = ["ORDEN", "CLIENTE", "TECNICO", "TIPO FO", "METROS", "VIÑETA", "MUFA"]
+    elif tipo == "fibra":
+        w = [20, 20, 40, 35, 20, 25, 30]
+        headers = ["ORDEN", "CLIENTE", "TECNICO", "RUTA ACOMETIDA", "METRAJE", "VIÑETA", "EVALUACIÓN"]
         for i in range(len(headers)):
             pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
         pdf.ln()
-        
+
         pdf.set_font("Helvetica", "", 7)
         for _, row in df_filtered.iterrows():
             if pdf.get_y() > 270:
@@ -4743,7 +4810,34 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
                     pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
                 pdf.ln()
                 pdf.set_font("Helvetica", "", 7)
-                
+
+            pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
+            pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
+            pdf.cell(w[2], 6, safestr(str(row.get('TECNICO', '')))[:22], border=1, align="L")
+            pdf.cell(w[3], 6, safestr(str(row.get('RUTA_ACOMETIDA', '')))[:26], border=1, align="L")
+            pdf.cell(w[4], 6, safestr(str(row.get('METRAJE', ''))), border=1, align="C")
+            pdf.cell(w[5], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
+            pdf.cell(w[6], 6, safestr(str(row.get('EVALUACION_TRABAJO', '')))[:20], border=1, align="L")
+            pdf.ln()
+
+    else:
+        w = [20, 20, 45, 30, 25, 25, 25]
+        headers = ["ORDEN", "CLIENTE", "TECNICO", "TIPO FO", "METROS", "VIÑETA", "MUFA"]
+        for i in range(len(headers)):
+            pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+        pdf.ln()
+
+        pdf.set_font("Helvetica", "", 7)
+        for _, row in df_filtered.iterrows():
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                pdf.set_fill_color(230, 235, 245)
+                pdf.set_font("Helvetica", "B", 7)
+                for i in range(len(headers)):
+                    pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+                pdf.ln()
+                pdf.set_font("Helvetica", "", 7)
+
             pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
             pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
             pdf.cell(w[2], 6, safestr(str(row.get('TECNICO', '')))[:24], border=1, align="L")
@@ -4752,5 +4846,5 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
             pdf.cell(w[5], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
             pdf.cell(w[6], 6, safestr(str(row.get('MUFA', ''))), border=1, align="C")
             pdf.ln()
-            
+
     return finalizar_pdf(pdf)
