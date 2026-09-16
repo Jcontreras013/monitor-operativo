@@ -6,6 +6,7 @@ from tools import (
     get_honduras_time,
     leer_espejo_gcs,
     guardar_auditoria_campo,
+    normalizar_nombre_cruce,
     NOMBRE_BUCKET_SISTEMA
 )
 
@@ -73,11 +74,24 @@ def mostrar_modulo_calidad(conn, df_base):
 
     if busqueda_libre and busqueda_libre.strip():
         q = busqueda_libre.strip().upper()
-        mask_busqueda = (
+        mask_num_cli = (
             df_evaluables['NUM'].astype(str).str.upper().str.contains(q, na=False, regex=False) |
-            df_evaluables['CLIENTE'].astype(str).str.upper().str.contains(q, na=False, regex=False) |
-            df_evaluables['NOMBRE'].fillna('').astype(str).str.upper().str.contains(q, na=False, regex=False)
+            df_evaluables['CLIENTE'].astype(str).str.upper().str.contains(q, na=False, regex=False)
         )
+
+        # Para el nombre no basta con "contains" del texto completo: si se
+        # escribe solo nombre y apellido ("JUAN PEREZ") pero el nombre
+        # guardado tiene más partes en medio ("JUAN CARLOS PEREZ LOPEZ"), el
+        # texto "JUAN PEREZ" nunca aparece pegado tal cual y no encontraba
+        # nada. Se normaliza (sin acentos, mayúsculas, espacios de más -- lo
+        # mismo que ya usa el cruce de técnicos) y se exige que CADA palabra
+        # escrita esté presente en el nombre, sin importar el orden ni si hay
+        # otras palabras en medio.
+        q_tokens = normalizar_nombre_cruce(q).split()
+        nombre_norm = df_evaluables['NOMBRE'].fillna('').apply(normalizar_nombre_cruce)
+        mask_nombre = nombre_norm.apply(lambda n: all(tok in n for tok in q_tokens)) if q_tokens else pd.Series(False, index=df_evaluables.index)
+
+        mask_busqueda = mask_num_cli | mask_nombre
         df_resultados = df_evaluables[mask_busqueda].copy()
 
         if df_resultados.empty:
