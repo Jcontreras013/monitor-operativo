@@ -507,7 +507,15 @@ def consultar_api_ordenes(fecha_inicio_dt: datetime) -> pd.DataFrame:
                     else:
                         print(f"  -> [!] Archivo procesado, pero la tabla quedó completamente vacía para {query_user}.")
                 else:
-                    print(f"  -> [-] Error de acceso con {query_user} (Código {response.status_code})")
+                    # Antes solo se imprimía el código de estado (ej. "400"),
+                    # sin el cuerpo de la respuesta -- que es justo donde
+                    # Cepheus suele explicar la razón real (ej. un límite de
+                    # rango de fechas, un parámetro inválido, etc.). Sin este
+                    # detalle, un error 400 al pedir un rango de fechas amplio
+                    # (backfill) no se puede diagnosticar sin volver a
+                    # modificar el código para verlo.
+                    detalle_error = response.text.strip()[:500] if response.text else "(sin cuerpo de respuesta)"
+                    print(f"  -> [-] Error de acceso con {query_user} (Código {response.status_code}): {detalle_error}")
             except Exception as e_user:
                 print(f"  -> [-] Error descargando el archivo de {query_user}: {e_user}")
                 
