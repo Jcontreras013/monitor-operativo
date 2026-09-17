@@ -213,7 +213,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
 def _ejecutar_backfill_una_vez(dias_atras):
     """
-    Relleno de historial de UNA SOLA VEZ: pide a Cepheus una ventana mucho más
+    Relleno de historial de UNA SOLA VEZ: pide a Cepheus una ventana más
     amplia que los 55 días normales, para traer órdenes CERRADAS viejas que el
     ciclo regular nunca llegó a capturar (porque cerraron antes de esos 55
     días, o el robot estuvo caído justo en ese momento). Reutiliza el mismo
@@ -223,7 +223,18 @@ def _ejecutar_backfill_una_vez(dias_atras):
     Se corre UNA vez y termina (no entra al bucle de 15 minutos), para no
     quedarse pidiendo esa ventana ancha repetidamente y gastar de más el
     cupo de 5 consultas/hora que impone Cepheus.
+
+    LÍMITE DURO DE CEPHEUS: confirmado en producción que su API rechaza
+    cualquier fechaInicio de más de ~2 meses atrás (responde 400 con
+    "La fecha no puede ser anterior a 2 meses"). No es un límite nuestro y no
+    se puede evitar desde este script -- una orden cerrada hace más de ~2
+    meses que el robot nunca haya capturado en su momento ya NO se puede
+    recuperar por esta vía, para nadie. Por eso dias_atras se topa a 60 más
+    abajo: pedir más solo hace que Cepheus rechace la consulta entera.
     """
+    if dias_atras > 60:
+        print(f"[!] Cepheus no acepta fechaInicio de más de ~60 días atrás (pediste {dias_atras}). Se ajusta a 60.", flush=True)
+        dias_atras = 60
     print("="*60, flush=True)
     print(f"🔧 RELLENO DE HISTÓRICO (una sola vez): últimos {dias_atras} días", flush=True)
     print("="*60, flush=True)
@@ -237,11 +248,12 @@ def _ejecutar_backfill_una_vez(dias_atras):
 
 
 if __name__ == '__main__':
-    # Uso: python sync_job.py --backfill 365
-    # Trae los últimos 365 días (ajustable) en vez de los 55 de siempre, UNA
-    # sola vez, y termina -- no reemplaza al ciclo normal de 15 minutos.
+    # Uso: python sync_job.py --backfill 60
+    # Trae los últimos N días (máximo 60 -- límite impuesto por Cepheus, ver
+    # _ejecutar_backfill_una_vez) en vez de los 55 de siempre, UNA sola vez, y
+    # termina -- no reemplaza al ciclo normal de 15 minutos.
     if len(sys.argv) >= 2 and sys.argv[1] == '--backfill':
-        _dias_backfill = int(sys.argv[2]) if len(sys.argv) >= 3 else 365
+        _dias_backfill = int(sys.argv[2]) if len(sys.argv) >= 3 else 60
         _ejecutar_backfill_una_vez(_dias_backfill)
         sys.exit(0)
 
