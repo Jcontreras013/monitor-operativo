@@ -46,16 +46,25 @@ from tools import (
     NOMBRE_BUCKET_SISTEMA as NOMBRE_BUCKET
 )
 
-def ejecutar_sincronizacion_background():
+def ejecutar_sincronizacion_background(dias_atras=55):
     if not HAS_GSPREAD:
         print("[-] Error: Las librerías 'gspread' o 'google-auth' no están instaladas.")
         return
 
-    print(f"[{datetime.now()}] Iniciando descarga automática desde la API de Cepheus...")
+    print(f"[{datetime.now()}] Iniciando descarga automática desde la API de Cepheus ({dias_atras} días atrás)...")
 
     # 1. Definir rango de extracción
+    #
+    # dias_atras=55 es la ventana normal del ciclo cada 15 min. Un valor mayor
+    # se usa SOLO para el relleno manual de historial (ver --backfill al final
+    # de este archivo): las órdenes CERRADAS que Cepheus nunca llegó a
+    # devolver dentro de esos 55 días (porque cerraron antes de esa ventana, o
+    # el robot estuvo caído en ese momento) nunca entran al historial
+    # acumulado -- una vez que una orden cerrada SÍ queda en Sheet1 una vez,
+    # el resto del ciclo (más abajo) la conserva para siempre sin volver a
+    # pedirla, pero si nunca se capturó no hay forma de que reaparezca sola.
     ahora_local = get_honduras_time()
-    fecha_api = ahora_local - timedelta(days=55)
+    fecha_api = ahora_local - timedelta(days=dias_atras)
     fecha_dt_api = datetime.combine(fecha_api.date(), datetime.min.time())
 
     # 2. Descargar órdenes en vivo desde la API de Cepheus
@@ -202,7 +211,40 @@ def ejecutar_sincronizacion_background():
     except Exception as e_gcs:
         print(f"[-] Error menor al respaldar en GCS: {e_gcs}")
 
+def _ejecutar_backfill_una_vez(dias_atras):
+    """
+    Relleno de historial de UNA SOLA VEZ: pide a Cepheus una ventana mucho más
+    amplia que los 55 días normales, para traer órdenes CERRADAS viejas que el
+    ciclo regular nunca llegó a capturar (porque cerraron antes de esos 55
+    días, o el robot estuvo caído justo en ese momento). Reutiliza el mismo
+    ejecutar_sincronizacion_background(): lee lo que ya hay en Sheet1,
+    conserva las cerradas existentes y las combina con lo que traiga esta
+    consulta más amplia -- así que es seguro correrlo aunque ya haya datos.
+    Se corre UNA vez y termina (no entra al bucle de 15 minutos), para no
+    quedarse pidiendo esa ventana ancha repetidamente y gastar de más el
+    cupo de 5 consultas/hora que impone Cepheus.
+    """
+    print("="*60, flush=True)
+    print(f"🔧 RELLENO DE HISTÓRICO (una sola vez): últimos {dias_atras} días", flush=True)
+    print("="*60, flush=True)
+    try:
+        ejecutar_sincronizacion_background(dias_atras=dias_atras)
+    except Exception as e_backfill:
+        print(f"[-] Falla durante el relleno de histórico: {e_backfill}", flush=True)
+    print("="*60, flush=True)
+    print("✅ Relleno terminado. Revisa arriba cuántas órdenes se descargaron.", flush=True)
+    print("="*60, flush=True)
+
+
 if __name__ == '__main__':
+    # Uso: python sync_job.py --backfill 365
+    # Trae los últimos 365 días (ajustable) en vez de los 55 de siempre, UNA
+    # sola vez, y termina -- no reemplaza al ciclo normal de 15 minutos.
+    if len(sys.argv) >= 2 and sys.argv[1] == '--backfill':
+        _dias_backfill = int(sys.argv[2]) if len(sys.argv) >= 3 else 365
+        _ejecutar_backfill_una_vez(_dias_backfill)
+        sys.exit(0)
+
     print("="*60, flush=True)
     print("🚀 INICIANDO DEMONIO DE SINCRONIZACIÓN MAXCOM PRO", flush=True)
     print("="*60, flush=True)
