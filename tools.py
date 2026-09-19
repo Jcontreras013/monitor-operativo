@@ -140,6 +140,33 @@ def resolver_tecnico_por_similitud(nombre_tecleado, nombres_existentes):
     if len(candidatos) == 1:
         return candidatos[0], candidatos[0]
 
+    # 2.5) Una sola palabra suelta, el caso más común (ej. "Amy", o "Saira"
+    # con un typo por "Sayra"): se busca esa palabra contra el PRIMER
+    # NOMBRE de cada persona conocida únicamente (no cualquier palabra del
+    # nombre completo: comparar contra todas las palabras generaba falsos
+    # "ambiguos", por ejemplo "Daniel" dejaba de resolver porque además de
+    # ser el primer nombre de una persona, aparece como segundo nombre de
+    # otra -- "Norman Daniel..."). Si calza EXACTO con más de una persona
+    # (dos "Josué", dos "Marvin"...) no se resuelve. La tolerancia a typos
+    # solo entra si no hubo ningún exacto, y por separado -- si no, un
+    # exacto real (ej. "Elvin") quedaba bloqueado porque otro nombre
+    # parecido pero distinto (ej. "Melvin") también pasaba el umbral de
+    # similitud y la mezcla de ambos parecía ambigua.
+    if len(tokens_tecleado) == 1:
+        tok = tokens_tecleado[0]
+        exactos = {nombre_real for norm_n, nombre_real in mapa_norm.items() if norm_n.split()[0] == tok}
+        if len(exactos) == 1:
+            unico = next(iter(exactos))
+            return unico, unico
+        if not exactos:
+            parecidos = {
+                nombre_real for norm_n, nombre_real in mapa_norm.items()
+                if difflib.SequenceMatcher(None, tok, norm_n.split()[0]).ratio() >= 0.8
+            }
+            if len(parecidos) == 1:
+                unico = next(iter(parecidos))
+                return unico, unico
+
     # 3) Similitud aproximada (typos, letras de más/menos). Umbral alto para
     # no confundir a dos personas distintas con nombres parecidos.
     coincidencias = difflib.get_close_matches(norm_tecleado, list(mapa_norm.keys()), n=1, cutoff=0.88)
