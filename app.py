@@ -78,6 +78,7 @@ try:
         sobrescribir_archivo_gcs,
         leer_espejo_gcs,
         normalizar_nombre_cruce,
+        resolver_tecnico_por_similitud,
         guardar_almuerzo,
         cargar_almuerzos,
         cargar_catalogo_tecnicos,
@@ -145,66 +146,9 @@ def mascara_tecnico_asignado(serie_tecnicos):
     return ~s.isin(valores_invalidos)
 
 
-def resolver_tecnico_por_similitud(nombre_tecleado, nombres_existentes):
-    """
-    Busca, entre los técnicos que YA aparecen en las órdenes reales
-    (df_base['TECNICO']), uno cuyo nombre coincida o sea muy similar al
-    nombre ingresado/seleccionado para una orden manual. Si lo encuentra,
-    devuelve el nombre EXACTO tal como aparece en las órdenes reales, para
-    que el Gantt lo agrupe en la MISMA fila (vía normalizar_nombre_cruce);
-    si no encuentra nada parecido, devuelve el nombre original sin tocar.
-
-    Resuelve el caso reportado: el catálogo de técnicos ofrece "EDY
-    FLORENTINO GUZMAN" (sin apellido) pero las órdenes reales de Cepheus
-    traen "EDY FLORENTINO GUZMAN PEREZ" -- sin este cruce, la orden manual
-    creaba una fila nueva en el Gantt en vez de unirse a la del técnico real.
-
-    Devuelve (nombre_a_guardar, nombre_detectado_o_None). El segundo valor
-    es distinto de None solo cuando hubo una sustitución, para poder avisar
-    al usuario qué nombre se usó en su lugar.
-    """
-    if not nombre_tecleado or not nombres_existentes:
-        return nombre_tecleado, None
-
-    norm_tecleado = normalizar_nombre_cruce(nombre_tecleado)
-    if not norm_tecleado:
-        return nombre_tecleado, None
-
-    # Mapa normalizado -> primer nombre real (tal como aparece en las órdenes)
-    # que produjo esa forma normalizada.
-    mapa_norm = {}
-    for n in nombres_existentes:
-        norm_n = normalizar_nombre_cruce(n)
-        if norm_n and norm_n not in mapa_norm:
-            mapa_norm[norm_n] = n
-
-    # 1) Coincidencia exacta tras normalizar (acentos/espacios/alias ya resueltos).
-    if norm_tecleado in mapa_norm:
-        nombre_real = mapa_norm[norm_tecleado]
-        return nombre_real, (nombre_real if nombre_real != nombre_tecleado else None)
-
-    # 2) Nombre incompleto de un lado: todas las palabras del más corto
-    # aparecen, en el mismo orden, al inicio del más largo (ej. falta un
-    # apellido). Evita falsos positivos entre técnicos distintos que solo
-    # comparten el primer nombre.
-    tokens_tecleado = norm_tecleado.split()
-    for norm_n, nombre_real in mapa_norm.items():
-        tokens_n = norm_n.split()
-        if len(tokens_tecleado) <= len(tokens_n):
-            mas_corto, mas_largo = tokens_tecleado, tokens_n
-        else:
-            mas_corto, mas_largo = tokens_n, tokens_tecleado
-        if len(mas_corto) >= 2 and mas_largo[:len(mas_corto)] == mas_corto:
-            return nombre_real, nombre_real
-
-    # 3) Similitud aproximada (typos, letras de más/menos). Umbral alto para
-    # no confundir a dos técnicos distintos con nombres parecidos.
-    coincidencias = difflib.get_close_matches(norm_tecleado, list(mapa_norm.keys()), n=1, cutoff=0.88)
-    if coincidencias:
-        nombre_real = mapa_norm[coincidencias[0]]
-        return nombre_real, nombre_real
-
-    return nombre_tecleado, None
+# resolver_tecnico_por_similitud vive ahora en tools.py (se importa más abajo
+# junto con el resto de utilidades), para que scripts que no corren dentro de
+# Streamlit -- como telegram_bot.py -- también puedan reutilizarla.
 
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL DE LA INTERFAZ

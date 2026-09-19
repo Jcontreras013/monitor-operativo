@@ -6,6 +6,7 @@ import unicodedata
 import tempfile
 import os
 import numpy as np
+import difflib
 import streamlit as st
 import io
 import json
@@ -68,6 +69,68 @@ def normalizar_nombre_cruce(texto):
     t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
     t = ' '.join(t.split())
     return ALIAS_TECNICOS_CONOCIDOS.get(t, t)
+
+
+def resolver_tecnico_por_similitud(nombre_tecleado, nombres_existentes):
+    """
+    Busca, entre una lista de nombres ya conocidos, uno que coincida o sea
+    muy similar al nombre ingresado/tecleado. Si lo encuentra, devuelve el
+    nombre EXACTO tal como aparece en la lista conocida; si no encuentra
+    nada parecido, devuelve el nombre original sin tocar.
+
+    Vive en tools.py (no en app.py, donde se usó por primera vez para
+    técnicos de órdenes manuales) para que también la puedan usar scripts
+    que no corren dentro de Streamlit -- como telegram_bot.py, para
+    resolver el nombre de colaborador que un jefe teclea en el grupo de
+    Telegram contra el catálogo real de personal, tolerando typos/acentos/
+    nombre incompleto.
+
+    Devuelve (nombre_a_guardar, nombre_detectado_o_None). El segundo valor
+    es distinto de None solo cuando hubo una sustitución, para poder avisar
+    qué nombre se usó en su lugar.
+    """
+    if not nombre_tecleado or not nombres_existentes:
+        return nombre_tecleado, None
+
+    norm_tecleado = normalizar_nombre_cruce(nombre_tecleado)
+    if not norm_tecleado:
+        return nombre_tecleado, None
+
+    # Mapa normalizado -> primer nombre real (tal como aparece en la lista
+    # conocida) que produjo esa forma normalizada.
+    mapa_norm = {}
+    for n in nombres_existentes:
+        norm_n = normalizar_nombre_cruce(n)
+        if norm_n and norm_n not in mapa_norm:
+            mapa_norm[norm_n] = n
+
+    # 1) Coincidencia exacta tras normalizar (acentos/espacios/alias ya resueltos).
+    if norm_tecleado in mapa_norm:
+        nombre_real = mapa_norm[norm_tecleado]
+        return nombre_real, (nombre_real if nombre_real != nombre_tecleado else None)
+
+    # 2) Nombre incompleto de un lado: todas las palabras del más corto
+    # aparecen, en el mismo orden, al inicio del más largo (ej. falta un
+    # apellido). Evita falsos positivos entre dos personas distintas que
+    # solo comparten el primer nombre.
+    tokens_tecleado = norm_tecleado.split()
+    for norm_n, nombre_real in mapa_norm.items():
+        tokens_n = norm_n.split()
+        if len(tokens_tecleado) <= len(tokens_n):
+            mas_corto, mas_largo = tokens_tecleado, tokens_n
+        else:
+            mas_corto, mas_largo = tokens_n, tokens_tecleado
+        if len(mas_corto) >= 2 and mas_largo[:len(mas_corto)] == mas_corto:
+            return nombre_real, nombre_real
+
+    # 3) Similitud aproximada (typos, letras de más/menos). Umbral alto para
+    # no confundir a dos personas distintas con nombres parecidos.
+    coincidencias = difflib.get_close_matches(norm_tecleado, list(mapa_norm.keys()), n=1, cutoff=0.88)
+    if coincidencias:
+        nombre_real = mapa_norm[coincidencias[0]]
+        return nombre_real, nombre_real
+
+    return nombre_tecleado, None
 
 # ==============================================================================
 # REEMPLAZAR ESTAS DOS FUNCIONES EN TOOLS.PY
