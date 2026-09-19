@@ -8,7 +8,7 @@
 # Streamlit).
 #
 # Dos formas de reportar:
-#   1) Formulario guiado con botones: comando /reportarfalta (recomendada,
+#   1) Formulario guiado con botones: comando /falta (recomendada,
 #      usa las mismas opciones que el formulario de Expedientes en la app).
 #   2) Mensaje de texto libre con formato fijo (ver parse_mensaje_falta), para
 #      quien prefiera escribirlo de un jalón.
@@ -82,7 +82,7 @@ SINONIMOS_AREA = {
     'VENTAS': 'SAC', 'CALL CENTER': 'SAC', 'CALLCENTER': 'SAC', 'OFICINA': 'SAC',
 }
 
-# Estado de las conversaciones guiadas (/reportarfalta) EN MEMORIA, por
+# Estado de las conversaciones guiadas (/falta) EN MEMORIA, por
 # (chat_id, user_id) -- así dos jefes pueden estar llenando su propio reporte
 # al mismo tiempo en el mismo grupo sin cruzarse. Se pierde si el script se
 # reinicia (aceptable: la persona solo tiene que volver a escribir el
@@ -259,7 +259,7 @@ def texto_resumen(estado):
 
 
 # ==============================================================================
-# FORMULARIO GUIADO CON BOTONES (/reportarfalta)
+# FORMULARIO GUIADO CON BOTONES (/falta)
 # ==============================================================================
 def iniciar_flujo(token, chat_id, user_id):
     ESTADOS_CONVERSACION[(chat_id, user_id)] = {"paso": "area"}
@@ -435,7 +435,7 @@ def procesar_respuesta_texto_flujo(token, chat_id, worksheet_exp, message, estad
 
 
 # ==============================================================================
-# TEXTO LIBRE CON FORMATO FIJO (alternativa a /reportarfalta)
+# TEXTO LIBRE CON FORMATO FIJO (alternativa a /falta)
 # ==============================================================================
 def parse_mensaje_falta(texto):
     """
@@ -551,7 +551,7 @@ def procesar_mensaje(token, chat_id_esperado, worksheet_exp, message):
     texto = (message.get("text") or "").strip()
     comando = texto.split('@')[0].lower()  # quita el "@NombreDelBot" que Telegram agrega en grupos
 
-    if comando == "/reportarfalta":
+    if comando == "/falta":
         iniciar_flujo(token, chat_id, user_id)
         return
 
@@ -609,7 +609,7 @@ def main():
     offset = leer_offset()
     print("=" * 60, flush=True)
     print("🤖 BOT DE TELEGRAM DE FALTAS -- escuchando el grupo...", flush=True)
-    print("   Formulario guiado: /reportarfalta", flush=True)
+    print("   Formulario guiado: /falta", flush=True)
     print("=" * 60, flush=True)
 
     while True:
