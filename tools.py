@@ -71,6 +71,13 @@ def normalizar_nombre_cruce(texto):
     return ALIAS_TECNICOS_CONOCIDOS.get(t, t)
 
 
+def _tokens_en_orden(corta, larga):
+    """True si cada palabra de `corta` aparece en `larga`, en ese mismo
+    orden, sin importar qué palabras de `larga` queden saltadas en el medio."""
+    it = iter(larga)
+    return all(tok in it for tok in corta)
+
+
 def resolver_tecnico_por_similitud(nombre_tecleado, nombres_existentes):
     """
     Busca, entre una lista de nombres ya conocidos, uno que coincida o sea
@@ -110,18 +117,28 @@ def resolver_tecnico_por_similitud(nombre_tecleado, nombres_existentes):
         return nombre_real, (nombre_real if nombre_real != nombre_tecleado else None)
 
     # 2) Nombre incompleto de un lado: todas las palabras del más corto
-    # aparecen, en el mismo orden, al inicio del más largo (ej. falta un
-    # apellido). Evita falsos positivos entre dos personas distintas que
-    # solo comparten el primer nombre.
+    # aparecen, en el mismo orden, DENTRO del más largo -- no hace falta que
+    # sean las primeras. Esto cubre el caso típico de un jefe escribiendo
+    # "Nombre Apellido" y saltándose el segundo nombre o segundo apellido
+    # (ej. "Sayra Escobar" para "Sayra Michelle Escobar Garcia"), que un
+    # simple prefijo no detectaba. Se exige mínimo 2 palabras para evitar
+    # falsos positivos entre dos personas que solo comparten el primer nombre.
+    # Si el nombre corto calza con MÁS DE UNA persona distinta (ej. dos
+    # "Josué ... Hernández"), no se adivina a cuál se refería -- mejor pedir
+    # que lo escriba más completo que atribuirle la falta a la persona
+    # equivocada.
     tokens_tecleado = norm_tecleado.split()
+    candidatos = []
     for norm_n, nombre_real in mapa_norm.items():
         tokens_n = norm_n.split()
         if len(tokens_tecleado) <= len(tokens_n):
             mas_corto, mas_largo = tokens_tecleado, tokens_n
         else:
             mas_corto, mas_largo = tokens_n, tokens_tecleado
-        if len(mas_corto) >= 2 and mas_largo[:len(mas_corto)] == mas_corto:
-            return nombre_real, nombre_real
+        if len(mas_corto) >= 2 and _tokens_en_orden(mas_corto, mas_largo):
+            candidatos.append(nombre_real)
+    if len(candidatos) == 1:
+        return candidatos[0], candidatos[0]
 
     # 3) Similitud aproximada (typos, letras de más/menos). Umbral alto para
     # no confundir a dos personas distintas con nombres parecidos.
