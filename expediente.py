@@ -623,7 +623,16 @@ def sanitizar(texto):
 # ==============================================================================
 # 2. GENERADORES DE DOCUMENTOS DE REPORTES (PDF Y WORD)
 # ==============================================================================
-def generar_pdf_consolidado(df):
+def generar_pdf_consolidado(df, df_para_resumen_mes=None):
+    """
+    df: registros ya filtrados (fecha/tipo/colaborador) que se listan en el
+    reporte, igual que antes.
+    df_para_resumen_mes: historial COMPLETO del colaborador (sin el filtro de
+    fechas ni de tipo) -- opcional. Cuando el reporte es de UN solo
+    colaborador (df['TECNICO'].nunique() == 1), se usa para agregar al final
+    del PDF un resumen de sus faltas en lo que va del mes calendario actual,
+    sin importar el rango de fechas que se haya elegido para generar el PDF.
+    """
     df_work = pd.DataFrame()
     df_leves = df_graves = df_otros = pd.DataFrame()
     conteo_tardes = {}
@@ -720,6 +729,55 @@ def generar_pdf_consolidado(df):
 
         pdf_obj.ln(6)
 
+    def _dibujar_resumen_mes(pdf_obj, df_persona_completo, tecnico_nombre):
+        """Tabla pequeña con el total de faltas del mes calendario actual de
+        `tecnico_nombre`, calculada a partir del historial COMPLETO de la
+        persona (df_persona_completo) -- no del `df` ya recortado al rango
+        de fechas del reporte, para que este resumen sea siempre el real
+        del mes en curso sin importar qué rango se haya elegido al pedir
+        el PDF."""
+        hoy_r = get_honduras_time().date()
+        dfp = df_persona_completo[df_persona_completo['TECNICO'].astype(str) == tecnico_nombre].copy()
+        dfp['FECHA_DT'] = pd.to_datetime(dfp['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+        dfp = dfp[
+            dfp['FECHA_DT'].notna() &
+            (dfp['FECHA_DT'].dt.year == hoy_r.year) &
+            (dfp['FECHA_DT'].dt.month == hoy_r.month)
+        ]
+
+        meses_es = {
+            1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
+            7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
+        }
+        titulo = f"RESUMEN: FALTAS DE {sanitizar(tecnico_nombre).upper()} EN LO QUE VA DE {meses_es[hoy_r.month].upper()} {hoy_r.year}"
+
+        if pdf_obj.get_y() > 230:
+            pdf_obj.add_page()
+        pdf_obj.ln(4)
+        pdf_obj.set_font("Helvetica", "B", 10)
+        pdf_obj.set_fill_color(40, 50, 100)
+        pdf_obj.set_text_color(255, 255, 255)
+        pdf_obj.cell(0, 7, f"  {titulo}", border=1, fill=True, ln=True)
+
+        if dfp.empty:
+            pdf_obj.set_font("Helvetica", "I", 9)
+            pdf_obj.set_text_color(0, 120, 0)
+            pdf_obj.cell(0, 7, "  Sin faltas registradas este mes.", border=1, ln=True)
+        else:
+            conteo = dfp['TIPO_FALTA'].value_counts()
+            pdf_obj.set_font("Helvetica", "", 9)
+            pdf_obj.set_text_color(40, 40, 40)
+            for motivo, cant in conteo.items():
+                pdf_obj.set_fill_color(245, 245, 250)
+                pdf_obj.cell(140, 6, f"  {sanitizar(motivo)}", border=1, fill=True)
+                pdf_obj.cell(30, 6, str(int(cant)), border=1, fill=True, align="C", ln=True)
+            pdf_obj.set_font("Helvetica", "B", 9)
+            pdf_obj.set_text_color(40, 40, 40)
+            pdf_obj.set_fill_color(220, 225, 240)
+            pdf_obj.cell(140, 7, "  TOTAL DEL MES", border=1, fill=True)
+            pdf_obj.cell(30, 7, str(int(conteo.sum())), border=1, fill=True, align="C", ln=True)
+        pdf_obj.ln(4)
+
     pdf = MemoPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -802,6 +860,12 @@ def generar_pdf_consolidado(df):
                 rr=235, rg=238, rb=245,
                 thr=255, thg=255, thb=255,
             )
+
+        # Resumen "lo que va del mes" -- solo tiene sentido cuando el reporte
+        # es de UN colaborador puntual (si es "VER TODOS" no hay una sola
+        # persona a la que resumir, igual que en la vista de Streamlit).
+        if df_work['TECNICO'].nunique() == 1 and df_para_resumen_mes is not None and not df_para_resumen_mes.empty:
+            _dibujar_resumen_mes(pdf, df_para_resumen_mes, str(df_work['TECNICO'].iloc[0]))
 
     # BLINDAJE DE SEGURIDAD: Evita que el generador intente insertar PDFs como fotos (Imagen 1) [3]
     tiene_anexos = False
@@ -2001,7 +2065,7 @@ def mostrar_modulo_expedientes(conn, df_base):
                             # al usuario de vuelta al inicio del módulo.
                             if st.button("📄 Preparar PDF", key=f"btn_pdf_{tab_id}", use_container_width=True):
                                 with st.spinner("Generando PDF..."):
-                                    st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar)
+                                    st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar, df_para_resumen_mes=df_sin_filtrar)
                                     st.session_state['estado_pdf_actual'] = id_estado_pdf
                                 st.download_button(
                                     label="⬇️ Descargar PDF",
