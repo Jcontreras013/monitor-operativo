@@ -4696,6 +4696,79 @@ def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
         
     return finalizar_pdf(pdf)
 
+def generar_pdf_cierres_insfibra(df_mostrar, f_inicio, f_fin, total, llamadas_hechas, pendientes) -> bytes:
+    """
+    Reporte PDF del listado de "Cierres INSFIBRA por Rango de Fechas" de
+    ccalidad.py: qué órdenes INSFIBRA se cerraron entre dos fechas y a
+    cuáles ya se les gestionó la llamada de satisfacción (o cuáles siguen
+    pendientes), para poder imprimir/archivar el mismo resumen que se ve
+    en pantalla.
+    """
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("CIERRES INSFIBRA Y GESTIÓN DE LLAMADAS"), ln=True, align="C")
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 100, 100)
+    inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
+    fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
+    pdf.cell(0, 6, safestr(f"Rango de Fechas de Cierre: {inicio_str} al {fin_str}"), ln=True, align="C")
+    pdf.ln(5)
+
+    if df_mostrar.empty:
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 10, "No se encontraron cierres de INSFIBRA en el rango seleccionado.", ln=True, align="C")
+        return finalizar_pdf(pdf)
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 6, safestr("1. RESUMEN"), ln=True)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(50, 50, 50)
+    pdf.cell(0, 6, safestr(f"Total INSFIBRA cerradas: {total}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Ya con llamada registrada: {llamadas_hechas}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Pendientes de llamar: {pendientes}"), ln=True)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 6, safestr("2. LISTADO DETALLADO"), ln=True)
+
+    w = [20, 25, 50, 40, 30, 25]
+    headers = ["NUM", "CLIENTE", "NOMBRE", "TÉCNICO", "FECHA DE CIERRE", "¿SE LLAMÓ?"]
+    cols_df = ['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'FECHA DE CIERRE', '¿SE LLAMÓ?']
+
+    def _encabezado_tabla():
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 7)
+        for i in range(len(headers)):
+            pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+        pdf.ln()
+
+    _encabezado_tabla()
+    pdf.set_font("Helvetica", "", 7)
+    for _, row in df_mostrar.iterrows():
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            _encabezado_tabla()
+            pdf.set_font("Helvetica", "", 7)
+
+        pdf.cell(w[0], 6, safestr(str(row.get('NUM', 'N/D'))), border=1, align="C")
+        pdf.cell(w[1], 6, safestr(str(row.get('CLIENTE', 'N/D'))), border=1, align="C")
+        pdf.cell(w[2], 6, safestr(str(row.get('NOMBRE', 'N/D'))[:28]), border=1, align="L")
+        pdf.cell(w[3], 6, safestr(str(row.get('TECNICO', 'N/D'))[:22]), border=1, align="L")
+        pdf.cell(w[4], 6, safestr(str(row.get('FECHA DE CIERRE', 'N/D'))), border=1, align="C")
+        pdf.cell(w[5], 6, safestr(str(row.get('¿SE LLAMÓ?', 'N/D'))), border=1, align="C")
+        pdf.ln()
+
+    return finalizar_pdf(pdf)
+
 # ==============================================================================
 # AUDITORÍA DE CAMPO: GESTIÓN DE OPERACIONES E INSTALACIONES (ccalidad.py)
 # ==============================================================================
