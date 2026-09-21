@@ -493,9 +493,10 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
         "APERTURADA TARDE", "CERRADA TARDE", "APERTURADAS TARDES", "CERRADAS TARDES",
         "MAL USO", "MAL MANEJO", "MALA MANIPULACIÓN", "MALA MANIPULACION",
         "CHOQUE", "ACCIDENTE", "ALCOHOL", "EBRIEDAD", "EBRIO", "DROGA", 
-        "ROBO", "HURTO", "ABANDONO DE RUTA", "ABANDONO RUTA", "ABANDONO", 
-        "INJUSTIFICADA", "DAÑO", "PÉRDIDA", "PERDIDA", "FRAUDE", "NEGLIGENCIA", 
-        "REINCIDENCIA", "DORMIDO", "GRAVE", "IRRESPONSABILIDAD"
+        "ROBO", "HURTO", "ABANDONO DE RUTA", "ABANDONO RUTA", "ABANDONO",
+        "INJUSTIFICADA", "DAÑO", "PÉRDIDA", "PERDIDA", "FRAUDE", "NEGLIGENCIA",
+        "REINCIDENCIA", "DORMIDO", "GRAVE", "IRRESPONSABILIDAD",
+        "FALSIFIC", "MINTIÓ", "MINTIO", "MENTIRA"
     ]
     if any(kw in texto for kw in palabras_graves_directas):
         return 'GRAVE'
@@ -516,6 +517,15 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
         ('AUSENCIA', 'AVISO'), ('AUSENCIA', 'JUSTIF'),
         ('INASISTENCIA', 'AVISO'), ('INASISTENCIA', 'JUSTIF'),
         ('IRRESPETO', 'COMPAÑERO'), ('IRRESPETO', 'SUPERVISOR'),
+        # Documentación/datos falsificados o inventados para pasar una
+        # verificación (ej. inventar el metraje de fibra para que una orden
+        # pase a Pexterno sin la revisión real) -- mucho más grave que un
+        # simple error de forma, que es lo que "MALA DOCUMENTACION" cubre
+        # más abajo en la lista de faltas LEVES.
+        ('INVENTO', 'DATOS'), ('INVENTÓ', 'DATOS'), ('INVENTAR', 'DATOS'),
+        ('DATOS', 'INVENTADOS'), ('DATOS', 'FALSOS'),
+        ('ALTERO', 'DATOS'), ('ALTERÓ', 'DATOS'),
+        ('MANIPULO', 'DATOS'), ('MANIPULÓ', 'DATOS'),
     ]
     for w1, w2 in graves_combos:
         if w1 in texto and w2 in texto:
