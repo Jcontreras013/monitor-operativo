@@ -637,10 +637,11 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
     """
     df: registros ya filtrados (fecha/tipo/colaborador) que se listan en el
     reporte, igual que antes.
-    df_para_resumen_mes: historial COMPLETO del colaborador (sin el filtro de
-    fechas ni de tipo) -- opcional. Cuando el reporte es de UN solo
-    colaborador (df['TECNICO'].nunique() == 1), se usa para agregar al final
-    del PDF un resumen de sus faltas en lo que va del mes calendario actual,
+    df_para_resumen_mes: historial COMPLETO de TODOS los colaboradores (sin
+    el filtro de fechas ni de tipo) -- opcional. Se usa para agregar al
+    final del PDF una tabla con una fila por cada colaborador que aparece
+    en este reporte (df['TECNICO'].unique()), mostrando sus llegadas
+    tardías y demás incidencias en lo que va del mes calendario actual,
     sin importar el rango de fechas que se haya elegido para generar el PDF.
     """
     df_work = pd.DataFrame()
@@ -739,15 +740,16 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
 
         pdf_obj.ln(6)
 
-    def _dibujar_resumen_mes(pdf_obj, df_persona_completo, tecnico_nombre):
-        """Tabla pequeña con el total de faltas del mes calendario actual de
-        `tecnico_nombre`, calculada a partir del historial COMPLETO de la
-        persona (df_persona_completo) -- no del `df` ya recortado al rango
-        de fechas del reporte, para que este resumen sea siempre el real
-        del mes en curso sin importar qué rango se haya elegido al pedir
-        el PDF."""
+    def _dibujar_resumen_mes_personas(pdf_obj, df_historial_completo, lista_personas):
+        """Tabla con una fila por cada colaborador de `lista_personas` (los
+        que aparecen en este reporte), con sus llegadas tardías y demás
+        incidencias del mes calendario actual -- calculado sobre el
+        historial COMPLETO de cada persona (df_historial_completo), no
+        sobre el `df` ya recortado al rango de fechas del reporte, para que
+        este resumen sea siempre el real del mes en curso sin importar qué
+        rango se haya elegido al pedir el PDF."""
         hoy_r = get_honduras_time().date()
-        dfp = df_persona_completo[df_persona_completo['TECNICO'].astype(str) == tecnico_nombre].copy()
+        dfp = df_historial_completo[df_historial_completo['TECNICO'].isin(lista_personas)].copy()
         dfp['FECHA_DT'] = pd.to_datetime(dfp['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
         dfp = dfp[
             dfp['FECHA_DT'].notna() &
@@ -759,9 +761,9 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
             1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
             7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
         }
-        titulo = f"RESUMEN: FALTAS DE {sanitizar(tecnico_nombre).upper()} EN LO QUE VA DE {meses_es[hoy_r.month].upper()} {hoy_r.year}"
+        titulo = f"RESUMEN DEL MES -- LO QUE VA DE {meses_es[hoy_r.month].upper()} {hoy_r.year}"
 
-        if pdf_obj.get_y() > 230:
+        if pdf_obj.get_y() > 220:
             pdf_obj.add_page()
         pdf_obj.ln(4)
         pdf_obj.set_font("Helvetica", "B", 10)
@@ -769,23 +771,27 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
         pdf_obj.set_text_color(255, 255, 255)
         pdf_obj.cell(0, 7, f"  {titulo}", border=1, fill=True, ln=True)
 
-        if dfp.empty:
-            pdf_obj.set_font("Helvetica", "I", 9)
-            pdf_obj.set_text_color(0, 120, 0)
-            pdf_obj.cell(0, 7, "  Sin faltas registradas este mes.", border=1, ln=True)
-        else:
-            conteo = dfp['TIPO_FALTA'].value_counts()
-            pdf_obj.set_font("Helvetica", "", 9)
-            pdf_obj.set_text_color(40, 40, 40)
-            for motivo, cant in conteo.items():
-                pdf_obj.set_fill_color(245, 245, 250)
-                pdf_obj.cell(140, 6, f"  {sanitizar(motivo)}", border=1, fill=True)
-                pdf_obj.cell(30, 6, str(int(cant)), border=1, fill=True, align="C", ln=True)
-            pdf_obj.set_font("Helvetica", "B", 9)
-            pdf_obj.set_text_color(40, 40, 40)
-            pdf_obj.set_fill_color(220, 225, 240)
-            pdf_obj.cell(140, 7, "  TOTAL DEL MES", border=1, fill=True)
-            pdf_obj.cell(30, 7, str(int(conteo.sum())), border=1, fill=True, align="C", ln=True)
+        W = [80, 40, 40, 30]
+        HDRS = ["COLABORADOR", "LLEGADAS TARDIAS", "OTRAS INCIDENCIAS", "TOTAL"]
+        pdf_obj.set_font("Helvetica", "B", 8)
+        pdf_obj.set_fill_color(220, 225, 240)
+        pdf_obj.set_text_color(40, 40, 40)
+        for i, h in enumerate(HDRS):
+            pdf_obj.cell(W[i], 6, h, border=1, fill=True, align="C")
+        pdf_obj.ln()
+
+        pdf_obj.set_font("Helvetica", "", 8)
+        for idx, persona in enumerate(sorted(lista_personas)):
+            sub = dfp[dfp['TECNICO'] == persona]
+            n_tarde = int(sub.apply(lambda r: es_llegada_tarde(r['TIPO_FALTA'], r['COMENTARIO']), axis=1).sum()) if not sub.empty else 0
+            n_total = len(sub)
+            n_otras = n_total - n_tarde
+
+            pdf_obj.set_fill_color(245, 245, 250) if idx % 2 == 0 else pdf_obj.set_fill_color(255, 255, 255)
+            pdf_obj.cell(W[0], 6, f" {sanitizar(persona)}", border=1, fill=True)
+            pdf_obj.cell(W[1], 6, str(n_tarde), border=1, fill=True, align="C")
+            pdf_obj.cell(W[2], 6, str(n_otras), border=1, fill=True, align="C")
+            pdf_obj.cell(W[3], 6, str(n_total), border=1, fill=True, align="C", ln=True)
         pdf_obj.ln(4)
 
     pdf = MemoPDF()
@@ -871,11 +877,12 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
                 thr=255, thg=255, thb=255,
             )
 
-        # Resumen "lo que va del mes" -- solo tiene sentido cuando el reporte
-        # es de UN colaborador puntual (si es "VER TODOS" no hay una sola
-        # persona a la que resumir, igual que en la vista de Streamlit).
-        if df_work['TECNICO'].nunique() == 1 and df_para_resumen_mes is not None and not df_para_resumen_mes.empty:
-            _dibujar_resumen_mes(pdf, df_para_resumen_mes, str(df_work['TECNICO'].iloc[0]))
+        # Resumen "lo que va del mes" -- una fila por cada colaborador que
+        # aparece en este reporte, sea uno solo o "VER TODOS".
+        if df_para_resumen_mes is not None and not df_para_resumen_mes.empty:
+            personas_reporte = df_work['TECNICO'].dropna().unique().tolist()
+            if personas_reporte:
+                _dibujar_resumen_mes_personas(pdf, df_para_resumen_mes, personas_reporte)
 
     # BLINDAJE DE SEGURIDAD: Evita que el generador intente insertar PDFs como fotos (Imagen 1) [3]
     tiene_anexos = False
@@ -2140,38 +2147,48 @@ def mostrar_modulo_expedientes(conn, df_base):
                         height=250
                     )
 
-                    # --- RESUMEN "LO QUE VA DEL MES" DEL COLABORADOR FILTRADO ---
-                    # Cuenta TODAS las faltas del mes calendario en curso de esa
-                    # persona, sin importar el rango de fechas ni el tipo de
-                    # registro elegidos arriba en los filtros -- es un resumen
-                    # aparte, siempre del mes actual, para que el supervisor
-                    # vea de un vistazo cuántas incidencias lleva en lo que va
-                    # del mes sin tener que ir cambiando el rango de fechas.
-                    if filtro_nombre != "VER TODOS":
-                        hoy_resumen = get_honduras_time().date()
-                        df_persona_mes = df_sin_filtrar[df_sin_filtrar['TECNICO'] == filtro_nombre].copy()
-                        df_persona_mes['FECHA_DT'] = pd.to_datetime(df_persona_mes['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
-                        df_persona_mes = df_persona_mes[
-                            df_persona_mes['FECHA_DT'].notna() &
-                            (df_persona_mes['FECHA_DT'].dt.year == hoy_resumen.year) &
-                            (df_persona_mes['FECHA_DT'].dt.month == hoy_resumen.month)
-                        ]
+                    # --- RESUMEN "LO QUE VA DEL MES" DE LAS PERSONAS DE LA TABLA ---
+                    # Una fila por cada colaborador que aparece en la tabla de
+                    # arriba (sin importar si se filtró a uno solo o se está
+                    # viendo "VER TODOS"), con sus llegadas tardías y demás
+                    # incidencias del MES CALENDARIO ACTUAL -- calculado sobre
+                    # el historial completo de cada persona (df_sin_filtrar),
+                    # no sobre el rango de fechas elegido arriba, para que
+                    # siempre refleje lo que va del mes en curso sin importar
+                    # qué fechas se hayan usado para filtrar la tabla.
+                    hoy_resumen = get_honduras_time().date()
+                    personas_tabla = sorted(df_mostrar['TECNICO'].dropna().unique().tolist())
 
-                        meses_es = {
-                            1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
-                            7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
-                        }
-                        nombre_mes_actual = meses_es[hoy_resumen.month]
+                    df_mes_todas = df_sin_filtrar[df_sin_filtrar['TECNICO'].isin(personas_tabla)].copy()
+                    df_mes_todas['FECHA_DT'] = pd.to_datetime(df_mes_todas['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+                    df_mes_todas = df_mes_todas[
+                        df_mes_todas['FECHA_DT'].notna() &
+                        (df_mes_todas['FECHA_DT'].dt.year == hoy_resumen.year) &
+                        (df_mes_todas['FECHA_DT'].dt.month == hoy_resumen.month)
+                    ]
 
-                        st.markdown(f"##### 📅 Resumen de {filtro_nombre} — lo que va de {nombre_mes_actual} de {hoy_resumen.year}")
-                        if df_persona_mes.empty:
-                            st.caption("Sin faltas registradas este mes. ✅")
+                    meses_es = {
+                        1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
+                        7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
+                    }
+                    st.markdown(f"##### 📅 Resumen del mes — lo que va de {meses_es[hoy_resumen.month]} de {hoy_resumen.year}")
+
+                    filas_resumen_personas = []
+                    for persona in personas_tabla:
+                        sub = df_mes_todas[df_mes_todas['TECNICO'] == persona]
+                        if sub.empty:
+                            n_tarde = n_total = 0
                         else:
-                            df_resumen_mes = df_persona_mes['TIPO_FALTA'].value_counts().reset_index()
-                            df_resumen_mes.columns = ['Motivo', 'Cantidad']
-                            fila_total = pd.DataFrame([{'Motivo': 'TOTAL DEL MES', 'Cantidad': int(df_resumen_mes['Cantidad'].sum())}])
-                            df_resumen_mes = pd.concat([df_resumen_mes, fila_total], ignore_index=True)
-                            st.dataframe(df_resumen_mes, hide_index=True, use_container_width=True)
+                            n_tarde = int(sub.apply(lambda r: es_llegada_tarde(r['TIPO_FALTA'], r['COMENTARIO']), axis=1).sum())
+                            n_total = len(sub)
+                        filas_resumen_personas.append({
+                            'Colaborador': persona,
+                            'Llegadas Tardías (mes)': n_tarde,
+                            'Otras Incidencias (mes)': n_total - n_tarde,
+                            'Total (mes)': n_total,
+                        })
+                    df_resumen_personas = pd.DataFrame(filas_resumen_personas)
+                    st.dataframe(df_resumen_personas, hide_index=True, use_container_width=True)
 
                     st.markdown("<br>", unsafe_allow_html=True)
 
