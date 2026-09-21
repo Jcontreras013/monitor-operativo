@@ -499,11 +499,42 @@ def mostrar_modulo_calidad(conn, df_base):
                     df_mostrar_ins = df_rango_ins[df_rango_ins['¿SE LLAMÓ?'] == "❌ Pendiente"] if solo_pendientes_ins else df_rango_ins
 
                     cols_ins_mostrar = [c for c in ['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'FECHA DE CIERRE', '¿SE LLAMÓ?'] if c in df_mostrar_ins.columns]
+                    df_tabla_ins = df_mostrar_ins[cols_ins_mostrar].sort_values('FECHA DE CIERRE')
                     st.dataframe(
-                        df_mostrar_ins[cols_ins_mostrar].sort_values('FECHA DE CIERRE'),
+                        df_tabla_ins,
                         use_container_width=True,
                         hide_index=True
                     )
+
+                    st.markdown("#### 📥 Exportación en PDF")
+                    id_estado_pdf_ins = f"pdf_insfibra_{ini_rango_ins}_{fin_rango_ins}_{solo_pendientes_ins}_{len(df_tabla_ins)}"
+                    if st.session_state.get('estado_pdf_insfibra_actual') == id_estado_pdf_ins:
+                        st.download_button(
+                            label="⬇️ Descargar PDF",
+                            data=st.session_state['pdf_insfibra_bytes_listo'],
+                            file_name=f"Cierres_INSFIBRA_{ini_rango_ins}_a_{fin_rango_ins}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                            type="primary"
+                        )
+                    else:
+                        if st.button("📄 Preparar PDF", key="btn_pdf_insfibra_cierres", use_container_width=True):
+                            with st.spinner("Generando PDF..."):
+                                from tools import generar_pdf_cierres_insfibra
+                                st.session_state['pdf_insfibra_bytes_listo'] = generar_pdf_cierres_insfibra(
+                                    df_tabla_ins, ini_rango_ins, fin_rango_ins,
+                                    total_cerradas_ins, total_llamadas_ins, total_pendientes_ins
+                                )
+                                st.session_state['estado_pdf_insfibra_actual'] = id_estado_pdf_ins
+                            st.download_button(
+                                label="⬇️ Descargar PDF",
+                                data=st.session_state['pdf_insfibra_bytes_listo'],
+                                file_name=f"Cierres_INSFIBRA_{ini_rango_ins}_a_{fin_rango_ins}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                type="primary",
+                                key="dl_pdf_insfibra_directo"
+                            )
 
         # --------------------------------------------------------------------------
         # FLUJO: ENVÍO AUTOMÁTICO DE ENCUESTA DIGITAL POR WHATSAPP (WATI)
