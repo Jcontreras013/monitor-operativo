@@ -29,6 +29,33 @@ def safestr(texto: Any) -> str:
         return ""
     return unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode('ascii')
 
+def fmt_celda(valor, default: str = "N/D") -> str:
+    """
+    Limpia un valor de DataFrame y lo deja listo para una celda de un reporte
+    PDF (ya sanitizado con safestr(), no hace falta envolverlo aparte). Sin
+    la limpieza de NaN, un valor faltante llegaba a la tabla como el texto
+    literal "nan" (porque para cuando safestr() lo recibía ya era un string
+    "nan", no un NaN real -- pd.isna("nan") es False), y un número de orden
+    guardado como float aparecía con un ".0" de más (ej. "95695421.0"). Se
+    usa en vez de "str(valor)"/"safestr(str(valor))" en todos los
+    generadores de reportes PDF de este archivo.
+    """
+    if valor is None:
+        return default
+    try:
+        if pd.isna(valor):
+            return default
+    except (TypeError, ValueError):
+        pass
+    if isinstance(valor, float) and valor.is_integer():
+        texto = str(int(valor))
+    else:
+        texto = str(valor).strip()
+        if not texto or texto.upper() in ("NAN", "NONE", "NAT"):
+            return default
+    texto = safestr(texto)
+    return texto if texto else default
+
 def get_honduras_time() -> datetime:
     """Ajusta la hora a UTC-6 internamente."""
     return datetime.utcnow() - timedelta(hours=6)
@@ -4565,135 +4592,203 @@ def eliminar_registro_calidad(conn, ticket: str, fecha_gestion: str) -> bool:
         print(f"Error general al eliminar registro de calidad: {e}")
         return False
 
+def _clasificar_gestion_calidad(row) -> str:
+    """
+    Devuelve 'Aprobado' / 'Con Obs.' / 'Rechazado' / 'Sin Gestión' para una
+    fila de la pestaña 'Calidad'.
+
+    Antes se adivinaba el resultado leyendo solo APROBACION_INTERNA, pero esa
+    columna guarda el MISMO texto ("Servicio no aprobado – requiere
+    seguimiento") tanto para una encuesta completa que salió mal como para
+    una llamada que ni siquiera se logró contestar -- así que toda llamada
+    fallida (número equivocado, no contestó, etc.) terminaba contada como
+    "Rechazada", como si el servicio se hubiera evaluado y reprobado, cuando
+    en realidad nunca se evaluó. METODO_AUDITORIA sí distingue ambos casos
+    ("Llamada Telefónica Completada" vs. "Gestión sin encuesta - ..."), así
+    que se usa esa columna primero.
+    """
+    metodo = str(row.get('METODO_AUDITORIA', '')).strip()
+    if metodo and 'Completada' not in metodo:
+        return 'Sin Gestión'
+    aprob = str(row.get('APROBACION_INTERNA', '')).strip()
+    if aprob == 'Servicio aprobado':
+        return 'Aprobado'
+    if aprob == 'Servicio con observaciones':
+        return 'Con Obs.'
+    if aprob.startswith('Servicio no aprobado'):
+        return 'Rechazado'
+    return 'Sin Gestión'
+
+
 def generar_pdf_reporte_calidad(df_filtered, f_inicio, f_fin) -> bytes:
     """
-    Genera un reporte PDF gerencial detallado de las auditorías de calidad filtradas.
-    Evita KeyErrors utilizando búsquedas seguras y fallbacks automáticos.
+    Genera un reporte PDF gerencial de las auditorías de calidad (encuestas
+    de satisfacción y gestiones de llamada) filtradas: indicadores clave,
+    desglose de diagnóstico por pregunta, resumen por técnico y el listado
+    detallado.
     """
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
-    
+
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 10, safestr("REPORTE GERENCIAL: AUDITORÍAS DE CALIDAD"), ln=True, align="C")
-    
+
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
-    
+
     inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
     fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
     pdf.cell(0, 6, safestr(f"Rango de Fechas: {inicio_str} al {fin_str}"), ln=True, align="C")
     pdf.ln(5)
-    
+
     if df_filtered.empty:
         pdf.set_font("Helvetica", "I", 10)
         pdf.cell(0, 10, "No se encontraron registros de calidad en el rango seleccionado.", ln=True, align="C")
         return finalizar_pdf(pdf)
-        
-    # Calcular métricas básicas con tolerancia a columnas ausentes
+
+    df_filtered = df_filtered.copy()
     total_evaluaciones = len(df_filtered)
-    
-    # Mapeo inteligente de CSAT / Satisfacción General
-    if 'CSAT' in df_filtered.columns:
-        df_filtered['CSAT_NUM'] = pd.to_numeric(df_filtered['CSAT'], errors='coerce')
-    elif 'SATISFACCION_GENERAL' in df_filtered.columns:
-        # Traducimos las respuestas de texto de la nueva encuesta a escala numérica para calcular promedio
-        satisfaccion_map = {
-            "MUY SATISFECHO": 5.0,
-            "SATISFECHO": 4.0,
-            "POCO SATISFECHO": 2.5,
-            "INSATISFECHO": 1.0,
-            "N/A": np.nan,
-            "PENDIENTE": np.nan
-        }
-        df_filtered['CSAT_NUM'] = df_filtered['SATISFACCION_GENERAL'].astype(str).str.upper().str.strip().map(satisfaccion_map)
+
+    # CSAT = % de respuestas que calificaron 4 o 5 en la pregunta de
+    # satisfacción general (P7), sobre las respuestas VÁLIDAS -- exactamente
+    # el mismo criterio que ya se muestra en pantalla en el Histórico de
+    # Control de Calidad. La versión anterior de este PDF buscaba una
+    # columna "CSAT"/"SATISFACCION_GENERAL" que el formulario actual ya no
+    # llena, así que siempre salía "N/A".
+    if 'P7_SATISFACCION_GENERAL' in df_filtered.columns:
+        p7_valores = pd.to_numeric(df_filtered['P7_SATISFACCION_GENERAL'], errors='coerce').dropna()
     else:
-        df_filtered['CSAT_NUM'] = np.nan
-        
-    promedio_csat = df_filtered['CSAT_NUM'].mean()
-    promedio_csat_str = f"{promedio_csat:.2f} / 5.0" if pd.notnull(promedio_csat) and not pd.isna(promedio_csat) else "N/A"
-    
-    # Conteo de estados de aprobación
-    aprobadas = 0
-    observadas = 0
-    rechazadas = 0
-    
-    if 'APROBACION_INTERNA' in df_filtered.columns:
-        conteo_aprobacion = df_filtered['APROBACION_INTERNA'].value_counts()
-        aprobadas = conteo_aprobacion.get("Servicio aprobado", 0)
-        observadas = conteo_aprobacion.get("Servicio con observaciones", 0)
-        rechazadas = conteo_aprobacion.get("Servicio no aprobado – requiere seguimiento", 0)
-    
+        p7_valores = pd.Series(dtype=float)
+    respuestas_validas = int(len(p7_valores))
+    califican_top = int((p7_valores >= 4).sum())
+    csat_pct_str = f"{(califican_top / respuestas_validas * 100):.0f}% ({califican_top} de {respuestas_validas} respuestas)" if respuestas_validas > 0 else "N/A (sin encuestas completadas)"
+
+    df_filtered['_RESULTADO'] = df_filtered.apply(_clasificar_gestion_calidad, axis=1)
+    conteo_resultado = df_filtered['_RESULTADO'].value_counts()
+    aprobadas = int(conteo_resultado.get('Aprobado', 0))
+    observadas = int(conteo_resultado.get('Con Obs.', 0))
+    rechazadas = int(conteo_resultado.get('Rechazado', 0))
+    sin_gestion = int(conteo_resultado.get('Sin Gestión', 0))
+
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(40, 50, 100)
     pdf.cell(0, 6, safestr("1. RESUMEN DE INDICADORES CLAVE"), ln=True)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(50, 50, 50)
-    pdf.cell(0, 6, safestr(f"Total Auditorías Realizadas: {total_evaluaciones}"), ln=True)
-    pdf.cell(0, 6, safestr(f"Índice de Satisfacción Promedio (CSAT Equivalente): {promedio_csat_str}"), ln=True)
-    pdf.cell(0, 6, safestr(f"Estatus de Aprobación: Aprobadas: {aprobadas} | Con Observaciones: {observadas} | Reclamos/Rechazadas: {rechazadas}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Total Gestiones Registradas: {total_evaluaciones}"), ln=True)
+    pdf.cell(0, 6, safestr(f"CSAT (satisfacción general, calif. 4 o 5): {csat_pct_str}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Encuestas completas -- Aprobadas: {aprobadas} | Con Observaciones: {observadas} | Rechazadas: {rechazadas}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Sin gestión completada (no contestó, número equivocado, etc.): {sin_gestion}"), ln=True)
     pdf.ln(5)
-    
-    # Tabla detallada (190mm de ancho total)
+
+    # --- Desglose de diagnóstico por pregunta (1 a 5), igual que en pantalla ---
+    diag_preguntas = {
+        'P1_PUNTUALIDAD': '1. Puntualidad',
+        'P2_PRESENTACION_TRATO': '2. Presentación / Trato',
+        'P3_CLARIDAD_EXPLICACION': '3. Claridad de explicación',
+        'P4_EXPLICACION_TV_CCVEO': '4. TV Cable / CCVEO',
+        'P5_CALIDAD_SERVICIO': '5. Calidad del servicio',
+        'P6_LIMPIEZA_TRABAJO': '6. Limpieza del área',
+    }
+    filas_diag = []
+    for col_p, etiqueta in diag_preguntas.items():
+        if col_p in df_filtered.columns:
+            serie = pd.to_numeric(df_filtered[col_p], errors='coerce').dropna()
+            if len(serie) > 0:
+                filas_diag.append((etiqueta, f"{serie.mean():.2f}", str(len(serie))))
+    if filas_diag:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 6, safestr("2. DIAGNÓSTICO POR PREGUNTA (encuestas completas)"), ln=True)
+        w_d = [90, 50, 50]
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 7)
+        for i, h in enumerate(["INDICADOR", "PROMEDIO (1-5)", "RESPUESTAS"]):
+            pdf.cell(w_d[i], 6, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 7)
+        for etiqueta, prom, n in filas_diag:
+            pdf.cell(w_d[0], 6, safestr(etiqueta), border=1, align="L")
+            pdf.cell(w_d[1], 6, safestr(prom), border=1, align="C")
+            pdf.cell(w_d[2], 6, safestr(n), border=1, align="C")
+            pdf.ln()
+        pdf.ln(4)
+
+    # --- Resumen por técnico ---
+    if 'TECNICO' in df_filtered.columns:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 6, safestr("3. RESUMEN POR TÉCNICO"), ln=True)
+        w_t = [55, 25, 25, 25, 25, 35]
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 7)
+        for i, h in enumerate(["TÉCNICO", "TOTAL", "APROB.", "OBS.", "RECH.", "SIN GESTIÓN"]):
+            pdf.cell(w_t[i], 6, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 7)
+        resumen_tec = df_filtered.groupby(df_filtered['TECNICO'].apply(lambda v: fmt_celda(v)))['_RESULTADO'].value_counts().unstack(fill_value=0)
+        resumen_tec['TOTAL'] = resumen_tec.sum(axis=1)
+        resumen_tec = resumen_tec.sort_values('TOTAL', ascending=False)
+        for tecnico, fila_t in resumen_tec.iterrows():
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                pdf.set_fill_color(230, 235, 245)
+                pdf.set_font("Helvetica", "B", 7)
+                for i, h in enumerate(["TÉCNICO", "TOTAL", "APROB.", "OBS.", "RECH.", "SIN GESTIÓN"]):
+                    pdf.cell(w_t[i], 6, safestr(h), border=1, fill=True, align="C")
+                pdf.ln()
+                pdf.set_font("Helvetica", "", 7)
+            pdf.cell(w_t[0], 6, safestr(str(tecnico)[:32]), border=1, align="L")
+            pdf.cell(w_t[1], 6, safestr(int(fila_t.get('TOTAL', 0))), border=1, align="C")
+            pdf.cell(w_t[2], 6, safestr(int(fila_t.get('Aprobado', 0))), border=1, align="C")
+            pdf.cell(w_t[3], 6, safestr(int(fila_t.get('Con Obs.', 0))), border=1, align="C")
+            pdf.cell(w_t[4], 6, safestr(int(fila_t.get('Rechazado', 0))), border=1, align="C")
+            pdf.cell(w_t[5], 6, safestr(int(fila_t.get('Sin Gestión', 0))), border=1, align="C")
+            pdf.ln()
+        pdf.ln(4)
+
+    # --- Listado detallado (190mm de ancho total) ---
+    if pdf.get_y() > 240:
+        pdf.add_page()
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 6, safestr("2. LISTADO DETALLADO DE AUDITORÍAS"), ln=True)
-    
-    pdf.set_fill_color(230, 235, 245)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "B", 7)
-    
+    pdf.cell(0, 6, safestr("4. LISTADO DETALLADO DE GESTIONES"), ln=True)
+
     w = [25, 45, 50, 15, 30, 25]
-    headers = ["TICKET", "TÉCNICO", "CLIENTE", "SATISF.", "ESTÉTICA", "APROBACIÓN"]
-    
-    for i in range(len(headers)):
-        pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
-    pdf.ln()
-    
+    headers = ["TICKET", "TÉCNICO", "CLIENTE", "P7", "FECHA GESTIÓN", "RESULTADO"]
+
+    def _encabezado_calidad():
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 7)
+        for i in range(len(headers)):
+            pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
+        pdf.ln()
+
+    _encabezado_calidad()
     pdf.set_font("Helvetica", "", 7)
     for _, row in df_filtered.iterrows():
         if pdf.get_y() > 270:
             pdf.add_page()
-            pdf.set_fill_color(230, 235, 245)
-            pdf.set_font("Helvetica", "B", 7)
-            for i in range(len(headers)):
-                pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
-            pdf.ln()
+            _encabezado_calidad()
             pdf.set_font("Helvetica", "", 7)
-            
-        ticket = str(row.get('TICKET', 'N/D'))
-        tec = str(row.get('TECNICO', 'N/D'))[:22]
-        cli = str(row.get('NOMBRE_CLIENTE', 'N/D'))[:24]
-        
-        # Obtener nivel de satisfacción de forma segura
-        satisf_val = str(row.get('CSAT', ''))
-        if not satisf_val or satisf_val.upper() in ["NAN", "NONE", "N/D", "", "PENDIENTE"]:
-            satisf_val = str(row.get('SATISFACCION_GENERAL', 'N/D'))
-            # Abreviar los textos largos del nuevo CSAT para que quepan en la columna de ancho 15
-            if "muy satisfecho" in satisf_val.lower(): satisf_val = "Muy Sat."
-            elif "insatisfecho" in satisf_val.lower(): satisf_val = "Insat."
-            elif "poco satisfecho" in satisf_val.lower(): satisf_val = "Poco Sat."
-            elif "satisfecho" in satisf_val.lower(): satisf_val = "Sat."
-            
-        estetica = str(row.get('ESTETICA', 'N/D'))[:15]
-        aprob = str(row.get('APROBACION_INTERNA', 'N/D'))
-        
-        if "aprobado" in aprob.lower() and "no" not in aprob.lower() and "con" not in aprob.lower():
-            aprob_str = "Aprobado"
-        elif "observaciones" in aprob.lower():
-            aprob_str = "Con Obs."
-        else:
-            aprob_str = "Rechazado"
-            
-        pdf.cell(w[0], 6, safestr(ticket), border=1, align="C")
-        pdf.cell(w[1], 6, safestr(tec), border=1, align="L")
-        pdf.cell(w[2], 6, safestr(cli), border=1, align="L")
-        pdf.cell(w[3], 6, safestr(satisf_val), border=1, align="C")
-        pdf.cell(w[4], 6, safestr(estetica), border=1, align="C")
-        pdf.cell(w[5], 6, safestr(aprob_str), border=1, align="C")
+
+        p7_val = row.get('P7_SATISFACCION_GENERAL', None)
+        p7_str = fmt_celda(p7_val) if pd.notna(p7_val) and str(p7_val).strip() not in ('', 'N/A') else "N/D"
+        fecha_gestion = str(row.get('FECHA_GESTION', ''))[:16]
+
+        pdf.cell(w[0], 6, fmt_celda(row.get('TICKET'))[:16], border=1, align="C")
+        pdf.cell(w[1], 6, fmt_celda(row.get('TECNICO'))[:22], border=1, align="L")
+        pdf.cell(w[2], 6, fmt_celda(row.get('NOMBRE_CLIENTE'))[:24], border=1, align="L")
+        pdf.cell(w[3], 6, p7_str, border=1, align="C")
+        pdf.cell(w[4], 6, fmt_celda(fecha_gestion), border=1, align="C")
+        pdf.cell(w[5], 6, safestr(row['_RESULTADO']), border=1, align="C")
         pdf.ln()
-        
+
     return finalizar_pdf(pdf)
 
 def generar_pdf_cierres_insfibra(df_mostrar, f_inicio, f_fin, total, llamadas_hechas, pendientes) -> bytes:
@@ -4735,13 +4830,46 @@ def generar_pdf_cierres_insfibra(df_mostrar, f_inicio, f_fin, total, llamadas_he
     pdf.cell(0, 6, safestr(f"Pendientes de llamar: {pendientes}"), ln=True)
     pdf.ln(5)
 
+    # --- Resumen por técnico: cuántos cierres y cuántos siguen sin llamada ---
+    if 'TECNICO' in df_mostrar.columns:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(40, 50, 100)
+        pdf.cell(0, 6, safestr("2. RESUMEN POR TÉCNICO"), ln=True)
+        w_t = [90, 30, 35, 35]
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 7)
+        for i, h in enumerate(["TÉCNICO", "CIERRES", "YA LLAMADAS", "PENDIENTES"]):
+            pdf.cell(w_t[i], 6, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 7)
+        df_mostrar['_TEC_FMT'] = df_mostrar['TECNICO'].apply(lambda v: fmt_celda(v))
+        for tecnico, grupo in df_mostrar.groupby('_TEC_FMT'):
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                pdf.set_fill_color(230, 235, 245)
+                pdf.set_font("Helvetica", "B", 7)
+                for i, h in enumerate(["TÉCNICO", "CIERRES", "YA LLAMADAS", "PENDIENTES"]):
+                    pdf.cell(w_t[i], 6, safestr(h), border=1, fill=True, align="C")
+                pdf.ln()
+                pdf.set_font("Helvetica", "", 7)
+            n_total_t = len(grupo)
+            n_llamadas_t = int((grupo['¿SE LLAMÓ?'] == "✅ Sí").sum())
+            pdf.cell(w_t[0], 6, safestr(str(tecnico)[:48]), border=1, align="L")
+            pdf.cell(w_t[1], 6, safestr(n_total_t), border=1, align="C")
+            pdf.cell(w_t[2], 6, safestr(n_llamadas_t), border=1, align="C")
+            pdf.cell(w_t[3], 6, safestr(n_total_t - n_llamadas_t), border=1, align="C")
+            pdf.ln()
+        pdf.ln(4)
+
+    if pdf.get_y() > 240:
+        pdf.add_page()
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_text_color(40, 50, 100)
-    pdf.cell(0, 6, safestr("2. LISTADO DETALLADO"), ln=True)
+    pdf.cell(0, 6, safestr("3. LISTADO DETALLADO"), ln=True)
 
     w = [20, 25, 50, 40, 30, 25]
     headers = ["NUM", "CLIENTE", "NOMBRE", "TÉCNICO", "FECHA DE CIERRE", "¿SE LLAMÓ?"]
-    cols_df = ['NUM', 'CLIENTE', 'NOMBRE', 'TECNICO', 'FECHA DE CIERRE', '¿SE LLAMÓ?']
 
     def _encabezado_tabla():
         pdf.set_fill_color(230, 235, 245)
@@ -4759,12 +4887,12 @@ def generar_pdf_cierres_insfibra(df_mostrar, f_inicio, f_fin, total, llamadas_he
             _encabezado_tabla()
             pdf.set_font("Helvetica", "", 7)
 
-        pdf.cell(w[0], 6, safestr(str(row.get('NUM', 'N/D'))), border=1, align="C")
-        pdf.cell(w[1], 6, safestr(str(row.get('CLIENTE', 'N/D'))), border=1, align="C")
-        pdf.cell(w[2], 6, safestr(str(row.get('NOMBRE', 'N/D'))[:28]), border=1, align="L")
-        pdf.cell(w[3], 6, safestr(str(row.get('TECNICO', 'N/D'))[:22]), border=1, align="L")
-        pdf.cell(w[4], 6, safestr(str(row.get('FECHA DE CIERRE', 'N/D'))), border=1, align="C")
-        pdf.cell(w[5], 6, safestr(str(row.get('¿SE LLAMÓ?', 'N/D'))), border=1, align="C")
+        pdf.cell(w[0], 6, fmt_celda(row.get('NUM')), border=1, align="C")
+        pdf.cell(w[1], 6, fmt_celda(row.get('CLIENTE')), border=1, align="C")
+        pdf.cell(w[2], 6, fmt_celda(row.get('NOMBRE'))[:28], border=1, align="L")
+        pdf.cell(w[3], 6, fmt_celda(row.get('TECNICO'))[:22], border=1, align="L")
+        pdf.cell(w[4], 6, fmt_celda(row.get('FECHA DE CIERRE')), border=1, align="C")
+        pdf.cell(w[5], 6, fmt_celda(row.get('¿SE LLAMÓ?')), border=1, align="C")
         pdf.ln()
 
     return finalizar_pdf(pdf)
@@ -4914,14 +5042,52 @@ def marcar_auditoria_fibra_convertida(conn, orden_num: str, fecha_auditoria: str
         return False
 
 
+def _dibujar_tabla_conteo(pdf, titulo, conteo, etiqueta_col="CATEGORÍA"):
+    """
+    Dibuja una tabla de 2 columnas (categoría, cantidad) a partir de un
+    pandas.Series de conteos (lo que devuelve value_counts()/groupby().size()).
+    La usan los resúmenes por técnico/servicio/estética de los reportes de
+    auditoría de campo, para no repetir el dibujado 3 veces.
+    """
+    if conteo is None or len(conteo) == 0:
+        return
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 6, safestr(titulo), ln=True)
+    w = [140, 50]
+
+    def _encabezado():
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.cell(w[0], 6, safestr(etiqueta_col), border=1, fill=True, align="C")
+        pdf.cell(w[1], 6, safestr("CANTIDAD"), border=1, fill=True, align="C")
+        pdf.ln()
+
+    _encabezado()
+    pdf.set_font("Helvetica", "", 7)
+    for categoria, cantidad in conteo.items():
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            _encabezado()
+            pdf.set_font("Helvetica", "", 7)
+        pdf.cell(w[0], 6, safestr(fmt_celda(categoria)[:60]), border=1, align="L")
+        pdf.cell(w[1], 6, safestr(int(cantidad)), border=1, align="C")
+        pdf.ln()
+    pdf.ln(4)
+
+
 def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
     """
-    Genera un reporte PDF gerencial detallado de las auditorías de campo filtradas (Operaciones o Instalaciones).
+    Genera un reporte PDF gerencial de las auditorías de campo filtradas
+    (Operaciones, Instalaciones o Fibra): resumen de indicadores, un
+    desglose por técnico (o por servicio/estética en Operaciones, que no
+    registra técnico) y el listado detallado.
     """
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
-    
+
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(40, 50, 100)
     if tipo == "operaciones":
@@ -4931,38 +5097,59 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
     else:
         titulo_rep = "REPORTE GERENCIAL: AUDITORÍA DE INSTALACIONES (INSFIBRA)"
     pdf.cell(0, 10, safestr(titulo_rep), ln=True, align="C")
-    
+
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 100, 100)
     inicio_str = f_inicio.strftime('%d/%m/%Y') if hasattr(f_inicio, 'strftime') else str(f_inicio)
     fin_str = f_fin.strftime('%d/%m/%Y') if hasattr(f_fin, 'strftime') else str(f_fin)
     pdf.cell(0, 6, safestr(f"Rango de Fechas: {inicio_str} al {fin_str}"), ln=True, align="C")
     pdf.ln(5)
-    
+
     if df_filtered.empty:
         pdf.set_font("Helvetica", "I", 10)
         pdf.cell(0, 10, "No se encontraron registros de auditoría en el rango seleccionado.", ln=True, align="C")
         return finalizar_pdf(pdf)
-        
+
+    df_filtered = df_filtered.copy()
     pdf.seccion_titulo("1. RESUMEN DE COMPROBACIONES TÉCNICAS")
     total_auditorias = len(df_filtered)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(50, 50, 50)
     pdf.cell(0, 6, safestr(f"Total Auditorías de Campo Realizadas: {total_auditorias}"), ln=True)
     pdf.ln(5)
-    
-    pdf.seccion_titulo("2. LISTADO DETALLADO DE COMPROBACIONES")
+
+    # --- Desglose gerencial: por técnico (Instalaciones/Fibra) o por
+    # servicio/estética (Operaciones, que no registra técnico en el
+    # formulario -- solo el supervisor que hizo la auditoría). ---
+    if tipo == "operaciones":
+        if 'CODIGO_SERVICIO' in df_filtered.columns:
+            _dibujar_tabla_conteo(pdf, "2. RESUMEN POR SERVICIO", df_filtered['CODIGO_SERVICIO'].apply(fmt_celda).value_counts(), "SERVICIO")
+        if 'ESTETICA' in df_filtered.columns:
+            _dibujar_tabla_conteo(pdf, "3. RESUMEN POR ESTÉTICA", df_filtered['ESTETICA'].apply(fmt_celda).value_counts(), "ESTÉTICA")
+        num_seccion_listado = "4"
+    else:
+        if 'TECNICO' in df_filtered.columns:
+            _dibujar_tabla_conteo(pdf, "2. RESUMEN POR TÉCNICO", df_filtered['TECNICO'].apply(fmt_celda).value_counts(), "TÉCNICO")
+        if tipo == "fibra" and 'EVALUACION_TRABAJO' in df_filtered.columns:
+            _dibujar_tabla_conteo(pdf, "3. RESUMEN POR EVALUACIÓN DE TRABAJO", df_filtered['EVALUACION_TRABAJO'].apply(fmt_celda).value_counts(), "EVALUACIÓN")
+            num_seccion_listado = "4"
+        else:
+            num_seccion_listado = "3"
+
+    if pdf.get_y() > 240:
+        pdf.add_page()
+    pdf.seccion_titulo(f"{num_seccion_listado}. LISTADO DETALLADO DE COMPROBACIONES")
     pdf.set_fill_color(230, 235, 245)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "B", 7)
-    
+
     if tipo == "operaciones":
         w = [25, 25, 45, 25, 25, 45]
         headers = ["ORDEN", "CLIENTE", "SERVICIO", "VIÑETA", "MUFA", "ESTÉTICA"]
         for i in range(len(headers)):
             pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
         pdf.ln()
-        
+
         pdf.set_font("Helvetica", "", 7)
         for _, row in df_filtered.iterrows():
             if pdf.get_y() > 270:
@@ -4973,13 +5160,13 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
                     pdf.cell(w[i], 7, safestr(headers[i]), border=1, fill=True, align="C")
                 pdf.ln()
                 pdf.set_font("Helvetica", "", 7)
-                
-            pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
-            pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
-            pdf.cell(w[2], 6, safestr(str(row.get('CODIGO_SERVICIO', '')))[:24], border=1, align="L")
-            pdf.cell(w[3], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
-            pdf.cell(w[4], 6, safestr(str(row.get('MUFA', ''))), border=1, align="C")
-            pdf.cell(w[5], 6, safestr(str(row.get('ESTETICA', ''))), border=1, align="C")
+
+            pdf.cell(w[0], 6, fmt_celda(row.get('ORDEN_NUM')), border=1, align="C")
+            pdf.cell(w[1], 6, fmt_celda(row.get('CODIGO_CLIENTE')), border=1, align="C")
+            pdf.cell(w[2], 6, fmt_celda(row.get('CODIGO_SERVICIO'))[:24], border=1, align="L")
+            pdf.cell(w[3], 6, fmt_celda(row.get('VINETA')), border=1, align="C")
+            pdf.cell(w[4], 6, fmt_celda(row.get('MUFA')), border=1, align="C")
+            pdf.cell(w[5], 6, fmt_celda(row.get('ESTETICA')), border=1, align="C")
             pdf.ln()
     elif tipo == "fibra":
         w = [20, 20, 40, 35, 20, 25, 30]
@@ -4999,13 +5186,13 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
                 pdf.ln()
                 pdf.set_font("Helvetica", "", 7)
 
-            pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
-            pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
-            pdf.cell(w[2], 6, safestr(str(row.get('TECNICO', '')))[:22], border=1, align="L")
-            pdf.cell(w[3], 6, safestr(str(row.get('RUTA_ACOMETIDA', '')))[:26], border=1, align="L")
-            pdf.cell(w[4], 6, safestr(str(row.get('METRAJE', ''))), border=1, align="C")
-            pdf.cell(w[5], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
-            pdf.cell(w[6], 6, safestr(str(row.get('EVALUACION_TRABAJO', '')))[:20], border=1, align="L")
+            pdf.cell(w[0], 6, fmt_celda(row.get('ORDEN_NUM')), border=1, align="C")
+            pdf.cell(w[1], 6, fmt_celda(row.get('CODIGO_CLIENTE')), border=1, align="C")
+            pdf.cell(w[2], 6, fmt_celda(row.get('TECNICO'))[:22], border=1, align="L")
+            pdf.cell(w[3], 6, fmt_celda(row.get('RUTA_ACOMETIDA'))[:26], border=1, align="L")
+            pdf.cell(w[4], 6, fmt_celda(row.get('METRAJE')), border=1, align="C")
+            pdf.cell(w[5], 6, fmt_celda(row.get('VINETA')), border=1, align="C")
+            pdf.cell(w[6], 6, fmt_celda(row.get('EVALUACION_TRABAJO'))[:20], border=1, align="L")
             pdf.ln()
 
     else:
@@ -5026,13 +5213,13 @@ def generar_pdf_reporte_campo(df_filtered, f_inicio, f_fin, tipo: str) -> bytes:
                 pdf.ln()
                 pdf.set_font("Helvetica", "", 7)
 
-            pdf.cell(w[0], 6, safestr(str(row.get('ORDEN_NUM', ''))), border=1, align="C")
-            pdf.cell(w[1], 6, safestr(str(row.get('CODIGO_CLIENTE', ''))), border=1, align="C")
-            pdf.cell(w[2], 6, safestr(str(row.get('TECNICO', '')))[:24], border=1, align="L")
-            pdf.cell(w[3], 6, safestr(str(row.get('TIPO_FO', ''))), border=1, align="C")
-            pdf.cell(w[4], 6, safestr(str(row.get('METROS_FO', ''))), border=1, align="C")
-            pdf.cell(w[5], 6, safestr(str(row.get('VINETA', ''))), border=1, align="C")
-            pdf.cell(w[6], 6, safestr(str(row.get('MUFA', ''))), border=1, align="C")
+            pdf.cell(w[0], 6, fmt_celda(row.get('ORDEN_NUM')), border=1, align="C")
+            pdf.cell(w[1], 6, fmt_celda(row.get('CODIGO_CLIENTE')), border=1, align="C")
+            pdf.cell(w[2], 6, fmt_celda(row.get('TECNICO'))[:24], border=1, align="L")
+            pdf.cell(w[3], 6, fmt_celda(row.get('TIPO_FO')), border=1, align="C")
+            pdf.cell(w[4], 6, fmt_celda(row.get('METROS_FO')), border=1, align="C")
+            pdf.cell(w[5], 6, fmt_celda(row.get('VINETA')), border=1, align="C")
+            pdf.cell(w[6], 6, fmt_celda(row.get('MUFA')), border=1, align="C")
             pdf.ln()
 
     return finalizar_pdf(pdf)
