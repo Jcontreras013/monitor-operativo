@@ -872,7 +872,14 @@ def mostrar_modulo_calidad(conn, df_base):
                         st.markdown("#### 📥 Exportación de Reporte en PDF")
                         col_pdf1, col_pdf2 = st.columns([1, 2])
                         with col_pdf1:
-                            if st.button("📄 GENERAR REPORTE PDF DE CALIDAD", use_container_width=True, type="primary", key="btn_pdf_calidad_action"):
+                            # El botón dice "de Calidad" solo cuando de verdad es la
+                            # encuesta de satisfacción -- si no, deja claro que genera
+                            # el PDF del tipo de auditoría elegido arriba (Operaciones,
+                            # Instalaciones o Fibra), que antes quedaba escondido bajo
+                            # un rótulo que solo mencionaba "Calidad" y hacía pensar
+                            # que el botón no aplicaba a las auditorías de Miguel.
+                            etiqueta_btn_pdf = "📄 GENERAR REPORTE PDF DE CALIDAD" if hoja_target == "Calidad" else f"📄 GENERAR REPORTE PDF DE {tipo_consulta.upper()}"
+                            if st.button(etiqueta_btn_pdf, use_container_width=True, type="primary", key="btn_pdf_calidad_action"):
                                 with st.spinner("Preparando archivo de reporte..."):
                                     from tools import generar_pdf_reporte_calidad, generar_pdf_reporte_campo
                                     if hoja_target == "Calidad":
