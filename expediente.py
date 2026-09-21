@@ -1811,6 +1811,13 @@ def mostrar_modulo_expedientes(conn, df_base):
                     lambda r: normalizar_motivo(r['TIPO_FALTA'], r['COMENTARIO']), axis=1
                 )
 
+                # Copia SIN los filtros de colaborador/fecha/tipo que se aplican
+                # más abajo -- se usa después para el resumen "lo que va del
+                # mes" de la tabla principal, que debe reflejar el total real
+                # del mes en curso sin importar qué rango de fechas se haya
+                # elegido arriba para la tabla.
+                df_sin_filtrar = df_mostrar.copy()
+
                 with st.container():
                     col1, col2, col3 = st.columns(3)
                     with col1:
@@ -2054,11 +2061,44 @@ def mostrar_modulo_expedientes(conn, df_base):
                     
                     st.dataframe(
                         df_tabla.iloc[::-1],
-                        hide_index=True, 
+                        hide_index=True,
                         use_container_width=True,
                         height=250
                     )
-                    
+
+                    # --- RESUMEN "LO QUE VA DEL MES" DEL COLABORADOR FILTRADO ---
+                    # Cuenta TODAS las faltas del mes calendario en curso de esa
+                    # persona, sin importar el rango de fechas ni el tipo de
+                    # registro elegidos arriba en los filtros -- es un resumen
+                    # aparte, siempre del mes actual, para que el supervisor
+                    # vea de un vistazo cuántas incidencias lleva en lo que va
+                    # del mes sin tener que ir cambiando el rango de fechas.
+                    if filtro_nombre != "VER TODOS":
+                        hoy_resumen = get_honduras_time().date()
+                        df_persona_mes = df_sin_filtrar[df_sin_filtrar['TECNICO'] == filtro_nombre].copy()
+                        df_persona_mes['FECHA_DT'] = pd.to_datetime(df_persona_mes['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+                        df_persona_mes = df_persona_mes[
+                            df_persona_mes['FECHA_DT'].notna() &
+                            (df_persona_mes['FECHA_DT'].dt.year == hoy_resumen.year) &
+                            (df_persona_mes['FECHA_DT'].dt.month == hoy_resumen.month)
+                        ]
+
+                        meses_es = {
+                            1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
+                            7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
+                        }
+                        nombre_mes_actual = meses_es[hoy_resumen.month]
+
+                        st.markdown(f"##### 📅 Resumen de {filtro_nombre} — lo que va de {nombre_mes_actual} de {hoy_resumen.year}")
+                        if df_persona_mes.empty:
+                            st.caption("Sin faltas registradas este mes. ✅")
+                        else:
+                            df_resumen_mes = df_persona_mes['TIPO_FALTA'].value_counts().reset_index()
+                            df_resumen_mes.columns = ['Motivo', 'Cantidad']
+                            fila_total = pd.DataFrame([{'Motivo': 'TOTAL DEL MES', 'Cantidad': int(df_resumen_mes['Cantidad'].sum())}])
+                            df_resumen_mes = pd.concat([df_resumen_mes, fila_total], ignore_index=True)
+                            st.dataframe(df_resumen_mes, hide_index=True, use_container_width=True)
+
                     st.markdown("<br>", unsafe_allow_html=True)
 
                     # --- 4. ACCIONES SOBRE EL REGISTRO SELECCIONADO ---
