@@ -1984,7 +1984,6 @@ def mostrar_modulo_expedientes(conn, df_base):
             else:
                 df_consolidado = df_mes_consolidado['TECNICO'].value_counts().reset_index()
                 df_consolidado.columns = ['Colaborador', 'Faltas del Mes']
-                st.dataframe(df_consolidado, hide_index=True, use_container_width=True)
 
                 id_estado_consolidado = f"consolidado_mes_{hoy_consolidado.year}_{hoy_consolidado.month}_{len(df_mes_consolidado)}"
                 nombre_archivo_consolidado = f"Consolidado_Faltas_{nombre_mes_actual}_{hoy_consolidado.year}.pdf"
