@@ -1951,69 +1951,6 @@ def mostrar_modulo_expedientes(conn, df_base):
 
     st.title("📁 Gestión de Expedientes y Reportes")
 
-    # ==========================================================================
-    # CONSOLIDADO MENSUAL -- vista simple para gerencia: solo el nombre de
-    # cada colaborador y cuántas faltas lleva en lo que va del mes, sin el
-    # detalle de motivos/fechas/descripciones del historial completo (que
-    # viene más abajo, para quien sí necesite entrar al detalle). Se calcula
-    # sobre TODO el personal (técnicos + administrativos) del mes calendario
-    # actual, sin depender de ningún filtro.
-    # ==========================================================================
-    with st.container(border=True):
-        hoy_consolidado = get_honduras_time().date()
-        meses_es_consolidado = {
-            1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
-            7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
-        }
-        nombre_mes_actual = meses_es_consolidado[hoy_consolidado.month]
-        st.subheader(f"📊 Consolidado del Mes — {nombre_mes_actual.capitalize()} {hoy_consolidado.year}")
-        st.caption("Cuántas faltas lleva registradas cada colaborador en lo que va del mes.")
-
-        df_todo_consolidado = obtener_datos_memoria(conn)
-        if df_todo_consolidado is not None and not df_todo_consolidado.empty and 'TECNICO' in df_todo_consolidado.columns and 'FECHA_INCIDENCIA' in df_todo_consolidado.columns:
-            df_mes_consolidado = df_todo_consolidado.copy()
-            df_mes_consolidado['FECHA_DT'] = pd.to_datetime(df_mes_consolidado['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
-            df_mes_consolidado = df_mes_consolidado[
-                df_mes_consolidado['FECHA_DT'].notna() &
-                (df_mes_consolidado['FECHA_DT'].dt.year == hoy_consolidado.year) &
-                (df_mes_consolidado['FECHA_DT'].dt.month == hoy_consolidado.month)
-            ]
-
-            if df_mes_consolidado.empty:
-                st.success("✅ Nadie tiene faltas registradas este mes.")
-            else:
-                df_consolidado = df_mes_consolidado['TECNICO'].value_counts().reset_index()
-                df_consolidado.columns = ['Colaborador', 'Faltas del Mes']
-
-                id_estado_consolidado = f"consolidado_mes_{hoy_consolidado.year}_{hoy_consolidado.month}_{len(df_mes_consolidado)}"
-                nombre_archivo_consolidado = f"Consolidado_Faltas_{nombre_mes_actual}_{hoy_consolidado.year}.pdf"
-                if st.session_state.get('estado_pdf_consolidado_mes') == id_estado_consolidado:
-                    st.download_button(
-                        "⬇️ Descargar Consolidado en PDF",
-                        data=st.session_state['pdf_consolidado_mes_bytes'],
-                        file_name=nombre_archivo_consolidado,
-                        mime="application/pdf",
-                        key="dl_pdf_consolidado_mes"
-                    )
-                else:
-                    if st.button("📥 Preparar Consolidado en PDF", key="btn_pdf_consolidado_mes"):
-                        with st.spinner("Generando PDF..."):
-                            st.session_state['pdf_consolidado_mes_bytes'] = generar_pdf_consolidado_mensual(
-                                df_consolidado, nombre_mes_actual, hoy_consolidado.year
-                            )
-                            st.session_state['estado_pdf_consolidado_mes'] = id_estado_consolidado
-                        st.download_button(
-                            "⬇️ Descargar Consolidado en PDF",
-                            data=st.session_state['pdf_consolidado_mes_bytes'],
-                            file_name=nombre_archivo_consolidado,
-                            mime="application/pdf",
-                            key="dl_pdf_consolidado_mes_directo"
-                        )
-        else:
-            st.info("No hay datos disponibles todavía para armar el consolidado.")
-
-    st.divider()
-
     def generar_vista_historial(df_mostrar, titulo_seccion, tab_id):
         try:
             col_tit, col_ref = st.columns([4, 1])
@@ -2193,6 +2130,68 @@ def mostrar_modulo_expedientes(conn, df_base):
                         st.dataframe(df_resumen_rubros, use_container_width=True, hide_index=True)
                     else:
                         st.info("📊 No hay datos disponibles para los filtros seleccionados.")
+
+                    # --- CONSOLIDADO MENSUAL PARA GERENCIA (solo en la pestaña
+                    # principal de Operaciones y Técnicos, para no repetir el
+                    # mismo botón global en cada área administrativa) ---
+                    # Vista simple: solo el nombre de cada colaborador y cuántas
+                    # faltas lleva en lo que va del mes, sin el detalle de
+                    # motivos/fechas/descripciones del historial de arriba.
+                    # Se calcula sobre TODO el personal (técnicos +
+                    # administrativos), sin depender de ningún filtro.
+                    if tab_id == "tec":
+                        st.markdown("---")
+                        hoy_consolidado = get_honduras_time().date()
+                        meses_es_consolidado = {
+                            1: 'enero', 2: 'febrero', 3: 'marzo', 4: 'abril', 5: 'mayo', 6: 'junio',
+                            7: 'julio', 8: 'agosto', 9: 'septiembre', 10: 'octubre', 11: 'noviembre', 12: 'diciembre'
+                        }
+                        nombre_mes_actual = meses_es_consolidado[hoy_consolidado.month]
+                        st.markdown(f"##### 📊 Consolidado del Mes — {nombre_mes_actual.capitalize()} {hoy_consolidado.year}")
+                        st.caption("Cuántas faltas lleva registradas cada colaborador en lo que va del mes (todo el personal).")
+
+                        df_todo_consolidado = obtener_datos_memoria(conn)
+                        if df_todo_consolidado is not None and not df_todo_consolidado.empty and 'TECNICO' in df_todo_consolidado.columns and 'FECHA_INCIDENCIA' in df_todo_consolidado.columns:
+                            df_mes_consolidado = df_todo_consolidado.copy()
+                            df_mes_consolidado['FECHA_DT'] = pd.to_datetime(df_mes_consolidado['FECHA_INCIDENCIA'], format='%d/%m/%Y', errors='coerce')
+                            df_mes_consolidado = df_mes_consolidado[
+                                df_mes_consolidado['FECHA_DT'].notna() &
+                                (df_mes_consolidado['FECHA_DT'].dt.year == hoy_consolidado.year) &
+                                (df_mes_consolidado['FECHA_DT'].dt.month == hoy_consolidado.month)
+                            ]
+
+                            if df_mes_consolidado.empty:
+                                st.success("✅ Nadie tiene faltas registradas este mes.")
+                            else:
+                                df_consolidado = df_mes_consolidado['TECNICO'].value_counts().reset_index()
+                                df_consolidado.columns = ['Colaborador', 'Faltas del Mes']
+
+                                id_estado_consolidado = f"consolidado_mes_{hoy_consolidado.year}_{hoy_consolidado.month}_{len(df_mes_consolidado)}"
+                                nombre_archivo_consolidado = f"Consolidado_Faltas_{nombre_mes_actual}_{hoy_consolidado.year}.pdf"
+                                if st.session_state.get('estado_pdf_consolidado_mes') == id_estado_consolidado:
+                                    st.download_button(
+                                        "⬇️ Descargar Consolidado en PDF",
+                                        data=st.session_state['pdf_consolidado_mes_bytes'],
+                                        file_name=nombre_archivo_consolidado,
+                                        mime="application/pdf",
+                                        key="dl_pdf_consolidado_mes"
+                                    )
+                                else:
+                                    if st.button("📥 Preparar Consolidado en PDF", key="btn_pdf_consolidado_mes"):
+                                        with st.spinner("Generando PDF..."):
+                                            st.session_state['pdf_consolidado_mes_bytes'] = generar_pdf_consolidado_mensual(
+                                                df_consolidado, nombre_mes_actual, hoy_consolidado.year
+                                            )
+                                            st.session_state['estado_pdf_consolidado_mes'] = id_estado_consolidado
+                                        st.download_button(
+                                            "⬇️ Descargar Consolidado en PDF",
+                                            data=st.session_state['pdf_consolidado_mes_bytes'],
+                                            file_name=nombre_archivo_consolidado,
+                                            mime="application/pdf",
+                                            key="dl_pdf_consolidado_mes_directo"
+                                        )
+                        else:
+                            st.info("No hay datos disponibles todavía para armar el consolidado.")
 
                 st.markdown("---")
 
