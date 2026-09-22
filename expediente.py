@@ -2162,34 +2162,41 @@ def mostrar_modulo_expedientes(conn, df_base):
 
                             if df_mes_consolidado.empty:
                                 st.success("✅ Nadie tiene faltas registradas este mes.")
+                                df_consolidado = pd.DataFrame(columns=['Colaborador', 'Faltas del Mes'])
                             else:
                                 df_consolidado = df_mes_consolidado['TECNICO'].value_counts().reset_index()
                                 df_consolidado.columns = ['Colaborador', 'Faltas del Mes']
 
-                                id_estado_consolidado = f"consolidado_mes_{hoy_consolidado.year}_{hoy_consolidado.month}_{len(df_mes_consolidado)}"
-                                nombre_archivo_consolidado = f"Consolidado_Faltas_{nombre_mes_actual}_{hoy_consolidado.year}.pdf"
-                                if st.session_state.get('estado_pdf_consolidado_mes') == id_estado_consolidado:
+                            # El botón se muestra SIEMPRE, incluso sin faltas este
+                            # mes -- antes quedaba anidado dentro del "else" de
+                            # arriba, así que un mes limpio (0 faltas) dejaba a la
+                            # gerencia sin forma de descargar el PDF confirmando
+                            # eso mismo. generar_pdf_consolidado_mensual() ya sabe
+                            # generar un PDF válido con la lista vacía.
+                            id_estado_consolidado = f"consolidado_mes_{hoy_consolidado.year}_{hoy_consolidado.month}_{len(df_mes_consolidado)}"
+                            nombre_archivo_consolidado = f"Consolidado_Faltas_{nombre_mes_actual}_{hoy_consolidado.year}.pdf"
+                            if st.session_state.get('estado_pdf_consolidado_mes') == id_estado_consolidado:
+                                st.download_button(
+                                    "⬇️ Descargar Consolidado en PDF",
+                                    data=st.session_state['pdf_consolidado_mes_bytes'],
+                                    file_name=nombre_archivo_consolidado,
+                                    mime="application/pdf",
+                                    key="dl_pdf_consolidado_mes"
+                                )
+                            else:
+                                if st.button("📥 Preparar Consolidado en PDF", key="btn_pdf_consolidado_mes"):
+                                    with st.spinner("Generando PDF..."):
+                                        st.session_state['pdf_consolidado_mes_bytes'] = generar_pdf_consolidado_mensual(
+                                            df_consolidado, nombre_mes_actual, hoy_consolidado.year
+                                        )
+                                        st.session_state['estado_pdf_consolidado_mes'] = id_estado_consolidado
                                     st.download_button(
                                         "⬇️ Descargar Consolidado en PDF",
                                         data=st.session_state['pdf_consolidado_mes_bytes'],
                                         file_name=nombre_archivo_consolidado,
                                         mime="application/pdf",
-                                        key="dl_pdf_consolidado_mes"
+                                        key="dl_pdf_consolidado_mes_directo"
                                     )
-                                else:
-                                    if st.button("📥 Preparar Consolidado en PDF", key="btn_pdf_consolidado_mes"):
-                                        with st.spinner("Generando PDF..."):
-                                            st.session_state['pdf_consolidado_mes_bytes'] = generar_pdf_consolidado_mensual(
-                                                df_consolidado, nombre_mes_actual, hoy_consolidado.year
-                                            )
-                                            st.session_state['estado_pdf_consolidado_mes'] = id_estado_consolidado
-                                        st.download_button(
-                                            "⬇️ Descargar Consolidado en PDF",
-                                            data=st.session_state['pdf_consolidado_mes_bytes'],
-                                            file_name=nombre_archivo_consolidado,
-                                            mime="application/pdf",
-                                            key="dl_pdf_consolidado_mes_directo"
-                                        )
                         else:
                             st.info("No hay datos disponibles todavía para armar el consolidado.")
 
