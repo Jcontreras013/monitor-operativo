@@ -103,17 +103,25 @@ def normalizar_unidad(v_str):
         return f"MX-{match.group(1)}"
     return clean
 
-# --- SUBIDA CON PRIORIDAD 1: CATBOX ---
+# --- SUBIDA A CATBOX ---
 def subir_pdf_gratis_catbox(file_buffer, file_name):
     try:
         file_buffer.seek(0)
         files = {
             "fileToUpload": (file_name, file_buffer.getvalue())
         }
-        data = {
-            "reqtype": "fileupload",
-            "userhash": "327c87ffe7f915a6d1ec367ee"
-        }
+        data = {"reqtype": "fileupload"}
+        # Mismo criterio que subir_archivo_catbox() en expediente.py: el
+        # userhash sale de st.secrets y solo se manda si existe. Antes había
+        # uno real escrito aquí (el repo es público), y Catbox responde 412
+        # "Invalid uploader" ante un userhash vacío o inválido en vez de subir
+        # el archivo de forma anónima.
+        try:
+            userhash = str(st.secrets.get("catbox_userhash", "")).strip()
+        except Exception:
+            userhash = ""
+        if userhash:
+            data["userhash"] = userhash
         response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
             url = response.text.strip()
@@ -124,37 +132,12 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
     except Exception as e:
         return None, f"Fallo al conectar con Catbox: {str(e)}"
 
-# --- SUBIDA GRATUITA CON PRIORIDAD 2: LITTERBOX ---
-def subir_pdf_gratis_litterbox(file_buffer, file_name):
-    try:
-        file_buffer.seek(0)
-        files = {
-            "fileToUpload": (file_name, file_buffer.getvalue())
-        }
-        data = {
-            "reqtype": "fileupload",
-            "time": "72h"
-        }
-        response = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, timeout=30)
-        if response.status_code == 200:
-            url = response.text.strip()
-            if url.startswith("http"):
-                return url, None
-            return None, f"Litterbox error: {url}"
-        return None, f"Litterbox HTTP {response.status_code}"
-    except Exception as e:
-        return None, f"Fallo al conectar con Litterbox: {str(e)}"
-
 def subir_documento_nube(file_buffer, file_name, mimetype):
-    enlace, err_catbox = subir_pdf_gratis_catbox(file_buffer, file_name)
-    if enlace:
-        return enlace, None
-        
-    enlace_alt, err_litter = subir_pdf_gratis_litterbox(file_buffer, file_name)
-    if enlace_alt:
-        return enlace_alt, None
-        
-    return None, f"No se pudo completar la subida (Catbox: {err_catbox} | Litterbox: {err_litter})"
+    # Ya no hay respaldo en Litterbox: sus archivos se borran a las 72 horas,
+    # así que un registro "guardado exitosamente" terminaba con un enlace
+    # muerto a los 3 días. Es mejor que la subida falle a la vista y se
+    # reintente, que archivar un documento que va a desaparecer.
+    return subir_pdf_gratis_catbox(file_buffer, file_name)
 
 # ==============================================================================
 # DATOS DEL CALENDARIO DE INSPECCIONES
