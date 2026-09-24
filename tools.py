@@ -4534,9 +4534,9 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 7, safestr(f"Total: {total_metros_real:,.0f} m"), ln=True)
     pdf.set_font("Helvetica", "", 8)
-    pdf.cell(0, 5, safestr(f"Con orden en Cepheus: {res['metros_con_orden_cepheus']:,.0f} m"), ln=True)
+    pdf.cell(0, 5, safestr(f"En {' + '.join(actividades)}: {res['metros_actividades_evaluadas']:,.0f} m"), ln=True)
+    pdf.cell(0, 5, safestr(f"En ordenes {', '.join(razones)}: {res['metros_ordenes_evaluadas']:,.0f} m"), ln=True)
     pdf.cell(0, 5, safestr(f"Sin orden en Cepheus: {res['metros_sin_orden_cepheus']:,.0f} m"), ln=True)
-    pdf.cell(0, 5, safestr(f"En ordenes evaluadas ({', '.join(razones)}): {res['metros_ordenes_evaluadas']:,.0f} m"), ln=True)
     pdf.ln(2)
 
     if not metraje_por_producto.empty:
@@ -4552,20 +4552,42 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
             pdf.ln()
     pdf.ln(6)
 
-    if not metraje_por_tecnico.empty:
+    metraje_por_actividad = res['metraje_por_actividad']
+    if not metraje_por_actividad.empty:
         pdf.set_fill_color(230, 235, 245)
         pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(100, 6, safestr("TECNICO"), border=1, fill=True)
+        pdf.cell(95, 6, safestr("ACTIVIDAD"), border=1, fill=True)
         pdf.cell(25, 6, safestr("ORDENES"), border=1, fill=True, align="C")
-        pdf.cell(30, 6, safestr("METROS"), border=1, fill=True, align="C")
+        pdf.cell(35, 6, safestr("METROS"), border=1, fill=True, align="C")
         pdf.cell(35, 6, safestr("PROM. M/ORDEN"), border=1, fill=True, align="C")
         pdf.ln()
         pdf.set_font("Helvetica", "", 8)
-        for _, row in metraje_por_tecnico.iterrows():
-            pdf.cell(100, 6, safestr(row.get('TECNICO', ''))[:60], border=1)
+        for _, row in metraje_por_actividad.iterrows():
+            pdf.cell(95, 6, safestr(row.get('ACTIVIDAD', ''))[:55], border=1)
             pdf.cell(25, 6, str(int(row.get('ORDENES', 0))), border=1, align="C")
-            pdf.cell(30, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
+            pdf.cell(35, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
             pdf.cell(35, 6, f"{row.get('PROMEDIO_M_X_ORDEN', 0):,.1f}", border=1, align="C")
+            pdf.ln()
+    pdf.ln(6)
+
+    # Técnico SIEMPRE separado por actividad: un PEXTERNO/INSFIBRA lleva
+    # mucho más cable que un SOPFIBRA y el promedio no sería comparable.
+    if not metraje_por_tecnico.empty:
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(40, 6, safestr("ACTIVIDAD"), border=1, fill=True)
+        pdf.cell(75, 6, safestr("TECNICO"), border=1, fill=True)
+        pdf.cell(20, 6, safestr("ORDENES"), border=1, fill=True, align="C")
+        pdf.cell(25, 6, safestr("METROS"), border=1, fill=True, align="C")
+        pdf.cell(30, 6, safestr("PROM. M/ORDEN"), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in metraje_por_tecnico.iterrows():
+            pdf.cell(40, 6, safestr(row.get('ACTIVIDAD', ''))[:22], border=1)
+            pdf.cell(75, 6, safestr(row.get('TECNICO', ''))[:42], border=1)
+            pdf.cell(20, 6, str(int(row.get('ORDENES', 0))), border=1, align="C")
+            pdf.cell(25, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
+            pdf.cell(30, 6, f"{row.get('PROMEDIO_M_X_ORDEN', 0):,.1f}", border=1, align="C")
             pdf.ln()
     pdf.ln(8)
 
