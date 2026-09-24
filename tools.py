@@ -4465,7 +4465,97 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
             pdf.ln()
     else:
         pdf.cell(0, 6, "No se registraron reemplazos de acometidas en el mes.", ln=True)
-        
+
+    return finalizar_pdf(pdf)
+
+
+def generar_pdf_auditoria_materiales(df_detalle, resumen, actividades, razones) -> bytes:
+    """
+    Reporte ejecutivo del cruce Cepheus vs. movimientos de bodega (Odoo):
+    cuántas órdenes se cerraron con una razón que implica cambio de cable
+    (ej. "Corte de Acometida") sin que exista metraje de fibra real
+    respaldándolo, desglosado por técnico, con el detalle de las órdenes
+    sospechosas para revisión.
+    """
+    pdf = ReporteGenerencialPDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(40, 50, 100)
+    pdf.cell(0, 10, safestr("AUDITORIA DE MATERIALES - LANZAMIENTOS DE FIBRA"), ln=True, align="C")
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, safestr(f"Actividades: {', '.join(actividades)}"), ln=True, align="C")
+    pdf.cell(0, 6, safestr(f"Razon(es) de cierre evaluada(s): {', '.join(razones)}"), ln=True, align="C")
+    pdf.ln(6)
+
+    total = len(df_detalle)
+    sin_metraje = int(df_detalle['SIN_METRAJE'].sum()) if total else 0
+    con_metraje = total - sin_metraje
+    mencionan_reserva = int(df_detalle['MENCIONA_RESERVA'].sum()) if total else 0
+    pct_sin = (sin_metraje / total * 100) if total else 0
+
+    # --- SECCIÓN 1: KPIs GENERALES ---
+    pdf.seccion_titulo("1. RESUMEN GENERAL")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 6, safestr(f"Ordenes evaluadas: {total}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Con metraje real en Odoo: {con_metraje}"), ln=True)
+    pdf.cell(0, 6, safestr(f"Sin metraje (mal depuradas): {sin_metraje}  ({pct_sin:.0f}%)"), ln=True)
+    pdf.cell(0, 6, safestr(f"Mencionan 'reserva' sin metraje: {mencionan_reserva}"), ln=True)
+    pdf.ln(6)
+
+    # --- SECCIÓN 2: RESUMEN POR TÉCNICO ---
+    pdf.seccion_titulo("2. RESUMEN POR TECNICO")
+    if not resumen.empty:
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 8)
+
+        headers = ["TECNICO", "TOTAL", "SIN METRAJE", "% SIN METRAJE", "MENCIONAN RESERVA"]
+        w = [75, 25, 30, 30, 30]
+        for idx_h, h in enumerate(headers):
+            pdf.cell(w[idx_h], 7, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in resumen.iterrows():
+            pdf.cell(w[0], 6, safestr(row.get('TECNICO', ''))[:38], border=1)
+            pdf.cell(w[1], 6, str(int(row.get('TOTAL_ORDENES', 0))), border=1, align="C")
+            pdf.cell(w[2], 6, str(int(row.get('SIN_METRAJE', 0))), border=1, align="C")
+            pdf.cell(w[3], 6, f"{row.get('PCT_SIN_METRAJE', 0):.0f}%", border=1, align="C")
+            pdf.cell(w[4], 6, str(int(row.get('MENCIONAN_RESERVA', 0))), border=1, align="C")
+            pdf.ln()
+    else:
+        pdf.cell(0, 6, "Sin ordenes para el periodo/filtros seleccionados.", ln=True)
+
+    pdf.ln(8)
+
+    # --- SECCIÓN 3: DETALLE DE ÓRDENES SOSPECHOSAS ---
+    pdf.seccion_titulo("3. DETALLE DE ORDENES SIN METRAJE (Primeras 40)")
+    df_sospechosas = df_detalle[df_detalle['SIN_METRAJE']].sort_values('MENCIONA_RESERVA', ascending=False)
+    if not df_sospechosas.empty:
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_font("Helvetica", "B", 7)
+        headers_d = ["ORDEN", "TECNICO", "RESERVA?", "COMENTARIO DE CIERRE"]
+        w_d = [22, 42, 18, 108]
+        for idx_h, h in enumerate(headers_d):
+            pdf.cell(w_d[idx_h], 6, safestr(h), border=1, fill=True, align="C")
+        pdf.ln()
+
+        pdf.set_font("Helvetica", "", 7)
+        for _, row in df_sospechosas.head(40).iterrows():
+            p_com = safestr(row.get('COMENTARIO', ''))[:90]
+            pdf.cell(w_d[0], 5, safestr(row.get('ORDEN', '')), border=1, align="C")
+            pdf.cell(w_d[1], 5, safestr(row.get('TECNICO', ''))[:26], border=1)
+            pdf.cell(w_d[2], 5, "SI" if row.get('MENCIONA_RESERVA') else "NO", border=1, align="C")
+            pdf.cell(w_d[3], 5, p_com, border=1)
+            pdf.ln()
+    else:
+        pdf.cell(0, 6, "No hay ordenes sin metraje para los filtros seleccionados.", ln=True)
+
     return finalizar_pdf(pdf)
 
 
