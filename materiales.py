@@ -160,6 +160,8 @@ def mostrar_auditoria_materiales(*args, **kwargs):
                     )
                     st.session_state['mat_detalle'] = df_detalle
                     st.session_state['mat_resumen'] = resumen
+                    st.session_state['mat_actividades_usadas'] = actividades_sel
+                    st.session_state['mat_razones_usadas'] = razones
                 except Exception as e:
                     st.error(f"❌ Error al cruzar la información: {e}")
 
@@ -200,14 +202,39 @@ def mostrar_auditoria_materiales(*args, **kwargs):
         hide_index=True,
     )
 
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        resumen.to_excel(writer, sheet_name='Resumen por Tecnico', index=False)
-        df_detalle.to_excel(writer, sheet_name='Detalle Ordenes', index=False)
-    st.download_button(
-        "⬇️ Descargar Excel (Resumen + Detalle)",
-        data=buffer.getvalue(),
-        file_name="auditoria_materiales_sopfibra.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_mat_excel",
-    )
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            resumen.to_excel(writer, sheet_name='Resumen por Tecnico', index=False)
+            df_detalle.to_excel(writer, sheet_name='Detalle Ordenes', index=False)
+        st.download_button(
+            "⬇️ Descargar Excel (Resumen + Detalle)",
+            data=buffer.getvalue(),
+            file_name="auditoria_materiales_sopfibra.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_mat_excel",
+            use_container_width=True,
+        )
+    with col_dl2:
+        id_estado_pdf = f"mat_pdf_{total}_{sin_metraje}_{mencionan_reserva}"
+        if st.session_state.get('mat_estado_pdf') != id_estado_pdf:
+            if st.button("📥 Preparar Reporte PDF", key="btn_mat_pdf", use_container_width=True):
+                with st.spinner("Generando PDF..."):
+                    from tools import generar_pdf_auditoria_materiales
+                    st.session_state['mat_pdf_bytes'] = generar_pdf_auditoria_materiales(
+                        df_detalle, resumen,
+                        st.session_state.get('mat_actividades_usadas', actividades_sel),
+                        st.session_state.get('mat_razones_usadas', [RAZONES_EXIGEN_METRAJE_DEFAULT]),
+                    )
+                    st.session_state['mat_estado_pdf'] = id_estado_pdf
+                st.rerun()
+        else:
+            st.download_button(
+                "⬇️ Descargar Reporte PDF",
+                data=st.session_state['mat_pdf_bytes'],
+                file_name="auditoria_materiales_sopfibra.pdf",
+                mime="application/pdf",
+                key="dl_mat_pdf",
+                use_container_width=True,
+            )
