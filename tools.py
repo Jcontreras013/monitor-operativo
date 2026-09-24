@@ -719,8 +719,8 @@ class ReporteGenerencialPDF(FPDF):
         self.cell(0, 5, safestr(MARCA_TAGLINE), ln=True, align="R")
 
         self.set_draw_color(200, 200, 200)
-        y_line = max(self.get_y(), 18) 
-        self.line(10, y_line, 200, y_line)
+        y_line = max(self.get_y(), 18)
+        self.line(10, y_line, self.w - 10, y_line)
         self.set_y(y_line + 5)
 
     def footer(self):
@@ -4599,7 +4599,7 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
         pdf.set_font("Helvetica", "B", 8)
 
         headers = ["TECNICO", "TOTAL", "SIN METRAJE", "% SIN METRAJE", "MENCIONAN RESERVA"]
-        w = [75, 25, 30, 30, 30]
+        w = [68, 20, 28, 30, 44]
         for idx_h, h in enumerate(headers):
             pdf.cell(w[idx_h], 7, safestr(h), border=1, fill=True, align="C")
         pdf.ln()
@@ -4617,26 +4617,49 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
 
     pdf.ln(8)
 
-    # --- SECCIÓN 4: DETALLE DE ÓRDENES SOSPECHOSAS ---
-    pdf.seccion_titulo("4. DETALLE DE ORDENES SIN METRAJE (Primeras 40)")
-    df_sospechosas = df_detalle[df_detalle['SIN_METRAJE']].sort_values('MENCIONA_RESERVA', ascending=False)
-    if not df_sospechosas.empty:
-        pdf.set_fill_color(240, 240, 240)
-        pdf.set_font("Helvetica", "B", 7)
-        headers_d = ["ORDEN", "TECNICO", "RESERVA?", "COMENTARIO DE CIERRE"]
-        w_d = [22, 42, 18, 108]
-        for idx_h, h in enumerate(headers_d):
-            pdf.cell(w_d[idx_h], 6, safestr(h), border=1, fill=True, align="C")
-        pdf.ln()
+    # --- SECCIÓN 4: DETALLE DE ÓRDENES SOSPECHOSAS (hoja horizontal aparte) ---
+    # En hoja horizontal el comentario de cierre cabe completo, ajustado en
+    # varias líneas dentro de su celda, en vez de cortarse a media palabra.
+    from fpdf.fonts import FontFace
 
+    limite_detalle = 40
+    df_sospechosas = df_detalle[df_detalle['SIN_METRAJE']].sort_values('MENCIONA_RESERVA', ascending=False)
+
+    pdf.add_page(orientation="L")
+    pdf.seccion_titulo(f"4. DETALLE DE ORDENES SIN METRAJE (Primeras {limite_detalle})")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 5, safestr(
+        f"{len(df_sospechosas)} ordenes cerradas como {', '.join(razones)} sin fibra retirada en Odoo. "
+        "Primero las que mencionan 'reserva'. El listado completo va en el Excel."
+    ), ln=True)
+    pdf.ln(2)
+
+    if not df_sospechosas.empty:
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_draw_color(180, 180, 180)
         pdf.set_font("Helvetica", "", 7)
-        for _, row in df_sospechosas.head(40).iterrows():
-            p_com = safestr(row.get('COMENTARIO', ''))[:90]
-            pdf.cell(w_d[0], 5, safestr(row.get('ORDEN', '')), border=1, align="C")
-            pdf.cell(w_d[1], 5, safestr(row.get('TECNICO', ''))[:26], border=1)
-            pdf.cell(w_d[2], 5, "SI" if row.get('MENCIONA_RESERVA') else "NO", border=1, align="C")
-            pdf.cell(w_d[3], 5, p_com, border=1)
-            pdf.ln()
+        with pdf.table(
+            col_widths=(20, 52, 24, 16, 165),
+            text_align=("CENTER", "LEFT", "CENTER", "CENTER", "LEFT"),
+            line_height=3.6,
+            headings_style=FontFace(emphasis="BOLD", fill_color=(230, 235, 245)),
+            # Fondo blanco explícito: sin esto, en las páginas donde la tabla
+            # continúa, las filas heredaban el color del encabezado repetido.
+            cell_fill_color=(255, 255, 255),
+            cell_fill_mode="ALL",
+            repeat_headings=1,
+        ) as tabla:
+            encabezado = tabla.row()
+            for titulo in ("ORDEN", "TECNICO", "FECHA CIERRE", "RESERVA?", "COMENTARIO DE CIERRE"):
+                encabezado.cell(titulo)
+            for _, row in df_sospechosas.head(limite_detalle).iterrows():
+                fila = tabla.row()
+                fila.cell(fmt_celda(row.get('ORDEN'), ""))
+                fila.cell(fmt_celda(row.get('TECNICO'), ""))
+                fila.cell(fmt_celda(row.get('FECHA_CIERRE'), "")[:16])
+                fila.cell("SI" if row.get('MENCIONA_RESERVA') else "NO")
+                fila.cell(fmt_celda(row.get('COMENTARIO'), ""))
     else:
         pdf.cell(0, 6, "No hay ordenes sin metraje para los filtros seleccionados.", ln=True)
 
