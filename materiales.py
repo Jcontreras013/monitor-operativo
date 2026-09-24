@@ -30,6 +30,9 @@ ACTIVIDAD_SIN_ORDEN = 'SIN ORDEN EN CEPHEUS'
 # sesión que cruzó con una versión anterior pide volver a cruzar en vez de
 # mostrar datos incompletos o fallar por una llave que no existe.
 VERSION_RESULTADO = 2
+# Igual, pero para el formato del PDF (un PDF ya preparado en la sesión se
+# regenera si cambió su diseño).
+VERSION_PDF = 2
 
 
 def _normalizar_num(serie):
@@ -361,7 +364,7 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             use_container_width=True,
         )
     with col_dl2:
-        id_estado_pdf = f"mat_pdf_v{VERSION_RESULTADO}_{total}_{sin_metraje}_{mencionan_reserva}_{res['total_metros']:.0f}"
+        id_estado_pdf = f"mat_pdf_v{VERSION_RESULTADO}.{VERSION_PDF}_{total}_{sin_metraje}_{mencionan_reserva}_{res['total_metros']:.0f}"
         if st.session_state.get('mat_estado_pdf') != id_estado_pdf:
             if st.button("📥 Preparar Reporte PDF", key="btn_mat_pdf", use_container_width=True):
                 with st.spinner("Generando PDF..."):
