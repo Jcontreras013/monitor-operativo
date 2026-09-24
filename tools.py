@@ -4479,14 +4479,23 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
     return finalizar_pdf(pdf)
 
 
-def generar_pdf_auditoria_materiales(df_detalle, resumen, actividades, razones) -> bytes:
+def generar_pdf_auditoria_materiales(
+    df_detalle, resumen, actividades, razones,
+    total_metros_real=0.0, metraje_por_producto=None, metraje_por_tecnico=None,
+) -> bytes:
     """
     Reporte ejecutivo del cruce Cepheus vs. movimientos de bodega (Odoo):
     cuántas órdenes se cerraron con una razón que implica cambio de cable
     (ej. "Corte de Acometida") sin que exista metraje de fibra real
     respaldándolo, desglosado por técnico, con el detalle de las órdenes
-    sospechosas para revisión.
+    sospechosas para revisión. También incluye el metraje real de fibra
+    usado en todo el periodo (sin filtrar por actividad/razón), para dejar
+    en el mismo reporte cuánta fibra se consumió de verdad.
     """
+    if metraje_por_producto is None:
+        metraje_por_producto = pd.DataFrame()
+    if metraje_por_tecnico is None:
+        metraje_por_tecnico = pd.DataFrame()
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -4517,8 +4526,44 @@ def generar_pdf_auditoria_materiales(df_detalle, resumen, actividades, razones) 
     pdf.cell(0, 6, safestr(f"Mencionan 'reserva' sin metraje: {mencionan_reserva}"), ln=True)
     pdf.ln(6)
 
-    # --- SECCIÓN 2: RESUMEN POR TÉCNICO ---
-    pdf.seccion_titulo("2. RESUMEN POR TECNICO")
+    # --- SECCIÓN 2: METRAJE REAL DE FIBRA USADO EN EL PERIODO ---
+    pdf.seccion_titulo("2. METRAJE REAL DE FIBRA USADO EN EL PERIODO")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 5, safestr("Todo el periodo del archivo de Odoo, sin filtrar por actividad ni razon de cierre."), ln=True)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 7, safestr(f"Total: {total_metros_real:,.0f} m"), ln=True)
+    pdf.ln(2)
+
+    if not metraje_por_producto.empty:
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(120, 6, safestr("PRODUCTO"), border=1, fill=True)
+        pdf.cell(40, 6, safestr("METROS"), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in metraje_por_producto.iterrows():
+            pdf.cell(120, 6, safestr(row.get('PRODUCTO', ''))[:70], border=1)
+            pdf.cell(40, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
+            pdf.ln()
+    pdf.ln(6)
+
+    if not metraje_por_tecnico.empty:
+        pdf.set_fill_color(230, 235, 245)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(120, 6, safestr("TECNICO"), border=1, fill=True)
+        pdf.cell(40, 6, safestr("METROS"), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        for _, row in metraje_por_tecnico.iterrows():
+            pdf.cell(120, 6, safestr(row.get('TECNICO', ''))[:70], border=1)
+            pdf.cell(40, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
+            pdf.ln()
+    pdf.ln(8)
+
+    # --- SECCIÓN 3: RESUMEN POR TÉCNICO ---
+    pdf.seccion_titulo("3. RESUMEN POR TECNICO (Razon de cierre evaluada)")
     if not resumen.empty:
         pdf.set_fill_color(230, 235, 245)
         pdf.set_text_color(0, 0, 0)
@@ -4543,8 +4588,8 @@ def generar_pdf_auditoria_materiales(df_detalle, resumen, actividades, razones) 
 
     pdf.ln(8)
 
-    # --- SECCIÓN 3: DETALLE DE ÓRDENES SOSPECHOSAS ---
-    pdf.seccion_titulo("3. DETALLE DE ORDENES SIN METRAJE (Primeras 40)")
+    # --- SECCIÓN 4: DETALLE DE ÓRDENES SOSPECHOSAS ---
+    pdf.seccion_titulo("4. DETALLE DE ORDENES SIN METRAJE (Primeras 40)")
     df_sospechosas = df_detalle[df_detalle['SIN_METRAJE']].sort_values('MENCIONA_RESERVA', ascending=False)
     if not df_sospechosas.empty:
         pdf.set_fill_color(240, 240, 240)
