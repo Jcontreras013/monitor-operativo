@@ -3319,12 +3319,12 @@ def main():
         return
 
     if nav_menu_diamante == "🚙 Auditoría Vehículos":
-        tab1, tab2 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos"])
-        
+        tab1, tab2, tab3 = st.tabs(["🚙 Auditoría Vehículos", "⏱️ Tiempo Tecnicos", "🔍 Auditoría Materiales"])
+
         with tab1:
             try: mostrar_auditoria(es_movil, conn)
             except Exception as e: st.error(f"Ocurrió un error al cargar el módulo de Auditoría: {e}")
-            
+
         with tab2:
             try:
                 import tiempot
@@ -3333,7 +3333,16 @@ def main():
                 st.warning("⚠️ Falta el archivo 'tiempot.py'. Asegúrate de crearlo en la misma carpeta.")
             except Exception as e:
                 st.error(f"Ocurrió un error al cargar el módulo de Tiempo Técnicos: {e}")
-                
+
+        with tab3:
+            try:
+                import materiales
+                materiales.mostrar_auditoria_materiales()
+            except ImportError:
+                st.warning("⚠️ Falta el archivo 'materiales.py'. Asegúrate de crearlo en la misma carpeta.")
+            except Exception as e:
+                st.error(f"Ocurrió un error al cargar el módulo de Auditoría de Materiales: {e}")
+
         return
 
     if nav_menu_diamante == "📅 Reprog / No Inst":
