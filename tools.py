@@ -2330,6 +2330,16 @@ def read_file_robust(uploaded_file):
             df = pd.read_excel(uploaded_file, engine='xlrd')
         except ImportError:
             if st: st.error("Falta librería xlrd para Excel antiguo.")
+    elif content.startswith(b'PK\x03\x04'):
+        # Un .xlsx real es un ZIP -- se detecta por su firma ANTES de husmear
+        # "<table"/"<html" en el contenido crudo. Algunos exportadores (ej. el
+        # rep_actividades de Cepheus) guardan las partes del ZIP sin comprimir,
+        # así que el XML de estilos -- que trae "<tableStyles .../>" de fábrica
+        # en cualquier xlsx -- queda legible tal cual en los bytes del archivo.
+        # Sin este chequeo, el sniff de HTML de abajo confundía ese archivo con
+        # una tabla HTML y tronaba con "No tables found" al no poder parsearlo.
+        uploaded_file.seek(0)
+        df = pd.read_excel(uploaded_file, engine='openpyxl')
     elif b'<table' in content.lower() or b'<html' in content.lower():
         try:
             dfs = pd.read_html(io.StringIO(content.decode('utf-8', errors='ignore')))
