@@ -17,107 +17,64 @@ from tools import read_file_robust, procesar_dataframe_base
 ACTIVIDADES_FIBRA_DEFAULT = ['SOPFIBRA', 'SOPFIBRACORP']
 RAZONES_EXIGEN_METRAJE_DEFAULT = "CORTE DE ACOMETIDA"
 
+# Nombres posibles de la columna de cantidad realmente entregada en el
+# reporte stock.move.line de Odoo, en orden de preferencia. "Reservado" NO
+# sirve: es lo apartado, no lo que salió.
+COLUMNAS_METROS_ODOO = ['HECHO', 'CANTIDAD HECHA', 'CANTIDAD REALIZADA', 'QUANTITY DONE', 'DONE', 'CANTIDAD']
+UNIDADES_METRO = {'m', 'mt', 'mts', 'metro', 'metros'}
+
+SIN_ORDEN_CEPHEUS = 'N/D (orden no encontrada en Cepheus)'
+
 
 def _normalizar_num(serie):
     return serie.astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
 
-def calcular_metraje_por_orden(df_odoo):
+def extraer_fibra_odoo(df_odoo):
     """
-    Suma, por número de orden (columna 'Origen' del reporte de Odoo), el
-    metraje de fibra realmente retirado de bodega. Solo cuenta productos de
-    fibra medidos en metros -- conectores, patch cords, fajillas, etc. no
-    sirven para confirmar si hubo o no un lanzamiento real de cable.
+    Deja solo los movimientos de fibra medidos en metros, con columnas
+    normalizadas ORDEN_NORM / PRODUCTO / METROS. Conectores, patch cords,
+    fajillas, etc. no sirven para confirmar si hubo un lanzamiento real.
+    Devuelve (df_fibra, nombre_columna_metros_usada).
     """
+    cols_por_nombre = {str(c).strip().upper(): c for c in df_odoo.columns}
     col_producto = next((c for c in df_odoo.columns if 'PRODUCTO' in str(c).upper()), None)
     col_unidad = next((c for c in df_odoo.columns if 'UNIDAD' in str(c).upper()), None)
     col_origen = next((c for c in df_odoo.columns if 'ORIGEN' in str(c).upper()), None)
-    col_hecho = next((c for c in df_odoo.columns if str(c).strip().upper() == 'HECHO'), None)
+    col_metros = next((cols_por_nombre[n] for n in COLUMNAS_METROS_ODOO if n in cols_por_nombre), None)
 
     faltantes = [nombre for nombre, col in [
         ('Producto', col_producto), ('Unidad de medida', col_unidad),
-        ('Origen', col_origen), ('Hecho', col_hecho),
+        ('Origen', col_origen), ('Hecho (cantidad entregada)', col_metros),
     ] if col is None]
     if faltantes:
         raise ValueError(
             "El archivo de Odoo no tiene las columnas esperadas: " + ", ".join(faltantes)
+            + f". Columnas encontradas: {', '.join(map(str, df_odoo.columns))}"
         )
 
-    df = df_odoo.copy()
-    es_fibra = df[col_producto].astype(str).str.upper().str.contains('FIBRA', na=False)
-    es_metro = df[col_unidad].astype(str).str.strip().str.lower() == 'm'
-    df_fibra = df[es_fibra & es_metro].copy()
-    df_fibra['ORDEN_NORM'] = _normalizar_num(df_fibra[col_origen])
-    return df_fibra.groupby('ORDEN_NORM')[col_hecho].sum().rename('METRAJE_ODOO')
+    es_fibra = df_odoo[col_producto].astype(str).str.upper().str.contains('FIBRA', na=False)
+    es_metro = df_odoo[col_unidad].astype(str).str.strip().str.lower().isin(UNIDADES_METRO)
+    mask = es_fibra & es_metro
+
+    df_fibra = pd.DataFrame({
+        'ORDEN_NORM': _normalizar_num(df_odoo.loc[mask, col_origen]),
+        'PRODUCTO': df_odoo.loc[mask, col_producto].astype(str),
+        'METROS': pd.to_numeric(df_odoo.loc[mask, col_metros], errors='coerce').fillna(0),
+    })
+    return df_fibra, str(col_metros)
 
 
-def calcular_metraje_real_usado(df_cepheus_crudo, df_odoo_crudo):
+def cruzar_cepheus_odoo(df_cep, metraje_por_orden, actividades, razones_exigen_metraje):
     """
-    Calcula el metraje REAL de fibra retirado de bodega en todo el periodo
-    que cubre el archivo de Odoo -- sin filtrar por actividad ni razón de
-    cierre, para responder directamente "cuántos metros de fibra se usaron
-    de verdad", independientemente de cómo haya quedado cerrada la orden en
-    Cepheus. Devuelve (total_metros, df_por_producto, df_por_tecnico).
-    """
-    col_producto = next((c for c in df_odoo_crudo.columns if 'PRODUCTO' in str(c).upper()), None)
-    col_unidad = next((c for c in df_odoo_crudo.columns if 'UNIDAD' in str(c).upper()), None)
-    col_origen = next((c for c in df_odoo_crudo.columns if 'ORIGEN' in str(c).upper()), None)
-    col_hecho = next((c for c in df_odoo_crudo.columns if str(c).strip().upper() == 'HECHO'), None)
-
-    faltantes = [nombre for nombre, col in [
-        ('Producto', col_producto), ('Unidad de medida', col_unidad),
-        ('Origen', col_origen), ('Hecho', col_hecho),
-    ] if col is None]
-    if faltantes:
-        raise ValueError(
-            "El archivo de Odoo no tiene las columnas esperadas: " + ", ".join(faltantes)
-        )
-
-    df = df_odoo_crudo.copy()
-    es_fibra = df[col_producto].astype(str).str.upper().str.contains('FIBRA', na=False)
-    es_metro = df[col_unidad].astype(str).str.strip().str.lower() == 'm'
-    df_fibra = df[es_fibra & es_metro].copy()
-    df_fibra['ORDEN_NORM'] = _normalizar_num(df_fibra[col_origen])
-
-    total_metros = float(df_fibra[col_hecho].sum())
-
-    por_producto = df_fibra.groupby(col_producto)[col_hecho].sum().reset_index()
-    por_producto.columns = ['PRODUCTO', 'METROS']
-    por_producto = por_producto.sort_values('METROS', ascending=False).reset_index(drop=True)
-
-    # El técnico se toma de Cepheus (más confiable que parsear el nombre
-    # desde el campo "Desde" de Odoo), cruzando TODAS las órdenes del
-    # archivo -- no solo las de la actividad/razón filtradas -- para no
-    # dejar metraje real sin atribuir a nadie.
-    df_cep = procesar_dataframe_base(df_cepheus_crudo.copy())
-    df_cep['NUM_NORM'] = _normalizar_num(df_cep['NUM'])
-    tecnico_por_orden = df_cep.drop_duplicates('NUM_NORM').set_index('NUM_NORM')['TECNICO']
-
-    df_fibra['TECNICO'] = df_fibra['ORDEN_NORM'].map(tecnico_por_orden).fillna('N/D (orden no encontrada en Cepheus)')
-    por_tecnico = df_fibra.groupby('TECNICO')[col_hecho].sum().reset_index()
-    por_tecnico.columns = ['TECNICO', 'METROS']
-    por_tecnico = por_tecnico.sort_values('METROS', ascending=False).reset_index(drop=True)
-
-    return total_metros, por_producto, por_tecnico
-
-
-def cruzar_cepheus_odoo(df_cepheus_crudo, df_odoo_crudo, actividades, razones_exigen_metraje):
-    """
-    Cruza el reporte de Cepheus (rep_actividades) con los movimientos de
-    material de Odoo. Devuelve (df_detalle, df_resumen_por_tecnico).
-
     Regla aplicada: entre las órdenes CERRADAS de las actividades indicadas,
     las que se cerraron con una razón de la lista `razones_exigen_metraje`
     deben tener metraje de fibra en Odoo. Las que no lo tienen quedan
     marcadas como SIN_METRAJE; si además el comentario de cierre menciona
     "reserva", se marca MENCIONA_RESERVA -- es la prueba más clara de que el
     propio técnico admite que no hizo el cambio.
+    Devuelve (df_detalle, df_resumen_por_tecnico).
     """
-    df_cep = procesar_dataframe_base(df_cepheus_crudo.copy())
-    df_cep['NUM_NORM'] = _normalizar_num(df_cep['NUM'])
-
-    metraje_por_orden = calcular_metraje_por_orden(df_odoo_crudo)
-
     act_upper = df_cep['ACTIVIDAD'].astype(str).str.upper().str.strip()
     est_upper = df_cep['ESTADO'].astype(str).str.upper().str.strip()
     actividades_upper = [a.upper().strip() for a in actividades]
@@ -149,12 +106,72 @@ def cruzar_cepheus_odoo(df_cepheus_crudo, df_odoo_crudo, actividades, razones_ex
         TOTAL_ORDENES=('NUM_NORM', 'count'),
         SIN_METRAJE=('SIN_METRAJE', 'sum'),
         MENCIONAN_RESERVA=('MENCIONA_RESERVA', 'sum'),
+        METROS_ODOO=('METRAJE_ODOO', 'sum'),
     ).reset_index()
     resumen['CON_METRAJE'] = resumen['TOTAL_ORDENES'] - resumen['SIN_METRAJE']
     resumen['PCT_SIN_METRAJE'] = (resumen['SIN_METRAJE'] / resumen['TOTAL_ORDENES'] * 100).round(1)
-    resumen = resumen.sort_values('SIN_METRAJE', ascending=False).reset_index(drop=True)
+    resumen = resumen[[
+        'TECNICO', 'TOTAL_ORDENES', 'CON_METRAJE', 'SIN_METRAJE', 'PCT_SIN_METRAJE',
+        'MENCIONAN_RESERVA', 'METROS_ODOO',
+    ]].sort_values('SIN_METRAJE', ascending=False).reset_index(drop=True)
 
     return df_detalle, resumen
+
+
+def calcular_metraje_real_usado(df_cep, df_fibra):
+    """
+    Metraje REAL de fibra retirado de bodega en todo el periodo del archivo
+    de Odoo, sin filtrar por actividad ni razón de cierre. El técnico se
+    toma de Cepheus cruzando por número de orden (más confiable que parsear
+    el nombre desde el campo "Desde" de Odoo); lo que no aparece en Cepheus
+    queda en una fila aparte para que se note, no se pierde.
+    Devuelve (por_producto, por_tecnico).
+    """
+    por_producto = df_fibra.groupby('PRODUCTO').agg(
+        MOVIMIENTOS=('METROS', 'count'),
+        METROS=('METROS', 'sum'),
+    ).reset_index().sort_values('METROS', ascending=False).reset_index(drop=True)
+
+    tecnico_por_orden = df_cep.drop_duplicates('NUM_NORM').set_index('NUM_NORM')['TECNICO']
+    df_fibra = df_fibra.copy()
+    df_fibra['TECNICO'] = df_fibra['ORDEN_NORM'].map(tecnico_por_orden).fillna(SIN_ORDEN_CEPHEUS)
+    por_tecnico = df_fibra.groupby('TECNICO').agg(
+        ORDENES=('ORDEN_NORM', 'nunique'),
+        METROS=('METROS', 'sum'),
+    ).reset_index()
+    por_tecnico['PROMEDIO_M_X_ORDEN'] = (por_tecnico['METROS'] / por_tecnico['ORDENES']).round(1)
+    por_tecnico = por_tecnico.sort_values('METROS', ascending=False).reset_index(drop=True)
+
+    return por_producto, por_tecnico
+
+
+def procesar_auditoria_materiales(df_cepheus_crudo, df_odoo_crudo, actividades, razones):
+    """Corre todo el análisis y devuelve un solo dict con los resultados."""
+    df_cep = procesar_dataframe_base(df_cepheus_crudo.copy())
+    df_cep['NUM_NORM'] = _normalizar_num(df_cep['NUM'])
+
+    df_fibra, col_metros = extraer_fibra_odoo(df_odoo_crudo)
+    metraje_por_orden = df_fibra.groupby('ORDEN_NORM')['METROS'].sum().rename('METRAJE_ODOO')
+
+    df_detalle, resumen = cruzar_cepheus_odoo(df_cep, metraje_por_orden, actividades, razones)
+    por_producto, por_tecnico = calcular_metraje_real_usado(df_cep, df_fibra)
+
+    total_metros = float(df_fibra['METROS'].sum())
+    en_cepheus = df_fibra['ORDEN_NORM'].isin(set(df_cep['NUM_NORM']))
+
+    return {
+        'detalle': df_detalle,
+        'resumen': resumen,
+        'metraje_por_producto': por_producto,
+        'metraje_por_tecnico': por_tecnico,
+        'total_metros': total_metros,
+        'metros_con_orden_cepheus': float(df_fibra.loc[en_cepheus, 'METROS'].sum()),
+        'metros_sin_orden_cepheus': float(df_fibra.loc[~en_cepheus, 'METROS'].sum()),
+        'metros_ordenes_evaluadas': float(df_detalle['METRAJE_ODOO'].sum()),
+        'col_metros': col_metros,
+        'actividades': list(actividades),
+        'razones': [r.strip().upper() for r in razones],
+    }
 
 
 # ==============================================================================
@@ -202,33 +219,53 @@ def mostrar_auditoria_materiales(*args, **kwargs):
         else:
             with st.spinner("Cruzando Cepheus contra los movimientos de bodega..."):
                 try:
-                    df_cepheus_crudo = read_file_robust(archivo_cepheus)
-                    df_odoo_crudo = read_file_robust(archivo_odoo)
                     razones = [r for r in razones_txt.split(',') if r.strip()]
-                    df_detalle, resumen = cruzar_cepheus_odoo(
-                        df_cepheus_crudo, df_odoo_crudo, actividades_sel, razones
+                    st.session_state['mat_resultado'] = procesar_auditoria_materiales(
+                        read_file_robust(archivo_cepheus), read_file_robust(archivo_odoo),
+                        actividades_sel, razones,
                     )
-                    total_metros_real, metraje_por_producto, metraje_por_tecnico = calcular_metraje_real_usado(
-                        df_cepheus_crudo, df_odoo_crudo
-                    )
-                    st.session_state['mat_detalle'] = df_detalle
-                    st.session_state['mat_resumen'] = resumen
-                    st.session_state['mat_total_metros'] = total_metros_real
-                    st.session_state['mat_metraje_producto'] = metraje_por_producto
-                    st.session_state['mat_metraje_tecnico'] = metraje_por_tecnico
-                    st.session_state['mat_actividades_usadas'] = actividades_sel
-                    st.session_state['mat_razones_usadas'] = razones
                 except Exception as e:
                     st.error(f"❌ Error al cruzar la información: {e}")
 
-    if 'mat_detalle' not in st.session_state:
+    # Todo el resultado vive en UNA sola llave: así nunca se muestra un
+    # análisis a medias (ej. detalle de un cruce viejo con metraje en 0).
+    res = st.session_state.get('mat_resultado')
+    if res is None:
         return
 
-    df_detalle = st.session_state['mat_detalle']
-    resumen = st.session_state['mat_resumen']
+    df_detalle = res['detalle']
+    resumen = res['resumen']
 
     st.divider()
 
+    # --- METRAJE REAL (no depende del filtro de actividad/razón) ---
+    st.markdown("#### 📏 Metraje Real de Fibra Usado en el Periodo")
+    st.caption(
+        f"Metros de fibra realmente entregados según Odoo (columna **{res['col_metros']}**, unidad en metros), "
+        "en TODO el periodo del archivo — sin filtrar por actividad ni razón de cierre."
+    )
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total metros de fibra usados", f"{res['total_metros']:,.0f} m")
+    m2.metric("Con orden en Cepheus", f"{res['metros_con_orden_cepheus']:,.0f} m")
+    m3.metric("Sin orden en Cepheus", f"{res['metros_sin_orden_cepheus']:,.0f} m")
+    m4.metric("En órdenes evaluadas", f"{res['metros_ordenes_evaluadas']:,.0f} m")
+    if res['metros_sin_orden_cepheus'] > 0:
+        st.caption(
+            "ℹ️ \"Sin orden en Cepheus\" son movimientos de bodega cuyo número de orden no aparece en el "
+            "rep_actividades subido — normalmente porque los dos archivos no cubren exactamente las mismas fechas."
+        )
+    col_mp1, col_mp2 = st.columns(2)
+    with col_mp1:
+        st.markdown("**Por tipo de fibra**")
+        st.dataframe(res['metraje_por_producto'], use_container_width=True, hide_index=True)
+    with col_mp2:
+        st.markdown("**Por técnico**")
+        st.dataframe(res['metraje_por_tecnico'], use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- AUDITORÍA DE LA RAZÓN DE CIERRE ---
+    st.markdown(f"#### 🧾 Órdenes cerradas como: {', '.join(res['razones'])}")
     total = len(df_detalle)
     if total == 0:
         st.info("No se encontraron órdenes que coincidan con las actividades y razones de cierre seleccionadas.")
@@ -244,25 +281,7 @@ def mostrar_auditoria_materiales(*args, **kwargs):
     c3.metric("Sin metraje (mal depuradas)", sin_metraje, delta=f"{sin_metraje / total * 100:.0f}%", delta_color="inverse")
     c4.metric("Mencionan 'reserva' sin metraje", mencionan_reserva)
 
-    st.markdown("#### 📏 Metraje Real de Fibra Usado en el Periodo")
-    st.caption(
-        "Metros de fibra realmente retirados de bodega según Odoo, en TODO el periodo del archivo "
-        "-- sin filtrar por actividad ni razón de cierre. Es el número real de consumo, independiente "
-        "de cómo haya quedado cerrada la orden en Cepheus."
-    )
-    total_metros_real = st.session_state.get('mat_total_metros', 0.0)
-    metraje_por_producto = st.session_state.get('mat_metraje_producto', pd.DataFrame())
-    metraje_por_tecnico = st.session_state.get('mat_metraje_tecnico', pd.DataFrame())
-    st.metric("Total de metros de fibra usados", f"{total_metros_real:,.0f} m")
-    col_mp1, col_mp2 = st.columns(2)
-    with col_mp1:
-        st.markdown("**Por tipo de fibra**")
-        st.dataframe(metraje_por_producto, use_container_width=True, hide_index=True)
-    with col_mp2:
-        st.markdown("**Por técnico**")
-        st.dataframe(metraje_por_tecnico, use_container_width=True, hide_index=True)
-
-    st.markdown("#### 📋 Resumen por Técnico (razón de cierre evaluada)")
+    st.markdown("#### 📋 Resumen por Técnico")
     st.dataframe(resumen, use_container_width=True, hide_index=True)
 
     st.markdown("#### 🔎 Detalle de Órdenes")
@@ -282,8 +301,8 @@ def mostrar_auditoria_materiales(*args, **kwargs):
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             resumen.to_excel(writer, sheet_name='Resumen por Tecnico', index=False)
             df_detalle.to_excel(writer, sheet_name='Detalle Ordenes', index=False)
-            metraje_por_producto.to_excel(writer, sheet_name='Metraje Real x Producto', index=False)
-            metraje_por_tecnico.to_excel(writer, sheet_name='Metraje Real x Tecnico', index=False)
+            res['metraje_por_producto'].to_excel(writer, sheet_name='Metraje Real x Producto', index=False)
+            res['metraje_por_tecnico'].to_excel(writer, sheet_name='Metraje Real x Tecnico', index=False)
         st.download_button(
             "⬇️ Descargar Excel (Resumen + Detalle)",
             data=buffer.getvalue(),
@@ -293,17 +312,12 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             use_container_width=True,
         )
     with col_dl2:
-        id_estado_pdf = f"mat_pdf_{total}_{sin_metraje}_{mencionan_reserva}_{total_metros_real:.0f}"
+        id_estado_pdf = f"mat_pdf_{total}_{sin_metraje}_{mencionan_reserva}_{res['total_metros']:.0f}"
         if st.session_state.get('mat_estado_pdf') != id_estado_pdf:
             if st.button("📥 Preparar Reporte PDF", key="btn_mat_pdf", use_container_width=True):
                 with st.spinner("Generando PDF..."):
                     from tools import generar_pdf_auditoria_materiales
-                    st.session_state['mat_pdf_bytes'] = generar_pdf_auditoria_materiales(
-                        df_detalle, resumen,
-                        st.session_state.get('mat_actividades_usadas', actividades_sel),
-                        st.session_state.get('mat_razones_usadas', [RAZONES_EXIGEN_METRAJE_DEFAULT]),
-                        total_metros_real, metraje_por_producto, metraje_por_tecnico,
-                    )
+                    st.session_state['mat_pdf_bytes'] = generar_pdf_auditoria_materiales(res)
                     st.session_state['mat_estado_pdf'] = id_estado_pdf
                 st.rerun()
         else:

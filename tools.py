@@ -4479,23 +4479,22 @@ def generar_pdf_materiales_mensual(df_equipos, df_acometidas, tech_summary, mes_
     return finalizar_pdf(pdf)
 
 
-def generar_pdf_auditoria_materiales(
-    df_detalle, resumen, actividades, razones,
-    total_metros_real=0.0, metraje_por_producto=None, metraje_por_tecnico=None,
-) -> bytes:
+def generar_pdf_auditoria_materiales(res: dict) -> bytes:
     """
-    Reporte ejecutivo del cruce Cepheus vs. movimientos de bodega (Odoo):
-    cuántas órdenes se cerraron con una razón que implica cambio de cable
-    (ej. "Corte de Acometida") sin que exista metraje de fibra real
-    respaldándolo, desglosado por técnico, con el detalle de las órdenes
-    sospechosas para revisión. También incluye el metraje real de fibra
-    usado en todo el periodo (sin filtrar por actividad/razón), para dejar
-    en el mismo reporte cuánta fibra se consumió de verdad.
+    Reporte ejecutivo del cruce Cepheus vs. movimientos de bodega (Odoo).
+    Recibe el dict que arma materiales.procesar_auditoria_materiales():
+    metraje real de fibra usado en el periodo (con su cotejo contra
+    Cepheus) y cuántas órdenes se cerraron con una razón que implica cambio
+    de cable sin metraje real que lo respalde, por técnico y en detalle.
     """
-    if metraje_por_producto is None:
-        metraje_por_producto = pd.DataFrame()
-    if metraje_por_tecnico is None:
-        metraje_por_tecnico = pd.DataFrame()
+    df_detalle = res['detalle']
+    resumen = res['resumen']
+    actividades = res['actividades']
+    razones = res['razones']
+    total_metros_real = res['total_metros']
+    metraje_por_producto = res['metraje_por_producto']
+    metraje_por_tecnico = res['metraje_por_tecnico']
+
     pdf = ReporteGenerencialPDF()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -4534,6 +4533,10 @@ def generar_pdf_auditoria_materiales(
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 7, safestr(f"Total: {total_metros_real:,.0f} m"), ln=True)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(0, 5, safestr(f"Con orden en Cepheus: {res['metros_con_orden_cepheus']:,.0f} m"), ln=True)
+    pdf.cell(0, 5, safestr(f"Sin orden en Cepheus: {res['metros_sin_orden_cepheus']:,.0f} m"), ln=True)
+    pdf.cell(0, 5, safestr(f"En ordenes evaluadas ({', '.join(razones)}): {res['metros_ordenes_evaluadas']:,.0f} m"), ln=True)
     pdf.ln(2)
 
     if not metraje_por_producto.empty:
@@ -4552,13 +4555,17 @@ def generar_pdf_auditoria_materiales(
     if not metraje_por_tecnico.empty:
         pdf.set_fill_color(230, 235, 245)
         pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(120, 6, safestr("TECNICO"), border=1, fill=True)
-        pdf.cell(40, 6, safestr("METROS"), border=1, fill=True, align="C")
+        pdf.cell(100, 6, safestr("TECNICO"), border=1, fill=True)
+        pdf.cell(25, 6, safestr("ORDENES"), border=1, fill=True, align="C")
+        pdf.cell(30, 6, safestr("METROS"), border=1, fill=True, align="C")
+        pdf.cell(35, 6, safestr("PROM. M/ORDEN"), border=1, fill=True, align="C")
         pdf.ln()
         pdf.set_font("Helvetica", "", 8)
         for _, row in metraje_por_tecnico.iterrows():
-            pdf.cell(120, 6, safestr(row.get('TECNICO', ''))[:70], border=1)
-            pdf.cell(40, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
+            pdf.cell(100, 6, safestr(row.get('TECNICO', ''))[:60], border=1)
+            pdf.cell(25, 6, str(int(row.get('ORDENES', 0))), border=1, align="C")
+            pdf.cell(30, 6, f"{row.get('METROS', 0):,.0f}", border=1, align="C")
+            pdf.cell(35, 6, f"{row.get('PROMEDIO_M_X_ORDEN', 0):,.1f}", border=1, align="C")
             pdf.ln()
     pdf.ln(8)
 
