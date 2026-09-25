@@ -3307,7 +3307,7 @@ def main():
     # 3. RENDERIZADO DE PANTALLAS Y CONFIGURACIÓN
     # ==============================================================================
     if nav_menu_diamante == "⚙️ Configuración":
-        settings.mostrar_configuracion()
+        settings.mostrar_configuracion(conn)
         return
 
     if nav_menu_diamante == "📁 Expedientes":
@@ -4090,9 +4090,15 @@ def main():
         )
 
         if os.path.exists("logo_monitor.png"):
-            st.image("logo_monitor.png", width=400) 
+            st.image("logo_monitor.png", width=400)
         else:
             st.title("⚡ Monitor Operativo Maxcom")
+
+        try:
+            import clientes_vip
+            clientes_vip.mostrar_panel_vip_monitor(conn, df_monitor_filtrado[mask_vivas_monitor])
+        except Exception as e_vip:
+            st.caption(f"⚠️ No se pudo revisar la lista de clientes VIP: {e_vip}")
 
         mask_tec_valido_mon = mascara_tecnico_asignado(df_todas_pendientes_monitor['TECNICO'])
         

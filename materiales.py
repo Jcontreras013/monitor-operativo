@@ -29,14 +29,34 @@ ACTIVIDAD_SIN_ORDEN = 'SIN ORDEN EN CEPHEUS'
 # Subirlo cada vez que cambie la forma del dict de resultados: así una
 # sesión que cruzó con una versión anterior pide volver a cruzar en vez de
 # mostrar datos incompletos o fallar por una llave que no existe.
-VERSION_RESULTADO = 2
+VERSION_RESULTADO = 3
 # Igual, pero para el formato del PDF (un PDF ya preparado en la sesión se
 # regenera si cambió su diseño).
-VERSION_PDF = 2
+VERSION_PDF = 3
 
 
 def _normalizar_num(serie):
     return serie.astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+
+def _columnas_odoo(df_odoo):
+    """Ubica las columnas del reporte stock.move.line de Odoo, o falla diciendo cuáles faltan."""
+    cols_por_nombre = {str(c).strip().upper(): c for c in df_odoo.columns}
+    columnas = {
+        'producto': next((c for c in df_odoo.columns if 'PRODUCTO' in str(c).upper()), None),
+        'unidad': next((c for c in df_odoo.columns if 'UNIDAD' in str(c).upper()), None),
+        'origen': next((c for c in df_odoo.columns if 'ORIGEN' in str(c).upper()), None),
+        'cantidad': next((cols_por_nombre[n] for n in COLUMNAS_METROS_ODOO if n in cols_por_nombre), None),
+    }
+    nombres = {'producto': 'Producto', 'unidad': 'Unidad de medida', 'origen': 'Origen', 'cantidad': 'Hecho (cantidad entregada)'}
+    faltantes = [nombres[k] for k, v in columnas.items() if v is None]
+    if faltantes:
+        raise ValueError(
+            "El archivo de Odoo no tiene las columnas esperadas: " + ", ".join(faltantes)
+            + f". Columnas encontradas: {', '.join(map(str, df_odoo.columns))}"
+        )
+    columnas['fecha'] = cols_por_nombre.get('FECHA')
+    return columnas
 
 
 def extraer_fibra_odoo(df_odoo):
@@ -46,32 +66,51 @@ def extraer_fibra_odoo(df_odoo):
     fajillas, etc. no sirven para confirmar si hubo un lanzamiento real.
     Devuelve (df_fibra, nombre_columna_metros_usada).
     """
-    cols_por_nombre = {str(c).strip().upper(): c for c in df_odoo.columns}
-    col_producto = next((c for c in df_odoo.columns if 'PRODUCTO' in str(c).upper()), None)
-    col_unidad = next((c for c in df_odoo.columns if 'UNIDAD' in str(c).upper()), None)
-    col_origen = next((c for c in df_odoo.columns if 'ORIGEN' in str(c).upper()), None)
-    col_metros = next((cols_por_nombre[n] for n in COLUMNAS_METROS_ODOO if n in cols_por_nombre), None)
-
-    faltantes = [nombre for nombre, col in [
-        ('Producto', col_producto), ('Unidad de medida', col_unidad),
-        ('Origen', col_origen), ('Hecho (cantidad entregada)', col_metros),
-    ] if col is None]
-    if faltantes:
-        raise ValueError(
-            "El archivo de Odoo no tiene las columnas esperadas: " + ", ".join(faltantes)
-            + f". Columnas encontradas: {', '.join(map(str, df_odoo.columns))}"
-        )
-
-    es_fibra = df_odoo[col_producto].astype(str).str.upper().str.contains('FIBRA', na=False)
-    es_metro = df_odoo[col_unidad].astype(str).str.strip().str.lower().isin(UNIDADES_METRO)
+    col = _columnas_odoo(df_odoo)
+    es_fibra = df_odoo[col['producto']].astype(str).str.upper().str.contains('FIBRA', na=False)
+    es_metro = df_odoo[col['unidad']].astype(str).str.strip().str.lower().isin(UNIDADES_METRO)
     mask = es_fibra & es_metro
 
     df_fibra = pd.DataFrame({
-        'ORDEN_NORM': _normalizar_num(df_odoo.loc[mask, col_origen]),
-        'PRODUCTO': df_odoo.loc[mask, col_producto].astype(str),
-        'METROS': pd.to_numeric(df_odoo.loc[mask, col_metros], errors='coerce').fillna(0),
+        'ORDEN_NORM': _normalizar_num(df_odoo.loc[mask, col['origen']]),
+        'PRODUCTO': df_odoo.loc[mask, col['producto']].astype(str),
+        'METROS': pd.to_numeric(df_odoo.loc[mask, col['cantidad']], errors='coerce').fillna(0),
     })
-    return df_fibra, str(col_metros)
+    return df_fibra, str(col['cantidad'])
+
+
+def detectar_molex_en_soporte(df_cep, df_odoo, actividades):
+    """
+    Órdenes de soporte (actividades evaluadas, ej. SOPFIBRA) en las que se
+    depuró una caja molex en Odoo. Una caja molex es material de instalación:
+    en un soporte normalmente no se deja una, así que cada caso se revisa.
+    MENCIONA_MOLEX dice si el técnico lo justificó en el comentario de cierre.
+    """
+    col = _columnas_odoo(df_odoo)
+    es_molex = df_odoo[col['producto']].astype(str).str.upper().str.contains('MOLEX', na=False)
+    df_molex = pd.DataFrame({
+        'ORDEN': _normalizar_num(df_odoo.loc[es_molex, col['origen']]),
+        'CAJAS': pd.to_numeric(df_odoo.loc[es_molex, col['cantidad']], errors='coerce').fillna(0),
+        'FECHA_DEPURACION': (df_odoo.loc[es_molex, col['fecha']].astype(str).str[:16]
+                             if col['fecha'] is not None else ''),
+    })
+    if df_molex.empty:
+        return df_molex.assign(TECNICO='', ACTIVIDAD='', RAZON_CIERRE='', MENCIONA_MOLEX=False, COMENTARIO='')
+
+    df_molex = df_molex.groupby('ORDEN', as_index=False).agg(CAJAS=('CAJAS', 'sum'), FECHA_DEPURACION=('FECHA_DEPURACION', 'min'))
+    datos = df_cep.drop_duplicates('NUM_NORM').set_index('NUM_NORM')
+    for destino, origen in [('TECNICO', 'TECNICO'), ('ACTIVIDAD', 'ACTIVIDAD'), ('CLIENTE', 'CLIENTE'),
+                            ('RAZON_CIERRE', 'RAZON_CIERRE_SOP'), ('COMENTARIO', 'COMENTARIO_CIERRE')]:
+        df_molex[destino] = df_molex['ORDEN'].map(datos[origen]) if origen in datos.columns else ''
+
+    actividades_upper = [a.upper().strip() for a in actividades]
+    df_molex = df_molex[df_molex['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(actividades_upper)].copy()
+    df_molex['MENCIONA_MOLEX'] = df_molex['COMENTARIO'].astype(str).str.upper().str.contains('MOLEX', na=False)
+    df_molex['CAJAS'] = df_molex['CAJAS'].astype(int)
+    return df_molex[[
+        'ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_DEPURACION', 'CAJAS',
+        'RAZON_CIERRE', 'MENCIONA_MOLEX', 'COMENTARIO',
+    ]].sort_values(['MENCIONA_MOLEX', 'TECNICO']).reset_index(drop=True)
 
 
 def cruzar_cepheus_odoo(df_cep, metraje_por_orden, actividades, razones_exigen_metraje):
@@ -191,6 +230,7 @@ def procesar_auditoria_materiales(df_cepheus_crudo, df_odoo_crudo, actividades, 
 
     return {
         'version': VERSION_RESULTADO,
+        'molex': detectar_molex_en_soporte(df_cep, df_odoo_crudo, actividades),
         'detalle': df_detalle,
         'resumen': resumen,
         'metraje_por_producto': por_producto,
@@ -205,6 +245,88 @@ def procesar_auditoria_materiales(df_cepheus_crudo, df_odoo_crudo, actividades, 
         'actividades': list(actividades),
         'razones': [r.strip().upper() for r in razones],
     }
+
+
+# ==============================================================================
+# ALERTA POR CORREO: CAJAS MOLEX EN SOPORTE
+# ==============================================================================
+# Cada orden se avisa UNA sola vez, sin importar cuántas veces ni quién suba
+# los archivos: las ya avisadas quedan registradas en GCS.
+ARCHIVO_ALERTAS_MOLEX = "alertas_molex_enviadas.csv"
+
+
+def _leer_alertas_molex_enviadas():
+    """Devuelve (DataFrame, None) o (None, error). Un error NO se trata como 'ninguna enviada'."""
+    try:
+        from tools import obtener_cliente_gcs_nativo, NOMBRE_BUCKET_SISTEMA
+        blob = obtener_cliente_gcs_nativo().bucket(NOMBRE_BUCKET_SISTEMA).blob(ARCHIVO_ALERTAS_MOLEX)
+        if not blob.exists():
+            return pd.DataFrame(columns=['ORDEN', 'FECHA_AVISO']), None
+        return pd.read_csv(io.BytesIO(blob.download_as_bytes()), dtype=str), None
+    except Exception as e:
+        return None, str(e)
+
+
+def avisar_molex_por_correo(df_molex, config_correo):
+    """
+    Envía por correo las órdenes de df_molex que no se habían avisado antes.
+    Devuelve (tipo, mensaje) con tipo en success / info / warning.
+    """
+    from notificaciones import enviar_correo, falta_configuracion, tabla_html
+    from tools import sobrescribir_archivo_gcs, get_honduras_time, NOMBRE_BUCKET_SISTEMA
+
+    if df_molex.empty:
+        return "info", "No hay cajas molex depuradas en órdenes de soporte en este archivo."
+    faltante = falta_configuracion(config_correo)
+    if faltante:
+        return "warning", f"📧 No se envió la alerta por correo: falta configurar en los secretos [correo]: {faltante}."
+
+    enviadas, error = _leer_alertas_molex_enviadas()
+    if error:
+        return "warning", (
+            f"📧 No se envió la alerta: no se pudo consultar cuáles ya se habían avisado ({error}). "
+            "Se evita así mandar otra vez todas las anteriores; vuelve a cruzar en un momento."
+        )
+    nuevas = df_molex[~df_molex['ORDEN'].isin(set(enviadas['ORDEN'].astype(str)))]
+    if nuevas.empty:
+        return "info", f"📧 Las {len(df_molex)} órdenes con caja molex ya se habían avisado por correo antes."
+
+    columnas = {
+        'ORDEN': 'Orden', 'TECNICO': 'Técnico', 'ACTIVIDAD': 'Actividad', 'CLIENTE': 'Cliente',
+        'FECHA_DEPURACION': 'Depurada en Odoo', 'CAJAS': 'Cajas', 'RAZON_CIERRE': 'Razón de cierre',
+        'MENCIONA_MOLEX': '¿La menciona en el comentario?', 'COMENTARIO': 'Comentario de cierre',
+    }
+    tabla = nuevas.rename(columns=columnas).assign(**{'¿La menciona en el comentario?': nuevas['MENCIONA_MOLEX'].map({True: 'Sí', False: 'NO'})})
+    sin_justificar = int((~nuevas['MENCIONA_MOLEX']).sum())
+    asunto = f"⚠️ Cajas molex en órdenes de soporte: {len(nuevas)} orden(es) por revisar"
+    intro = (
+        f"Se depuraron cajas molex en {len(nuevas)} orden(es) de soporte "
+        f"({', '.join(sorted(nuevas['ACTIVIDAD'].astype(str).unique()))}). "
+        f"En {sin_justificar} de ellas el técnico no menciona la molex en el comentario de cierre."
+    )
+    texto = intro + "\n\n" + "\n".join(
+        f"- Orden {r['ORDEN']} | {r['TECNICO']} | {r['CAJAS']} caja(s) | {r['RAZON_CIERRE']} | {str(r['COMENTARIO'])[:200]}"
+        for _, r in nuevas.iterrows()
+    ) + "\n\nMonitor Operativo MAXCOM - Auditoría de Materiales"
+    cuerpo_html = (
+        f'<div style="font-family:Arial,sans-serif;font-size:13px;"><p>{intro}</p>'
+        f"{tabla_html(tabla)}"
+        '<p style="color:#666;font-size:11px;">Monitor Operativo MAXCOM · Auditoría de Materiales. '
+        "Cada orden se avisa una sola vez.</p></div>"
+    )
+
+    ok, error_envio = enviar_correo(config_correo, asunto, texto, cuerpo_html)
+    if not ok:
+        return "warning", f"📧 No se pudo enviar la alerta por correo: {error_envio}"
+
+    ahora = get_honduras_time().strftime('%Y-%m-%d %H:%M:%S')
+    registro = pd.concat([enviadas, pd.DataFrame({'ORDEN': nuevas['ORDEN'].astype(str), 'FECHA_AVISO': ahora})], ignore_index=True)
+    if not sobrescribir_archivo_gcs(registro, NOMBRE_BUCKET_SISTEMA, ARCHIVO_ALERTAS_MOLEX):
+        return "warning", (
+            f"📧 Alerta enviada ({len(nuevas)} orden(es)), pero no se pudo registrar el envío: "
+            "si vuelves a cruzar, se avisarán de nuevo."
+        )
+    return "success", f"📧 Alerta enviada por correo: {len(nuevas)} orden(es) nueva(s) con caja molex."
 
 
 # ==============================================================================
@@ -253,10 +375,14 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             with st.spinner("Cruzando Cepheus contra los movimientos de bodega..."):
                 try:
                     razones = [r for r in razones_txt.split(',') if r.strip()]
-                    st.session_state['mat_resultado'] = procesar_auditoria_materiales(
+                    resultado = procesar_auditoria_materiales(
                         read_file_robust(archivo_cepheus), read_file_robust(archivo_odoo),
                         actividades_sel, razones,
                     )
+                    # Solo aquí (al presionar el botón), nunca en cada rerun.
+                    from notificaciones import config_correo_streamlit
+                    resultado['aviso_molex'] = avisar_molex_por_correo(resultado['molex'], config_correo_streamlit())
+                    st.session_state['mat_resultado'] = resultado
                 except Exception as e:
                     st.error(f"❌ Error al cruzar la información: {e}")
 
@@ -315,6 +441,27 @@ def mostrar_auditoria_materiales(*args, **kwargs):
 
     st.divider()
 
+    # --- CAJAS MOLEX EN SOPORTE ---
+    df_molex = res['molex']
+    st.markdown(f"#### 📦 Cajas molex depuradas en {' / '.join(res['actividades'])}")
+    st.caption(
+        "Una caja molex es material de instalación: en una orden de soporte normalmente no se deja una. "
+        "\"Menciona molex\" dice si el técnico lo explicó en su comentario de cierre."
+    )
+    tipo_aviso, mensaje_aviso = res.get('aviso_molex', ("info", ""))
+    if df_molex.empty:
+        st.success("✅ No se depuraron cajas molex en órdenes de soporte en este periodo.")
+    else:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Órdenes con caja molex", len(df_molex))
+        k2.metric("Cajas depuradas", int(df_molex['CAJAS'].sum()))
+        k3.metric("Sin mencionarla en el comentario", int((~df_molex['MENCIONA_MOLEX']).sum()))
+        st.dataframe(df_molex, use_container_width=True, hide_index=True)
+    if mensaje_aviso:
+        getattr(st, tipo_aviso, st.info)(mensaje_aviso)
+
+    st.divider()
+
     # --- AUDITORÍA DE LA RAZÓN DE CIERRE ---
     st.markdown(f"#### 🧾 Órdenes cerradas como: {', '.join(res['razones'])}")
     total = len(df_detalle)
@@ -355,6 +502,7 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             res['metraje_por_producto'].to_excel(writer, sheet_name='Metraje Real x Producto', index=False)
             res['metraje_por_actividad'].to_excel(writer, sheet_name='Metraje Real x Actividad', index=False)
             res['metraje_por_tecnico'].to_excel(writer, sheet_name='Metraje Real x Tecnico', index=False)
+            res['molex'].to_excel(writer, sheet_name='Molex en Soporte', index=False)
         st.download_button(
             "⬇️ Descargar Excel (Resumen + Detalle)",
             data=buffer.getvalue(),

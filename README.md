@@ -157,6 +157,16 @@ usuarios_consulta = ["usuario1", "usuario2"]
 token = "..."      # token del bot, de @BotFather
 chat_id = "..."     # ID del grupo de Telegram donde se reportan faltas
 
+# Opcional: avisos por correo (cajas molex en soporte y órdenes nuevas de clientes VIP)
+[correo]
+servidor = "smtp.gmail.com"     # o "smtp.office365.com"
+puerto = 587                    # 587 (STARTTLS) o 465 (SSL)
+usuario = "cuenta@dominio"
+contrasena = "..."              # en Gmail: una "contraseña de aplicación", no la normal
+remitente = "cuenta@dominio"    # opcional; por defecto, el usuario
+destinatarios = ["persona1@...", "persona2@..."]
+destinatarios_vip = ["..."]     # opcional; por defecto, los mismos destinatarios
+
 # Opcional:
 [wati]
 api_url = "..."
@@ -164,7 +174,11 @@ access_token = "..."
 template_name = "..."
 ```
 
-`sync_job.py` y `telegram_bot.py` leen este mismo archivo con `toml.load()` (no usan `st.secrets`, porque corren fuera de Streamlit), así que en la PC donde se ejecutan debe existir `.streamlit/secrets.toml` junto al resto del código.
+`sync_job.py` y `telegram_bot.py` leen este mismo archivo con `toml.load()` (no usan `st.secrets`, porque corren fuera de Streamlit), así que en la PC donde se ejecutan debe existir `.streamlit/secrets.toml` junto al resto del código. La sección `[correo]` tiene que estar en **los dos lugares**: en los secretos de Streamlit Cloud (para la alerta de cajas molex, que sale al cruzar archivos en Auditoría de Materiales) y en el `secrets.toml` de la PC del robot (para el aviso de órdenes VIP, que sale de `sync_job.py`).
+
+**Avisos por correo:**
+- **Cajas molex en soporte:** al presionar "Cruzar Información" en Auditoría de Materiales, se avisa de las órdenes SOPFIBRA/SOPFIBRACORP en las que Odoo muestra una caja molex depurada. Cada orden se avisa una sola vez (registro en GCS: `alertas_molex_enviadas.csv`).
+- **Clientes VIP:** en cada ciclo, `sync_job.py` avisa de las órdenes abiertas en las últimas 24 h de clientes de la lista VIP. Cada orden se avisa una sola vez (registro local: `vip_avisadas.json`, junto al script). La lista VIP se carga en **Configuración → ⭐ Clientes VIP** y queda en la hoja `ClientesVIP` de Google Sheets; nunca va al repositorio, que es público.
 
 ## Cómo correrlo
 
