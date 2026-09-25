@@ -128,7 +128,11 @@ sudo xargs apt install -y < packages.txt
 **Este repositorio es público — nunca commitear un `secrets.toml` real.** La app lee toda credencial desde `st.secrets` (Streamlit) o desde `.streamlit/secrets.toml` (scripts independientes). Estructura esperada (con valores de ejemplo, no reales):
 
 ```toml
+# Las claves sueltas (sin sección) van SIEMPRE arriba, antes del primer
+# encabezado [...]: en TOML todo lo que viene después de un encabezado
+# pertenece a esa sección.
 url_base_datos = "https://docs.google.com/spreadsheets/d/TU_HOJA_AQUI"
+catbox_userhash = "..."   # opcional: cuenta de Catbox.moe (sin ella se sube anónimo y no se puede borrar desde la app)
 
 [connections.gsheets]
 # Credenciales de la cuenta de servicio de Google (JSON de service account),
@@ -153,8 +157,7 @@ usuarios_consulta = ["usuario1", "usuario2"]
 token = "..."      # token del bot, de @BotFather
 chat_id = "..."     # ID del grupo de Telegram donde se reportan faltas
 
-# Opcionales:
-catbox_userhash = "..."   # cuenta de Catbox.moe para subir evidencias fotográficas
+# Opcional:
 [wati]
 api_url = "..."
 access_token = "..."

@@ -137,6 +137,11 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
             if url.startswith("http"):
                 return url, None
             return None, f"Catbox error: {url}"
+        if response.status_code == 412:
+            return None, (
+                "Catbox rechazó la subida (412). Configura un 'catbox_userhash' válido en los secretos "
+                "de la app, arriba del todo, antes de cualquier sección entre corchetes [ ]."
+            )
         return None, f"Catbox HTTP {response.status_code}"
     except Exception as e:
         return None, f"Fallo al conectar con Catbox: {str(e)}"
