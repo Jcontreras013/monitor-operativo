@@ -214,6 +214,10 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
     # 9. ALERTAS POR CORREO: órdenes nuevas de clientes VIP y molex en
     # comentarios de cierre de soporte. Solo se envía correo si hay algo nuevo.
+    from notificaciones import falta_configuracion
+    _faltante_correo = falta_configuracion(secrets_data.get("correo", {}))
+    if _faltante_correo:
+        print(f"  -> [!] Alertas por correo desactivadas: falta en secrets.toml [correo]: {_faltante_correo}")
     for nombre_alerta, funcion_alerta in (("clientes VIP", _avisar_ordenes_vip_nuevas),
                                            ("molex en cierres", _avisar_molex_en_comentarios)):
         try:
@@ -266,7 +270,7 @@ def _enviar_y_registrar(nombre, nuevas, correo, ruta, avisadas, secrets_data, ah
         print(f"  -> [!] {len(nuevas)} orden(es) de {nombre} sin avisar por correo: {error}")
         return
     _registrar_avisadas(ruta, avisadas, nuevas['NUM'], ahora_local)
-    print(f"  -> [+] Alerta de {nombre} enviada por correo: {len(nuevas)} orden(es).")
+    print(f"  -> [+] Alerta de {nombre} enviada por correo: {len(nuevas)} orden(es)." + (f" Nota: {error}" if error else ""))
 
 
 def _avisar_ordenes_vip_nuevas(spreadsheet, df_ordenes, secrets_data, ahora_local):
@@ -288,7 +292,9 @@ def _avisar_ordenes_vip_nuevas(spreadsheet, df_ordenes, secrets_data, ahora_loca
     if avisadas is None:
         return
     nuevas = seleccionar_ordenes_vip_nuevas(df_ordenes, df_vip, avisadas.keys(), ahora_local)
-    if not nuevas.empty:
+    if nuevas.empty:
+        print(f"  -> [i] Alerta de clientes VIP: sin órdenes nuevas sin atender ({len(df_vip)} clientes en la lista).")
+    else:
         _enviar_y_registrar("clientes VIP", nuevas, armar_correo_vip(nuevas), RUTA_VIP_AVISADAS,
                             avisadas, secrets_data, ahora_local, "destinatarios_vip")
 
@@ -300,7 +306,9 @@ def _avisar_molex_en_comentarios(spreadsheet, df_ordenes, secrets_data, ahora_lo
     if avisadas is None:
         return
     nuevas = seleccionar_molex_en_comentarios(df_ordenes, avisadas.keys(), ahora_local)
-    if not nuevas.empty:
+    if nuevas.empty:
+        print("  -> [i] Alerta de molex en cierres: sin cierres nuevos que mencionen molex.")
+    else:
         _enviar_y_registrar("molex en cierres", nuevas, armar_correo_molex(nuevas), RUTA_MOLEX_AVISADAS,
                             avisadas, secrets_data, ahora_local, "destinatarios")
 
@@ -355,6 +363,8 @@ if __name__ == '__main__':
         _ok, _error = enviar_correo_prueba(_config, clave_destinatarios="destinatarios_vip", origen="el robot de sincronización")
         if _ok:
             print(f"✅ Correo de prueba enviado a: {', '.join(lista_destinatarios(_config, 'destinatarios_vip'))}", flush=True)
+            if _error:
+                print(f"   Nota: {_error}", flush=True)
         else:
             print(f"❌ No se pudo enviar: {_error}", flush=True)
         sys.exit(0 if _ok else 1)

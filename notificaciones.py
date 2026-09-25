@@ -75,30 +75,50 @@ def enviar_correo(config, asunto, texto, html_cuerpo=None, clave_destinatarios="
 
     servidor = str(config["servidor"]).strip()
     puerto = int(config.get("puerto", 465))
-    try:
-        if puerto == 465:
-            with smtplib.SMTP_SSL(servidor, puerto, context=ssl.create_default_context(), timeout=30) as smtp:
-                smtp.login(str(config["usuario"]).strip(), str(config["contrasena"]))
-                smtp.send_message(mensaje)
-        else:
-            with smtplib.SMTP(servidor, puerto, timeout=30) as smtp:
-                smtp.starttls(context=ssl.create_default_context())
-                smtp.login(str(config["usuario"]).strip(), str(config["contrasena"]))
-                smtp.send_message(mensaje)
-        return True, None
-    # El orden importa: los errores SMTP y de certificado también son OSError.
-    except smtplib.SMTPAuthenticationError:
-        return False, "el servidor de correo rechazó el usuario o la contraseña"
-    except smtplib.SMTPException as e:
-        return False, f"el servidor de correo respondió con un error: {e}"
-    except ssl.SSLCertVerificationError:
-        return False, (f"el certificado de seguridad del servidor no corresponde a '{servidor}'. "
-                       "Usa el nombre del servidor del proveedor de correo (en MAXCOM: smtp.us-east.atmailcloud.com)")
-    except OSError as e:
-        return False, (f"no se pudo conectar a {servidor}:{puerto} ({e}). Revisa el servidor y el puerto; "
-                       "si es desde la PC del robot, que el firewall de la red permita salir por ese puerto")
-    except Exception as e:
-        return False, str(e)
+    # Si el puerto configurado no conecta, se prueba el otro puerto cifrado
+    # (465 = SSL/TLS, 587 = STARTTLS). Solo ante fallas de CONEXIÓN: una
+    # contraseña o un destinatario rechazado no se arreglan cambiando de puerto.
+    puertos = [puerto] + ([587 if puerto == 465 else 465] if puerto in (465, 587) else [])
+    fallas_conexion = []
+    for p in puertos:
+        try:
+            _enviar_por_puerto(servidor, p, config, mensaje)
+            if p != puerto:
+                return True, (f"se envió por el puerto {p} ({_modo(p)}) porque el {puerto} no conectó; "
+                              f"conviene poner puerto = {p} en los secretos [correo]")
+            return True, None
+        # El orden importa: los errores SMTP y de certificado también son OSError.
+        except smtplib.SMTPAuthenticationError:
+            return False, "el servidor de correo rechazó el usuario o la contraseña"
+        except smtplib.SMTPException as e:
+            return False, f"el servidor de correo respondió con un error: {e}"
+        except ssl.SSLCertVerificationError:
+            return False, (f"el certificado de seguridad del servidor no corresponde a '{servidor}'. "
+                           "Usa el nombre del servidor del proveedor de correo (en MAXCOM: smtp.us-east.atmailcloud.com)")
+        except OSError as e:
+            fallas_conexion.append(f"{p} ({_modo(p)}): {e}")
+        except Exception as e:
+            return False, str(e)
+    return False, (f"no se pudo conectar a {servidor} por ningún puerto [{'; '.join(fallas_conexion)}]. "
+                   "Revisa el nombre del servidor; si es desde la PC del robot, que el firewall de la red "
+                   "permita salir por los puertos 465 o 587")
+
+
+def _modo(puerto):
+    return "SSL/TLS" if puerto == 465 else "STARTTLS"
+
+
+def _enviar_por_puerto(servidor, puerto, config, mensaje):
+    contexto = ssl.create_default_context()
+    if puerto == 465:
+        with smtplib.SMTP_SSL(servidor, puerto, context=contexto, timeout=30) as smtp:
+            smtp.login(str(config["usuario"]).strip(), str(config["contrasena"]))
+            smtp.send_message(mensaje)
+    else:
+        with smtplib.SMTP(servidor, puerto, timeout=30) as smtp:
+            smtp.starttls(context=contexto)
+            smtp.login(str(config["usuario"]).strip(), str(config["contrasena"]))
+            smtp.send_message(mensaje)
 
 
 def enviar_correo_prueba(config, clave_destinatarios="destinatarios", origen="la app"):
@@ -144,5 +164,7 @@ def mostrar_config_correo():
             ok, error = enviar_correo_prueba(config)
         if ok:
             st.success(f"✅ Correo de prueba enviado a {len(lista_destinatarios(config))} destinatario(s). Revisen la bandeja (y el spam).")
+            if error:
+                st.warning(f"⚠️ Nota: {error}.")
         else:
             st.error(f"❌ No se pudo enviar: {error}")
