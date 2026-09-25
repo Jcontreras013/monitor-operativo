@@ -325,6 +325,19 @@ if __name__ == '__main__':
     # Trae los últimos N días (máximo 60 -- límite impuesto por Cepheus, ver
     # _ejecutar_backfill_una_vez) en vez de los 55 de siempre, UNA sola vez, y
     # termina -- no reemplaza al ciclo normal de 15 minutos.
+    # Uso: python sync_job.py --probar-correo
+    # Manda un correo de prueba a destinatarios_vip con la sección [correo]
+    # del secrets.toml de esta PC, y termina.
+    if len(sys.argv) >= 2 and sys.argv[1] == '--probar-correo':
+        from notificaciones import enviar_correo_prueba, lista_destinatarios
+        _config = toml.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".streamlit", "secrets.toml")).get("correo", {})
+        _ok, _error = enviar_correo_prueba(_config, clave_destinatarios="destinatarios_vip", origen="el robot de sincronización")
+        if _ok:
+            print(f"✅ Correo de prueba enviado a: {', '.join(lista_destinatarios(_config, 'destinatarios_vip'))}", flush=True)
+        else:
+            print(f"❌ No se pudo enviar: {_error}", flush=True)
+        sys.exit(0 if _ok else 1)
+
     if len(sys.argv) >= 2 and sys.argv[1] == '--backfill':
         _dias_backfill = int(sys.argv[2]) if len(sys.argv) >= 3 else 60
         _ejecutar_backfill_una_vez(_dias_backfill)

@@ -86,7 +86,63 @@ def enviar_correo(config, asunto, texto, html_cuerpo=None, clave_destinatarios="
                 smtp.login(str(config["usuario"]).strip(), str(config["contrasena"]))
                 smtp.send_message(mensaje)
         return True, None
+    # El orden importa: los errores SMTP y de certificado también son OSError.
     except smtplib.SMTPAuthenticationError:
         return False, "el servidor de correo rechazó el usuario o la contraseña"
+    except smtplib.SMTPException as e:
+        return False, f"el servidor de correo respondió con un error: {e}"
+    except ssl.SSLCertVerificationError:
+        return False, (f"el certificado de seguridad del servidor no corresponde a '{servidor}'. "
+                       "Usa el nombre del servidor del proveedor de correo (en MAXCOM: smtp.us-east.atmailcloud.com)")
+    except OSError as e:
+        return False, (f"no se pudo conectar a {servidor}:{puerto} ({e}). Revisa el servidor y el puerto; "
+                       "si es desde la PC del robot, que el firewall de la red permita salir por ese puerto")
     except Exception as e:
         return False, str(e)
+
+
+def enviar_correo_prueba(config, clave_destinatarios="destinatarios", origen="la app"):
+    """Correo de prueba para confirmar que la configuración [correo] funciona."""
+    texto = (
+        f"Este es un correo de prueba enviado desde {origen} del Monitor Operativo MAXCOM.\n\n"
+        "Si lo recibiste, las alertas por correo (cajas molex en soporte y órdenes de clientes VIP) "
+        "van a llegar a esta misma lista de destinatarios."
+    )
+    return enviar_correo(config, "✅ Prueba de alertas por correo - Monitor Operativo", texto,
+                         clave_destinatarios=clave_destinatarios)
+
+
+def mostrar_config_correo():
+    """Pestaña de Configuración: estado de [correo] y botón de prueba (sin mostrar la contraseña)."""
+    import streamlit as st
+
+    st.subheader("📧 Correo de alertas")
+    st.caption(
+        "Cuenta y destinatarios de las alertas por correo (cajas molex en soporte y órdenes nuevas de "
+        "clientes VIP). Se configuran en Settings → Secrets de la app, sección [correo]."
+    )
+    config = config_correo_streamlit()
+    if not config:
+        st.warning("No hay sección [correo] en los secretos de la app. Hasta configurarla no se envía ninguna alerta.")
+        return
+
+    c1, c2 = st.columns(2)
+    c1.markdown(f"**Servidor:** `{config.get('servidor', '—')}:{config.get('puerto', 587)}`")
+    c1.markdown(f"**Envía:** `{config.get('remitente') or config.get('usuario', '—')}`")
+    c1.markdown(f"**Contraseña:** {'configurada' if str(config.get('contrasena', '')).strip() else '❌ falta'}")
+    c2.markdown("**Alertas de cajas molex a:**<br>" + ("<br>".join(map(html.escape, lista_destinatarios(config))) or "—"),
+                unsafe_allow_html=True)
+    c2.markdown("**Avisos VIP a:**<br>" + ("<br>".join(map(html.escape, lista_destinatarios(config, "destinatarios_vip"))) or "—"),
+                unsafe_allow_html=True)
+
+    faltante = falta_configuracion(config)
+    if faltante:
+        st.warning(f"Falta configurar: {faltante}.")
+        return
+    if st.button("📨 Enviar correo de prueba", key="btn_correo_prueba"):
+        with st.spinner("Enviando..."):
+            ok, error = enviar_correo_prueba(config)
+        if ok:
+            st.success(f"✅ Correo de prueba enviado a {len(lista_destinatarios(config))} destinatario(s). Revisen la bandeja (y el spam).")
+        else:
+            st.error(f"❌ No se pudo enviar: {error}")
