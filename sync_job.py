@@ -214,17 +214,40 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
     # 9. ALERTAS POR CORREO: órdenes nuevas de clientes VIP y molex en
     # comentarios de cierre de soporte. Solo se envía correo si hay algo nuevo.
+    _procesar_alertas(spreadsheet, df_depurado, secrets_data, ahora_local)
+
+
+def _procesar_alertas(spreadsheet, df_depurado, secrets_data, ahora_local):
+    """
+    Corre las alertas y guarda el resultado de cada una en GCS, para verlo
+    desde la app (Configuración -> Correo de alertas) sin abrir el log de esta PC.
+    """
     from notificaciones import falta_configuracion
+    marca_ciclo = pd.Timestamp(ahora_local).strftime('%Y-%m-%d %H:%M:%S')
+    estados = []
     _faltante_correo = falta_configuracion(secrets_data.get("correo", {}))
     if _faltante_correo:
         print(f"  -> [!] Alertas por correo desactivadas: falta en secrets.toml [correo]: {_faltante_correo}")
-    for nombre_alerta, funcion_alerta in (("clientes VIP", _avisar_ordenes_vip_nuevas),
-                                           ("molex en cierres", _avisar_molex_en_comentarios)):
+        estados.append(("Correo", "desactivado", f"falta en secrets.toml de la PC del robot [correo]: {_faltante_correo}"))
+    for nombre_alerta, funcion_alerta in (("Clientes VIP", _avisar_ordenes_vip_nuevas),
+                                           ("Molex en cierres", _avisar_molex_en_comentarios)):
         try:
-            funcion_alerta(spreadsheet, df_depurado, secrets_data, ahora_local)
+            resultado, detalle = funcion_alerta(spreadsheet, df_depurado, secrets_data, ahora_local)
         except Exception as e_alerta:
+            resultado, detalle = "error", str(e_alerta)
             print(f"[-] Error en la alerta de {nombre_alerta} (la sincronización sí se completó): {e_alerta}")
+        estados.append((nombre_alerta, resultado, detalle))
+    try:
+        df_estado = pd.DataFrame(
+            [{"ALERTA": a, "RESULTADO": r, "DETALLE": d, "ULTIMO_CICLO": marca_ciclo} for a, r, d in estados]
+        )
+        sobrescribir_archivo_gcs(df_estado, NOMBRE_BUCKET, ARCHIVO_ESTADO_ALERTAS)
+    except Exception as e_estado:
+        print(f"[-] No se pudo guardar el estado de las alertas en GCS: {e_estado}")
 
+
+# Resultado del último ciclo de alertas, que la app muestra en Configuración.
+ARCHIVO_ESTADO_ALERTAS = "estado_alertas_robot.csv"
 
 # Órdenes ya avisadas por correo (NUM -> fecha del aviso), una por alerta,
 # para no repetir el correo en cada ciclo de 15 minutos. Viven junto al
@@ -266,23 +289,25 @@ def _enviar_y_registrar(nombre, nuevas, correo, ruta, avisadas, secrets_data, ah
     asunto, texto, cuerpo_html = correo
     ok, error = enviar_correo(secrets_data.get("correo", {}), asunto, texto, cuerpo_html,
                               clave_destinatarios=clave_destinatarios)
+    ordenes = ", ".join(map(str, nuevas['NUM']))
     if not ok:
         print(f"  -> [!] {len(nuevas)} orden(es) de {nombre} sin avisar por correo: {error}")
-        return
+        return "error al enviar", f"{len(nuevas)} orden(es) sin avisar ({ordenes}): {error}"
     _registrar_avisadas(ruta, avisadas, nuevas['NUM'], ahora_local)
     print(f"  -> [+] Alerta de {nombre} enviada por correo: {len(nuevas)} orden(es)." + (f" Nota: {error}" if error else ""))
+    return "enviado", f"{len(nuevas)} orden(es): {ordenes}" + (f". Nota: {error}" if error else "")
 
 
 def _avisar_ordenes_vip_nuevas(spreadsheet, df_ordenes, secrets_data, ahora_local):
-    from clientes_vip import HOJA_VIP, normalizar_codigos, seleccionar_ordenes_vip_nuevas, armar_correo_vip
+    from clientes_vip import HOJA_VIP, normalizar_codigos, seleccionar_ordenes_vip_nuevas, armar_correo_vip, diagnostico_vip
 
     try:
         df_vip = pd.DataFrame(spreadsheet.worksheet(HOJA_VIP).get_all_records())
     except Exception as e:
         print(f"  -> [i] Sin hoja '{HOJA_VIP}' de clientes VIP en Sheets ({e}); no se revisan órdenes VIP.")
-        return
+        return "sin lista VIP", f"no se encontró la hoja '{HOJA_VIP}' en la base de datos ({e})"
     if df_vip.empty or 'CLIENTE' not in df_vip.columns:
-        return
+        return "sin lista VIP", f"la hoja '{HOJA_VIP}' está vacía o no tiene la columna CLIENTE"
     df_vip['CLIENTE'] = normalizar_codigos(df_vip['CLIENTE'])
     for columna in ('NOMBRE', 'CLASE'):
         if columna not in df_vip.columns:
@@ -290,13 +315,14 @@ def _avisar_ordenes_vip_nuevas(spreadsheet, df_ordenes, secrets_data, ahora_loca
 
     avisadas = _leer_avisadas(RUTA_VIP_AVISADAS)
     if avisadas is None:
-        return
+        return "error", f"no se pudo leer {RUTA_VIP_AVISADAS}"
     nuevas = seleccionar_ordenes_vip_nuevas(df_ordenes, df_vip, avisadas.keys(), ahora_local)
     if nuevas.empty:
-        print(f"  -> [i] Alerta de clientes VIP: sin órdenes nuevas sin atender ({len(df_vip)} clientes en la lista).")
-    else:
-        _enviar_y_registrar("clientes VIP", nuevas, armar_correo_vip(nuevas), RUTA_VIP_AVISADAS,
-                            avisadas, secrets_data, ahora_local, "destinatarios_vip")
+        detalle = diagnostico_vip(df_ordenes, df_vip, avisadas.keys(), ahora_local)
+        print(f"  -> [i] Alerta de clientes VIP: nada nuevo que avisar. {detalle}")
+        return "sin novedades", detalle
+    return _enviar_y_registrar("clientes VIP", nuevas, armar_correo_vip(nuevas), RUTA_VIP_AVISADAS,
+                               avisadas, secrets_data, ahora_local, "destinatarios_vip")
 
 
 def _avisar_molex_en_comentarios(spreadsheet, df_ordenes, secrets_data, ahora_local):
@@ -304,13 +330,13 @@ def _avisar_molex_en_comentarios(spreadsheet, df_ordenes, secrets_data, ahora_lo
 
     avisadas = _leer_avisadas(RUTA_MOLEX_AVISADAS)
     if avisadas is None:
-        return
+        return "error", f"no se pudo leer {RUTA_MOLEX_AVISADAS}"
     nuevas = seleccionar_molex_en_comentarios(df_ordenes, avisadas.keys(), ahora_local)
     if nuevas.empty:
         print("  -> [i] Alerta de molex en cierres: sin cierres nuevos que mencionen molex.")
-    else:
-        _enviar_y_registrar("molex en cierres", nuevas, armar_correo_molex(nuevas), RUTA_MOLEX_AVISADAS,
-                            avisadas, secrets_data, ahora_local, "destinatarios")
+        return "sin novedades", "ningún cierre de soporte nuevo (últimas 24 h) menciona molex"
+    return _enviar_y_registrar("molex en cierres", nuevas, armar_correo_molex(nuevas), RUTA_MOLEX_AVISADAS,
+                               avisadas, secrets_data, ahora_local, "destinatarios")
 
 
 def _ejecutar_backfill_una_vez(dias_atras):

@@ -136,18 +136,56 @@ def enviar_correo_prueba(config, clave_destinatarios="destinatarios", origen="la
                          clave_destinatarios=clave_destinatarios)
 
 
+ARCHIVO_ESTADO_ALERTAS = "estado_alertas_robot.csv"
+MINUTOS_ROBOT_DETENIDO = 35   # el ciclo es de 15 min; más de dos ciclos sin reportar = algo pasa
+
+
+def mostrar_estado_robot():
+    """Resultado del último ciclo de alertas que reportó sync_job.py (lo guarda en GCS)."""
+    import streamlit as st
+    from tools import leer_espejo_gcs, get_honduras_time, NOMBRE_BUCKET_SISTEMA
+
+    st.markdown("##### 🤖 Último ciclo de alertas del robot")
+    try:
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, ARCHIVO_ESTADO_ALERTAS)
+    except Exception:
+        df = None
+    if df is None or df.empty:
+        st.warning(
+            "El robot todavía no reporta el estado de las alertas. Eso significa que en la PC del robot sigue "
+            "corriendo una versión anterior del código, o que no se ha reiniciado desde que se actualizó. "
+            "Actualiza el código en esa PC y reinicia el robot; después de un ciclo (15 min) aparece aquí."
+        )
+        return
+    ultimo = pd.to_datetime(df["ULTIMO_CICLO"].iloc[0], errors="coerce")
+    if pd.notna(ultimo):
+        minutos = (pd.Timestamp(get_honduras_time()) - ultimo).total_seconds() / 60
+        texto = f"Último ciclo: **{ultimo:%d/%m/%Y %H:%M}** (hace {max(minutos, 0):.0f} min)."
+        (st.warning if minutos > MINUTOS_ROBOT_DETENIDO else st.caption)(
+            texto + (" El robot parece detenido: no reporta desde hace más de dos ciclos." if minutos > MINUTOS_ROBOT_DETENIDO else "")
+        )
+    iconos = {"enviado": "✅", "sin novedades": "➖", "desactivado": "⛔", "sin lista VIP": "⚠️",
+              "error al enviar": "❌", "error": "❌"}
+    for _, fila in df.iterrows():
+        st.markdown(f"{iconos.get(fila['RESULTADO'], '•')} **{fila['ALERTA']}:** {fila['RESULTADO']} — {fila['DETALLE']}")
+
+
 def mostrar_config_correo():
     """Pestaña de Configuración: estado de [correo] y botón de prueba (sin mostrar la contraseña)."""
     import streamlit as st
 
     st.subheader("📧 Correo de alertas")
+    mostrar_estado_robot()
+    st.divider()
+
+    st.markdown("##### Configuración de la app (botón de prueba)")
     st.caption(
-        "Cuenta y destinatarios de las alertas por correo (cajas molex en soporte y órdenes nuevas de "
-        "clientes VIP). Se configuran en Settings → Secrets de la app, sección [correo]."
+        "Las alertas las envía el robot con el [correo] de su propio secrets.toml. Esta sección usa el [correo] "
+        "de Settings → Secrets de la app, solo para el correo de prueba."
     )
     config = config_correo_streamlit()
     if not config:
-        st.warning("No hay sección [correo] en los secretos de la app. Hasta configurarla no se envía ninguna alerta.")
+        st.warning("No hay sección [correo] en los secretos de la app, así que no se puede mandar el correo de prueba desde aquí.")
         return
 
     c1, c2 = st.columns(2)
