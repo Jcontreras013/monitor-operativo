@@ -7,7 +7,7 @@
 #
 # Secretos (sección [correo]):
 #   servidor = "smtp.us-east.atmailcloud.com"
-#   puerto = 465                       # 465 = SSL/TLS (por defecto); 587 = STARTTLS
+#   puerto = 587                       # 587 = STARTTLS (por defecto, cifrado TLS); 465 = SSL/TLS
 #   usuario = "cuenta@dominio"
 #   contrasena = "..."                 # en Gmail: "contraseña de aplicación"
 #   remitente = "cuenta@dominio"       # opcional; por defecto, el usuario
@@ -74,11 +74,12 @@ def enviar_correo(config, asunto, texto, html_cuerpo=None, clave_destinatarios="
         mensaje.add_alternative(html_cuerpo, subtype="html")
 
     servidor = str(config["servidor"]).strip()
-    puerto = int(config.get("puerto", 465))
-    # Si el puerto configurado no conecta, se prueba el otro puerto cifrado
-    # (465 = SSL/TLS, 587 = STARTTLS). Solo ante fallas de CONEXIÓN: una
+    puerto = int(config.get("puerto", 587))
+    # Si el puerto configurado no conecta, se prueban los puertos cifrados
+    # estándar (587 = STARTTLS, 465 = SSL/TLS), también si el configurado no
+    # es de correo (ej. un 447 mal escrito). Solo ante fallas de CONEXIÓN: una
     # contraseña o un destinatario rechazado no se arreglan cambiando de puerto.
-    puertos = [puerto] + ([587 if puerto == 465 else 465] if puerto in (465, 587) else [])
+    puertos = [puerto] + [p for p in (587, 465) if p != puerto]
     fallas_conexion = []
     for p in puertos:
         try:
@@ -90,6 +91,9 @@ def enviar_correo(config, asunto, texto, html_cuerpo=None, clave_destinatarios="
         # El orden importa: los errores SMTP y de certificado también son OSError.
         except smtplib.SMTPAuthenticationError:
             return False, "el servidor de correo rechazó el usuario o la contraseña"
+        except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected) as e:
+            # Algo contestó en ese puerto pero no es el servicio de correo esperado.
+            fallas_conexion.append(f"{p} ({_modo(p)}): {e}")
         except smtplib.SMTPException as e:
             return False, f"el servidor de correo respondió con un error: {e}"
         except ssl.SSLCertVerificationError:
@@ -105,7 +109,7 @@ def enviar_correo(config, asunto, texto, html_cuerpo=None, clave_destinatarios="
 
 
 def _modo(puerto):
-    return "SSL/TLS" if puerto == 465 else "STARTTLS"
+    return "SSL/TLS" if puerto == 465 else "STARTTLS (TLS)"
 
 
 def _enviar_por_puerto(servidor, puerto, config, mensaje):
@@ -147,7 +151,7 @@ def mostrar_config_correo():
         return
 
     c1, c2 = st.columns(2)
-    c1.markdown(f"**Servidor:** `{config.get('servidor', '—')}:{config.get('puerto', 465)}` ({'SSL/TLS' if int(config.get('puerto', 465)) == 465 else 'STARTTLS'})")
+    c1.markdown(f"**Servidor:** `{config.get('servidor', '—')}:{config.get('puerto', 587)}` ({_modo(int(config.get('puerto', 587)))})")
     c1.markdown(f"**Envía:** `{config.get('remitente') or config.get('usuario', '—')}`")
     c1.markdown(f"**Contraseña:** {'configurada' if str(config.get('contrasena', '')).strip() else '❌ falta'}")
     c2.markdown("**Alertas de cajas molex a:**<br>" + ("<br>".join(map(html.escape, lista_destinatarios(config))) or "—"),
