@@ -160,7 +160,7 @@ chat_id = "..."     # ID del grupo de Telegram donde se reportan faltas
 # Opcional: avisos por correo (cajas molex en soporte y órdenes nuevas de clientes VIP)
 [correo]
 servidor = "smtp.us-east.atmailcloud.com"   # correo de maxcom.hn (Atmail Cloud); otros: smtp.gmail.com, smtp.office365.com
-puerto = 465                    # 465 = SSL/TLS (por defecto); 587 = STARTTLS
+puerto = 587                    # 587 = STARTTLS con TLS (por defecto; el que funciona con maxcom.hn); 465 = SSL/TLS
 usuario = "cuenta@dominio"
 contrasena = "..."              # en Gmail: una "contraseña de aplicación", no la normal
 remitente = "cuenta@dominio"    # opcional; por defecto, el usuario
