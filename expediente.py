@@ -127,7 +127,7 @@ def _borrar_documento_repositorio(url):
             "https://catbox.moe/user/api.php",
             data={
                 "reqtype": "deletefiles",
-                "userhash": CATBOX_USERHASH,
+                "userhash": obtener_catbox_userhash(),
                 "files": nombre_en_catbox,
             },
             timeout=30
@@ -205,13 +205,29 @@ def _guardar_indice_repositorio(conn, df):
 # CONFIGURACIÓN Y CARGA DE PERSONAL
 # ==============================================================================
 API_KEY_FREEIMAGE = _leer_secreto("api_freeimage", "6d207e02198a847aa98d0a2a901485a5")
-# Sin userhash configurado, Catbox sube los archivos de forma anónima (nadie
-# puede administrarlos después, pero tampoco expone la cuenta de nadie). Antes
-# había un userhash real harcodeado acá como valor por defecto -- este
-# repositorio es público, así que quedaba expuesto para cualquiera. Configurar
-# uno propio en st.secrets["catbox_userhash"] si hace falta poder borrar/listar
-# los archivos subidos desde la cuenta de Catbox.
-CATBOX_USERHASH = str(_leer_secreto("catbox_userhash", "") or "").strip()
+def obtener_catbox_userhash():
+    """
+    userhash de la cuenta de Catbox, desde st.secrets["catbox_userhash"]
+    (nunca en el código: el repositorio es público). Se lee en cada uso y no
+    al importar el módulo: un módulo importado queda en memoria mientras la
+    app corre, y un secreto agregado después no se veía hasta reiniciarla.
+    """
+    return str(_leer_secreto("catbox_userhash", "") or "").strip()
+
+
+def mensaje_error_412_catbox(userhash):
+    """Explica un 412 de Catbox según si había o no userhash configurado."""
+    if not userhash:
+        return (
+            "Catbox rechazó la subida (412): no hay 'catbox_userhash' en los secretos de la app y "
+            "Catbox no acepta la subida sin cuenta. Agrégalo en Settings → Secrets, arriba del todo, "
+            "antes de cualquier sección entre corchetes [ ]."
+        )
+    return (
+        f"Catbox rechazó el 'catbox_userhash' configurado (412). El valor que lee la app tiene "
+        f"{len(userhash)} caracteres (el de una cuenta de Catbox tiene 25): revisa que sea el de tu "
+        "cuenta, copiado completo y sin espacios ni comillas de más."
+    )
 
 @st.cache_data(show_spinner=False)
 def cargar_personal(filepath="personal_tecnico.txt"):
@@ -321,40 +337,21 @@ def extraer_hora_falta(comentario, fecha_registro):
 # ==============================================================================
 def subir_archivo_catbox(file_bytes, file_name):
     """
-    Sube cualquier tipo de archivo a Catbox.moe. Si hay un userhash
-    configurado en st.secrets, el archivo queda en esa cuenta; si no,
-    se sube de forma anónima.
+    Sube cualquier tipo de archivo a Catbox.moe con el userhash de
+    st.secrets. Catbox responde 412 "Invalid uploader" tanto si el userhash
+    no es válido como si se sube sin cuenta.
     """
     url = "https://catbox.moe/user/api.php"
     payload = {"reqtype": "fileupload"}
-    # La API de Catbox distingue entre "no mandar userhash" (sube anónimo,
-    # sin error) y "mandar userhash vacío o inválido" (responde 412 "Invalid
-    # uploader"). Antes siempre se mandaba la clave, así que sin un
-    # catbox_userhash configurado en st.secrets TODA subida fallaba -- solo
-    # no se notaba porque las imágenes normalmente se iban por Freeimage y
-    # nadie había intentado subir un PDF sin ese secreto configurado.
-    if CATBOX_USERHASH:
-        payload["userhash"] = CATBOX_USERHASH
+    userhash = obtener_catbox_userhash()
+    if userhash:
+        payload["userhash"] = userhash
     try:
         response = requests.post(url, data=payload, files={"fileToUpload": (file_name, file_bytes)}, timeout=35)
-        if response.status_code == 412 and "userhash" in payload:
-            # El userhash de st.secrets ya no es válido (se regeneró en la
-            # cuenta o está mal copiado). Se reintenta anónimo para no
-            # bloquear la subida; esos archivos no se podrán borrar desde la
-            # app hasta corregir el secreto.
-            st.warning(
-                "⚠️ El 'catbox_userhash' configurado en los secretos no es válido, así que el archivo "
-                "se subió de forma anónima. Actualízalo para poder borrar archivos desde la app."
-            )
-            payload.pop("userhash")
-            response = requests.post(url, data=payload, files={"fileToUpload": (file_name, file_bytes)}, timeout=35)
         if response.status_code == 200:
             return response.text.strip()
         if response.status_code == 412:
-            st.error(
-                "Catbox rechazó la subida (412). Configura un 'catbox_userhash' válido en los secretos "
-                "de la app, arriba del todo, antes de cualquier sección entre corchetes [ ]."
-            )
+            st.error(mensaje_error_412_catbox(userhash))
             return None
         st.error(f"Error de Catbox ({response.status_code}): {response.text}")
         return None
