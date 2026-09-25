@@ -103,15 +103,28 @@ def marcar_ordenes_vip(df_ordenes, df_vip):
 # ==============================================================================
 # AVISO DE ÓRDENES NUEVAS (lo usa sync_job.py en cada ciclo)
 # ==============================================================================
+def sin_atender(df):
+    """
+    Órdenes que siguen sin atender: en un estado vivo (pendiente, asignada,
+    en ruta...), el mismo criterio del Monitor en Vivo. Una orden CERRADA o
+    ANULADA ya no genera aviso ni aparece en el panel VIP.
+    """
+    from tools import PATRON_ASIGNADAS_VIVA_STR
+    if df.empty or "ESTADO" not in df.columns:
+        return df.iloc[0:0]
+    return df[df["ESTADO"].astype(str).str.contains(PATRON_ASIGNADAS_VIVA_STR, case=False, na=False)]
+
+
 def seleccionar_ordenes_vip_nuevas(df_ordenes, df_vip, ya_avisadas, ahora, horas=24):
     """
-    Órdenes VIP abiertas en las últimas `horas` que no se hayan avisado.
-    La ventana evita que, al activar el aviso, lleguen de golpe todas las
-    órdenes viejas de clientes VIP que siguen en la consulta de 55 días.
+    Órdenes VIP sin atender, abiertas en las últimas `horas`, que no se
+    hayan avisado. La ventana evita que, al activar el aviso, lleguen de
+    golpe todas las órdenes viejas de clientes VIP de la consulta de 55 días.
     """
-    df = marcar_ordenes_vip(df_ordenes, df_vip)
+    df = sin_atender(marcar_ordenes_vip(df_ordenes, df_vip))
     if df.empty or "NUM" not in df.columns or "FECHA_APE" not in df.columns:
         return pd.DataFrame()
+    df = df.copy()
     df["NUM"] = normalizar_codigos(df["NUM"])
     apertura = pd.to_datetime(df["FECHA_APE"], errors="coerce")
     recientes = apertura >= pd.Timestamp(ahora) - pd.Timedelta(hours=horas)
@@ -152,8 +165,8 @@ def armar_correo_vip(df_nuevas):
 # INTERFAZ
 # ==============================================================================
 def mostrar_panel_vip_monitor(conn, df_vivas):
-    """Aviso arriba del Monitor en Vivo con las órdenes abiertas de clientes VIP."""
-    df_vip_abiertas = marcar_ordenes_vip(df_vivas, cargar_clientes_vip(conn))
+    """Aviso arriba del Monitor en Vivo con las órdenes de clientes VIP sin atender."""
+    df_vip_abiertas = sin_atender(marcar_ordenes_vip(df_vivas, cargar_clientes_vip(conn)))
     if df_vip_abiertas.empty:
         return
     columnas = [c for c in ["NUM", "CLIENTE", "NOMBRE_VIP", "CLASE_VIP", "ACTIVIDAD", "ESTADO",
@@ -161,7 +174,7 @@ def mostrar_panel_vip_monitor(conn, df_vivas):
     if "FECHA_APE" in df_vip_abiertas.columns:
         df_vip_abiertas = df_vip_abiertas.sort_values("FECHA_APE", ascending=False)
     with st.container(border=True):
-        st.warning(f"⭐ **{len(df_vip_abiertas)} orden(es) abierta(s) de clientes VIP** "
+        st.warning(f"⭐ **{len(df_vip_abiertas)} orden(es) de clientes VIP sin atender** "
                    f"({df_vip_abiertas['CLIENTE'].nunique()} cliente(s)).")
         st.dataframe(df_vip_abiertas[columnas], use_container_width=True, hide_index=True)
 
