@@ -1,7 +1,7 @@
 # ==============================================================================
 # CLIENTES VIP
 # ==============================================================================
-# La lista vive en la hoja "ClientesVIP" de Google Sheets y se carga desde
+# La lista vive en la hoja "VIP" de la base de datos (Google Sheets) y se carga desde
 # Configuración. NUNCA en el repositorio (es público): el Excel original trae
 # correos y teléfonos de clientes. De ese archivo solo se guardan código,
 # nombre y clase, que es lo único que hace falta para marcar las órdenes.
@@ -13,7 +13,7 @@ import io
 import pandas as pd
 import streamlit as st
 
-HOJA_VIP = "ClientesVIP"
+HOJA_VIP = "VIP"
 COLUMNAS_VIP = ["CLIENTE", "NOMBRE", "CLASE"]
 
 
@@ -78,7 +78,7 @@ def cargar_clientes_vip(conn):
 
 
 def guardar_clientes_vip(conn, df):
-    """Reemplaza la lista completa en la hoja ClientesVIP (la crea si no existe)."""
+    """Reemplaza la lista completa en la hoja VIP (la crea si no existe)."""
     url = st.secrets["url_base_datos"]
     df = df[COLUMNAS_VIP].astype(str)
     try:
@@ -172,7 +172,7 @@ def mostrar_admin_clientes_vip(conn):
     st.caption(
         "Las órdenes abiertas de estos clientes se marcan arriba del Monitor en Vivo y, si el correo "
         "está configurado, el robot de sincronización avisa por correo cuando se abre una orden nueva. "
-        "Del archivo solo se guardan código, nombre y clase: los correos y teléfonos de contacto no se guardan."
+        "Se guarda en la hoja VIP de la base de datos, solo con código, nombre y clase: los correos y teléfonos de contacto no se guardan."
     )
     if conn is None:
         st.error("No hay conexión con Google Sheets.")

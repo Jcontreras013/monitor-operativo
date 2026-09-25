@@ -6,8 +6,8 @@
 # configuración entra como dict y este módulo no depende de Streamlit.
 #
 # Secretos (sección [correo]):
-#   servidor = "smtp.gmail.com"        # o "smtp.office365.com"
-#   puerto = 587                       # 587 (STARTTLS) o 465 (SSL)
+#   servidor = "smtp.us-east.atmailcloud.com"
+#   puerto = 465                       # 465 = SSL/TLS (por defecto); 587 = STARTTLS
 #   usuario = "cuenta@dominio"
 #   contrasena = "..."                 # en Gmail: "contraseña de aplicación"
 #   remitente = "cuenta@dominio"       # opcional; por defecto, el usuario
@@ -74,7 +74,7 @@ def enviar_correo(config, asunto, texto, html_cuerpo=None, clave_destinatarios="
         mensaje.add_alternative(html_cuerpo, subtype="html")
 
     servidor = str(config["servidor"]).strip()
-    puerto = int(config.get("puerto", 587))
+    puerto = int(config.get("puerto", 465))
     try:
         if puerto == 465:
             with smtplib.SMTP_SSL(servidor, puerto, context=ssl.create_default_context(), timeout=30) as smtp:
@@ -127,7 +127,7 @@ def mostrar_config_correo():
         return
 
     c1, c2 = st.columns(2)
-    c1.markdown(f"**Servidor:** `{config.get('servidor', '—')}:{config.get('puerto', 587)}`")
+    c1.markdown(f"**Servidor:** `{config.get('servidor', '—')}:{config.get('puerto', 465)}` ({'SSL/TLS' if int(config.get('puerto', 465)) == 465 else 'STARTTLS'})")
     c1.markdown(f"**Envía:** `{config.get('remitente') or config.get('usuario', '—')}`")
     c1.markdown(f"**Contraseña:** {'configurada' if str(config.get('contrasena', '')).strip() else '❌ falta'}")
     c2.markdown("**Alertas de cajas molex a:**<br>" + ("<br>".join(map(html.escape, lista_destinatarios(config))) or "—"),

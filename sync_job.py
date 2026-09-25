@@ -212,47 +212,70 @@ def ejecutar_sincronizacion_background(dias_atras=55):
     except Exception as e_gcs:
         print(f"[-] Error menor al respaldar en GCS: {e_gcs}")
 
-    # 9. AVISO POR CORREO DE ÓRDENES NUEVAS DE CLIENTES VIP
-    try:
-        _avisar_ordenes_vip_nuevas(spreadsheet, df_depurado, secrets_data, ahora_local)
-    except Exception as e_vip:
-        print(f"[-] Error al revisar órdenes de clientes VIP (la sincronización sí se completó): {e_vip}")
+    # 9. ALERTAS POR CORREO: órdenes nuevas de clientes VIP y molex en
+    # comentarios de cierre de soporte. Solo se envía correo si hay algo nuevo.
+    for nombre_alerta, funcion_alerta in (("clientes VIP", _avisar_ordenes_vip_nuevas),
+                                           ("molex en cierres", _avisar_molex_en_comentarios)):
+        try:
+            funcion_alerta(spreadsheet, df_depurado, secrets_data, ahora_local)
+        except Exception as e_alerta:
+            print(f"[-] Error en la alerta de {nombre_alerta} (la sincronización sí se completó): {e_alerta}")
 
 
-# Órdenes VIP ya avisadas (NUM -> fecha del aviso), para no repetir el correo
-# en cada ciclo de 15 minutos. Vive junto al script, en la PC del robot.
-RUTA_VIP_AVISADAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vip_avisadas.json")
+# Órdenes ya avisadas por correo (NUM -> fecha del aviso), una por alerta,
+# para no repetir el correo en cada ciclo de 15 minutos. Viven junto al
+# script, en la PC del robot.
+_DIR_SCRIPT = os.path.dirname(os.path.abspath(__file__))
+RUTA_VIP_AVISADAS = os.path.join(_DIR_SCRIPT, "vip_avisadas.json")
+RUTA_MOLEX_AVISADAS = os.path.join(_DIR_SCRIPT, "molex_avisadas.json")
 
 
-def _leer_vip_avisadas():
+def _leer_avisadas(ruta):
     """Devuelve el dict de avisadas, {} si aún no existe, o None si no se puede leer."""
     try:
-        with open(RUTA_VIP_AVISADAS, encoding="utf-8") as f:
+        with open(ruta, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
     except Exception as e:
-        print(f"  -> [!] No se pudo leer {RUTA_VIP_AVISADAS} ({e}). No se envían avisos VIP para no repetirlos; "
+        print(f"  -> [!] No se pudo leer {ruta} ({e}). No se envía esta alerta para no repetirla; "
               "si el archivo está dañado, bórralo.")
         return None
 
 
-def _guardar_vip_avisadas(avisadas):
+def _registrar_avisadas(ruta, avisadas, nums, ahora_local):
+    marca = pd.Timestamp(ahora_local).strftime('%Y-%m-%d %H:%M:%S')
+    avisadas.update({str(num): marca for num in nums})
+    # Pasados 30 días una orden ya no entra en la ventana de 24 h, así que se puede olvidar.
+    limite = pd.Timestamp(ahora_local) - pd.Timedelta(days=30)
+    avisadas = {num: f for num, f in avisadas.items() if pd.to_datetime(f, errors='coerce') >= limite}
     # Se escribe a un temporal y se reemplaza, para que un corte a medias no deje el archivo dañado.
-    temporal = RUTA_VIP_AVISADAS + ".tmp"
+    temporal = ruta + ".tmp"
     with open(temporal, "w", encoding="utf-8") as f:
         json.dump(avisadas, f, ensure_ascii=False, indent=0)
-    os.replace(temporal, RUTA_VIP_AVISADAS)
+    os.replace(temporal, ruta)
+
+
+def _enviar_y_registrar(nombre, nuevas, correo, ruta, avisadas, secrets_data, ahora_local, clave_destinatarios):
+    from notificaciones import enviar_correo
+
+    asunto, texto, cuerpo_html = correo
+    ok, error = enviar_correo(secrets_data.get("correo", {}), asunto, texto, cuerpo_html,
+                              clave_destinatarios=clave_destinatarios)
+    if not ok:
+        print(f"  -> [!] {len(nuevas)} orden(es) de {nombre} sin avisar por correo: {error}")
+        return
+    _registrar_avisadas(ruta, avisadas, nuevas['NUM'], ahora_local)
+    print(f"  -> [+] Alerta de {nombre} enviada por correo: {len(nuevas)} orden(es).")
 
 
 def _avisar_ordenes_vip_nuevas(spreadsheet, df_ordenes, secrets_data, ahora_local):
     from clientes_vip import HOJA_VIP, normalizar_codigos, seleccionar_ordenes_vip_nuevas, armar_correo_vip
-    from notificaciones import enviar_correo
 
     try:
         df_vip = pd.DataFrame(spreadsheet.worksheet(HOJA_VIP).get_all_records())
     except Exception as e:
-        print(f"  -> [i] Sin lista de clientes VIP en Sheets ({e}); no se revisan órdenes VIP.")
+        print(f"  -> [i] Sin hoja '{HOJA_VIP}' de clientes VIP en Sheets ({e}); no se revisan órdenes VIP.")
         return
     if df_vip.empty or 'CLIENTE' not in df_vip.columns:
         return
@@ -261,27 +284,25 @@ def _avisar_ordenes_vip_nuevas(spreadsheet, df_ordenes, secrets_data, ahora_loca
         if columna not in df_vip.columns:
             df_vip[columna] = ''
 
-    avisadas = _leer_vip_avisadas()
+    avisadas = _leer_avisadas(RUTA_VIP_AVISADAS)
     if avisadas is None:
         return
     nuevas = seleccionar_ordenes_vip_nuevas(df_ordenes, df_vip, avisadas.keys(), ahora_local)
-    if nuevas.empty:
-        return
+    if not nuevas.empty:
+        _enviar_y_registrar("clientes VIP", nuevas, armar_correo_vip(nuevas), RUTA_VIP_AVISADAS,
+                            avisadas, secrets_data, ahora_local, "destinatarios_vip")
 
-    asunto, texto, cuerpo_html = armar_correo_vip(nuevas)
-    ok, error = enviar_correo(secrets_data.get("correo", {}), asunto, texto, cuerpo_html,
-                              clave_destinatarios="destinatarios_vip")
-    if not ok:
-        print(f"  -> [!] {len(nuevas)} orden(es) VIP nueva(s) sin avisar por correo: {error}")
-        return
 
-    marca = pd.Timestamp(ahora_local).strftime('%Y-%m-%d %H:%M:%S')
-    avisadas.update({str(num): marca for num in nuevas['NUM']})
-    # Pasados 30 días una orden ya no entra en la ventana de 24 h, así que se puede olvidar.
-    limite = pd.Timestamp(ahora_local) - pd.Timedelta(days=30)
-    avisadas = {num: f for num, f in avisadas.items() if pd.to_datetime(f, errors='coerce') >= limite}
-    _guardar_vip_avisadas(avisadas)
-    print(f"  -> [+] Aviso VIP enviado por correo: {len(nuevas)} orden(es) nueva(s).")
+def _avisar_molex_en_comentarios(spreadsheet, df_ordenes, secrets_data, ahora_local):
+    from materiales import seleccionar_molex_en_comentarios, armar_correo_molex
+
+    avisadas = _leer_avisadas(RUTA_MOLEX_AVISADAS)
+    if avisadas is None:
+        return
+    nuevas = seleccionar_molex_en_comentarios(df_ordenes, avisadas.keys(), ahora_local)
+    if not nuevas.empty:
+        _enviar_y_registrar("molex en cierres", nuevas, armar_correo_molex(nuevas), RUTA_MOLEX_AVISADAS,
+                            avisadas, secrets_data, ahora_local, "destinatarios")
 
 
 def _ejecutar_backfill_una_vez(dias_atras):
