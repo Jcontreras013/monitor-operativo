@@ -350,9 +350,14 @@ def subir_archivo_catbox(file_bytes, file_name):
             response = requests.post(url, data=payload, files={"fileToUpload": (file_name, file_bytes)}, timeout=35)
         if response.status_code == 200:
             return response.text.strip()
-        else:
-            st.error(f"Error de Catbox ({response.status_code}): {response.text}")
+        if response.status_code == 412:
+            st.error(
+                "Catbox rechazó la subida (412). Configura un 'catbox_userhash' válido en los secretos "
+                "de la app, arriba del todo, antes de cualquier sección entre corchetes [ ]."
+            )
             return None
+        st.error(f"Error de Catbox ({response.status_code}): {response.text}")
+        return None
     except Exception as e:
         st.error(f"Error al conectar con Catbox: {e}")
         return None
