@@ -3,3 +3,4 @@ __pycache__/
 log_sync.txt
 log_telegram_bot.txt
 telegram_offset.txt
+vip_avisadas.json

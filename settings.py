@@ -487,10 +487,14 @@ def inicializar_configuracion():
         st.session_state.config_ver_panel = True
 
 
-def mostrar_configuracion():
+def mostrar_configuracion(conn=None):
     st.title("⚙️ Configuración y Documentación")
 
-    tab_conf, tab_doc = st.tabs(["🎛️ Preferencias de Interfaz", "📚 Manual de Usuario"])
+    tab_conf, tab_vip, tab_doc = st.tabs(["🎛️ Preferencias de Interfaz", "⭐ Clientes VIP", "📚 Manual de Usuario"])
+
+    with tab_vip:
+        import clientes_vip
+        clientes_vip.mostrar_admin_clientes_vip(conn)
 
     with tab_conf:
         st.subheader("Personalización del Monitor en Vivo")

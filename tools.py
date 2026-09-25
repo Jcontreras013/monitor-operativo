@@ -4663,6 +4663,47 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
     else:
         pdf.cell(0, 6, "No hay ordenes sin metraje para los filtros seleccionados.", ln=True)
 
+    # --- SECCIÓN 5: CAJAS MOLEX EN ÓRDENES DE SOPORTE ---
+    df_molex = res.get('molex', pd.DataFrame())
+    pdf.ln(6)
+    pdf.set_text_color(0, 0, 0)
+    pdf.seccion_titulo(f"5. CAJAS MOLEX DEPURADAS EN {' / '.join(actividades)}")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(100, 100, 100)
+    if df_molex.empty:
+        pdf.cell(0, 5, safestr("No se depuraron cajas molex en ordenes de soporte en este periodo."), ln=True)
+    else:
+        sin_mencion = int((~df_molex['MENCIONA_MOLEX']).sum())
+        pdf.cell(0, 5, safestr(
+            f"{len(df_molex)} ordenes con {int(df_molex['CAJAS'].sum())} caja(s) molex. "
+            f"En {sin_mencion} el tecnico no la menciona en el comentario de cierre."
+        ), ln=True)
+        pdf.ln(2)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_draw_color(180, 180, 180)
+        pdf.set_font("Helvetica", "", 7)
+        with pdf.table(
+            col_widths=(20, 46, 24, 12, 38, 18, 119),
+            text_align=("CENTER", "LEFT", "CENTER", "CENTER", "LEFT", "CENTER", "LEFT"),
+            line_height=3.6,
+            headings_style=FontFace(emphasis="BOLD", fill_color=(230, 235, 245)),
+            cell_fill_color=(255, 255, 255),
+            cell_fill_mode="ALL",
+            repeat_headings=1,
+        ) as tabla_molex:
+            encabezado = tabla_molex.row()
+            for titulo in ("ORDEN", "TECNICO", "DEPURADA", "CAJAS", "RAZON DE CIERRE", "LA MENCIONA?", "COMENTARIO DE CIERRE"):
+                encabezado.cell(titulo)
+            for _, row in df_molex.iterrows():
+                fila = tabla_molex.row()
+                fila.cell(fmt_celda(row.get('ORDEN'), ""))
+                fila.cell(fmt_celda(row.get('TECNICO'), ""))
+                fila.cell(fmt_celda(row.get('FECHA_DEPURACION'), ""))
+                fila.cell(fmt_celda(row.get('CAJAS'), ""))
+                fila.cell(fmt_celda(row.get('RAZON_CIERRE'), ""))
+                fila.cell("SI" if row.get('MENCIONA_MOLEX') else "NO")
+                fila.cell(fmt_celda(row.get('COMENTARIO'), ""))
+
     return finalizar_pdf(pdf)
 
 
