@@ -160,7 +160,7 @@ chat_id = "..."     # ID del grupo de Telegram donde se reportan faltas
 # Opcional: avisos por correo (cajas molex en soporte y órdenes nuevas de clientes VIP)
 [correo]
 servidor = "smtp.us-east.atmailcloud.com"   # correo de maxcom.hn (Atmail Cloud); otros: smtp.gmail.com, smtp.office365.com
-puerto = 587                    # 587 (STARTTLS) o 465 (SSL)
+puerto = 465                    # 465 = SSL/TLS (por defecto); 587 = STARTTLS
 usuario = "cuenta@dominio"
 contrasena = "..."              # en Gmail: una "contraseña de aplicación", no la normal
 remitente = "cuenta@dominio"    # opcional; por defecto, el usuario
@@ -174,11 +174,14 @@ access_token = "..."
 template_name = "..."
 ```
 
-`sync_job.py` y `telegram_bot.py` leen este mismo archivo con `toml.load()` (no usan `st.secrets`, porque corren fuera de Streamlit), así que en la PC donde se ejecutan debe existir `.streamlit/secrets.toml` junto al resto del código. La sección `[correo]` tiene que estar en **los dos lugares**: en los secretos de Streamlit Cloud (para la alerta de cajas molex, que sale al cruzar archivos en Auditoría de Materiales) y en el `secrets.toml` de la PC del robot (para el aviso de órdenes VIP, que sale de `sync_job.py`).
+`sync_job.py` y `telegram_bot.py` leen este mismo archivo con `toml.load()` (no usan `st.secrets`, porque corren fuera de Streamlit), así que en la PC donde se ejecutan debe existir `.streamlit/secrets.toml` junto al resto del código. 
 
 **Avisos por correo** (para probar la configuración: **Configuración → 📧 Correo de alertas → Enviar correo de prueba** en la app, y `python sync_job.py --probar-correo` en la PC del robot):
-- **Cajas molex en soporte:** al presionar "Cruzar Información" en Auditoría de Materiales, se avisa de las órdenes SOPFIBRA/SOPFIBRACORP en las que Odoo muestra una caja molex depurada. Cada orden se avisa una sola vez (registro en GCS: `alertas_molex_enviadas.csv`).
-- **Clientes VIP:** en cada ciclo, `sync_job.py` avisa de las órdenes abiertas en las últimas 24 h de clientes de la lista VIP. Cada orden se avisa una sola vez (registro local: `vip_avisadas.json`, junto al script). La lista VIP se carga en **Configuración → ⭐ Clientes VIP** y queda en la hoja `ClientesVIP` de Google Sheets; nunca va al repositorio, que es público.
+Las dos alertas las envía `sync_job.py` en cada ciclo (cada 15 min), y solo si hay algo nuevo:
+- **Molex en cierres de soporte:** órdenes SOPFIBRA/SOPFIBRACORP cerradas en las últimas 24 h cuyo comentario de cierre menciona una molex (registro de avisadas: `molex_avisadas.json`, junto al script). Aparte, Auditoría de Materiales muestra las cajas molex que Odoo registra como depuradas en soporte.
+- **Clientes VIP:** órdenes abiertas en las últimas 24 h de clientes de la lista VIP (registro: `vip_avisadas.json`). La lista se carga en **Configuración → ⭐ Clientes VIP** y queda en la hoja `VIP` de la base de datos (Google Sheets); nunca va al repositorio, que es público.
+
+Cada orden se avisa una sola vez. La sección `[correo]` tiene que estar en el `secrets.toml` de la PC del robot (es quien envía) y en los secretos de Streamlit Cloud (para el botón de prueba de Configuración).
 
 ## Cómo correrlo
 

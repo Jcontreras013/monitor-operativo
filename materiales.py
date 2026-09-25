@@ -248,85 +248,60 @@ def procesar_auditoria_materiales(df_cepheus_crudo, df_odoo_crudo, actividades, 
 
 
 # ==============================================================================
-# ALERTA POR CORREO: CAJAS MOLEX EN SOPORTE
+# ALERTA POR CORREO: MOLEX EN COMENTARIOS DE CIERRE (la envía sync_job.py)
 # ==============================================================================
-# Cada orden se avisa UNA sola vez, sin importar cuántas veces ni quién suba
-# los archivos: las ya avisadas quedan registradas en GCS.
-ARCHIVO_ALERTAS_MOLEX = "alertas_molex_enviadas.csv"
+# Se revisa en cada ciclo del robot (cada 15 min) con los datos de Cepheus,
+# sin esperar al archivo de Odoo: si el técnico menciona una molex en el
+# comentario de cierre de un soporte, se avisa para revisar si la usó.
+ACTIVIDADES_ALERTA_MOLEX = ('SOPFIBRA', 'SOPFIBRACORP')
 
 
-def _leer_alertas_molex_enviadas():
-    """Devuelve (DataFrame, None) o (None, error). Un error NO se trata como 'ninguna enviada'."""
-    try:
-        from tools import obtener_cliente_gcs_nativo, NOMBRE_BUCKET_SISTEMA
-        blob = obtener_cliente_gcs_nativo().bucket(NOMBRE_BUCKET_SISTEMA).blob(ARCHIVO_ALERTAS_MOLEX)
-        if not blob.exists():
-            return pd.DataFrame(columns=['ORDEN', 'FECHA_AVISO']), None
-        return pd.read_csv(io.BytesIO(blob.download_as_bytes()), dtype=str), None
-    except Exception as e:
-        return None, str(e)
-
-
-def avisar_molex_por_correo(df_molex, config_correo):
+def seleccionar_molex_en_comentarios(df_ordenes, ya_avisadas, ahora, horas=24):
     """
-    Envía por correo las órdenes de df_molex que no se habían avisado antes.
-    Devuelve (tipo, mensaje) con tipo en success / info / warning.
+    Soportes CERRADOS en las últimas `horas` cuyo comentario de cierre
+    menciona "molex" y que no se hayan avisado. La ventana evita que, al
+    activar la alerta, lleguen de golpe todos los cierres viejos que siguen
+    en la consulta de 55 días del robot.
     """
-    from notificaciones import enviar_correo, falta_configuracion, tabla_html
-    from tools import sobrescribir_archivo_gcs, get_honduras_time, NOMBRE_BUCKET_SISTEMA
+    columnas = ('NUM', 'ACTIVIDAD', 'ESTADO', 'HORA_LIQ', 'COMENTARIO_CIERRE')
+    if df_ordenes is None or df_ordenes.empty or any(c not in df_ordenes.columns for c in columnas):
+        return pd.DataFrame()
+    df = df_ordenes.copy()
+    df['NUM'] = _normalizar_num(df['NUM'])
+    es_soporte = df['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(ACTIVIDADES_ALERTA_MOLEX)
+    cerrada = df['ESTADO'].astype(str).str.upper().str.strip() == 'CERRADA'
+    menciona = df['COMENTARIO_CIERRE'].astype(str).str.upper().str.contains('MOLEX', na=False)
+    reciente = pd.to_datetime(df['HORA_LIQ'], errors='coerce') >= pd.Timestamp(ahora) - pd.Timedelta(hours=horas)
+    nuevas = df[es_soporte & cerrada & menciona & reciente & ~df['NUM'].isin(set(ya_avisadas)) & (df['NUM'] != 'N/D')]
+    return nuevas.drop_duplicates('NUM')
 
-    if df_molex.empty:
-        return "info", "No hay cajas molex depuradas en órdenes de soporte en este archivo."
-    faltante = falta_configuracion(config_correo)
-    if faltante:
-        return "warning", f"📧 No se envió la alerta por correo: falta configurar en los secretos [correo]: {faltante}."
 
-    enviadas, error = _leer_alertas_molex_enviadas()
-    if error:
-        return "warning", (
-            f"📧 No se envió la alerta: no se pudo consultar cuáles ya se habían avisado ({error}). "
-            "Se evita así mandar otra vez todas las anteriores; vuelve a cruzar en un momento."
-        )
-    nuevas = df_molex[~df_molex['ORDEN'].isin(set(enviadas['ORDEN'].astype(str)))]
-    if nuevas.empty:
-        return "info", f"📧 Las {len(df_molex)} órdenes con caja molex ya se habían avisado por correo antes."
+def armar_correo_molex(df_nuevas):
+    """Devuelve (asunto, texto, html) de la alerta de molex en comentarios de cierre."""
+    from notificaciones import tabla_html
 
     columnas = {
-        'ORDEN': 'Orden', 'TECNICO': 'Técnico', 'ACTIVIDAD': 'Actividad', 'CLIENTE': 'Cliente',
-        'FECHA_DEPURACION': 'Depurada en Odoo', 'CAJAS': 'Cajas', 'RAZON_CIERRE': 'Razón de cierre',
-        'MENCIONA_MOLEX': '¿La menciona en el comentario?', 'COMENTARIO': 'Comentario de cierre',
+        'NUM': 'Orden', 'TECNICO': 'Técnico', 'ACTIVIDAD': 'Actividad', 'CLIENTE': 'Cliente',
+        'HORA_LIQ': 'Cierre', 'RAZON_CIERRE_SOP': 'Razón de cierre', 'COMENTARIO_CIERRE': 'Comentario de cierre',
     }
-    tabla = nuevas.rename(columns=columnas).assign(**{'¿La menciona en el comentario?': nuevas['MENCIONA_MOLEX'].map({True: 'Sí', False: 'NO'})})
-    sin_justificar = int((~nuevas['MENCIONA_MOLEX']).sum())
-    asunto = f"⚠️ Cajas molex en órdenes de soporte: {len(nuevas)} orden(es) por revisar"
+    tabla = df_nuevas[[c for c in columnas if c in df_nuevas.columns]].rename(columns=columnas)
+    if 'Cierre' in tabla.columns:
+        tabla['Cierre'] = pd.to_datetime(tabla['Cierre'], errors='coerce').dt.strftime('%d/%m/%Y %H:%M')
+    asunto = f"⚠️ Molex en cierre de soporte: {len(df_nuevas)} orden(es) por revisar"
     intro = (
-        f"Se depuraron cajas molex en {len(nuevas)} orden(es) de soporte "
-        f"({', '.join(sorted(nuevas['ACTIVIDAD'].astype(str).unique()))}). "
-        f"En {sin_justificar} de ellas el técnico no menciona la molex en el comentario de cierre."
+        f"En {len(df_nuevas)} orden(es) de soporte ({', '.join(sorted(df_nuevas['ACTIVIDAD'].astype(str).unique()))}) "
+        "el técnico menciona una molex en el comentario de cierre. Revisar si se dejó una caja molex."
     )
     texto = intro + "\n\n" + "\n".join(
-        f"- Orden {r['ORDEN']} | {r['TECNICO']} | {r['CAJAS']} caja(s) | {r['RAZON_CIERRE']} | {str(r['COMENTARIO'])[:200]}"
-        for _, r in nuevas.iterrows()
-    ) + "\n\nMonitor Operativo MAXCOM - Auditoría de Materiales"
+        " | ".join(f"{k}: {v}" for k, v in fila.items()) for fila in tabla.fillna('').to_dict('records')
+    ) + "\n\nMonitor Operativo MAXCOM - alerta automática"
     cuerpo_html = (
         f'<div style="font-family:Arial,sans-serif;font-size:13px;"><p>{intro}</p>'
         f"{tabla_html(tabla)}"
-        '<p style="color:#666;font-size:11px;">Monitor Operativo MAXCOM · Auditoría de Materiales. '
+        '<p style="color:#666;font-size:11px;">Monitor Operativo MAXCOM · alerta automática cada 15 min. '
         "Cada orden se avisa una sola vez.</p></div>"
     )
-
-    ok, error_envio = enviar_correo(config_correo, asunto, texto, cuerpo_html)
-    if not ok:
-        return "warning", f"📧 No se pudo enviar la alerta por correo: {error_envio}"
-
-    ahora = get_honduras_time().strftime('%Y-%m-%d %H:%M:%S')
-    registro = pd.concat([enviadas, pd.DataFrame({'ORDEN': nuevas['ORDEN'].astype(str), 'FECHA_AVISO': ahora})], ignore_index=True)
-    if not sobrescribir_archivo_gcs(registro, NOMBRE_BUCKET_SISTEMA, ARCHIVO_ALERTAS_MOLEX):
-        return "warning", (
-            f"📧 Alerta enviada ({len(nuevas)} orden(es)), pero no se pudo registrar el envío: "
-            "si vuelves a cruzar, se avisarán de nuevo."
-        )
-    return "success", f"📧 Alerta enviada por correo: {len(nuevas)} orden(es) nueva(s) con caja molex."
+    return asunto, texto, cuerpo_html
 
 
 # ==============================================================================
@@ -379,9 +354,6 @@ def mostrar_auditoria_materiales(*args, **kwargs):
                         read_file_robust(archivo_cepheus), read_file_robust(archivo_odoo),
                         actividades_sel, razones,
                     )
-                    # Solo aquí (al presionar el botón), nunca en cada rerun.
-                    from notificaciones import config_correo_streamlit
-                    resultado['aviso_molex'] = avisar_molex_por_correo(resultado['molex'], config_correo_streamlit())
                     st.session_state['mat_resultado'] = resultado
                 except Exception as e:
                     st.error(f"❌ Error al cruzar la información: {e}")
@@ -446,9 +418,9 @@ def mostrar_auditoria_materiales(*args, **kwargs):
     st.markdown(f"#### 📦 Cajas molex depuradas en {' / '.join(res['actividades'])}")
     st.caption(
         "Una caja molex es material de instalación: en una orden de soporte normalmente no se deja una. "
-        "\"Menciona molex\" dice si el técnico lo explicó en su comentario de cierre."
+        "\"Menciona molex\" dice si el técnico lo explicó en su comentario de cierre. La alerta por correo "
+        "la envía el robot cada 15 minutos, revisando los comentarios de cierre."
     )
-    tipo_aviso, mensaje_aviso = res.get('aviso_molex', ("info", ""))
     if df_molex.empty:
         st.success("✅ No se depuraron cajas molex en órdenes de soporte en este periodo.")
     else:
@@ -457,8 +429,6 @@ def mostrar_auditoria_materiales(*args, **kwargs):
         k2.metric("Cajas depuradas", int(df_molex['CAJAS'].sum()))
         k3.metric("Sin mencionarla en el comentario", int((~df_molex['MENCIONA_MOLEX']).sum()))
         st.dataframe(df_molex, use_container_width=True, hide_index=True)
-    if mensaje_aviso:
-        getattr(st, tipo_aviso, st.info)(mensaje_aviso)
 
     st.divider()
 
