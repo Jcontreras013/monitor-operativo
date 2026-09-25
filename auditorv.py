@@ -123,6 +123,15 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
         if userhash:
             data["userhash"] = userhash
         response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
+        if response.status_code == 412 and "userhash" in data:
+            # Userhash de st.secrets inválido: se reintenta anónimo para no
+            # bloquear la subida (ver subir_archivo_catbox en expediente.py).
+            st.warning(
+                "⚠️ El 'catbox_userhash' configurado en los secretos no es válido, así que el archivo "
+                "se subió de forma anónima. Actualízalo en los secretos de la app."
+            )
+            data.pop("userhash")
+            response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
             url = response.text.strip()
             if url.startswith("http"):
