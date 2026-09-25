@@ -139,6 +139,182 @@ def _borrar_documento_repositorio(url):
         return False, str(e)
 
 
+# ==============================================================================
+# VISOR DE DOCUMENTOS DEL REPOSITORIO
+# ==============================================================================
+# El enlace de Catbox solo lo muestra el navegador si es PDF o imagen. Word
+# (guardado como .bin), Excel y ZIP el navegador los descarga con el nombre
+# aleatorio de Catbox, así que esos se ven con este visor dentro de la app.
+TIPOS_ABRIBLES_EN_NAVEGADOR = {"pdf", "png", "jpg", "jpeg"}
+PAGINAS_VISTA_PREVIA_PDF = 10
+
+
+@st.cache_data(ttl=900, max_entries=20, show_spinner=False)
+def _bajar_bytes_documento(url):
+    # Catbox rechaza peticiones sin User-Agent. Un error se lanza (no se
+    # devuelve) para que st.cache_data no guarde una falla pasajera.
+    r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0 (compatible; MonitorOperativo/1.0)"})
+    r.raise_for_status()
+    return r.content
+
+
+def _descargar_documento_repositorio(url):
+    """Devuelve (bytes, None) o (None, motivo del error)."""
+    try:
+        return _bajar_bytes_documento(str(url).strip()), None
+    except requests.HTTPError as e:
+        return None, f"El servidor respondió {e.response.status_code}."
+    except Exception as e:
+        return None, str(e)
+
+
+def _extension_documento(nombre):
+    nombre = str(nombre or "")
+    return nombre.rsplit('.', 1)[-1].lower() if '.' in nombre else ''
+
+
+def _tipo_real_documento(datos, nombre_archivo):
+    """
+    Tipo por el CONTENIDO primero y por la extensión después: en Catbox un
+    Word queda como .bin, y un .docx/.xlsx es por dentro un ZIP, así que la
+    extensión del enlace no dice qué es el archivo.
+    """
+    if datos[:5] == b"%PDF-":
+        return "pdf"
+    if datos[:8] == b"\x89PNG\r\n\x1a\n" or datos[:3] == b"\xff\xd8\xff":
+        return "imagen"
+    if datos[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(datos)) as zf:
+                internos = set(zf.namelist())
+            if "word/document.xml" in internos:
+                return "docx"
+            if "xl/workbook.xml" in internos:
+                return "xlsx"
+            return "zip"
+        except zipfile.BadZipFile:
+            pass
+    ext = _extension_documento(nombre_archivo)
+    if ext in ("xls", "csv", "doc"):
+        return ext
+    return "desconocido"
+
+
+def _escapar_md(texto):
+    return re.sub(r'([\\`*_{}\[\]<>()#+\-.!|~$])', r'\\\1', texto)
+
+
+def _parrafo_docx_a_markdown(parrafo):
+    partes = []
+    for elemento in parrafo.iter_inner_content():
+        # Un hipervínculo trae sus propios runs; un run se trata solo.
+        for run in getattr(elemento, "runs", [elemento]):
+            texto = run.text
+            nucleo = texto.strip()
+            if run.bold and nucleo:
+                izq = texto[:len(texto) - len(texto.lstrip())]
+                der = texto[len(texto.rstrip()):]
+                partes.append(f"{izq}**{_escapar_md(nucleo)}**{der}")
+            else:
+                partes.append(_escapar_md(texto))
+    linea = "".join(partes).strip()
+    if not linea:
+        return ""
+    estilo = str(getattr(parrafo.style, "name", "") or "").lower()
+    if estilo.startswith(("heading", "título", "titulo", "title")):
+        return f"#### {linea}"
+    return linea
+
+
+def _tabla_docx_a_dataframe(tabla):
+    filas = [[celda.text.strip() for celda in fila.cells] for fila in tabla.rows]
+    if not filas:
+        return pd.DataFrame()
+    encabezado = filas[0]
+    if len(filas) > 1 and all(encabezado) and len(set(encabezado)) == len(encabezado):
+        return pd.DataFrame(filas[1:], columns=encabezado)
+    return pd.DataFrame(filas, columns=[f"Col {i + 1}" for i in range(len(encabezado))])
+
+
+def _mostrar_docx(datos):
+    documento = Document(io.BytesIO(datos))
+    bloque = []
+
+    def _volcar():
+        if bloque:
+            st.markdown("\n\n".join(bloque))
+            bloque.clear()
+
+    for elemento in documento.iter_inner_content():
+        if hasattr(elemento, "rows"):
+            _volcar()
+            df_tabla = _tabla_docx_a_dataframe(elemento)
+            if not df_tabla.empty:
+                st.dataframe(df_tabla, hide_index=True, use_container_width=True)
+        else:
+            linea = _parrafo_docx_a_markdown(elemento)
+            if linea:
+                bloque.append(linea)
+    _volcar()
+
+    imagenes = [rel.target_part.blob for rel in documento.part.rels.values() if "image" in rel.reltype]
+    if imagenes:
+        with st.expander(f"🖼️ Imágenes del documento ({len(imagenes)})"):
+            for img in imagenes:
+                try:
+                    st.image(img, width="stretch")
+                except Exception:
+                    pass
+
+
+def _mostrar_vista_previa_documento(datos, nombre_archivo):
+    tipo = _tipo_real_documento(datos, nombre_archivo)
+    try:
+        if tipo == "pdf":
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(datos)) as pdf:
+                total = len(pdf.pages)
+                for i, pagina in enumerate(pdf.pages[:PAGINAS_VISTA_PREVIA_PDF]):
+                    st.image(pagina.to_image(resolution=110).original, caption=f"Página {i + 1} de {total}", width="stretch")
+            if total > PAGINAS_VISTA_PREVIA_PDF:
+                st.caption(f"Se muestran {PAGINAS_VISTA_PREVIA_PDF} de {total} páginas. Usa **🔗 Abrir** para verlo completo.")
+        elif tipo == "imagen":
+            st.image(datos, width="stretch")
+        elif tipo == "docx":
+            _mostrar_docx(datos)
+        elif tipo in ("xlsx", "xls"):
+            hojas = pd.read_excel(io.BytesIO(datos), sheet_name=None)
+            for nombre_hoja, df_hoja in list(hojas.items())[:5]:
+                st.markdown(f"**Hoja: {nombre_hoja}**")
+                st.dataframe(df_hoja, hide_index=True, use_container_width=True)
+            if len(hojas) > 5:
+                st.caption(f"Se muestran 5 de {len(hojas)} hojas. Usa **⬇️ Preparar** para bajar el archivo completo.")
+        elif tipo == "csv":
+            try:
+                df_csv = pd.read_csv(io.BytesIO(datos), encoding="utf-8")
+            except UnicodeDecodeError:
+                df_csv = pd.read_csv(io.BytesIO(datos), encoding="latin1")
+            st.dataframe(df_csv, hide_index=True, use_container_width=True)
+        elif tipo == "zip":
+            with zipfile.ZipFile(io.BytesIO(datos)) as zf:
+                contenido = [
+                    {"ARCHIVO": i.filename, "TAMAÑO_KB": round(i.file_size / 1024, 1)}
+                    for i in zf.infolist() if not i.is_dir()
+                ]
+            st.caption(f"🗂️ Archivo comprimido con {len(contenido)} archivo(s). Usa **⬇️ Preparar** para bajarlo.")
+            st.dataframe(pd.DataFrame(contenido), hide_index=True, use_container_width=True)
+        elif tipo == "doc":
+            st.info("Es un Word antiguo (.doc) y no se puede mostrar aquí. Usa **⬇️ Preparar** para bajarlo con su nombre real.")
+        else:
+            st.info("Este tipo de archivo no tiene vista previa. Usa **⬇️ Preparar** para bajarlo con su nombre real.")
+    except Exception as e:
+        st.warning(f"No se pudo mostrar la vista previa ({e}). Usa **⬇️ Preparar** para bajarlo.")
+
+
+def _alternar_vista_documento(idx):
+    st.session_state[f"repo_ver_{idx}"] = not st.session_state.get(f"repo_ver_{idx}", False)
+
+
 @st.cache_data(show_spinner=False)
 def _cargar_indice_repositorio(_conn):
     """
@@ -1811,36 +1987,34 @@ def mostrar_repositorio_documentos(conn):
                                 st.caption(f"📝 {fila['DESCRIPCION']}")
 
                         with c2:
-                            # Enlace directo: siempre funciona porque los archivos
-                            # de Catbox son públicos y lo abre el navegador, sin
-                            # que el servidor tenga que descargarlos.
-                            st.link_button("🔗 Abrir", str(fila['ENLACE']), use_container_width=True)
+                            viendo = st.session_state.get(f"repo_ver_{idx}", False)
+                            st.button(
+                                "🙈 Ocultar" if viendo else "👁️ Ver",
+                                key=f"repo_verbtn_{idx}",
+                                use_container_width=True,
+                                on_click=_alternar_vista_documento,
+                                args=(idx,),
+                            )
+
+                            # Enlace directo solo donde el navegador lo muestra
+                            # (PDF, imágenes). Para Word/Excel/ZIP el enlace de
+                            # Catbox solo descarga un archivo con nombre aleatorio.
+                            ext_fila = _extension_documento(fila['NOMBRE_ARCHIVO']) or str(fila.get('TIPO', '')).lower()
+                            if ext_fila in TIPOS_ABRIBLES_EN_NAVEGADOR:
+                                st.link_button("🔗 Abrir", str(fila['ENLACE']), use_container_width=True)
 
                             # Descarga por el servidor: sirve para restaurar el
                             # nombre real de los archivos de Word, que en Catbox
                             # están guardados con extensión .bin.
                             if st.button("⬇️ Preparar", key=f"repo_prep_{idx}", use_container_width=True):
                                 with st.spinner("Descargando..."):
-                                    datos, motivo_error = None, None
-                                    try:
-                                        # Catbox rechaza peticiones sin User-Agent.
-                                        r_doc = requests.get(
-                                            str(fila['ENLACE']).strip(),
-                                            timeout=60,
-                                            headers={"User-Agent": "Mozilla/5.0 (compatible; MonitorOperativo/1.0)"}
-                                        )
-                                        if r_doc.status_code == 200:
-                                            datos = r_doc.content
-                                        else:
-                                            motivo_error = f"El servidor respondió {r_doc.status_code}."
-                                    except Exception as e_dl:
-                                        motivo_error = str(e_dl)
+                                    datos, motivo_error = _descargar_documento_repositorio(fila['ENLACE'])
 
                                 if datos:
                                     st.session_state[f"repo_datos_{idx}"] = datos
                                 else:
                                     st.error(f"No se pudo descargar: {motivo_error}")
-                                    st.caption("Usa **🔗 Abrir** para bajarlo directo del navegador.")
+                                    st.caption("Enlace directo del archivo:")
                                     st.code(str(fila['ENLACE']), language=None)
 
                             if st.session_state.get(f"repo_datos_{idx}"):
@@ -1875,6 +2049,14 @@ def mostrar_repositorio_documentos(conn):
                                 if st.button("🗑️ Borrar", key=f"repo_del_{idx}", use_container_width=True):
                                     st.session_state[f"repo_confirmar_{idx}"] = True
                                     st.rerun()
+
+                        if st.session_state.get(f"repo_ver_{idx}"):
+                            with st.spinner("Cargando vista previa..."):
+                                datos_vista, error_vista = _descargar_documento_repositorio(fila['ENLACE'])
+                            if datos_vista:
+                                _mostrar_vista_previa_documento(datos_vista, fila['NOMBRE_ARCHIVO'])
+                            else:
+                                st.error(f"No se pudo cargar el documento: {error_vista}")
 
         # ------------------------------------------------------------------
         # MANTENIMIENTO
