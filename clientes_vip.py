@@ -132,6 +132,22 @@ def seleccionar_ordenes_vip_nuevas(df_ordenes, df_vip, ya_avisadas, ahora, horas
     return nuevas.drop_duplicates("NUM")
 
 
+def diagnostico_vip(df_ordenes, df_vip, ya_avisadas, ahora, horas=24):
+    """Explica en una línea por qué no hubo nada que avisar (para el estado del robot)."""
+    marcadas = marcar_ordenes_vip(df_ordenes, df_vip)
+    if marcadas.empty:
+        return (f"en los datos de Cepheus de este ciclo no hay órdenes de los {len(df_vip)} clientes VIP "
+                "(revisa que el código de cliente sea el mismo que en la hoja VIP)")
+    vivas = sin_atender(marcadas)
+    apertura = pd.to_datetime(vivas["FECHA_APE"], errors="coerce") if "FECHA_APE" in vivas.columns else pd.Series(dtype="datetime64[ns]")
+    recientes = vivas[apertura >= pd.Timestamp(ahora) - pd.Timedelta(hours=horas)]
+    nums_recientes = normalizar_codigos(recientes["NUM"]) if "NUM" in recientes.columns else pd.Series(dtype=str)
+    ya = [n for n in nums_recientes if n in set(ya_avisadas)]
+    return (f"órdenes VIP en los datos: {len(marcadas)}; sin atender: {len(vivas)}; "
+            f"sin atender abiertas en las últimas {horas} h: {len(recientes)}"
+            + (f" ({', '.join(nums_recientes)}), ya avisadas antes: {len(ya)}" if len(recientes) else ""))
+
+
 def armar_correo_vip(df_nuevas):
     """Devuelve (asunto, texto, html) del aviso de órdenes nuevas VIP."""
     from notificaciones import tabla_html
