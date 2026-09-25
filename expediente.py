@@ -211,7 +211,7 @@ API_KEY_FREEIMAGE = _leer_secreto("api_freeimage", "6d207e02198a847aa98d0a2a9014
 # repositorio es público, así que quedaba expuesto para cualquiera. Configurar
 # uno propio en st.secrets["catbox_userhash"] si hace falta poder borrar/listar
 # los archivos subidos desde la cuenta de Catbox.
-CATBOX_USERHASH = _leer_secreto("catbox_userhash", "")
+CATBOX_USERHASH = str(_leer_secreto("catbox_userhash", "") or "").strip()
 
 @st.cache_data(show_spinner=False)
 def cargar_personal(filepath="personal_tecnico.txt"):
@@ -335,11 +335,19 @@ def subir_archivo_catbox(file_bytes, file_name):
     # nadie había intentado subir un PDF sin ese secreto configurado.
     if CATBOX_USERHASH:
         payload["userhash"] = CATBOX_USERHASH
-    files = {
-        "fileToUpload": (file_name, file_bytes)
-    }
     try:
-        response = requests.post(url, data=payload, files=files, timeout=35)
+        response = requests.post(url, data=payload, files={"fileToUpload": (file_name, file_bytes)}, timeout=35)
+        if response.status_code == 412 and "userhash" in payload:
+            # El userhash de st.secrets ya no es válido (se regeneró en la
+            # cuenta o está mal copiado). Se reintenta anónimo para no
+            # bloquear la subida; esos archivos no se podrán borrar desde la
+            # app hasta corregir el secreto.
+            st.warning(
+                "⚠️ El 'catbox_userhash' configurado en los secretos no es válido, así que el archivo "
+                "se subió de forma anónima. Actualízalo para poder borrar archivos desde la app."
+            )
+            payload.pop("userhash")
+            response = requests.post(url, data=payload, files={"fileToUpload": (file_name, file_bytes)}, timeout=35)
         if response.status_code == 200:
             return response.text.strip()
         else:
