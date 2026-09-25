@@ -112,36 +112,19 @@ def subir_pdf_gratis_catbox(file_buffer, file_name):
         }
         data = {"reqtype": "fileupload"}
         # Mismo criterio que subir_archivo_catbox() en expediente.py: el
-        # userhash sale de st.secrets y solo se manda si existe. Antes había
-        # uno real escrito aquí (el repo es público), y Catbox responde 412
-        # "Invalid uploader" ante un userhash vacío o inválido en vez de subir
-        # el archivo de forma anónima.
-        try:
-            userhash = str(st.secrets.get("catbox_userhash", "")).strip()
-        except Exception:
-            userhash = ""
+        # userhash sale de st.secrets (nunca del código: el repo es público).
+        from expediente import obtener_catbox_userhash, mensaje_error_412_catbox
+        userhash = obtener_catbox_userhash()
         if userhash:
             data["userhash"] = userhash
         response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
-        if response.status_code == 412 and "userhash" in data:
-            # Userhash de st.secrets inválido: se reintenta anónimo para no
-            # bloquear la subida (ver subir_archivo_catbox en expediente.py).
-            st.warning(
-                "⚠️ El 'catbox_userhash' configurado en los secretos no es válido, así que el archivo "
-                "se subió de forma anónima. Actualízalo en los secretos de la app."
-            )
-            data.pop("userhash")
-            response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
         if response.status_code == 200:
             url = response.text.strip()
             if url.startswith("http"):
                 return url, None
             return None, f"Catbox error: {url}"
         if response.status_code == 412:
-            return None, (
-                "Catbox rechazó la subida (412). Configura un 'catbox_userhash' válido en los secretos "
-                "de la app, arriba del todo, antes de cualquier sección entre corchetes [ ]."
-            )
+            return None, mensaje_error_412_catbox(userhash)
         return None, f"Catbox HTTP {response.status_code}"
     except Exception as e:
         return None, f"Fallo al conectar con Catbox: {str(e)}"

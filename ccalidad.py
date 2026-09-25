@@ -18,7 +18,7 @@ _TIPO_CAMPO_POR_HOJA = {
     "Auditoria_Fibra": "fibra",
 }
 
-# subir_archivo_catbox vive en expediente.py (ya usa CATBOX_USERHASH desde
+# subir_archivo_catbox vive en expediente.py (ya lee catbox_userhash desde
 # st.secrets ahí) -- se reutiliza en vez de duplicar la integración con
 # Catbox. expediente.py no importa nada de este módulo, así que no hay
 # import circular.
