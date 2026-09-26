@@ -553,14 +553,24 @@ def _mostrar_tabla_panel_aggrid(df_estilo_v):
 # SINCROFONIZACIÓN DE DATOS CON LA NUBE
 # ==============================================================================
 @st.cache_data(ttl=120, show_spinner=False)
-def _ultimo_ciclo_robot():
-    """Hora del último ciclo completo de sync_job.py (la escribe junto al estado de las alertas)."""
+def _estado_robot():
+    """
+    Estado del último ciclo de sync_job.py: (ultimo_ciclo, sync_ok, motivo,
+    ultima_sync_ok), o None si el robot aún no lo reporta. El robot lo
+    escribe en cada ciclo, también cuando no logra actualizar Sheets.
+    """
     try:
-        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "estado_alertas_robot.csv")
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "estado_robot.csv")
         if df is None or df.empty:
             return None
-        ciclo = pd.to_datetime(df["ULTIMO_CICLO"].iloc[0], errors="coerce")
-        return None if pd.isna(ciclo) else ciclo
+        fila = df.iloc[0]
+        ciclo = pd.to_datetime(fila.get("ULTIMO_CICLO"), errors="coerce")
+        ultima_ok = pd.to_datetime(fila.get("ULTIMA_SYNC_OK"), errors="coerce")
+        if pd.isna(ciclo):
+            return None
+        sync_ok = str(fila.get("SYNC_OK", "")).strip().upper() in ("TRUE", "1", "VERDADERO")
+        motivo = "" if pd.isna(fila.get("MOTIVO")) else str(fila.get("MOTIVO"))
+        return ciclo, sync_ok, motivo, (None if pd.isna(ultima_ok) else ultima_ok)
     except Exception:
         return None
 
@@ -2788,12 +2798,19 @@ def main():
         # Hora del último ciclo del robot con Cepheus. Si no avanza, los datos
         # de Sheets están viejos aunque la app los acabe de leer: órdenes ya
         # cerradas en Cepheus seguirían viéndose pendientes.
-        _ciclo_robot = _ultimo_ciclo_robot()
-        if _ciclo_robot is not None:
-            _min_robot = int((get_honduras_time() - _ciclo_robot).total_seconds() // 60)
-            if _min_robot > 35:
-                st.warning(f"🤖 El robot no sincroniza con Cepheus desde las {_ciclo_robot:%H:%M} "
-                           f"(hace {_min_robot // 60}h {_min_robot % 60}min): las órdenes pueden estar desactualizadas.")
+        _estado = _estado_robot()
+        if _estado is not None:
+            _ciclo_robot, _sync_ok, _motivo_robot, _ultima_ok = _estado
+            _ahora_r = get_honduras_time()
+            _min_ciclo = int((_ahora_r - _ciclo_robot).total_seconds() // 60)
+            _desde_ok = (f" Última sincronización exitosa: {_ultima_ok:%d/%m %H:%M}." if _ultima_ok is not None
+                         else "")
+            if _min_ciclo > 35:
+                st.warning(f"🤖 El robot no reporta desde las {_ciclo_robot:%d/%m %H:%M}: parece detenido. "
+                           f"Las órdenes pueden estar desactualizadas.{_desde_ok}")
+            elif not _sync_ok:
+                st.error(f"🤖 El robot está corriendo (último intento {_ciclo_robot:%H:%M}) pero NO está "
+                         f"actualizando las órdenes: {_motivo_robot}.{_desde_ok}")
             else:
                 st.caption(f"🤖 Robot sincronizado con Cepheus a las {_ciclo_robot:%H:%M}.")
         
