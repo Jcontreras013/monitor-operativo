@@ -105,6 +105,10 @@ except ImportError as e:
 # así que cualquier actividad que NO esté aquí queda descartada desde la raíz del
 # pipeline y no puede reaparecer en ninguna vista.
 # Para agregar o quitar una actividad, se edita SOLO esta lista.
+# Cada cuánto se vuelve a leer Sheets en una sesión abierta (el robot lo
+# actualiza cada 15 min). Ver el refresco automático en main().
+MINUTOS_REFRESCO_DATOS = 10
+
 ACTIVIDADES_PERMITIDAS = [
     'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INS-WA',
     'PEXTERNO', 'PLEXISCA', 'SOP', 'SOPCORP', 'SOPFIBRA', 'SOPFIBRACORP',
@@ -548,7 +552,25 @@ def _mostrar_tabla_panel_aggrid(df_estilo_v):
 # ==============================================================================
 # SINCROFONIZACIÓN DE DATOS CON LA NUBE
 # ==============================================================================
-def sincronizar_datos_nube(conn):
+@st.cache_data(ttl=120, show_spinner=False)
+def _ultimo_ciclo_robot():
+    """Hora del último ciclo completo de sync_job.py (la escribe junto al estado de las alertas)."""
+    try:
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "estado_alertas_robot.csv")
+        if df is None or df.empty:
+            return None
+        ciclo = pd.to_datetime(df["ULTIMO_CICLO"].iloc[0], errors="coerce")
+        return None if pd.isna(ciclo) else ciclo
+    except Exception:
+        return None
+
+
+def sincronizar_datos_nube(conn, silencioso=False):
+    """
+    Carga las órdenes desde Google Sheets (respaldo: GCS) a la sesión.
+    Con silencioso=True (carga inicial y refresco automático) no muestra
+    mensajes ni recarga la página: devuelve True/False y el llamador decide.
+    """
     try:
         with st.spinner("☁️ Descargando historial desde Google Sheets (fuente al día)..."):
             # Se lee PRIMERO el Google Sheet, que es la fuente fresca y confiable: el
@@ -575,6 +597,8 @@ def sincronizar_datos_nube(conn):
             # que df_nube ya es un DataFrame -- y sin esta salvaguarda eso revienta con
             # "'NoneType' object has no attribute 'columns'" en vez de avisar con claridad.
             if df_nube is None:
+                if silencioso:
+                    return False
                 st.error("❌ No se pudo leer ni Google Sheets ni el respaldo en GCS. Verifica la conexión e intenta de nuevo.")
                 # Se muestra el error REAL de la lectura del Sheet (antes solo se
                 # imprimia a un log de servidor que el usuario no ve). Sin esto,
@@ -689,19 +713,28 @@ def sincronizar_datos_nube(conn):
                 df_nube = df_nube[cols_presentes + cols_restantes]
 
                 st.session_state.df_base = df_nube
-                
+                st.session_state['df_base_cargado_en'] = get_honduras_time()
+                if silencioso:
+                    return True
+
                 st.success(f"✅ Sincronización Exitosa. Se cargaron {len(df_nube)} órdenes de la nube.")
                 import time
                 time.sleep(1.5)
                 st.rerun()
             else: 
+                if silencioso:
+                    return False
                 st.warning("⚠️ La base de datos en la nube está completamente vacía. Sube archivos como Admin primero.")
                 import time
                 time.sleep(3)
     except Exception as e: 
+        if silencioso:
+            print(f"[aviso] Falló la carga silenciosa de datos de la nube: {e}")
+            return False
         st.error(f"❌ Error crítico al conectar con la nube: {e}")
         import time
         time.sleep(3)
+    return False
 
 # ==============================================================================
 # INTERFAZ PRINCIPAL (MAIN)
@@ -2751,6 +2784,18 @@ def main():
                     st.caption(f"🟢 Datos actualizados a las {_hora_datos}.")
             except Exception:
                 pass
+
+        # Hora del último ciclo del robot con Cepheus. Si no avanza, los datos
+        # de Sheets están viejos aunque la app los acabe de leer: órdenes ya
+        # cerradas en Cepheus seguirían viéndose pendientes.
+        _ciclo_robot = _ultimo_ciclo_robot()
+        if _ciclo_robot is not None:
+            _min_robot = int((get_honduras_time() - _ciclo_robot).total_seconds() // 60)
+            if _min_robot > 35:
+                st.warning(f"🤖 El robot no sincroniza con Cepheus desde las {_ciclo_robot:%H:%M} "
+                           f"(hace {_min_robot // 60}h {_min_robot % 60}min): las órdenes pueden estar desactualizadas.")
+            else:
+                st.caption(f"🤖 Robot sincronizado con Cepheus a las {_ciclo_robot:%H:%M}.")
         
         if es_admin:
             st.markdown("#### ⚡ Actualización Inmediata")
@@ -2958,36 +3003,52 @@ def main():
                 else: return
 
         if 'df_base' not in st.session_state:
-            df_gcs_init = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
-            if df_gcs_init is not None and not df_gcs_init.empty:
-                st.session_state.df_base = df_gcs_init
+            # Carga inicial desde Google Sheets, la fuente al día que actualiza
+            # el robot cada 15 min. Antes se leía SOLO el respaldo en GCS, que
+            # queda viejo cuando su escritura falla ("error menor" en
+            # sync_job.py): órdenes ya cerradas en Cepheus se veían pendientes.
+            if conn is None or not sincronizar_datos_nube(conn, silencioso=True):
+                df_gcs_init = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+                if df_gcs_init is not None and not df_gcs_init.empty:
+                    st.session_state.df_base = df_gcs_init
+        if 'df_base' not in st.session_state:
+            if os.path.exists("logo_monitor.png"):
+                col1_img, col2_img, col3_img = st.columns([1, 2, 1])
+                with col2_img:
+                    st.image("logo_monitor.png", use_container_width=True)
             else:
-                if os.path.exists("logo_monitor.png"):
-                    col1_img, col2_img, col3_img = st.columns([1, 2, 1])
-                    with col2_img:
-                        st.image("logo_monitor.png", use_container_width=True)
-                else:
-                    st.title("⚡ Monitor Operativo Maxcom PRO")
+                st.title("⚡ Monitor Operativo Maxcom PRO")
 
-                st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
-                st.markdown("<br><br>", unsafe_allow_html=True)
+            st.info("💡 Sesión iniciada correctamente. Los datos de la operación no están cargados en memoria.")
+            st.markdown("<br><br>", unsafe_allow_html=True)
 
-                col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
-                with col_c2:
-                    if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_fallback_inicial"):
-                        if conn is not None:
-                            sincronizar_datos_nube(conn)
-                        else:
-                            st.error("Conexión no disponible.")
-                return
+            col_c1, col_c2, col_c3 = st.columns([1, 2, 1])
+            with col_c2:
+                if st.button("📥 DESCARGAR DATOS AHORA", type="primary", use_container_width=True, key="btn_nube_fallback_inicial"):
+                    if conn is not None:
+                        sincronizar_datos_nube(conn)
+                    else:
+                        st.error("Conexión no disponible.")
+            return
 
     # Marca de tiempo del "snapshot" de datos que vive en memoria de ESTA sesión.
-    # df_base se guarda en st.session_state y NO se refresca solo: cada sesión
+    # df_base se guarda en st.session_state; se refresca solo cada
+    # MINUTOS_REFRESCO_DATOS (ver abajo), y mientras tanto cada sesión
     # conserva la foto de los datos del momento en que se cargó. Por eso dos
     # usuarios distintos pueden ver información diferente al mismo tiempo si uno
     # abrió su sesión antes que el otro. Guardar la hora permite avisarlo.
     if btn_reprocesar or btn_api_procesar or st.session_state.get('df_base_cargado_en') is None:
         st.session_state['df_base_cargado_en'] = get_honduras_time()
+
+    # Refresco automático: la foto de datos de la sesión se vuelve a leer de
+    # Sheets si tiene más de MINUTOS_REFRESCO_DATOS. Sin esto, una sesión
+    # abierta hace horas seguía mostrando pendientes órdenes ya cerradas.
+    # Ocurre en la siguiente interacción (cualquier clic o filtro).
+    _foto = st.session_state.get('df_base_cargado_en')
+    if (conn is not None and _foto is not None and not (btn_reprocesar or btn_api_procesar)
+            and (get_honduras_time() - _foto) > timedelta(minutes=MINUTOS_REFRESCO_DATOS)):
+        if not sincronizar_datos_nube(conn, silencioso=True):
+            st.caption("⚠️ No se pudieron refrescar los datos de la nube; se muestran los de la última carga.")
 
     df_base = st.session_state.df_base.copy()
 
