@@ -48,9 +48,10 @@ from tools import (
 )
 
 def ejecutar_sincronizacion_background(dias_atras=55):
+    """Un ciclo de sincronización. Devuelve (True, None) si actualizó Google Sheets, o (False, motivo)."""
     if not HAS_GSPREAD:
         print("[-] Error: Las librerías 'gspread' o 'google-auth' no están instaladas.")
-        return
+        return False, "faltan las librerías gspread/google-auth en la PC del robot"
 
     print(f"[{datetime.now()}] Iniciando descarga automática desde la API de Cepheus ({dias_atras} días atrás)...")
 
@@ -72,7 +73,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
     df_api_raw = consultar_api_ordenes(fecha_dt_api)
     if df_api_raw is None or df_api_raw.empty:
         print("[-] Fallo de descarga: La API de Cepheus no devolvió registros.")
-        return
+        return False, "la API de Cepheus no devolvió órdenes (ver en el log el motivo que dio Cepheus: límite de consultas, credenciales o conexión)"
 
     # 3. CONEXIÓN DIRECTA A GOOGLE SHEETS SIN STREAMLIT
     try:
@@ -95,7 +96,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
         df_sheets_master = pd.DataFrame(registros_crudos)
     except Exception as e_sheets:
         print(f"[-] Fallo al conectar o leer desde Google Sheets: {e_sheets}")
-        return
+        return False, f"no se pudo leer Google Sheets: {e_sheets}"
 
     # 4. Cruzar con el catálogo de dispositivos FTTX
     df_fttx_cloud = pd.DataFrame()
@@ -111,7 +112,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
     if df_fttx_cloud is None or df_fttx_cloud.empty:
         print("[-] Fallo: No se pudo localizar el catálogo FTTX ni en Google Sheets ni en GCS. Se aborta este ciclo.")
-        return
+        return False, "no se encontró el catálogo FTTX ni en Sheets ni en GCS"
     else:
         print(f"  -> [+] Catálogo FTTX cargado con {len(df_fttx_cloud)} registros.")
 
@@ -200,7 +201,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
         print("[+] Carga exitosa: Google Sheets actualizado correctamente.")
     except Exception as e_write:
         print(f"[-] Fallo al intentar escribir en Google Sheets: {e_write}")
-        return
+        return False, f"no se pudo escribir en Google Sheets: {e_write}"
 
     # 8. RESPALDO ESPEJO EN GCS
     try:
@@ -215,6 +216,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
     # 9. ALERTAS POR CORREO: órdenes nuevas de clientes VIP y molex en
     # comentarios de cierre de soporte. Solo se envía correo si hay algo nuevo.
     _procesar_alertas(spreadsheet, df_depurado, secrets_data, ahora_local)
+    return True, None
 
 
 def _procesar_alertas(spreadsheet, df_depurado, secrets_data, ahora_local):
@@ -248,6 +250,9 @@ def _procesar_alertas(spreadsheet, df_depurado, secrets_data, ahora_local):
 
 # Resultado del último ciclo de alertas, que la app muestra en Configuración.
 ARCHIVO_ESTADO_ALERTAS = "estado_alertas_robot.csv"
+# Resultado de cada ciclo de sincronización (aunque falle), que la app
+# muestra en la barra lateral.
+ARCHIVO_ESTADO_ROBOT = "estado_robot.csv"
 
 # Órdenes ya avisadas por correo (NUM -> fecha del aviso), una por alerta,
 # para no repetir el correo en cada ciclo de 15 minutos. Viven junto al
@@ -405,6 +410,16 @@ if __name__ == '__main__':
     print("="*60, flush=True)
 
     ruta_heartbeat = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heartbeat.txt")
+    # Se recupera la última sincronización exitosa del estado guardado, para
+    # no perderla si el robot se reinicia.
+    ultima_sync_ok = None
+    try:
+        _estado_previo = leer_espejo_gcs(NOMBRE_BUCKET, ARCHIVO_ESTADO_ROBOT)
+        if _estado_previo is not None and not _estado_previo.empty:
+            _previa = pd.to_datetime(_estado_previo["ULTIMA_SYNC_OK"].iloc[0], errors="coerce")
+            ultima_sync_ok = None if pd.isna(_previa) else _previa.to_pydatetime()
+    except Exception:
+        pass
 
     while True:
         # ======================================================================
@@ -415,18 +430,30 @@ if __name__ == '__main__':
         # tenerlo abierto en Notepad), la excepción mataba el proceso completo
         # sin dejar rastro, aunque la PC siguiera encendida.
         # ======================================================================
+        sync_ok, motivo_fallo = False, None
         try:
-            ejecutar_sincronizacion_background()
+            sync_ok, motivo_fallo = ejecutar_sincronizacion_background()
         except Exception as e_critico:
+            motivo_fallo = f"falla crítica: {e_critico}"
             try:
                 print(f"[-] Falla crítica en el ciclo actual. Se reintentará en la siguiente ventana. Detalle: {e_critico}", flush=True)
             except Exception:
                 pass
+        ahora_ciclo = get_honduras_time()
+        if sync_ok:
+            ultima_sync_ok = ahora_ciclo
 
+        # Antes el cierre decía "Ciclo terminado" aunque el ciclo se hubiera
+        # cortado antes de escribir en Sheets, y el log parecía al día cuando
+        # la hoja llevaba horas sin actualizarse. Ahora dice cuál de las dos.
         try:
             print("="*60, flush=True)
             hora_prox = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M:%S")
-            print(f"⏳ Ciclo terminado. Esperando 15 minutos. Próxima ejecución a las: {hora_prox}", flush=True)
+            if sync_ok:
+                print(f"✅ Ciclo terminado: Google Sheets actualizado. Próxima ejecución a las: {hora_prox}", flush=True)
+            else:
+                desde = f" Última sincronización exitosa: {ultima_sync_ok:%Y-%m-%d %H:%M}." if ultima_sync_ok else ""
+                print(f"❌ Ciclo terminado SIN actualizar Google Sheets: {motivo_fallo}.{desde} Próximo intento a las: {hora_prox}", flush=True)
         except Exception:
             # Si hasta el print de cierre de ciclo falla (log bloqueado, disco
             # lleno, etc.), no se debe dejar morir el demonio por esto.
@@ -437,7 +464,21 @@ if __name__ == '__main__':
         # proceso murió (o quedó colgado) justo después de la última escritura.
         try:
             with open(ruta_heartbeat, "w", encoding="utf-8") as f_hb:
-                f_hb.write(f"Último ciclo completado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f_hb.write(f"Último ciclo: {ahora_ciclo:%Y-%m-%d %H:%M:%S} "
+                           f"({'Sheets actualizado' if sync_ok else 'SIN actualizar Sheets: ' + str(motivo_fallo)})\n")
+                f_hb.write(f"Última sincronización exitosa: {ultima_sync_ok:%Y-%m-%d %H:%M:%S}\n" if ultima_sync_ok
+                           else "Última sincronización exitosa: ninguna desde que arrancó el robot\n")
+        except Exception:
+            pass
+
+        # Mismo estado en GCS, para que la app muestre por qué no hay datos nuevos.
+        try:
+            sobrescribir_archivo_gcs(pd.DataFrame([{
+                "ULTIMO_CICLO": ahora_ciclo.strftime('%Y-%m-%d %H:%M:%S'),
+                "SYNC_OK": sync_ok,
+                "MOTIVO": motivo_fallo or "",
+                "ULTIMA_SYNC_OK": ultima_sync_ok.strftime('%Y-%m-%d %H:%M:%S') if ultima_sync_ok else "",
+            }]), NOMBRE_BUCKET, ARCHIVO_ESTADO_ROBOT)
         except Exception:
             pass
 
