@@ -570,9 +570,28 @@ def _estado_robot():
             return None
         sync_ok = str(fila.get("SYNC_OK", "")).strip().upper() in ("TRUE", "1", "VERDADERO")
         motivo = "" if pd.isna(fila.get("MOTIVO")) else str(fila.get("MOTIVO"))
-        return ciclo, sync_ok, motivo, (None if pd.isna(ultima_ok) else ultima_ok)
+        respaldo = pd.to_datetime(fila.get("ULTIMO_RESPALDO_GCS"), errors="coerce")
+        return (ciclo, sync_ok, motivo, (None if pd.isna(ultima_ok) else ultima_ok),
+                (None if pd.isna(respaldo) else respaldo))
     except Exception:
         return None
+
+
+def _respaldo_gcs_mas_reciente():
+    """
+    True si el robot reporta que su último respaldo en GCS es más nuevo que
+    la última escritura en Sheets (pasa cuando Google rechaza la escritura en
+    Sheets pero el respaldo sí se guardó). En ese caso GCS es la fuente al día.
+    """
+    try:
+        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "estado_robot.csv")
+        if df is None or df.empty or "ULTIMO_RESPALDO_GCS" not in df.columns:
+            return False
+        respaldo = pd.to_datetime(df["ULTIMO_RESPALDO_GCS"].iloc[0], errors="coerce")
+        sheets = pd.to_datetime(df["ULTIMA_SYNC_OK"].iloc[0], errors="coerce")
+        return pd.notna(respaldo) and (pd.isna(sheets) or respaldo > sheets)
+    except Exception:
+        return False
 
 
 def sincronizar_datos_nube(conn, silencioso=False):
@@ -589,14 +608,19 @@ def sincronizar_datos_nube(conn, silencioso=False):
             # Sheet no responde. Antes se leia GCS primero, y cuando su escritura fallaba
             # (marcada como "error menor" en sync_job.py) la app mostraba datos viejos
             # aunque el Sheet estuviera al dia.
+            # Excepción: si el robot reporta que su respaldo en GCS es más nuevo que la
+            # última escritura en Sheets (Google rechazó la escritura), se usa GCS.
             df_nube = None
             _err_sheet_txt = None
-            try:
-                df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
-            except Exception as _e_sheet:
-                _err_sheet_txt = str(_e_sheet)
-                print(f"[aviso] No se pudo leer Google Sheets, se usara el respaldo GCS: {_e_sheet}")
-                df_nube = None
+            if _respaldo_gcs_mas_reciente():
+                df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
+            if df_nube is None or df_nube.empty:
+                try:
+                    df_nube = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Sheet1", ttl=0)
+                except Exception as _e_sheet:
+                    _err_sheet_txt = str(_e_sheet)
+                    print(f"[aviso] No se pudo leer Google Sheets, se usara el respaldo GCS: {_e_sheet}")
+                    df_nube = None
 
             if df_nube is None or df_nube.empty:
                 df_nube = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "historial_maestro.csv")
@@ -2800,7 +2824,7 @@ def main():
         # cerradas en Cepheus seguirían viéndose pendientes.
         _estado = _estado_robot()
         if _estado is not None:
-            _ciclo_robot, _sync_ok, _motivo_robot, _ultima_ok = _estado
+            _ciclo_robot, _sync_ok, _motivo_robot, _ultima_ok, _respaldo_gcs = _estado
             _ahora_r = get_honduras_time()
             _min_ciclo = int((_ahora_r - _ciclo_robot).total_seconds() // 60)
             _desde_ok = (f" Última sincronización exitosa: {_ultima_ok:%d/%m %H:%M}." if _ultima_ok is not None
@@ -2808,6 +2832,9 @@ def main():
             if _min_ciclo > 35:
                 st.warning(f"🤖 El robot no reporta desde las {_ciclo_robot:%d/%m %H:%M}: parece detenido. "
                            f"Las órdenes pueden estar desactualizadas.{_desde_ok}")
+            elif not _sync_ok and _respaldo_gcs is not None and (_ahora_r - _respaldo_gcs).total_seconds() <= 35 * 60:
+                st.warning(f"🤖 Google Sheets no aceptó la última actualización del robot, pero las órdenes están "
+                           f"al día desde el respaldo de las {_respaldo_gcs:%H:%M}. Detalle: {_motivo_robot}.")
             elif not _sync_ok:
                 st.error(f"🤖 El robot está corriendo (último intento {_ciclo_robot:%H:%M}) pero NO está "
                          f"actualizando las órdenes: {_motivo_robot}.{_desde_ok}")

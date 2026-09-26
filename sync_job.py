@@ -47,6 +47,41 @@ from tools import (
     NOMBRE_BUCKET_SISTEMA as NOMBRE_BUCKET
 )
 
+# Google rechaza (503) una sola petición con toda la hoja cuando el historial
+# es grande; se escribe en lotes y se reintenta ante fallas pasajeras.
+FILAS_POR_LOTE_SHEETS = 2000
+CODIGOS_REINTENTABLES = (429, 500, 502, 503, 504)
+
+# Hora del último respaldo exitoso en GCS (se reporta en estado_robot.csv).
+ULTIMO_RESPALDO_GCS = None
+
+
+def _con_reintentos(funcion, descripcion, intentos=5, espera_inicial=5):
+    """Ejecuta una llamada a Google Sheets reintentando ante 429/5xx, con espera creciente."""
+    espera = espera_inicial
+    for intento in range(1, intentos + 1):
+        try:
+            return funcion()
+        except Exception as e:
+            codigo = getattr(getattr(e, "response", None), "status_code", None)
+            reintentable = codigo in CODIGOS_REINTENTABLES or "UNAVAILABLE" in str(e)
+            if not reintentable or intento == intentos:
+                raise
+            print(f"  -> [!] Google Sheets respondió {codigo or 'con error'} al {descripcion}; "
+                  f"reintento {intento}/{intentos - 1} en {espera} s...", flush=True)
+            time.sleep(espera)
+            espera *= 2
+
+
+def _escribir_por_lotes(worksheet, valores):
+    for inicio in range(0, len(valores), FILAS_POR_LOTE_SHEETS):
+        lote = valores[inicio:inicio + FILAS_POR_LOTE_SHEETS]
+        _con_reintentos(
+            lambda lote=lote, inicio=inicio: worksheet.update(values=lote, range_name=f"A{inicio + 1}"),
+            f"escribir las filas {inicio + 1}-{inicio + len(lote)}",
+        )
+
+
 def ejecutar_sincronizacion_background(dias_atras=55):
     """Un ciclo de sincronización. Devuelve (True, None) si actualizó Google Sheets, o (False, motivo)."""
     if not HAS_GSPREAD:
@@ -168,15 +203,25 @@ def ejecutar_sincronizacion_background(dias_atras=55):
     df_final = df_final.fillna("")
 
     # 7. CARGA EN GOOGLE SHEETS
+    sheets_ok, error_sheets = True, None
     try:
         valores_actualizar = [df_final.columns.values.tolist()] + df_final.values.tolist()
         filas_nuevas = len(valores_actualizar)
         columnas_nuevas = len(df_final.columns)
+        print(f"  -> Escribiendo en Google Sheets: {filas_nuevas} filas x {columnas_nuevas} columnas "
+              f"en lotes de {FILAS_POR_LOTE_SHEETS}...", flush=True)
 
         # Dimensiones de la hoja ANTES de escribir, para poder recortar el
         # sobrante DESPUES de que los datos nuevos ya quedaron confirmados.
         filas_previas = worksheet.row_count
         columnas_previas = worksheet.col_count
+
+        # Si los datos nuevos no caben en la cuadrícula actual, se agranda
+        # antes de escribir (nunca se achica aquí).
+        if filas_nuevas > filas_previas or columnas_nuevas > columnas_previas:
+            _con_reintentos(lambda: worksheet.resize(rows=max(filas_nuevas, filas_previas),
+                                                     cols=max(columnas_nuevas, columnas_previas)),
+                            "agrandar la hoja")
 
         # ORDEN CRITICO: se escribe primero, se recorta el sobrante despues --
         # NUNCA al reves. Antes se hacia worksheet.clear() ANTES de escribir los
@@ -186,7 +231,12 @@ def ejecutar_sincronizacion_background(dias_atras=55):
         # exactamente el sintoma detectado en produccion (hoja en blanco, sin
         # encabezados ni datos). Escribiendo primero, un fallo aqui deja los
         # datos del ciclo ANTERIOR intactos en vez de borrarlos a ciegas.
-        worksheet.update(values=valores_actualizar, range_name='A1')
+        #
+        # Se escribe POR LOTES: con el historial acumulado (26 mil+ órdenes)
+        # una sola petición con toda la hoja es demasiado grande y Google la
+        # rechaza con 503 "The service is currently unavailable" en cada
+        # ciclo -- así se detuvo la sincronización el 25/09 a las 5:21 pm.
+        _escribir_por_lotes(worksheet, valores_actualizar)
 
         # Se recorta solo el sobrante de la version anterior (si tenia mas
         # filas o columnas que la nueva), para que no queden filas viejas
@@ -194,24 +244,33 @@ def ejecutar_sincronizacion_background(dias_atras=55):
         # datos nuevos YA quedaron escritos -- no se pierde nada.
         try:
             if filas_previas > filas_nuevas or columnas_previas > columnas_nuevas:
-                worksheet.resize(rows=filas_nuevas, cols=columnas_nuevas)
+                _con_reintentos(lambda: worksheet.resize(rows=filas_nuevas, cols=columnas_nuevas), "recortar la hoja")
         except Exception as e_recorte:
             print(f"[!] Aviso: no se pudo recortar el sobrante de la hoja anterior (los datos nuevos ya quedaron escritos): {e_recorte}")
 
         print("[+] Carga exitosa: Google Sheets actualizado correctamente.")
     except Exception as e_write:
+        sheets_ok, error_sheets = False, str(e_write)
         print(f"[-] Fallo al intentar escribir en Google Sheets: {e_write}")
-        return False, f"no se pudo escribir en Google Sheets: {e_write}"
 
-    # 8. RESPALDO ESPEJO EN GCS
+    # 8. RESPALDO ESPEJO EN GCS -- se hace aunque Sheets haya fallado: la app
+    # usa este respaldo cuando está más al día que Sheets (ver estado_robot.csv).
+    global ULTIMO_RESPALDO_GCS
     try:
         gcs_ok = sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET, "historial_maestro.csv")
         if gcs_ok:
+            ULTIMO_RESPALDO_GCS = get_honduras_time()
             print("[+] Respaldo exitoso: Copia de alta velocidad subida a GCS.")
         else:
-            print("[-] Error menor al respaldar en GCS (Sheets se guardó bien).")
+            print("[-] Error al respaldar en GCS.")
     except Exception as e_gcs:
-        print(f"[-] Error menor al respaldar en GCS: {e_gcs}")
+        gcs_ok = False
+        print(f"[-] Error al respaldar en GCS: {e_gcs}")
+
+    if not sheets_ok:
+        respaldo = ("el respaldo en GCS sí quedó al día y la app lo usa" if gcs_ok
+                    else "tampoco se pudo guardar el respaldo en GCS")
+        return False, f"no se pudo escribir en Google Sheets ({error_sheets}); {respaldo}"
 
     # 9. ALERTAS POR CORREO: órdenes nuevas de clientes VIP y molex en
     # comentarios de cierre de soporte. Solo se envía correo si hay algo nuevo.
@@ -478,6 +537,7 @@ if __name__ == '__main__':
                 "SYNC_OK": sync_ok,
                 "MOTIVO": motivo_fallo or "",
                 "ULTIMA_SYNC_OK": ultima_sync_ok.strftime('%Y-%m-%d %H:%M:%S') if ultima_sync_ok else "",
+                "ULTIMO_RESPALDO_GCS": ULTIMO_RESPALDO_GCS.strftime('%Y-%m-%d %H:%M:%S') if ULTIMO_RESPALDO_GCS else "",
             }]), NOMBRE_BUCKET, ARCHIVO_ESTADO_ROBOT)
         except Exception:
             pass
