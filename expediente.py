@@ -658,6 +658,15 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     if any(x in texto for x in palabras_vehiculo_neglect):
         return 'GRAVE'
 
+    # Vehículo sucio, con basura o desordenado ("MANEJO SUCIO DEL VEHICULO
+    # ASIGNADO"): también es mal cuidado de la unidad, así que es GRAVE. Va
+    # antes de la lista de LEVES porque ahí "SUCIO" y "DESORDEN" solos (ej. el
+    # uniforme) siguen siendo LEVE.
+    suciedad = ["SUCI", "BASURA", "DESORDEN", "DESASEO", "MUGR"]
+    unidad = ["VEHICULO", "VEHÍCULO", "UNIDAD VEHICULAR", "CARRO", "PICKUP", "PICK UP", "MOTOCICLETA"]
+    if any(s in texto for s in suciedad) and any(u in texto for u in unidad):
+        return 'GRAVE'
+
     # 2. EVALUACIÓN DE SLA & MANEJO DE ÓRDENES (REGLA ASOCIATIVA INTELIGENTE)
     roots_objeto = ["ORDEN", "ÓRDEN", "RUTA"]
     roots_accion = ["APERTUR", "CERR", "CIERR", "INIC", "LIQUID", "FINALIZ"]
@@ -1045,7 +1054,7 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
             _dibujar_tabla_clasif(
                 pdf, df_graves,
                 etiqueta   = "FALTAS GRAVES",
-                desc_corta = "Mal cuidado de vehiculos, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde",
+                desc_corta = "Mal cuidado o vehiculo sucio, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde",
                 hr=180, hg=30, hb=30,
                 rr=255, rg=235, rb=235,
                 thr=255, thg=255, thb=255,
