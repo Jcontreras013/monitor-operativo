@@ -346,31 +346,15 @@ def _cargar_indice_repositorio(_conn):
 def _guardar_indice_repositorio(conn, df):
     """
     Guarda el índice en Google Sheets. Si la hoja todavía no existe, la crea:
-    conn.update() falla con WorksheetNotFound cuando la worksheet no está creada,
-    y esa era la causa del error 'No se pudo guardar el índice: RepositorioDocs'.
+    conn.update() falla con WorksheetNotFound cuando la worksheet no está creada
+    (y conn.create() de la librería no sirve para crearla; ver
+    escribir_hoja_sheets en tools.py).
     Limpia la caché de _cargar_indice_repositorio al terminar, para que el
     próximo rerun muestre el índice actualizado en vez del viejo.
     """
     try:
-        conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
-        st.cache_data.clear()
-        return True
-    except Exception:
-        pass
-
-    # Segundo intento: crear la hoja y escribir en ella.
-    try:
-        conn.create(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
-        st.cache_data.clear()
-        return True
-    except Exception:
-        pass
-
-    # Tercer intento: crear vacía y luego actualizar (algunas versiones de
-    # st-gsheets-connection no aceptan 'data' en create()).
-    try:
-        conn.create(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO)
-        conn.update(spreadsheet=_leer_secreto("url_base_datos"), worksheet=HOJA_REPOSITORIO, data=df)
+        from tools import escribir_hoja_sheets
+        escribir_hoja_sheets(conn, _leer_secreto("url_base_datos"), HOJA_REPOSITORIO, df)
         st.cache_data.clear()
         return True
     except Exception as e:
