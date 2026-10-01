@@ -106,13 +106,7 @@ def _subir_documento_repositorio(datos_bytes, nombre_original):
         base = nombre_original.rsplit('.', 1)[0]
         nombre_envio = f"{base}__{ext}.bin"
 
-    try:
-        url = subir_archivo_catbox(datos_bytes, nombre_envio)
-        if url and str(url).startswith("http"):
-            return str(url).strip(), None
-        return None, f"Catbox devolvió una respuesta inesperada: {url}"
-    except Exception as e:
-        return None, str(e)
+    return subir_catbox(datos_bytes, nombre_envio)
 
 
 def _borrar_documento_repositorio(url):
@@ -495,29 +489,54 @@ def extraer_hora_falta(comentario, fecha_registro):
 # ==============================================================================
 # MOTOR AUXILIAR DE SUBIDA A NUBE (CATBOX PARA PDF / FREEIMAGE PARA IMÁGENES)
 # ==============================================================================
-def subir_archivo_catbox(file_bytes, file_name):
+CODIGOS_REINTENTABLES_CATBOX = (500, 502, 503, 504, 520, 521, 522, 524)
+ESPERAS_REINTENTO_CATBOX = (3, 8)   # segundos antes del 2.º y 3.er intento
+
+
+def subir_catbox(file_bytes, file_name):
     """
-    Sube cualquier tipo de archivo a Catbox.moe con el userhash de
-    st.secrets. Catbox responde 412 "Invalid uploader" tanto si el userhash
-    no es válido como si se sube sin cuenta.
+    Sube un archivo a Catbox.moe con el userhash de st.secrets. Devuelve
+    (url, None) o (None, motivo). Catbox a veces responde 502/503 o se corta
+    por unos segundos: esos errores pasajeros se reintentan. Un 412 ("Invalid
+    uploader": userhash inválido o subida sin cuenta) no se reintenta.
     """
-    url = "https://catbox.moe/user/api.php"
     payload = {"reqtype": "fileupload"}
     userhash = obtener_catbox_userhash()
     if userhash:
         payload["userhash"] = userhash
-    try:
-        response = requests.post(url, data=payload, files={"fileToUpload": (file_name, file_bytes)}, timeout=35)
-        if response.status_code == 200:
-            return response.text.strip()
-        if response.status_code == 412:
-            st.error(mensaje_error_412_catbox(userhash))
-            return None
-        st.error(f"Error de Catbox ({response.status_code}): {response.text}")
-        return None
-    except Exception as e:
-        st.error(f"Error al conectar con Catbox: {e}")
-        return None
+    cabeceras = {"User-Agent": "Mozilla/5.0 (compatible; MonitorOperativo/1.0)"}
+    motivo = None
+    for intento in range(len(ESPERAS_REINTENTO_CATBOX) + 1):
+        if intento:
+            time.sleep(ESPERAS_REINTENTO_CATBOX[intento - 1])
+        try:
+            r = requests.post("https://catbox.moe/user/api.php", data=payload, headers=cabeceras,
+                              files={"fileToUpload": (file_name, file_bytes)}, timeout=60)
+        except (requests.ConnectionError, requests.Timeout) as e:
+            motivo = f"no se pudo conectar con Catbox ({type(e).__name__})"
+            continue
+        except Exception as e:
+            return None, f"Error al conectar con Catbox: {e}"
+        if r.status_code == 200:
+            url = r.text.strip()
+            if url.startswith("http"):
+                return url, None
+            return None, f"Catbox devolvió una respuesta inesperada: {url[:200]}"
+        if r.status_code == 412:
+            return None, mensaje_error_412_catbox(userhash)
+        if r.status_code not in CODIGOS_REINTENTABLES_CATBOX:
+            return None, f"Error de Catbox ({r.status_code}): {r.text[:200]}"
+        motivo = f"Catbox HTTP {r.status_code}"
+    return None, (f"{motivo} en {len(ESPERAS_REINTENTO_CATBOX) + 1} intentos. Es una falla del servidor de "
+                  "Catbox (catbox.moe), no de la app; intenta de nuevo en unos minutos.")
+
+
+def subir_archivo_catbox(file_bytes, file_name):
+    """Como subir_catbox(), pero muestra el error en pantalla y devuelve solo la URL (o None)."""
+    url, error = subir_catbox(file_bytes, file_name)
+    if error:
+        st.error(error)
+    return url
 
 def subir_evidencias_inteligente(file_uploader_obj):
     """
