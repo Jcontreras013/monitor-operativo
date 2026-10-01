@@ -104,6 +104,66 @@ def normalizar_unidad(v_str):
     return clean
 
 # --- SUBIDA A CATBOX ---
+# ==============================================================================
+# REGISTRO DE INSPECCIONES ESCANEADAS (Gestión Documental de Flota)
+# ==============================================================================
+# Se guarda en la hoja "Registro_Flota" de la base de datos. Antes la fuente
+# principal era el CSV del bucket de GCS y la hoja solo un respaldo que nunca
+# llegó a crearse: cuando el bucket dejó de existir, leer fallaba y salía
+# "No se pudo cargar el registro". Ahora manda Sheets (la hoja se crea sola
+# al guardar el primer registro) y el CSV de GCS queda como copia opcional.
+HOJA_REGISTRO_FLOTA = "Registro_Flota"
+ARCHIVO_REGISTRO_FLOTA_GCS = "registro_escaneres_flota.csv"
+COLUMNAS_REGISTRO_FLOTA = ["FECHA", "PLACA", "SUPERVISOR", "ENLACE_DOCUMENTO", "FECHA_SUBIDA"]
+
+
+def cargar_registro_flota(conn):
+    """Registro de inspecciones; DataFrame vacío si todavía no hay ninguno."""
+    df = None
+    if conn is not None:
+        try:
+            df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=HOJA_REGISTRO_FLOTA, ttl=0)
+            df = df.dropna(how="all")
+        except Exception:
+            df = None  # la hoja aún no existe
+    if df is None or df.empty:
+        try:
+            df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, ARCHIVO_REGISTRO_FLOTA_GCS)
+        except Exception:
+            df = None
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLUMNAS_REGISTRO_FLOTA)
+    return df.reset_index(drop=True)
+
+
+def guardar_registro_flota(conn, df):
+    """Guarda en Sheets (creando la hoja si falta). Devuelve (True, None) o (False, motivo)."""
+    try:
+        sobrescribir_archivo_gcs(df, NOMBRE_BUCKET_SISTEMA, ARCHIVO_REGISTRO_FLOTA_GCS)
+    except Exception:
+        pass  # copia opcional
+    if conn is None:
+        return False, "no hay conexión con Google Sheets"
+    url = st.secrets["url_base_datos"]
+    try:
+        conn.update(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA, data=df)
+        return True, None
+    except Exception:
+        pass
+    # conn.update() falla con WorksheetNotFound si la hoja no existe: se crea.
+    try:
+        conn.create(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA, data=df)
+        return True, None
+    except Exception:
+        pass
+    try:
+        conn.create(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA)
+        conn.update(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA, data=df)
+        return True, None
+    except Exception as e:
+        return False, f"no se pudo guardar en la hoja '{HOJA_REGISTRO_FLOTA}': {e}"
+
+
 def subir_pdf_gratis_catbox(file_buffer, file_name):
     try:
         file_buffer.seek(0)
@@ -734,39 +794,14 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                     "FECHA_SUBIDA": get_hn_time().strftime("%Y-%m-%d %H:%M:%S")
                                 }])
                                 
-                                df_escaneres = None
-                                try:
-                                    df_escaneres = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                except:
-                                    pass
-                                    
-                                if df_escaneres is None or df_escaneres.empty:
-                                    if conn is not None:
-                                        try:
-                                            df_escaneres = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
-                                        except:
-                                            df_escaneres = pd.DataFrame()
-                                    else:
-                                        df_escaneres = pd.DataFrame()
-
-                                df_escaneres = pd.concat([df_escaneres, nuevo_registro_escaner], ignore_index=True)
-                                
-                                try:
-                                    sobrescribir_archivo_gcs(df_escaneres, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                except:
-                                    pass
-                                    
-                                if conn is not None:
-                                    try:
-                                        conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_escaneres)
-                                        st.success("✅ Documento guardado exitosamente en Google Sheets y en la Nube.")
-                                    except Exception as e:
-                                        st.warning("⚠️ Guardado en la nube pero falló GSheets.")
+                                df_escaneres = pd.concat([cargar_registro_flota(conn), nuevo_registro_escaner], ignore_index=True)
+                                ok_reg, err_reg = guardar_registro_flota(conn, df_escaneres)
+                                if ok_reg:
+                                    st.success("✅ Documento guardado exitosamente.")
+                                    time.sleep(2)
+                                    st.rerun()
                                 else:
-                                    st.success("✅ Guardado en la nube exitoso.")
-                                
-                                time.sleep(2)
-                                st.rerun()
+                                    st.error(f"❌ El documento se subió, pero no se pudo guardar el registro: {err_reg}")
                             except Exception as e:
                                 st.error(f"❌ Error interno al guardar: {e}")
                         else:
@@ -782,16 +817,8 @@ def mostrar_auditoria(es_movil=False, conn=None):
             
         with st.spinner("Cargando registro de la nube..."):
             try:
-                df_view_insp = None
-                try:
-                    df_view_insp = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                except:
-                    pass
-                    
-                if df_view_insp is None or df_view_insp.empty:
-                    if conn is not None:
-                        df_view_insp = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
-                        
+                df_view_insp = cargar_registro_flota(conn)
+
                 if df_view_insp is not None and not df_view_insp.empty:
                     if buscar_placa:
                         df_view_insp = df_view_insp[df_view_insp['PLACA'].astype(str).str.contains(buscar_placa.upper(), na=False)]
@@ -827,20 +854,11 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                 if es_admin:
                                     if st.button("🗑️ Eliminar Documento", key=f"btn_del_doc_{idx}"):
                                         try:
-                                            df_borrado = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                            if df_borrado is None or df_borrado.empty: 
-                                                df_borrado = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", ttl=0)
-                                            
+                                            df_borrado = cargar_registro_flota(conn)
                                             if idx in df_borrado.index:
-                                                df_borrado = df_borrado.drop(idx).reset_index(drop=True)
-                                                try:
-                                                    sobrescribir_archivo_gcs(df_borrado, NOMBRE_BUCKET_SISTEMA, "registro_escaneres_flota.csv")
-                                                except:
-                                                    pass
-                                                if conn is not None:
-                                                    try: conn.update(spreadsheet=st.secrets["url_base_datos"], worksheet="Registro_Flota", data=df_borrado)
-                                                    except: pass
-                                                
+                                                ok_del, err_del = guardar_registro_flota(conn, df_borrado.drop(idx).reset_index(drop=True))
+                                                if not ok_del:
+                                                    raise RuntimeError(err_del)
                                             st.rerun()
                                         except Exception as e: st.error(f"Error: {e}")
                                 else:
@@ -852,5 +870,5 @@ def mostrar_auditoria(es_movil=False, conn=None):
                         st.info("No se encontraron registros con esa placa.")
                 else: 
                     st.info("Aún no hay escáneres vehiculares.")
-            except Exception: 
-                st.warning("No se pudo cargar el registro.")
+            except Exception as e:
+                st.warning(f"No se pudo cargar el registro: {e}")
