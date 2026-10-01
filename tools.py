@@ -308,7 +308,26 @@ PATRON_ASIGNADAS_VIVA_STR = 'PENDIENTE|INICIADA|PROCESO|ASIGNADA|DESPACHO|RUTA|S
 # expediente.py, tiempot.py, sync_job.py y 4 funciones internas de este mismo
 # archivo -- si el bucket cambiaba algún día, había que acordarse de tocar los
 # 8. Ahora todos importan esta constante.
-NOMBRE_BUCKET_SISTEMA = "jovial-trilogy-306216.appspot.com"
+BUCKET_GCS_ANTERIOR = "jovial-trilogy-306216.appspot.com"   # ya no existe
+
+
+def _bucket_configurado():
+    """
+    Nombre del bucket desde los secretos (clave suelta gcs_bucket). Si no
+    está configurado se usa el anterior. Funciona igual en la app y en los
+    scripts sueltos (sync_job.py, telegram_bot.py), que leen el
+    .streamlit/secrets.toml de su carpeta.
+    """
+    try:
+        valor = str(st.secrets.get("gcs_bucket", "") or "").strip()
+        if valor:
+            return valor.removeprefix("gs://").strip("/")
+    except Exception:
+        pass
+    return BUCKET_GCS_ANTERIOR
+
+
+NOMBRE_BUCKET_SISTEMA = _bucket_configurado()
 
 # ==============================================================================
 # IDENTIDAD DE MARCA PARA REPORTES (logo y pie de membrete)

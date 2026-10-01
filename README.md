@@ -132,6 +132,7 @@ sudo xargs apt install -y < packages.txt
 # encabezado [...]: en TOML todo lo que viene después de un encabezado
 # pertenece a esa sección.
 url_base_datos = "https://docs.google.com/spreadsheets/d/TU_HOJA_AQUI"
+gcs_bucket = "nombre-del-bucket"   # bucket de Google Cloud Storage para respaldos y registros
 catbox_userhash = "..."   # opcional: cuenta de Catbox.moe (sin ella se sube anónimo y no se puede borrar desde la app)
 
 [connections.gsheets]
