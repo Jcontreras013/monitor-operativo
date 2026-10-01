@@ -3480,6 +3480,26 @@ def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
 # 7. MÓDULO DE PERSISTENCIA EN GOOGLE CLOUD STORAGE (NUEVO)
 # ==============================================================================
 
+def escribir_hoja_sheets(conn, url_spreadsheet, hoja, df):
+    """
+    Escribe df en la hoja indicada y la crea si todavía no existe.
+
+    No se usa conn.create(): en st-gsheets-connection 0.1.0 lanza "Spreadsheet
+    must be specified" siempre que se le pasa el spreadsheet, así que nunca
+    llegaba a crear la hoja. Se crea con gspread directamente y luego se
+    escribe con conn.update() como en el resto de la app.
+    """
+    import gspread
+    try:
+        conn.update(spreadsheet=url_spreadsheet, worksheet=hoja, data=df)
+        return
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    libro = conn.client._client.open_by_url(url_spreadsheet)
+    libro.add_worksheet(title=hoja, rows=max(len(df) + 1, 100), cols=max(len(df.columns), 10))
+    conn.update(spreadsheet=url_spreadsheet, worksheet=hoja, data=df)
+
+
 def obtener_cliente_gcs_nativo():
     """Inicializa el cliente de GCS reciclando las credenciales de gsheets de Streamlit."""
     import streamlit as st

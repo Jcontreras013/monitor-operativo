@@ -144,21 +144,9 @@ def guardar_registro_flota(conn, df):
         pass  # copia opcional
     if conn is None:
         return False, "no hay conexión con Google Sheets"
-    url = st.secrets["url_base_datos"]
     try:
-        conn.update(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA, data=df)
-        return True, None
-    except Exception:
-        pass
-    # conn.update() falla con WorksheetNotFound si la hoja no existe: se crea.
-    try:
-        conn.create(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA, data=df)
-        return True, None
-    except Exception:
-        pass
-    try:
-        conn.create(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA)
-        conn.update(spreadsheet=url, worksheet=HOJA_REGISTRO_FLOTA, data=df)
+        from tools import escribir_hoja_sheets
+        escribir_hoja_sheets(conn, st.secrets["url_base_datos"], HOJA_REGISTRO_FLOTA, df)
         return True, None
     except Exception as e:
         return False, f"no se pudo guardar en la hoja '{HOJA_REGISTRO_FLOTA}': {e}"
