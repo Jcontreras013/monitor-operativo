@@ -153,29 +153,11 @@ def guardar_registro_flota(conn, df):
 
 
 def subir_pdf_gratis_catbox(file_buffer, file_name):
-    try:
-        file_buffer.seek(0)
-        files = {
-            "fileToUpload": (file_name, file_buffer.getvalue())
-        }
-        data = {"reqtype": "fileupload"}
-        # Mismo criterio que subir_archivo_catbox() en expediente.py: el
-        # userhash sale de st.secrets (nunca del código: el repo es público).
-        from expediente import obtener_catbox_userhash, mensaje_error_412_catbox
-        userhash = obtener_catbox_userhash()
-        if userhash:
-            data["userhash"] = userhash
-        response = requests.post("https://catbox.moe/user/api.php", data=data, files=files, timeout=30)
-        if response.status_code == 200:
-            url = response.text.strip()
-            if url.startswith("http"):
-                return url, None
-            return None, f"Catbox error: {url}"
-        if response.status_code == 412:
-            return None, mensaje_error_412_catbox(userhash)
-        return None, f"Catbox HTTP {response.status_code}"
-    except Exception as e:
-        return None, f"Fallo al conectar con Catbox: {str(e)}"
+    # Misma subida que el Repositorio de expedientes (userhash desde
+    # st.secrets y reintentos ante los 502/503 pasajeros de Catbox).
+    from expediente import subir_catbox
+    file_buffer.seek(0)
+    return subir_catbox(file_buffer.getvalue(), file_name)
 
 def subir_documento_nube(file_buffer, file_name, mimetype):
     # Ya no hay respaldo en Litterbox: sus archivos se borran a las 72 horas,
