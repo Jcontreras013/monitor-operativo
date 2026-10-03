@@ -4746,28 +4746,57 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
     else:
         pdf.cell(0, 6, "No hay ordenes sin metraje para los filtros seleccionados.", ln=True)
 
-    # --- SECCIÓN 5: CAJAS MOLEX EN ÓRDENES DE SOPORTE ---
-    df_molex = res.get('molex', pd.DataFrame())
-    pdf.ln(6)
+    # --- SECCIÓN 5: USO DE CAJAS MOLEX (Odoo contra el comentario de cierre) ---
+    from materiales import ORDEN_VEREDICTOS, EXPLICACION_VEREDICTOS, VEREDICTO_CUADRA
+
+    def _sin_icono(veredicto):
+        # Helvetica no tiene emojis: en el PDF el veredicto va solo en texto.
+        return str(veredicto).split(' ', 1)[-1]
+
+    df_uso = res.get('molex', pd.DataFrame())
+    resumen_molex = res.get('molex_por_tecnico', pd.DataFrame())
+    pdf.add_page(orientation="L")
     pdf.set_text_color(0, 0, 0)
-    pdf.seccion_titulo(f"5. CAJAS MOLEX DEPURADAS EN {' / '.join(actividades)}")
+    pdf.seccion_titulo(f"5. USO DE CAJAS MOLEX ({' / '.join(actividades)} cerradas como {', '.join(razones)})")
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(100, 100, 100)
-    if df_molex.empty:
-        pdf.cell(0, 5, safestr("No se depuraron cajas molex en ordenes de soporte en este periodo."), ln=True)
+    pdf.multi_cell(0, 4, safestr(
+        "Odoo dice si se depuro una molex; el comentario de cierre dice si el tecnico puso una nueva o trabajo en la "
+        "que ya tenia el cliente. " + " ".join(f"{_sin_icono(v)}: {EXPLICACION_VEREDICTOS[v]}" for v in ORDEN_VEREDICTOS)
+    ))
+    pdf.ln(2)
+    if df_uso.empty:
+        pdf.cell(0, 5, safestr("Ninguna orden evaluada tiene molex depurada ni la menciona en el comentario de cierre."), ln=True)
     else:
-        sin_mencion = int((~df_molex['MENCIONA_MOLEX']).sum())
-        pdf.cell(0, 5, safestr(
-            f"{len(df_molex)} ordenes con {int(df_molex['CAJAS'].sum())} caja(s) molex. "
-            f"En {sin_mencion} el tecnico no la menciona en el comentario de cierre."
-        ), ln=True)
-        pdf.ln(2)
         pdf.set_text_color(0, 0, 0)
         pdf.set_draw_color(180, 180, 180)
         pdf.set_font("Helvetica", "", 7)
         with pdf.table(
-            col_widths=(20, 46, 24, 12, 38, 18, 119),
-            text_align=("CENTER", "LEFT", "CENTER", "CENTER", "LEFT", "CENTER", "LEFT"),
+            col_widths=(62, 20, 20) + (20,) * len(ORDEN_VEREDICTOS),
+            text_align=("LEFT",) + ("CENTER",) * (2 + len(ORDEN_VEREDICTOS)),
+            line_height=3.6,
+            headings_style=FontFace(emphasis="BOLD", fill_color=(230, 235, 245)),
+            cell_fill_color=(255, 255, 255),
+            cell_fill_mode="ALL",
+        ) as tabla_res:
+            encabezado = tabla_res.row()
+            for titulo in ["TECNICO", "ORDENES", "MOLEX DEPURADAS"] + [_sin_icono(v).upper() for v in ORDEN_VEREDICTOS]:
+                encabezado.cell(safestr(titulo))
+            for _, row in resumen_molex.iterrows():
+                fila = tabla_res.row()
+                fila.cell(fmt_celda(row.get('TECNICO'), ""))
+                fila.cell(fmt_celda(row.get('ORDENES_EVALUADAS'), "0"))
+                fila.cell(fmt_celda(row.get('MOLEX_DEPURADAS'), "0"))
+                for v in ORDEN_VEREDICTOS:
+                    fila.cell(fmt_celda(row.get(v), "0"))
+        pdf.ln(4)
+
+        # Detalle: primero lo que no cuadra; las que cuadran sin molex
+        # depurada (trabajó en la del cliente) solo van en el Excel.
+        df_pdf = df_uso[(df_uso['VEREDICTO'] != VEREDICTO_CUADRA) | (df_uso['MOLEX_DEPURADAS'] > 0)]
+        with pdf.table(
+            col_widths=(18, 44, 22, 12, 26, 155),
+            text_align=("CENTER", "LEFT", "CENTER", "CENTER", "LEFT", "LEFT"),
             line_height=3.6,
             headings_style=FontFace(emphasis="BOLD", fill_color=(230, 235, 245)),
             cell_fill_color=(255, 255, 255),
@@ -4775,17 +4804,16 @@ def generar_pdf_auditoria_materiales(res: dict) -> bytes:
             repeat_headings=1,
         ) as tabla_molex:
             encabezado = tabla_molex.row()
-            for titulo in ("ORDEN", "TECNICO", "DEPURADA", "CAJAS", "RAZON DE CIERRE", "LA MENCIONA?", "COMENTARIO DE CIERRE"):
+            for titulo in ("ORDEN", "TECNICO", "CIERRE", "MOLEX", "VEREDICTO", "LO QUE DICE EL COMENTARIO"):
                 encabezado.cell(titulo)
-            for _, row in df_molex.iterrows():
+            for _, row in df_pdf.iterrows():
                 fila = tabla_molex.row()
                 fila.cell(fmt_celda(row.get('ORDEN'), ""))
                 fila.cell(fmt_celda(row.get('TECNICO'), ""))
-                fila.cell(fmt_celda(row.get('FECHA_DEPURACION'), ""))
-                fila.cell(fmt_celda(row.get('CAJAS'), ""))
-                fila.cell(fmt_celda(row.get('RAZON_CIERRE'), ""))
-                fila.cell("SI" if row.get('MENCIONA_MOLEX') else "NO")
-                fila.cell(fmt_celda(row.get('COMENTARIO'), ""))
+                fila.cell(fmt_celda(row.get('FECHA_CIERRE'), ""))
+                fila.cell(fmt_celda(row.get('MOLEX_DEPURADAS'), "0"))
+                fila.cell(safestr(_sin_icono(row.get('VEREDICTO'))))
+                fila.cell(fmt_celda(row.get('FRASE_DEL_COMENTARIO'), ""))
 
     return finalizar_pdf(pdf)
 

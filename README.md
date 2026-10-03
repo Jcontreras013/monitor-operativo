@@ -179,7 +179,7 @@ template_name = "..."
 
 **Avisos por correo** (para probar la configuración: **Configuración → 📧 Correo de alertas → Enviar correo de prueba** en la app, y `python sync_job.py --probar-correo` en la PC del robot):
 Las dos alertas las envía `sync_job.py` en cada ciclo (cada 15 min), y solo si hay algo nuevo:
-- **Molex en cierres de soporte:** órdenes SOPFIBRA/SOPFIBRACORP cerradas en las últimas 24 h cuyo comentario de cierre menciona una molex (registro de avisadas: `molex_avisadas.json`, junto al script). Aparte, Auditoría de Materiales muestra las cajas molex que Odoo registra como depuradas en soporte.
+- **Molex en cierres de soporte:** órdenes SOPFIBRA/SOPFIBRACORP cerradas en las últimas 24 h cuyo comentario de cierre dice que se puso una molex nueva, o no deja claro si era nueva (registro de avisadas: `molex_avisadas.json`, junto al script). "Se preparó la molex" o "fibra dañada en la molex" es la que ya tenía el cliente y no genera aviso. Aparte, Auditoría de Materiales cruza las molex depuradas en Odoo contra el comentario de cierre y da un veredicto por orden (Cuadra / Probable / Revisar / Contradice / Sin respaldo / Usada sin depurar), con botón para enviarlo por correo.
 - **Clientes VIP:** órdenes abiertas en las últimas 24 h de clientes de la lista VIP (registro: `vip_avisadas.json`). La lista se carga en **Configuración → ⭐ Clientes VIP** y queda en la hoja `VIP` de la base de datos (Google Sheets); nunca va al repositorio, que es público.
 
 Cada orden se avisa una sola vez. La sección `[correo]` tiene que estar en el `secrets.toml` de la PC del robot (es quien envía) y en los secretos de Streamlit Cloud (para el botón de prueba de Configuración).
