@@ -406,8 +406,8 @@ def _avisar_molex_en_comentarios(spreadsheet, df_ordenes, secrets_data, ahora_lo
         return "error", f"no se pudo leer {RUTA_MOLEX_AVISADAS}"
     nuevas = seleccionar_molex_en_comentarios(df_ordenes, avisadas.keys(), ahora_local)
     if nuevas.empty:
-        print("  -> [i] Alerta de molex en cierres: sin cierres nuevos que mencionen molex.")
-        return "sin novedades", "ningún cierre de soporte nuevo (últimas 24 h) menciona molex"
+        print("  -> [i] Alerta de molex en cierres: ningún cierre nuevo dice que se puso una molex nueva.")
+        return "sin novedades", "ningún cierre de soporte nuevo (últimas 24 h) dice que se puso una molex nueva"
     return _enviar_y_registrar("molex en cierres", nuevas, armar_correo_molex(nuevas), RUTA_MOLEX_AVISADAS,
                                avisadas, secrets_data, ahora_local, "destinatarios")
 

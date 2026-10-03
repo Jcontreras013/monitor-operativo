@@ -29,10 +29,10 @@ ACTIVIDAD_SIN_ORDEN = 'SIN ORDEN EN CEPHEUS'
 # Subirlo cada vez que cambie la forma del dict de resultados: así una
 # sesión que cruzó con una versión anterior pide volver a cruzar en vez de
 # mostrar datos incompletos o fallar por una llave que no existe.
-VERSION_RESULTADO = 3
+VERSION_RESULTADO = 4
 # Igual, pero para el formato del PDF (un PDF ya preparado en la sesión se
 # regenera si cambió su diseño).
-VERSION_PDF = 3
+VERSION_PDF = 4
 
 
 def _normalizar_num(serie):
@@ -79,38 +79,158 @@ def extraer_fibra_odoo(df_odoo):
     return df_fibra, str(col['cantidad'])
 
 
-def detectar_molex_en_soporte(df_cep, df_odoo, actividades):
+# ------------------------------------------------------------------------------
+# USO DE CAJAS MOLEX: lo depurado en Odoo contra lo que dice el comentario
+# ------------------------------------------------------------------------------
+# Odoo dice que se depuró una molex, no que se instaló. Lo que el técnico
+# escribe al cerrar distingue dos situaciones muy distintas:
+#   - puso una molex NUEVA ("se le añadió una molex", "se dejó molex en la
+#     casa", "se le puso una molex temporal") -> sí gastó una;
+#   - trabajó en la molex que YA tenía el cliente ("fibra dañada en la molex,
+#     se preparó y se fusiona", "hasta una molex que ya estaba") -> no gastó.
+# Reglas sacadas de los cortes de acometida de septiembre 2026.
+MOLEX_NUEVA = (
+    r"(DEJ[OAE]|DEJAR|PUS[OI]|PONER|COLOC|INSTAL|ANADI|AGREG|SE USO|UTILIZ|HACERLE|HACER UNA|"
+    r"SE HIZO UNA|CAMBI[OA]R? (LA |DE )?(CAJA )?)[^.,]{0,25}MOLEX\b(?! NUEVAMENTE)|MOLEX (NUEVA\b|TEMPORAL|PROVISIONAL)"
+)
+# "Hasta una molex que ya estaba" o "se eliminó la molex" no dejan duda,
+# aunque la misma frase diga "una molex": se revisan antes que lo nuevo.
+MOLEX_EXISTENTE_SEGURO = r"MOLEX (QUE YA|YA EXISTENTE|EXISTENTE|DEL CLIENTE|INTERNA DEL)|(ELIMIN|RETIR|QUIT)[^.,]{0,25}MOLEX"
+MOLEX_EXISTENTE = (
+    r"(TENIA|TIENE|HABIA|ESTA|ENCONTRABA CON)( UNA| DOS)?( CAJA)? MOLEX|"
+    r"(SU|LA|EN LA|DE LA|DENTRO DE LA)( CAJA)? MOLEX|"
+    r"(DANAD|DAAD|CORTAD|COMID|HILO)[^.,]{0,40}EN UNA( CAJA)? MOLEX|"
+    r"MOLEX[^.,]{0,40}(PREPAR|REPAR|REPER|DANAR|DAAR)|PREPAR[^.,]{0,20}MOLEX|MOLEX NUEVAMENTE"
+)
+# Sin mencionar la molex: cambiar un tramo o dejar una reparación provisional
+# obliga a empalmar, así que una molex es posible aunque no se nombre.
+TRABAJO_CON_EMPALME = r"TRAMO|PROVISIONAL|TEMPORAL|EMPALM"
+
+COMENTARIO_NUEVA = 'Puso una molex nueva'
+COMENTARIO_EXISTENTE = 'Trabajó en la molex que ya estaba'
+COMENTARIO_AMBIGUO = 'Menciona molex sin decir si es nueva'
+COMENTARIO_EMPALME = 'Cambió un tramo / reparación provisional'
+COMENTARIO_NADA = 'No menciona molex'
+
+VEREDICTO_CUADRA = '✅ Cuadra'
+VEREDICTO_PROBABLE = '🟡 Probable'
+VEREDICTO_REVISAR = '🔎 Revisar'
+VEREDICTO_CONTRADICE = '❌ Contradice'
+VEREDICTO_SIN_RESPALDO = '⚠️ Sin respaldo'
+VEREDICTO_SIN_DEPURAR = '🔍 Usada sin depurar'
+# Orden de gravedad para ordenar la tabla (lo más grave primero).
+ORDEN_VEREDICTOS = [VEREDICTO_CONTRADICE, VEREDICTO_SIN_RESPALDO, VEREDICTO_SIN_DEPURAR,
+                    VEREDICTO_REVISAR, VEREDICTO_PROBABLE, VEREDICTO_CUADRA]
+EXPLICACION_VEREDICTOS = {
+    VEREDICTO_CONTRADICE: 'Depuró molex, pero el comentario dice que trabajó en la que ya tenía el cliente.',
+    VEREDICTO_SIN_RESPALDO: 'Depuró molex y el comentario no la menciona ni describe un empalme.',
+    VEREDICTO_SIN_DEPURAR: 'El comentario dice que puso una molex nueva, pero no se depuró en Odoo.',
+    VEREDICTO_REVISAR: 'El comentario menciona una molex sin dejar claro si era nueva.',
+    VEREDICTO_PROBABLE: 'Depuró molex; no la menciona, pero cambió un tramo o dejó una reparación provisional.',
+    VEREDICTO_CUADRA: 'Lo depurado coincide con lo que dice el comentario.',
+}
+
+
+def _sin_acentos_mayus(texto):
     """
-    Órdenes de soporte (actividades evaluadas, ej. SOPFIBRA) en las que se
-    depuró una caja molex en Odoo. Una caja molex es material de instalación:
-    en un soporte normalmente no se deja una, así que cada caso se revisa.
-    MENCIONA_MOLEX dice si el técnico lo justificó en el comentario de cierre.
+    Mayúsculas sin acentos, carácter por carácter (mismo largo que el original,
+    para poder recortar la frase del texto original). Cepheus a veces entrega
+    la ñ dañada como "¿" ("da¿aron"): se lee como N.
+    """
+    import unicodedata
+    return ''.join((unicodedata.normalize('NFKD', ch)[:1] or ch) for ch in str(texto).replace('¿', 'n')).upper()
+
+
+def clasificar_comentario_molex(comentario):
+    """Devuelve (qué dice del uso de molex, frase del comentario que lo muestra)."""
+    import re
+    original = '' if pd.isna(comentario) else str(comentario)
+    texto = _sin_acentos_mayus(original)
+
+    def frase(inicio, fin):
+        inicio, fin = max(0, inicio - 70), min(len(original), fin + 70)
+        return ('…' if inicio else '') + original[inicio:fin].strip() + ('…' if fin < len(original) else '')
+
+    if 'MOLEX' in texto:
+        for patron, tipo in ((MOLEX_EXISTENTE_SEGURO, COMENTARIO_EXISTENTE), (MOLEX_NUEVA, COMENTARIO_NUEVA),
+                             (MOLEX_EXISTENTE, COMENTARIO_EXISTENTE)):
+            m = re.search(patron, texto)
+            if m:
+                return tipo, frase(m.start(), m.end())
+        i = texto.find('MOLEX')
+        return COMENTARIO_AMBIGUO, frase(i, i + 5)
+    m = re.search(TRABAJO_CON_EMPALME, texto)
+    if m:
+        return COMENTARIO_EMPALME, frase(m.start(), m.end())
+    return COMENTARIO_NADA, frase(0, 150) if original else ''
+
+
+def veredicto_molex(cajas_depuradas, lo_que_dice):
+    """Veredicto de una orden según si se depuró molex y qué dice el comentario (None = no aplica)."""
+    if cajas_depuradas > 0:
+        return {
+            COMENTARIO_NUEVA: VEREDICTO_CUADRA,
+            COMENTARIO_EMPALME: VEREDICTO_PROBABLE,
+            COMENTARIO_AMBIGUO: VEREDICTO_REVISAR,
+            COMENTARIO_EXISTENTE: VEREDICTO_CONTRADICE,
+        }.get(lo_que_dice, VEREDICTO_SIN_RESPALDO)
+    return {
+        COMENTARIO_NUEVA: VEREDICTO_SIN_DEPURAR,
+        COMENTARIO_AMBIGUO: VEREDICTO_REVISAR,
+        COMENTARIO_EXISTENTE: VEREDICTO_CUADRA,
+    }.get(lo_que_dice)
+
+
+def analizar_uso_molex(df_cep, df_odoo, actividades, razones):
+    """
+    Una sola tabla de uso de molex en las órdenes CERRADAS de `actividades`
+    con razón de cierre en `razones` (por defecto SOPFIBRA/SOPFIBRACORP en
+    Corte de acometida): las que tienen molex depurada en Odoo o la mencionan
+    en el comentario de cierre, cada una con su veredicto.
+    Devuelve (df_uso, resumen_por_tecnico).
     """
     col = _columnas_odoo(df_odoo)
     es_molex = df_odoo[col['producto']].astype(str).str.upper().str.contains('MOLEX', na=False)
-    df_molex = pd.DataFrame({
-        'ORDEN': _normalizar_num(df_odoo.loc[es_molex, col['origen']]),
-        'CAJAS': pd.to_numeric(df_odoo.loc[es_molex, col['cantidad']], errors='coerce').fillna(0),
-        'FECHA_DEPURACION': (df_odoo.loc[es_molex, col['fecha']].astype(str).str[:16]
-                             if col['fecha'] is not None else ''),
-    })
-    if df_molex.empty:
-        return df_molex.assign(TECNICO='', ACTIVIDAD='', RAZON_CIERRE='', MENCIONA_MOLEX=False, COMENTARIO='')
+    cajas = pd.to_numeric(df_odoo.loc[es_molex, col['cantidad']], errors='coerce').fillna(0) \
+        .groupby(_normalizar_num(df_odoo.loc[es_molex, col['origen']])).sum()
 
-    df_molex = df_molex.groupby('ORDEN', as_index=False).agg(CAJAS=('CAJAS', 'sum'), FECHA_DEPURACION=('FECHA_DEPURACION', 'min'))
-    datos = df_cep.drop_duplicates('NUM_NORM').set_index('NUM_NORM')
-    for destino, origen in [('TECNICO', 'TECNICO'), ('ACTIVIDAD', 'ACTIVIDAD'), ('CLIENTE', 'CLIENTE'),
-                            ('RAZON_CIERRE', 'RAZON_CIERRE_SOP'), ('COMENTARIO', 'COMENTARIO_CIERRE')]:
-        df_molex[destino] = df_molex['ORDEN'].map(datos[origen]) if origen in datos.columns else ''
+    act = df_cep['ACTIVIDAD'].astype(str).str.upper().str.strip()
+    est = df_cep['ESTADO'].astype(str).str.upper().str.strip()
+    razon = df_cep['RAZON_CIERRE_SOP'].astype(str).str.upper().str.strip() if 'RAZON_CIERRE_SOP' in df_cep.columns \
+        else pd.Series('', index=df_cep.index)
+    df = df_cep[act.isin([a.upper().strip() for a in actividades]) & (est == 'CERRADA')
+                & razon.isin([r.upper().strip() for r in razones])].drop_duplicates('NUM_NORM').copy()
 
-    actividades_upper = [a.upper().strip() for a in actividades]
-    df_molex = df_molex[df_molex['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(actividades_upper)].copy()
-    df_molex['MENCIONA_MOLEX'] = df_molex['COMENTARIO'].astype(str).str.upper().str.contains('MOLEX', na=False)
-    df_molex['CAJAS'] = df_molex['CAJAS'].astype(int)
-    return df_molex[[
-        'ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_DEPURACION', 'CAJAS',
-        'RAZON_CIERRE', 'MENCIONA_MOLEX', 'COMENTARIO',
-    ]].sort_values(['MENCIONA_MOLEX', 'TECNICO']).reset_index(drop=True)
+    columnas = ['ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_CIERRE', 'MOLEX_DEPURADAS',
+                'QUE_DICE_EL_COMENTARIO', 'VEREDICTO', 'FRASE_DEL_COMENTARIO', 'COMENTARIO']
+    columnas_resumen = ['TECNICO', 'ORDENES_EVALUADAS', 'MOLEX_DEPURADAS'] + ORDEN_VEREDICTOS
+    if df.empty:
+        return pd.DataFrame(columns=columnas), pd.DataFrame(columns=columnas_resumen)
+
+    df['MOLEX_DEPURADAS'] = df['NUM_NORM'].map(cajas).fillna(0).astype(int)
+    comentario = df['COMENTARIO_CIERRE'] if 'COMENTARIO_CIERRE' in df.columns else pd.Series('', index=df.index)
+    clasif = comentario.apply(clasificar_comentario_molex)
+    df['QUE_DICE_EL_COMENTARIO'] = clasif.str[0]
+    df['FRASE_DEL_COMENTARIO'] = clasif.str[1]
+    df['VEREDICTO'] = [veredicto_molex(c, q) for c, q in zip(df['MOLEX_DEPURADAS'], df['QUE_DICE_EL_COMENTARIO'])]
+    df['COMENTARIO'] = comentario
+    # El rep_actividades trae dd/mm/aaaa y Sheets aaaa-mm-dd: sin dayfirst
+    # el 03/09 se leía como 9 de marzo y el 15/09 quedaba vacío.
+    df['FECHA_CIERRE'] = pd.to_datetime(df['HORA_LIQ'].astype(str), format='mixed', dayfirst=True, errors='coerce') \
+        .dt.strftime('%d/%m/%Y %H:%M') if 'HORA_LIQ' in df.columns else ''
+
+    resumen = df.groupby('TECNICO').agg(ORDENES_EVALUADAS=('NUM_NORM', 'count'),
+                                        MOLEX_DEPURADAS=('MOLEX_DEPURADAS', 'sum')).reset_index()
+    conteo = pd.crosstab(df['TECNICO'], df['VEREDICTO']).reindex(columns=ORDEN_VEREDICTOS, fill_value=0)
+    resumen = resumen.merge(conteo, left_on='TECNICO', right_index=True, how='left').fillna(0)
+    resumen[ORDEN_VEREDICTOS] = resumen[ORDEN_VEREDICTOS].astype(int)
+    resumen = resumen[columnas_resumen].sort_values(
+        [VEREDICTO_CONTRADICE, VEREDICTO_SIN_RESPALDO, 'MOLEX_DEPURADAS'], ascending=False).reset_index(drop=True)
+
+    df_uso = df[df['VEREDICTO'].notna()].rename(columns={'NUM_NORM': 'ORDEN'})
+    df_uso = df_uso.assign(_g=df_uso['VEREDICTO'].map({v: i for i, v in enumerate(ORDEN_VEREDICTOS)})) \
+        .sort_values(['_g', 'TECNICO', 'ORDEN'])
+    return df_uso[[c for c in columnas if c in df_uso.columns]].reset_index(drop=True), resumen
 
 
 def cruzar_cepheus_odoo(df_cep, metraje_por_orden, actividades, razones_exigen_metraje):
@@ -224,13 +344,16 @@ def procesar_auditoria_materiales(df_cepheus_crudo, df_odoo_crudo, actividades, 
     df_detalle, resumen = cruzar_cepheus_odoo(df_cep, metraje_por_orden, actividades, razones)
     df_por_orden, por_producto, por_actividad, por_tecnico = calcular_metraje_real_usado(df_cep, df_fibra)
 
+    df_uso_molex, resumen_molex = analizar_uso_molex(df_cep, df_odoo_crudo, actividades, razones)
+
     total_metros = float(df_fibra['METROS'].sum())
     en_cepheus = df_por_orden['ACTIVIDAD'] != ACTIVIDAD_SIN_ORDEN
     en_actividades = df_por_orden['ACTIVIDAD'].isin([a.upper().strip() for a in actividades])
 
     return {
         'version': VERSION_RESULTADO,
-        'molex': detectar_molex_en_soporte(df_cep, df_odoo_crudo, actividades),
+        'molex': df_uso_molex,
+        'molex_por_tecnico': resumen_molex,
         'detalle': df_detalle,
         'resumen': resumen,
         'metraje_por_producto': por_producto,
@@ -258,8 +381,9 @@ ACTIVIDADES_ALERTA_MOLEX = ('SOPFIBRA', 'SOPFIBRACORP')
 
 def seleccionar_molex_en_comentarios(df_ordenes, ya_avisadas, ahora, horas=24):
     """
-    Soportes CERRADOS en las últimas `horas` cuyo comentario de cierre
-    menciona "molex" y que no se hayan avisado. La ventana evita que, al
+    Soportes CERRADOS en las últimas `horas` cuyo comentario de cierre dice
+    que se puso una molex nueva (o no deja claro si era nueva) y que no se
+    hayan avisado. La ventana evita que, al
     activar la alerta, lleguen de golpe todos los cierres viejos que siguen
     en la consulta de 55 días del robot.
     """
@@ -273,7 +397,16 @@ def seleccionar_molex_en_comentarios(df_ordenes, ya_avisadas, ahora, horas=24):
     menciona = df['COMENTARIO_CIERRE'].astype(str).str.upper().str.contains('MOLEX', na=False)
     reciente = pd.to_datetime(df['HORA_LIQ'], errors='coerce') >= pd.Timestamp(ahora) - pd.Timedelta(hours=horas)
     nuevas = df[es_soporte & cerrada & menciona & reciente & ~df['NUM'].isin(set(ya_avisadas)) & (df['NUM'] != 'N/D')]
-    return nuevas.drop_duplicates('NUM')
+    nuevas = nuevas.drop_duplicates('NUM').copy()
+    if nuevas.empty:
+        return nuevas
+    # Solo se avisa cuando el técnico dice que PUSO una molex nueva (o no queda
+    # claro): esas son las que deben tener una depuración en Odoo. "Se preparó
+    # la molex" o "fibra dañada en la molex" es la del cliente y no gasta una.
+    clasif = nuevas['COMENTARIO_CIERRE'].apply(clasificar_comentario_molex)
+    nuevas['QUE_DICE_EL_COMENTARIO'] = clasif.str[0]
+    nuevas['FRASE_DEL_COMENTARIO'] = clasif.str[1]
+    return nuevas[nuevas['QUE_DICE_EL_COMENTARIO'].isin([COMENTARIO_NUEVA, COMENTARIO_AMBIGUO])]
 
 
 def armar_correo_molex(df_nuevas):
@@ -282,7 +415,8 @@ def armar_correo_molex(df_nuevas):
 
     columnas = {
         'NUM': 'Orden', 'TECNICO': 'Técnico', 'ACTIVIDAD': 'Actividad', 'CLIENTE': 'Cliente',
-        'HORA_LIQ': 'Cierre', 'RAZON_CIERRE_SOP': 'Razón de cierre', 'COMENTARIO_CIERRE': 'Comentario de cierre',
+        'HORA_LIQ': 'Cierre', 'RAZON_CIERRE_SOP': 'Razón de cierre', 'QUE_DICE_EL_COMENTARIO': 'Qué dice',
+        'FRASE_DEL_COMENTARIO': 'Comentario de cierre',
     }
     tabla = df_nuevas[[c for c in columnas if c in df_nuevas.columns]].rename(columns=columnas)
     if 'Cierre' in tabla.columns:
@@ -290,7 +424,8 @@ def armar_correo_molex(df_nuevas):
     asunto = f"⚠️ Molex en cierre de soporte: {len(df_nuevas)} orden(es) por revisar"
     intro = (
         f"En {len(df_nuevas)} orden(es) de soporte ({', '.join(sorted(df_nuevas['ACTIVIDAD'].astype(str).unique()))}) "
-        "el técnico menciona una molex en el comentario de cierre. Revisar si se dejó una caja molex."
+        "el técnico dice en el comentario de cierre que puso una caja molex nueva (o no queda claro si era nueva). "
+        "Revisar que esté depurada en Odoo."
     )
     texto = intro + "\n\n" + "\n".join(
         " | ".join(f"{k}: {v}" for k, v in fila.items()) for fila in tabla.fillna('').to_dict('records')
@@ -306,6 +441,79 @@ def armar_correo_molex(df_nuevas):
 
 # ==============================================================================
 # INTERFAZ STREAMLIT
+# ==============================================================================
+COLUMNAS_PANTALLA_MOLEX = ['ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_CIERRE', 'MOLEX_DEPURADAS',
+                           'QUE_DICE_EL_COMENTARIO', 'VEREDICTO']
+
+
+def armar_correo_uso_molex(df_uso, razones):
+    """(asunto, texto, html) con las órdenes cuyo uso de molex no cuadra, con la frase del comentario."""
+    from notificaciones import tabla_html
+
+    df = df_uso[df_uso['VEREDICTO'] != VEREDICTO_CUADRA]
+    columnas = {'ORDEN': 'Orden', 'TECNICO': 'Técnico', 'FECHA_CIERRE': 'Cierre', 'MOLEX_DEPURADAS': 'Molex depuradas',
+                'VEREDICTO': 'Veredicto', 'FRASE_DEL_COMENTARIO': 'Lo que dice el comentario'}
+    tabla = df[list(columnas)].rename(columns=columnas)
+    conteo = ', '.join(f"{v}: {n}" for v, n in df['VEREDICTO'].value_counts().reindex(ORDEN_VEREDICTOS).dropna().astype(int).items())
+    asunto = f"📦 Uso de molex: {len(df)} orden(es) por revisar ({', '.join(razones).title()})"
+    intro = (f"Órdenes cerradas como {', '.join(razones).title()} en las que lo depurado en Odoo no coincide con lo "
+             f"que el técnico escribió al cerrar. {conteo}.")
+    leyenda = ''.join(f"<li><b>{v}</b>: {EXPLICACION_VEREDICTOS[v]}</li>" for v in ORDEN_VEREDICTOS if v != VEREDICTO_CUADRA)
+    texto = intro + "\n\n" + "\n".join(
+        " | ".join(f"{k}: {v}" for k, v in fila.items()) for fila in tabla.fillna('').to_dict('records')
+    ) + "\n\nMonitor Operativo MAXCOM - Auditoría de Materiales"
+    cuerpo_html = (f'<div style="font-family:Arial,sans-serif;font-size:13px;"><p>{intro}</p>{tabla_html(tabla)}'
+                   f'<ul style="font-size:12px;color:#444;">{leyenda}</ul>'
+                   '<p style="color:#666;font-size:11px;">Monitor Operativo MAXCOM · Auditoría de Materiales.</p></div>')
+    return asunto, texto, cuerpo_html
+
+
+def mostrar_uso_molex(res):
+    """Una sola tabla: lo depurado en Odoo contra lo que dice el comentario de cierre."""
+    df_uso = res['molex']
+    resumen = res['molex_por_tecnico']
+    st.markdown(f"#### 📦 Uso de cajas molex · {' / '.join(res['actividades'])} cerradas como {', '.join(res['razones']).title()}")
+    st.caption(
+        "Odoo dice si se depuró una molex; el comentario de cierre dice si el técnico puso una nueva o trabajó en la "
+        "que ya tenía el cliente. Aquí se ven los veredictos; la frase del comentario que explica cada uno va en el "
+        "Excel, el PDF y el correo."
+    )
+    with st.expander("¿Qué significa cada veredicto?"):
+        for v in ORDEN_VEREDICTOS:
+            st.markdown(f"**{v}** — {EXPLICACION_VEREDICTOS[v]}")
+
+    if df_uso.empty:
+        st.success("✅ Ninguna orden evaluada tiene molex depurada ni la menciona en el comentario de cierre.")
+        return
+
+    conteo = df_uso['VEREDICTO'].value_counts()
+    k = st.columns(len(ORDEN_VEREDICTOS))
+    for col, v in zip(k, ORDEN_VEREDICTOS):
+        col.metric(v, int(conteo.get(v, 0)))
+
+    st.markdown("**Por técnico**")
+    st.dataframe(resumen, use_container_width=True, hide_index=True)
+
+    ocultar = st.checkbox("Ocultar las que cuadran", value=False, key="mat_molex_ocultar_cuadra")
+    df_ver = df_uso[df_uso['VEREDICTO'] != VEREDICTO_CUADRA] if ocultar else df_uso
+    st.dataframe(df_ver[COLUMNAS_PANTALLA_MOLEX], use_container_width=True, hide_index=True)
+
+    por_revisar = int((df_uso['VEREDICTO'] != VEREDICTO_CUADRA).sum())
+    if por_revisar and st.button(f"📧 Enviar por correo las {por_revisar} orden(es) por revisar", key="btn_mat_molex_correo"):
+        from notificaciones import config_correo_streamlit, enviar_correo, lista_destinatarios
+        config = config_correo_streamlit()
+        with st.spinner("Enviando..."):
+            ok, nota = enviar_correo(config, *armar_correo_uso_molex(df_uso, res['razones']))
+        if ok:
+            st.success(f"✅ Enviado a {len(lista_destinatarios(config))} destinatario(s).")
+            if nota:
+                st.warning(f"⚠️ Nota: {nota}.")
+        else:
+            st.error(f"❌ No se pudo enviar: {nota}")
+
+
+# ==============================================================================
+# PANTALLA PRINCIPAL
 # ==============================================================================
 def mostrar_auditoria_materiales(*args, **kwargs):
     st.title("🔍 Auditoría de Materiales SOPFIBRA")
@@ -413,22 +621,8 @@ def mostrar_auditoria_materiales(*args, **kwargs):
 
     st.divider()
 
-    # --- CAJAS MOLEX EN SOPORTE ---
-    df_molex = res['molex']
-    st.markdown(f"#### 📦 Cajas molex depuradas en {' / '.join(res['actividades'])}")
-    st.caption(
-        "Una caja molex es material de instalación: en una orden de soporte normalmente no se deja una. "
-        "\"Menciona molex\" dice si el técnico lo explicó en su comentario de cierre. La alerta por correo "
-        "la envía el robot cada 15 minutos, revisando los comentarios de cierre."
-    )
-    if df_molex.empty:
-        st.success("✅ No se depuraron cajas molex en órdenes de soporte en este periodo.")
-    else:
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Órdenes con caja molex", len(df_molex))
-        k2.metric("Cajas depuradas", int(df_molex['CAJAS'].sum()))
-        k3.metric("Sin mencionarla en el comentario", int((~df_molex['MENCIONA_MOLEX']).sum()))
-        st.dataframe(df_molex, use_container_width=True, hide_index=True)
+    # --- USO DE CAJAS MOLEX ---
+    mostrar_uso_molex(res)
 
     st.divider()
 
@@ -472,7 +666,8 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             res['metraje_por_producto'].to_excel(writer, sheet_name='Metraje Real x Producto', index=False)
             res['metraje_por_actividad'].to_excel(writer, sheet_name='Metraje Real x Actividad', index=False)
             res['metraje_por_tecnico'].to_excel(writer, sheet_name='Metraje Real x Tecnico', index=False)
-            res['molex'].to_excel(writer, sheet_name='Molex en Soporte', index=False)
+            res['molex_por_tecnico'].to_excel(writer, sheet_name='Molex por Tecnico', index=False)
+            res['molex'].to_excel(writer, sheet_name='Uso de Molex', index=False)
         st.download_button(
             "⬇️ Descargar Excel (Resumen + Detalle)",
             data=buffer.getvalue(),
@@ -482,7 +677,7 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             use_container_width=True,
         )
     with col_dl2:
-        id_estado_pdf = f"mat_pdf_v{VERSION_RESULTADO}.{VERSION_PDF}_{total}_{sin_metraje}_{mencionan_reserva}_{res['total_metros']:.0f}"
+        id_estado_pdf = f"mat_pdf_v{VERSION_RESULTADO}.{VERSION_PDF}_{total}_{sin_metraje}_{mencionan_reserva}_{res['total_metros']:.0f}_{len(res['molex'])}"
         if st.session_state.get('mat_estado_pdf') != id_estado_pdf:
             if st.button("📥 Preparar Reporte PDF", key="btn_mat_pdf", use_container_width=True):
                 with st.spinner("Generando PDF..."):
