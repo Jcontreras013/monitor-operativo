@@ -646,6 +646,15 @@ def sincronizar_datos_nube(conn, silencioso=False):
 
             if df_nube is not None and not df_nube.empty:
                 df_nube = df_nube.dropna(how='all')
+                # Diagnóstico de la lectura cruda (lo muestra el aviso de estados
+                # no reconocidos del Monitor si la columna ESTADO no llega bien).
+                _cols_crudas = [str(c) for c in df_nube.columns]
+                _col_estado = next((c for c in df_nube.columns if str(c).upper().strip() == 'ESTADO'), None)
+                st.session_state['_diag_lectura_sheet1'] = {
+                    'filas': len(df_nube), 'columnas': _cols_crudas,
+                    'estado_vacios': (int(df_nube[_col_estado].isna().sum()) if _col_estado is not None
+                                      and not isinstance(df_nube[_col_estado], pd.DataFrame) else None),
+                }
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
 
                 if 'SUSCRIPTOR' in df_nube.columns and 'NOMBRE' not in df_nube.columns: df_nube.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
@@ -4237,6 +4246,16 @@ def main():
                 + ", ".join(f"**{est}** ({n})" for est, n in _conteo_estados.items())
                 + ". Mándale esta lista a soporte del Monitor para agregar esos estados."
             )
+            _diag = st.session_state.get('_diag_lectura_sheet1')
+            if _diag and 'N/D' in _conteo_estados.index:
+                with st.expander("🔎 Detalle técnico de la lectura de Google Sheets (para soporte)"):
+                    _cols_est = [c for c in _diag['columnas'] if 'EST' in c.upper() or 'STATUS' in c.upper()]
+                    st.markdown(
+                        f"Filas leídas de Sheet1: **{_diag['filas']}** · columnas: **{len(_diag['columnas'])}** · "
+                        f"columnas parecidas a ESTADO: **{', '.join(_cols_est) or 'ninguna'}** · "
+                        f"celdas vacías en ESTADO: **{_diag['estado_vacios'] if _diag['estado_vacios'] is not None else 'sin columna'}**"
+                    )
+                    st.code(", ".join(_diag['columnas']), language=None)
 
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
