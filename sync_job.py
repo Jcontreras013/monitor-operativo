@@ -44,6 +44,7 @@ from tools import (
     calcular_offline_y_alertas,
     PATRON_ASIGNADAS_VIVA_STR as PATRON_VIVAS,
     ACTIVIDADES_BASURA,
+    completar_columnas_equivalentes,
     NOMBRE_BUCKET_SISTEMA as NOMBRE_BUCKET
 )
 
@@ -168,6 +169,10 @@ def ejecutar_sincronizacion_background(dias_atras=55):
     # 6. CONSOLIDACIÓN DE DATOS (Filtros y uniones)
     if df_sheets_master is not None and not df_sheets_master.empty:
         df_sheets_master.columns = df_sheets_master.columns.str.upper().str.strip()
+        # Repara las filas que ciclos anteriores guardaron con ESTADO = N/D
+        # (formato nuevo de Cepheus, estado en ESTADO ORDEN). Sin esto se
+        # quedaban en el historial como si fueran órdenes terminadas.
+        df_sheets_master = completar_columnas_equivalentes(df_sheets_master)
 
         if 'NUM' in df_sheets_master.columns:
             df_sheets_master['NUM'] = df_sheets_master['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -190,7 +195,11 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
     if 'NUM' in df_consolidado.columns:
         df_consolidado['TIENE_LIQ'] = df_consolidado.get('HORA_LIQ').notna()
-        df_consolidado = df_consolidado.sort_values(by=['TIENE_LIQ'], ascending=True)
+        # Orden ESTABLE: entre dos filas de la misma orden con el mismo TIENE_LIQ
+        # gana la última concatenada, que es la de la API (la más reciente).
+        # Con el quicksort por defecto el empate se resolvía al azar y a veces
+        # quedaba la copia vieja de Sheets.
+        df_consolidado = df_consolidado.sort_values(by=['TIENE_LIQ'], ascending=True, kind='stable')
         df_valid_num = df_consolidado[df_consolidado['NUM'] != 'N/D'].drop_duplicates(subset=['NUM'], keep='last')
         df_nd = df_consolidado[df_consolidado['NUM'] == 'N/D']
         df_consolidado = pd.concat([df_valid_num, df_nd]).drop(columns=['TIENE_LIQ'], errors='ignore')

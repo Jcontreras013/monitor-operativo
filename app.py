@@ -88,6 +88,7 @@ try:
         guardar_gps_tecnico,
         cargar_gps_tecnicos,
         COLUMNAS_VITALES_SISTEMA,
+        completar_columnas_equivalentes,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
@@ -656,6 +657,9 @@ def sincronizar_datos_nube(conn, silencioso=False):
                                       and not isinstance(df_nube[_col_estado], pd.DataFrame) else None),
                 }
                 df_nube.columns = df_nube.columns.str.upper().str.strip()
+                # Órdenes que Cepheus ya mandó en su formato nuevo y quedaron en
+                # Sheet1 con ESTADO = N/D: el estado real está en ESTADO ORDEN.
+                df_nube = completar_columnas_equivalentes(df_nube)
 
                 if 'SUSCRIPTOR' in df_nube.columns and 'NOMBRE' not in df_nube.columns: df_nube.rename(columns={'SUSCRIPTOR': 'NOMBRE'}, inplace=True)
                 elif 'NOMBRE CLIENTE' in df_nube.columns and 'NOMBRE' not in df_nube.columns: df_nube.rename(columns={'NOMBRE CLIENTE': 'NOMBRE'}, inplace=True)
@@ -2985,6 +2989,7 @@ def main():
                                     
                                 if df_cloud is not None and not df_cloud.empty:
                                     df_cloud.columns = df_cloud.columns.str.upper().str.strip()
+                                    df_cloud = completar_columnas_equivalentes(df_cloud)
                                     if 'NUM' in df_cloud.columns:
                                         df_cloud['NUM'] = df_cloud['NUM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                         df_cloud.loc[df_cloud['NUM'] == 'nan', 'NUM'] = 'N/D'

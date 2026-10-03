@@ -2191,6 +2191,42 @@ def depurar_archivos_en_crudo(fileactividades, filedispositivos):
     except Exception as e:
         raise Exception(f"Error en cruce: {str(e)}")
 
+# Cepheus cambió el formato de su API (oct-2026): en las órdenes nuevas el
+# estado llega en "ESTADO ORDEN" y la columna "ESTADO" viene vacía. Como la
+# API devuelve una mezcla de órdenes en formato viejo y nuevo, la columna
+# canónica se completa con la equivalente fila por fila, sin perder las que
+# sí traen ESTADO. ("ESTADO SERVICIO" NO es equivalente: es el estado del
+# servicio del cliente, no de la orden.)
+COLUMNAS_EQUIVALENTES = {
+    'ESTADO': ['ESTADO ORDEN', 'ESTADO_ORDEN', 'ESTADOORDEN'],
+}
+_VALORES_VACIOS = {'', 'N/D', 'NAN', 'NONE', 'NULL', 'NAT'}
+
+
+def completar_columnas_equivalentes(df):
+    """
+    Llena la columna canónica (ej. ESTADO) con su equivalente del formato
+    nuevo de Cepheus (ej. ESTADO ORDEN) en las filas donde viene vacía o N/D.
+    Crea la columna canónica si no existe. Devuelve el mismo DataFrame.
+    """
+    if df is None or df.empty:
+        return df
+    nombres = {str(c).upper().strip(): c for c in df.columns}
+    for canonica, equivalentes in COLUMNAS_EQUIVALENTES.items():
+        origen = next((nombres[e] for e in equivalentes if e in nombres), None)
+        if origen is None:
+            continue
+        valores_origen = df[origen]
+        if canonica not in df.columns:
+            df[canonica] = valores_origen
+            continue
+        actual = df[canonica]
+        vacia = actual.isna() | actual.astype(str).str.strip().str.upper().isin(_VALORES_VACIOS)
+        origen_ok = valores_origen.notna() & ~valores_origen.astype(str).str.strip().str.upper().isin(_VALORES_VACIOS)
+        df.loc[vacia & origen_ok, canonica] = valores_origen[vacia & origen_ok]
+    return df
+
+
 def procesar_dataframe_base(df):
     df.columns = df.columns.astype(str).str.strip()
     mapeocolumnas = {}
@@ -2201,6 +2237,7 @@ def procesar_dataframe_base(df):
                 mapeocolumnas[realname] = nombreinterno
                 break
     df = df.rename(columns=mapeocolumnas)
+    df = completar_columnas_equivalentes(df)
 
     # =========================================================================
     # 🏢 FILTRO POR EMPRESA: Solo descartar registros de OTRA empresa explícita
