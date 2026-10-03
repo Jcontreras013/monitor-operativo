@@ -2,8 +2,5 @@
 base = "light"
 primaryColor = "#3B82F6"
 
-[server]
-enableCORS = false
-
 [client]
 toolbarMode = "minimal"
