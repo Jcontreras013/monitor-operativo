@@ -4223,6 +4223,21 @@ def main():
         df_cerradas_hoy_monitor = df_monitor_filtrado[mask_cerradas_hoy & mascara_tecnico_asignado(df_monitor_filtrado['TECNICO'])].copy()
         cerradas_hoy = len(df_cerradas_hoy_monitor)
     
+        # Estados que no son ni "vivos" (los que cuentan las tarjetas) ni
+        # terminales: esas órdenes no suman en Pendientes, pero el Gantt sí las
+        # dibuja como abiertas. Si Cepheus cambia el nombre de un estado o llega
+        # vacío, aquí se ve cuál es en vez de que los números no cuadren.
+        _estados_mon = df_monitor_filtrado['ESTADO'].fillna('').astype(str).str.upper().str.strip()
+        _mask_no_reconocido = (~mask_vivas_monitor) & (~_estados_mon.str.contains('|'.join(ESTADOS_TERMINALES), na=False, regex=True))
+        if _mask_no_reconocido.any():
+            _conteo_estados = _estados_mon[_mask_no_reconocido].replace('', '(vacío)').value_counts().head(8)
+            st.warning(
+                f"⚠️ {int(_mask_no_reconocido.sum())} orden(es) con un estado que el monitor no reconoce, así que no "
+                "cuentan como pendientes ni como cerradas: "
+                + ", ".join(f"**{est}** ({n})" for est, n in _conteo_estados.items())
+                + ". Mándale esta lista a soporte del Monitor para agregar esos estados."
+            )
+
         tecs_activos = df_solo_asignadas_monitor['TECNICO'].nunique() if not check_no_asignadas else 0
         offline_criticos_asignadas = int((df_todas_pendientes_monitor.get('ES_OFFLINE', pd.Series([False]*len(df_todas_pendientes_monitor))) == True).sum())
         total_pendientes_general = len(df_todas_pendientes_monitor)
