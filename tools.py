@@ -3526,6 +3526,13 @@ def obtener_cliente_gcs_nativo():
     creds = service_account.Credentials.from_service_account_info(creds_dict)
     return storage.Client(credentials=creds, project=creds.project_id)
 
+def _resumen_error_gcs(e):
+    """Una sola línea en vez del JSON completo de Google (llenaba el log del robot en cada ciclo)."""
+    texto = str(e)
+    if "bucket does not exist" in texto:
+        return "el bucket no existe (ver gcs_bucket en los secretos)"
+    return texto.splitlines()[0][:200]
+
 def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_destino):
     """
     Sube un DataFrame (como CSV) o un archivo binario directo a GCS.
@@ -3550,7 +3557,7 @@ def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_de
             
         return True
     except Exception as e:
-        print(f"Error de persistencia en GCS: {e}")
+        print(f"Error de persistencia en GCS ({nombre_archivo_destino}): {_resumen_error_gcs(e)}")
         return False
         
 
@@ -3571,7 +3578,7 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
             print(f"El archivo {nombre_archivo_destino} no existe en GCS.")
             return None
     except Exception as e:
-        print(f"Error al leer desde GCS: {e}")
+        print(f"Error al leer desde GCS ({nombre_archivo_destino}): {_resumen_error_gcs(e)}")
         return None
 
 
