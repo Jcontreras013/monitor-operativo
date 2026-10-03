@@ -82,14 +82,18 @@ def extraer_fibra_odoo(df_odoo):
 # ------------------------------------------------------------------------------
 # USO DE CAJAS MOLEX: lo depurado en Odoo contra lo que dice el comentario
 # ------------------------------------------------------------------------------
-# Odoo dice que se depuró una molex, no que se instaló. Lo que el técnico
-# escribe al cerrar distingue dos situaciones muy distintas:
-#   - puso una molex NUEVA ("se le añadió una molex", "se dejó molex en la
-#     casa", "se le puso una molex temporal") -> sí gastó una;
-#   - trabajó en la molex que YA tenía el cliente ("fibra dañada en la molex,
-#     se preparó y se fusiona", "hasta una molex que ya estaba") -> no gastó.
+# Odoo dice que se depuró una molex, no que se instaló. Criterio de MAXCOM:
+#   - toda casa ya tiene su molex desde la instalación (INSFIBRA), y esa se
+#     depuró en ese momento. Si en un cambio de acometida el técnico menciona
+#     "la molex" de la casa ("fibra dañada en la molex, se preparó y se
+#     fusiona"), NO se vuelve a depurar;
+#   - la que sí se depura es una molex NUEVA EN MEDIO del tramo, entre la mufa
+#     y la casa, para empalmar ("se le añadió una molex", "se le puso una
+#     molex temporal", "molex en medio").
 # Reglas sacadas de los cortes de acometida de septiembre 2026.
 MOLEX_NUEVA = (
+    r"MOLEX (EN MEDIO|A MITAD|INTERMEDIA|EN EL POSTE|EN EL TRAMO)|(EN MEDIO|A MITAD|MITAD DEL)[^.,]{0,30}MOLEX|"
+    r"EMPALM[^.,]{0,20}MOLEX|"
     r"(DEJ[OAE]|DEJAR|PUS[OI]|PONER|COLOC|INSTAL|ANADI|AGREG|SE USO|UTILIZ|HACERLE|HACER UNA|"
     r"SE HIZO UNA|CAMBI[OA]R? (LA |DE )?(CAJA )?)[^.,]{0,25}MOLEX\b(?! NUEVAMENTE)|MOLEX (NUEVA\b|TEMPORAL|PROVISIONAL)"
 )
@@ -98,7 +102,7 @@ MOLEX_NUEVA = (
 MOLEX_EXISTENTE_SEGURO = r"MOLEX (QUE YA|YA EXISTENTE|EXISTENTE|DEL CLIENTE|INTERNA DEL)|(ELIMIN|RETIR|QUIT)[^.,]{0,25}MOLEX"
 MOLEX_EXISTENTE = (
     r"(TENIA|TIENE|HABIA|ESTA|ENCONTRABA CON)( UNA| DOS)?( CAJA)? MOLEX|"
-    r"(SU|LA|EN LA|DE LA|DENTRO DE LA)( CAJA)? MOLEX|"
+    r"(SU|LA|EN LA|DE LA|DENTRO DE LA)( CAJA)? MOLEX|MOLEX (DE LA CASA|INTERNA|DENTRO)|"
     r"(DANAD|DAAD|CORTAD|COMID|HILO)[^.,]{0,40}EN UNA( CAJA)? MOLEX|"
     r"MOLEX[^.,]{0,40}(PREPAR|REPAR|REPER|DANAR|DAAR)|PREPAR[^.,]{0,20}MOLEX|MOLEX NUEVAMENTE"
 )
@@ -106,9 +110,10 @@ MOLEX_EXISTENTE = (
 # obliga a empalmar, así que una molex es posible aunque no se nombre.
 TRABAJO_CON_EMPALME = r"TRAMO|PROVISIONAL|TEMPORAL|EMPALM"
 
-COMENTARIO_NUEVA = 'Puso una molex nueva'
-COMENTARIO_EXISTENTE = 'Trabajó en la molex que ya estaba'
-COMENTARIO_AMBIGUO = 'Menciona molex sin decir si es nueva'
+COMENTARIO_NUEVA = 'Molex nueva en medio del tramo'
+COMENTARIO_EXISTENTE = 'Molex de la casa (ya depurada en la instalación)'
+COMENTARIO_AMBIGUO = 'Menciona molex sin decir si es en medio o la de la casa'
+COMENTARIO_REEMPLAZO_CASA = 'Molex nueva en la casa (reemplazo)'
 COMENTARIO_EMPALME = 'Cambió un tramo / reparación provisional'
 COMENTARIO_NADA = 'No menciona molex'
 
@@ -122,11 +127,12 @@ VEREDICTO_SIN_DEPURAR = '🔍 Usada sin depurar'
 ORDEN_VEREDICTOS = [VEREDICTO_CONTRADICE, VEREDICTO_SIN_RESPALDO, VEREDICTO_SIN_DEPURAR,
                     VEREDICTO_REVISAR, VEREDICTO_PROBABLE, VEREDICTO_CUADRA]
 EXPLICACION_VEREDICTOS = {
-    VEREDICTO_CONTRADICE: 'Depuró molex, pero el comentario dice que trabajó en la que ya tenía el cliente.',
-    VEREDICTO_SIN_RESPALDO: 'Depuró molex y el comentario no la menciona ni describe un empalme.',
-    VEREDICTO_SIN_DEPURAR: 'El comentario dice que puso una molex nueva, pero no se depuró en Odoo.',
-    VEREDICTO_REVISAR: 'El comentario menciona una molex sin dejar claro si era nueva.',
-    VEREDICTO_PROBABLE: 'Depuró molex; no la menciona, pero cambió un tramo o dejó una reparación provisional.',
+    VEREDICTO_CONTRADICE: 'Depuró molex, pero el comentario habla de la molex de la casa, que ya se depuró en la instalación.',
+    VEREDICTO_SIN_RESPALDO: 'Depuró molex y el comentario no menciona una molex en medio ni un empalme en el tramo.',
+    VEREDICTO_SIN_DEPURAR: 'El comentario dice que puso una molex nueva (en medio del tramo o de reemplazo), pero no se depuró en Odoo.',
+    VEREDICTO_REVISAR: ('Depuró molex y el comentario la menciona sin aclarar si fue en medio del tramo o la de la casa, '
+                        'o dice que reemplazó la de la casa (solo vale si la anterior ya no estaba).'),
+    VEREDICTO_PROBABLE: 'Depuró molex; no la menciona, pero cambió un tramo o dejó una reparación provisional (empalme en medio).',
     VEREDICTO_CUADRA: 'Lo depurado coincide con lo que dice el comentario.',
 }
 
@@ -156,6 +162,10 @@ def clasificar_comentario_molex(comentario):
                              (MOLEX_EXISTENTE, COMENTARIO_EXISTENTE)):
             m = re.search(patron, texto)
             if m:
+                # "Se dejó molex en la casa ya que no se encontró la que tenían":
+                # es nueva, pero reemplaza la de la casa, no va en medio.
+                if tipo == COMENTARIO_NUEVA and 'CASA' in texto[m.end():m.end() + 25]:
+                    tipo = COMENTARIO_REEMPLAZO_CASA
                 return tipo, frase(m.start(), m.end())
         i = texto.find('MOLEX')
         return COMENTARIO_AMBIGUO, frase(i, i + 5)
@@ -172,11 +182,15 @@ def veredicto_molex(cajas_depuradas, lo_que_dice):
             COMENTARIO_NUEVA: VEREDICTO_CUADRA,
             COMENTARIO_EMPALME: VEREDICTO_PROBABLE,
             COMENTARIO_AMBIGUO: VEREDICTO_REVISAR,
+            COMENTARIO_REEMPLAZO_CASA: VEREDICTO_REVISAR,
             COMENTARIO_EXISTENTE: VEREDICTO_CONTRADICE,
         }.get(lo_que_dice, VEREDICTO_SIN_RESPALDO)
+    # Sin depuración, mencionar la molex sin aclarar casi siempre es la de la
+    # casa, que no se depura: cuadra. Solo falta la depuración si dice en medio.
     return {
         COMENTARIO_NUEVA: VEREDICTO_SIN_DEPURAR,
-        COMENTARIO_AMBIGUO: VEREDICTO_REVISAR,
+        COMENTARIO_REEMPLAZO_CASA: VEREDICTO_SIN_DEPURAR,
+        COMENTARIO_AMBIGUO: VEREDICTO_CUADRA,
         COMENTARIO_EXISTENTE: VEREDICTO_CUADRA,
     }.get(lo_que_dice)
 
@@ -382,8 +396,7 @@ ACTIVIDADES_ALERTA_MOLEX = ('SOPFIBRA', 'SOPFIBRACORP')
 def seleccionar_molex_en_comentarios(df_ordenes, ya_avisadas, ahora, horas=24):
     """
     Soportes CERRADOS en las últimas `horas` cuyo comentario de cierre dice
-    que se puso una molex nueva (o no deja claro si era nueva) y que no se
-    hayan avisado. La ventana evita que, al
+    que se puso una molex nueva en medio del tramo y que no se hayan avisado. La ventana evita que, al
     activar la alerta, lleguen de golpe todos los cierres viejos que siguen
     en la consulta de 55 días del robot.
     """
@@ -400,13 +413,14 @@ def seleccionar_molex_en_comentarios(df_ordenes, ya_avisadas, ahora, horas=24):
     nuevas = nuevas.drop_duplicates('NUM').copy()
     if nuevas.empty:
         return nuevas
-    # Solo se avisa cuando el técnico dice que PUSO una molex nueva (o no queda
-    # claro): esas son las que deben tener una depuración en Odoo. "Se preparó
-    # la molex" o "fibra dañada en la molex" es la del cliente y no gasta una.
+    # Solo se avisa cuando el técnico dice que puso una molex NUEVA EN MEDIO del
+    # tramo: esa es la que debe tener una depuración en Odoo. La molex de la
+    # casa ("se preparó la molex", "fibra dañada en la molex") ya se depuró en
+    # la instalación y no genera aviso.
     clasif = nuevas['COMENTARIO_CIERRE'].apply(clasificar_comentario_molex)
     nuevas['QUE_DICE_EL_COMENTARIO'] = clasif.str[0]
     nuevas['FRASE_DEL_COMENTARIO'] = clasif.str[1]
-    return nuevas[nuevas['QUE_DICE_EL_COMENTARIO'].isin([COMENTARIO_NUEVA, COMENTARIO_AMBIGUO])]
+    return nuevas[nuevas['QUE_DICE_EL_COMENTARIO'].isin([COMENTARIO_NUEVA, COMENTARIO_REEMPLAZO_CASA])]
 
 
 def armar_correo_molex(df_nuevas):
@@ -424,8 +438,8 @@ def armar_correo_molex(df_nuevas):
     asunto = f"⚠️ Molex en cierre de soporte: {len(df_nuevas)} orden(es) por revisar"
     intro = (
         f"En {len(df_nuevas)} orden(es) de soporte ({', '.join(sorted(df_nuevas['ACTIVIDAD'].astype(str).unique()))}) "
-        "el técnico dice en el comentario de cierre que puso una caja molex nueva (o no queda claro si era nueva). "
-        "Revisar que esté depurada en Odoo."
+        "el técnico dice en el comentario de cierre que puso una caja molex nueva en medio del tramo. "
+        "Revisar que esté depurada en Odoo (la molex de la casa ya se depuró en la instalación)."
     )
     texto = intro + "\n\n" + "\n".join(
         " | ".join(f"{k}: {v}" for k, v in fila.items()) for fila in tabla.fillna('').to_dict('records')
