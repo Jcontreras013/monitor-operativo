@@ -640,10 +640,32 @@ def es_llegada_tarde(motivo, comentario):
             return True
     return False
 
+# Cualquier falta cuyo MOTIVO trate del vehículo (uso, cuidado, manejo,
+# velocidad, combustible...) es GRAVE, también cuando se escribe a mano con
+# "Otro" (ej. "Mal cuidado de Vehículo asignado"). Se mira solo el motivo: en
+# el comentario el vehículo puede aparecer de pasada ("llegó tarde porque el
+# carro se arruinó") sin ser la falta.
+PATRON_MOTIVO_VEHICULO = (
+    r"VEHICUL|\bUNIDAD\b|\bCARRO\b|CAMION|\bMOTO\b|MOTOCICLETA|PICK ?UP|AUTOMOVIL|LLANTA|"
+    r"COMBUSTIBLE|GASOLINA|VELOCIDAD|CONDUCC|CONDUCIR|CONDUJO|\bMANEJ|ESTACIONAD|ESTACIONAMIENTO|"
+    r"PLACA|FLOTA"
+)
+
+
+def es_falta_de_vehiculo(motivo):
+    import unicodedata
+    motivo_sin_acentos = unicodedata.normalize('NFKD', str(motivo)).encode('ascii', 'ignore').decode().upper()
+    return re.search(PATRON_MOTIVO_VEHICULO, motivo_sin_acentos) is not None
+
+
 def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
     texto = motivo_u + " " + com_u
+
+    # 0. MOTIVO SOBRE EL VEHÍCULO - SIEMPRE GRAVE
+    if es_falta_de_vehiculo(motivo):
+        return 'GRAVE'
 
     # 1. VEHÍCULO / MAL CUIDADO O DESCUIDO - SIEMPRE GRAVE
     palabras_vehiculo_neglect = [
@@ -1057,7 +1079,7 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
             _dibujar_tabla_clasif(
                 pdf, df_graves,
                 etiqueta   = "FALTAS GRAVES",
-                desc_corta = "Mal cuidado o vehiculo sucio, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde",
+                desc_corta = "Mal uso o cuidado del vehiculo, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde",
                 hr=180, hg=30, hb=30,
                 rr=255, rg=235, rb=235,
                 thr=255, thg=255, thb=255,
