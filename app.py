@@ -109,6 +109,8 @@ except ImportError as e:
 # Cada cuánto se vuelve a leer Sheets en una sesión abierta (el robot lo
 # actualiza cada 15 min). Ver el refresco automático en main().
 MINUTOS_REFRESCO_DATOS = 10
+# Pantallas que muestran órdenes en vivo y por eso se refrescan solas.
+PANTALLAS_CON_REFRESCO = ("⚡ Monitor en Vivo", "📊 Centro de Reportes", "📅 Reprog / No Inst")
 
 ACTIVIDADES_PERMITIDAS = [
     'CEQUI', 'INSEQUIPO', 'INSFIBRA', 'INSFIBRACORP', 'INSHFC', 'INS-WA',
@@ -602,7 +604,9 @@ def sincronizar_datos_nube(conn, silencioso=False):
     mensajes ni recarga la página: devuelve True/False y el llamador decide.
     """
     try:
-        with st.spinner("☁️ Descargando historial desde Google Sheets (fuente al día)..."):
+        _texto_spinner = (f"🔄 Actualizando las órdenes desde Google Sheets (se hace cada {MINUTOS_REFRESCO_DATOS} min)..."
+                          if silencioso else "☁️ Descargando historial desde Google Sheets (fuente al día)...")
+        with st.spinner(_texto_spinner):
             # Se lee PRIMERO el Google Sheet, que es la fuente fresca y confiable: el
             # robot-monitor lo actualiza en cada ciclo y esa escritura casi nunca falla.
             # El respaldo en GCS (historial_maestro.csv) queda como PLAN B, solo si el
@@ -3101,9 +3105,13 @@ def main():
     # Refresco automático: la foto de datos de la sesión se vuelve a leer de
     # Sheets si tiene más de MINUTOS_REFRESCO_DATOS. Sin esto, una sesión
     # abierta hace horas seguía mostrando pendientes órdenes ya cerradas.
-    # Ocurre en la siguiente interacción (cualquier clic o filtro).
+    # Ocurre en la siguiente interacción (cualquier clic o filtro), pero SOLO
+    # en las pantallas que muestran órdenes en vivo: la descarga de Sheet1
+    # (30 mil+ órdenes) tarda y antes interrumpía también Expedientes,
+    # Configuración, Calidad o Vehículos, que no la necesitan al minuto.
     _foto = st.session_state.get('df_base_cargado_en')
     if (conn is not None and _foto is not None and not (btn_reprocesar or btn_api_procesar)
+            and nav_menu_diamante in PANTALLAS_CON_REFRESCO
             and (get_honduras_time() - _foto) > timedelta(minutes=MINUTOS_REFRESCO_DATOS)):
         if not sincronizar_datos_nube(conn, silencioso=True):
             st.caption("⚠️ No se pudieron refrescar los datos de la nube; se muestran los de la última carga.")
