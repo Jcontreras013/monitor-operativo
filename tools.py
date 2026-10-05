@@ -3536,6 +3536,38 @@ def generar_pdf_cerradas_detalle(df_cerradas, fecha_corte):
 # 7. MÓDULO DE PERSISTENCIA EN GOOGLE CLOUD STORAGE (NUEVO)
 # ==============================================================================
 
+def _archivo_de_error(file_name, mime, error):
+    """Si un reporte falla al generarse, se descarga un aviso en vez de un archivo roto."""
+    mensaje = f"No se pudo generar {file_name}: {error}. Intenta de nuevo; si se repite, avisa a soporte."
+    if mime == "application/pdf":
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 6, safestr(mensaje))
+        return bytes(pdf.output())
+    return mensaje.encode("utf-8")
+
+
+def boton_descarga(label, generar, file_name, mime="application/pdf", key=None, **kwargs):
+    """
+    Descarga en UN solo clic. El archivo se genera cuando se presiona el
+    botón (en vez del par "Preparar" -> "Descargar", que obligaba a dar dos
+    clics) y la página NO se recarga después de descargar, así que no queda
+    un rato "congelada" ni hace falta volver a hacer clic.
+    `generar` es una función sin argumentos (usar functools.partial para
+    fijar sus datos). Corre aparte, así que no debe usar comandos de st.
+    """
+    def _generar_seguro():
+        try:
+            return generar()
+        except Exception as e:
+            print(f"[descarga] No se pudo generar {file_name}: {e}")
+            return _archivo_de_error(file_name, mime, e)
+
+    return st.download_button(label, data=_generar_seguro, file_name=file_name, mime=mime, key=key,
+                              on_click="ignore", **kwargs)
+
+
 def escribir_hoja_sheets(conn, url_spreadsheet, hoja, df):
     """
     Escribe df en la hoja indicada y la crea si todavía no existe.

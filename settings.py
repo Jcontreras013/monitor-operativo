@@ -529,7 +529,8 @@ def mostrar_configuracion(conn=None):
                     file_name=f"Manual_Monitor_Operativo_{MANUAL_VERSION.replace(' ', '_')}.pdf",
                     mime="application/pdf",
                     type="primary",
-                    use_container_width=True
+                    use_container_width=True,
+                    on_click="ignore",
                 )
             except Exception as e:
                 st.error(f"No se pudo compilar el PDF del manual: {e}")

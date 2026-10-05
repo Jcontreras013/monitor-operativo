@@ -1,4 +1,5 @@
 import streamlit as st
+from functools import partial
 import pandas as pd
 import re
 import requests
@@ -415,7 +416,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     st.dataframe(res_t, use_container_width=True, hide_index=True)
                     col_d1, col_d2 = st.columns(2)
                     with col_d1: 
-                        st.download_button("🚀 Descargar Reporte Diario (PDF)", generar_pdf_auditoria_tiempos(res_t), "Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_down_tiem_diar")
+                        st.download_button("🚀 Descargar Reporte Diario (PDF)", partial(generar_pdf_auditoria_tiempos, res_t), "Auditoria_Tiempos_Diario.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_down_tiem_diar", on_click="ignore")
                 else: 
                     st.error(f"❌ Error: {msg}")
                 
@@ -430,7 +431,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     st.dataframe(res_sem, use_container_width=True, hide_index=True)
                     col_s1, col_s2 = st.columns(2)
                     with col_s1: 
-                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", generar_pdf_semanal_tiempos(res_diario, res_sem, f_in, f_out), "Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_down_tiem_sem")
+                        st.download_button("🚀 Descargar Reporte Semanal (PDF)", partial(generar_pdf_semanal_tiempos, res_diario, res_sem, f_in, f_out), "Auditoria_Tiempos_Semanal.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_down_tiem_sem", on_click="ignore")
                 else: 
                     st.warning(f"⚠️ {msg_sem}")
 
@@ -522,7 +523,8 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                         file_name=f"Auditoria_Velocidades_{get_hn_time().strftime('%Y%m%d')}.pdf", 
                                         mime="application/pdf", 
                                         use_container_width=True, 
-                                        type="primary"
+                                        type="primary",
+                                        on_click="ignore",
                                     )
                             else: st.error(f"❌ Error matriz principal: {msg_tel}")
                         except Exception as e: st.error(f"❌ Error de procesamiento: {e}")
@@ -579,8 +581,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             unidad_sin_cero = v['Unidad'].replace("MX-0", "MX-")
                             mapa_placas[unidad_sin_cero] = f"{v['Unidad']} [{v['Placa']}]"
                         df_g_pdf['VEHICULO'] = df_g_pdf['VEHICULO'].apply(lambda x: mapa_placas.get(str(x).strip(), x))
-                    pdf_gen = generar_pdf_reporte_general_gastos(df_g_pdf)
-                    st.download_button("📊 Descargar Reporte General Flota", pdf_gen, "Reporte_General_Flota.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_gral")
+                    st.download_button("📊 Descargar Reporte General Flota", partial(generar_pdf_reporte_general_gastos, df_g_pdf), "Reporte_General_Flota.pdf", "application/pdf", use_container_width=True, type="primary", key="btn_download_gral", on_click="ignore")
                 except Exception as e:
                     st.error(f"Error PDF General: {e}")
                     
@@ -682,8 +683,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                     st.metric("Total Gastos L.", f"{df_filtro['MONTO'].sum():,.2f}")
                     
                     try:
-                        pdf_veh = generar_pdf_gastos_vehiculo(df_filtro, vehiculo_seleccionado)
-                        st.download_button("📄 Bajar Reporte de Unidad", pdf_veh, f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad_desc")
+                        st.download_button("📄 Bajar Reporte de Unidad", partial(generar_pdf_gastos_vehiculo, df_filtro, vehiculo_seleccionado), f"Reporte_{vehiculo_seleccionado}.pdf", "application/pdf", use_container_width=True, key="btn_down_rep_unidad_desc", on_click="ignore")
                     except Exception as e:
                         pass
                         
@@ -727,7 +727,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         with st.expander("📅 Ver Calendario Anual de Inspecciones", expanded=False):
             st.info("💡 Programación de 2 revisiones por mes.")
             try:
-                st.download_button("📥 Bajar PDF de Calendario", generar_pdf_calendario(), "Calendario_Inspecciones.pdf", "application/pdf", key="btn_down_cal")
+                st.download_button("📥 Bajar PDF de Calendario", generar_pdf_calendario, "Calendario_Inspecciones.pdf", "application/pdf", key="btn_down_cal", on_click="ignore")
             except:
                 pass
             st.dataframe(pd.DataFrame(DATOS_CALENDARIO), use_container_width=True, hide_index=True)
@@ -736,7 +736,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
         with col_formato:
             st.markdown("#### 1️⃣ Obtener Formato Físico")
             try:
-                st.download_button("📄 DESCARGAR PLANTILLA (PDF)", generar_pdf_en_blanco(), "Formato_Inspeccion.pdf", "application/pdf", use_container_width=True, key="btn_down_plantilla")
+                st.download_button("📄 DESCARGAR PLANTILLA (PDF)", generar_pdf_en_blanco, "Formato_Inspeccion.pdf", "application/pdf", use_container_width=True, key="btn_down_plantilla", on_click="ignore")
             except Exception as e:
                 st.error(f"Error plantilla: {e}")
                 
