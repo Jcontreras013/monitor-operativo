@@ -182,6 +182,7 @@ MANUAL_SECCIONES = [
             ("lista", [
                 "Tres o más llegadas tarde del mismo colaborador promueven la falta a GRAVE por reincidencia.",
                 "Una ausencia sin aviso o sin justificar sale GRAVE; una ausencia simple queda LEVE.",
+                "Todo motivo que tenga que ver con el vehículo (mal uso, mal cuidado, vehículo sucio, exceso de velocidad, manejo, combustible, llantas...) sale GRAVE, también si se escribe a mano en \"Otro\".",
             ]),
         ],
     },
