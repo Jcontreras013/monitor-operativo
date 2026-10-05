@@ -1,4 +1,5 @@
 import streamlit as st
+from functools import partial
 import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
@@ -89,6 +90,7 @@ try:
         cargar_gps_tecnicos,
         COLUMNAS_VITALES_SISTEMA,
         completar_columnas_equivalentes,
+        boton_descarga,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
@@ -940,7 +942,8 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                 data=csv_pivot,
                 file_name=f"desglose_olt_pon_{hoy_date_valor.strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                key="red_dl_pivot"
+                key="red_dl_pivot",
+                on_click="ignore",
             )
 
     # ============================================================
@@ -1494,7 +1497,8 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                     data=d.tail(1).to_csv(index=False).encode('utf-8'),
                     file_name=f"aviso_reco_{get_honduras_time().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
-                    key=f"aviso_rescate_{get_honduras_time().strftime('%H%M%S')}"
+                    key=f"aviso_rescate_{get_honduras_time().strftime('%H%M%S')}",
+                    on_click="ignore",
                 )
             except Exception:
                 pass
@@ -1703,7 +1707,8 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                         data=coincid_nuevo[cols_m_n].to_csv(index=False).encode('utf-8'),
                         file_name=f"impacto_{fecha_trabajo.strftime('%Y%m%d')}.csv",
                         mime="text/csv",
-                        key="dl_impacto_nuevo"
+                        key="dl_impacto_nuevo",
+                        on_click="ignore",
                     )
 
                 # --- Guardado (no bloquea lo mostrado arriba) ---
@@ -1804,7 +1809,8 @@ def mostrar_analisis_red(df_base_activa, hoy_date_valor, conn=None):
                             data=coincid[cols_m].to_csv(index=False).encode('utf-8'),
                             file_name=f"impacto_{r['f_trab'].strftime('%Y%m%d')}_{str(av['COLONIAS'])[:20]}.csv",
                             mime="text/csv",
-                            key=f"dl_imp_{r['f_trab'].strftime('%Y%m%d')}_{r['n']}_{n_cli_r}"
+                            key=f"dl_imp_{r['f_trab'].strftime('%Y%m%d')}_{r['n']}_{n_cli_r}",
+                            on_click="ignore",
                         )
 
             with st.expander(f"📋 Incidencias registradas ({len(df_avisos)})"):
@@ -2137,7 +2143,8 @@ ahí el problema no es el análisis, es lo que se escribe al cerrar.
             data=df_det[cols_det].to_csv(index=False).encode('utf-8'),
             file_name=f"diagnostico_offline_{dias}d.csv",
             mime="text/csv",
-            key="dl_diag_offline"
+            key="dl_diag_offline",
+            on_click="ignore",
         )
 
 
@@ -2390,7 +2397,8 @@ def mostrar_analisis_cruzado(df_base_activa, hoy_date_valor):
                     data=cruce[cols_cruce].to_csv(index=False).encode('utf-8'),
                     file_name=f"retrabajo_instalacion_{ventana}d.csv",
                     mime="text/csv",
-                    key="dl_cruz_retrabajo"
+                    key="dl_cruz_retrabajo",
+                    on_click="ignore",
                 )
 
     # ---------------- Reincidencia general ----------------
@@ -2470,7 +2478,8 @@ def mostrar_analisis_cruzado(df_base_activa, hoy_date_valor):
             data=df_dx[cols_x].to_csv(index=False).encode('utf-8'),
             file_name=f"analisis_cruzado_{dias_x}d.csv",
             mime="text/csv",
-            key="dl_cruz_detalle"
+            key="dl_cruz_detalle",
+            on_click="ignore",
         )
 
 
@@ -3566,12 +3575,10 @@ def main():
             check_ordenes_totales = st.toggle(f"📋 Órdenes Totales Pendientes ({total_vivas})", key="toggle_totales")
             
             if check_ordenes_totales:
-                if st.button("📄 GENERAR PDF DE ÓRDENES TOTALES", use_container_width=True, key="btn_generar_pdf_totales"):
-                    with st.spinner("Generando documento PDF..."):
-                        df_vivas_export = df_base_activa[m_viva_count].copy()
-                        st.session_state['pdf_totales_gen'] = generar_pdf_ordenes_totales(df_vivas_export, hoy_date_valor)
-                if 'pdf_totales_gen' in st.session_state and st.session_state['pdf_totales_gen']:
-                    st.download_button("📥 DESCARGAR PDF TOTAL", data=st.session_state['pdf_totales_gen'], file_name=f"Ordenes_Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_download_pdf_totales")
+                boton_descarga("📄 DESCARGAR PDF DE ÓRDENES TOTALES",
+                               partial(generar_pdf_ordenes_totales, df_base_activa[m_viva_count].copy(), hoy_date_valor),
+                               f"Ordenes_Pendientes_{hoy_date_valor}.pdf", type="primary", use_container_width=True,
+                               key="btn_download_pdf_totales")
             
             try:
                 from tools import cargar_catalogo_tecnicos
@@ -3723,10 +3730,11 @@ def main():
                     cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                     df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Manana')
-                    st.download_button(label="📥 Exportar EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="btn_descargar_excel_pendientes")
-                    if st.button("📄 Generar PDF", use_container_width=True, type="primary", key="btn_generar_pdf_dispatch_mobile"):
-                        with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
-                    if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_dispatch_mobile")
+                    st.download_button(label="📥 Exportar EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="btn_descargar_excel_pendientes", on_click="ignore")
+                    boton_descarga("📄 Descargar PDF",
+                                   partial(generar_pdf_pendientes_dispatch, df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y')),
+                                   f"Pendientes_{hoy_date_valor}.pdf", type="primary", use_container_width=True,
+                                   key="btn_descargar_pdf_dispatch_mobile")
                 else:
                     col_d1, col_d2 = st.columns([2, 1])
                     with col_d1:
@@ -3739,10 +3747,11 @@ def main():
                         cols_export = ['NUM', 'CLIENTE', 'NOMBRE', 'COLONIA', 'ACTIVIDAD', 'COMENTARIO', 'ESTADO', 'TECNICO', 'CLASIFICACION_DISPATCH', 'FECHA_APE']
                         df_export = df_todas_vivas[[c for c in cols_export if c in df_todas_vivas.columns]]
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer: df_export.to_excel(writer, index=False, sheet_name='Pendientes_Dispatch_Hoy')
-                        st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="btn_descargar_excel_dispatch")
-                        if st.button("📄 Generar PDF (Dispatch)", use_container_width=True, type="primary", key="btn_generar_pdf_dispatch_desktop"):
-                            with st.spinner("Generando PDF..."): st.session_state['pdf_dispatch'] = generar_pdf_pendientes_dispatch(df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y'))
-                        if 'pdf_dispatch' in st.session_state and st.session_state['pdf_dispatch'] is not None: st.download_button(label="📥 Descargar PDF Generado", data=st.session_state['pdf_dispatch'], file_name=f"Pendientes_Dispatch_{hoy_date_valor}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_dispatch_desktop")
+                        st.download_button(label="📥 Exportar Resumen a EXCEL", data=buffer.getvalue(), file_name=f"Pendientes_Dispatch_{hoy_date_valor}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="btn_descargar_excel_dispatch", on_click="ignore")
+                        boton_descarga("📄 Descargar PDF (Dispatch)",
+                                       partial(generar_pdf_pendientes_dispatch, df_dispatch_final, df_todas_vivas, hoy_date_valor.strftime('%d/%m/%Y')),
+                                       f"Pendientes_Dispatch_{hoy_date_valor}.pdf", type="primary", use_container_width=True,
+                                       key="btn_descargar_pdf_dispatch_desktop")
             else: st.success("🎉 No hay órdenes pendientes registradas. ¡Operación limpia!")
 
         with tab_diario:
@@ -3983,20 +3992,10 @@ def main():
 
                         col_bpdf1, col_bpdf2 = st.columns([1, 2])
                         with col_bpdf1:
-                            if st.button("📄 GENERAR PDF TIEMPOS Y TIEMPO PERDIDO", use_container_width=True, key="btn_generar_pdf_tiempos_muertos"):
-                                with st.spinner("Calculando rendimientos de 8 horas..."):
-                                    st.session_state['pdf_tiempos_muertos'] = generar_pdf_tiempos_muertos(df_para_gantt_diario, fecha_cal_sel)
-                                    
-                            if 'pdf_tiempos_muertos' in st.session_state and st.session_state['pdf_tiempos_muertos']:
-                                st.download_button(
-                                    label=f"📥 Descargar PDF (Eficiencia {fecha_cal_sel.strftime('%d-%m')})", 
-                                    data=st.session_state['pdf_tiempos_muertos'], 
-                                    file_name=f"Eficiencia_Tiempos_{fecha_cal_sel}.pdf", 
-                                    mime="application/pdf", 
-                                    type="primary", 
-                                    use_container_width=True,
-                                    key="btn_descargar_pdf_tiempos_muertos"
-                                )
+                            boton_descarga(f"📄 Descargar PDF Tiempos y Tiempo Perdido ({fecha_cal_sel.strftime('%d-%m')})",
+                                           partial(generar_pdf_tiempos_muertos, df_para_gantt_diario, fecha_cal_sel),
+                                           f"Eficiencia_Tiempos_{fecha_cal_sel}.pdf", type="primary", use_container_width=True,
+                                           key="btn_descargar_pdf_tiempos_muertos")
                         st.markdown("---")
                     else:
                         st.info("No hay actividades registradas en esta fecha para generar el Gantt.")
@@ -4067,11 +4066,10 @@ def main():
                     if es_movil: col_btn1, col_btn2 = st.columns(2)
                     else: col_btn1, col_btn2 = st.columns([1, 2])
                     with col_btn1:
-                        if st.button("📄 GENERAR PDF PRIMERA ORDEN", use_container_width=True, key="btn_generar_pdf_primera_orden"):
-                            try:
-                                with st.spinner("Generando PDF..."): st.session_state['pdf_primera'] = generar_pdf_primera_orden(df_base, fecha_cal_sel)
-                            except Exception as e: st.error(f"Error generando PDF: {e}")
-                        if 'pdf_primera' in st.session_state and st.session_state['pdf_primera']: st.download_button("📥 Descargar PDF (Inicio Jornada)", data=st.session_state['pdf_primera'], file_name=f"Primeras_Ordenes_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_primera_orden")
+                        boton_descarga("📄 Descargar PDF (Inicio Jornada)",
+                                       partial(generar_pdf_primera_orden, df_base, fecha_cal_sel),
+                                       f"Primeras_Ordenes_{fecha_cal_sel}.pdf", type="primary", use_container_width=True,
+                                       key="btn_descargar_pdf_primera_orden")
                 else: st.info("No hay registros de inicio de órdenes para esta fecha.")
             else: st.info("No hay registros de inicio de órdenes para esta fecha.")
 
@@ -4146,36 +4144,22 @@ def main():
                 else: col_btn_p1, col_btn_p2 = st.columns([1, 2])
                 
                 with col_btn_p1:
-                    if st.button("📄 GENERAR PDF PROMEDIO SEMANAL", use_container_width=True, key="btn_generar_pdf_promedio_arranque"):
-                        try:
-                            with st.spinner("Generando PDF..."):
-                                st.session_state['pdf_promedio_arranque'] = generar_pdf_promedio_arranque(promedios_mostrar, f_inicio_primera, f_fin_primera)
-                        except Exception as e:
-                            st.error(f"Error generando PDF: {e}")
-                            
-                    if 'pdf_promedio_arranque' in st.session_state and st.session_state['pdf_promedio_arranque']:
-                        st.download_button(
-                            "📥 Descargar PDF (Promedio Semanal)", 
-                            data=st.session_state['pdf_promedio_arranque'], 
-                            file_name=f"Promedio_Arranque_{f_inicio_primera}.pdf", 
-                            mime="application/pdf", 
-                            type="primary", 
-                            use_container_width=True,
-                            key="btn_descargar_pdf_prom_arranque"
-                        )
+                    boton_descarga("📄 Descargar PDF Promedio Semanal",
+                                   partial(generar_pdf_promedio_arranque, promedios_mostrar, f_inicio_primera, f_fin_primera),
+                                   f"Promedio_Arranque_{f_inicio_primera}.pdf", type="primary", use_container_width=True,
+                                   key="btn_descargar_pdf_prom_arranque")
 
             st.markdown("---")
             st.markdown("### 📥 Exportación")
-            if st.button("🚀 GENERAR PDF DE CIERRE DIARIO", use_container_width=True, type="primary", key="btn_generar_pdf_cierre_diario"):
-                with st.spinner("Preparando archivo de cierre..."): st.session_state['pdf_cierre'] = generar_pdf_cierre_diario(df_base, fecha_cal_sel)
-            if 'pdf_cierre' in st.session_state: st.download_button("📥 Descargar Archivo (PDF)", data=st.session_state['pdf_cierre'], file_name=f"Cierre_{fecha_cal_sel}.pdf", mime="application/pdf", type="primary", use_container_width=True, key="btn_descargar_pdf_cierre")
+            boton_descarga("🚀 Descargar PDF de Cierre Diario", partial(generar_pdf_cierre_diario, df_base, fecha_cal_sel),
+                           f"Cierre_{fecha_cal_sel}.pdf", type="primary", use_container_width=True,
+                           key="btn_descargar_pdf_cierre")
 
             # Detalle por hora de las cerradas (NUM, hora de cierre, técnico, actividad, cliente, colonia).
-            if st.button("🕒 GENERAR PDF DE CERRADAS (DETALLE POR HORA)", use_container_width=True, key="btn_generar_pdf_cerradas_detalle"):
-                with st.spinner("Preparando detalle de cerradas..."):
-                    st.session_state['pdf_cerradas_det'] = generar_pdf_cerradas_detalle(df_cerradas_espejo, fecha_cal_sel)
-            if 'pdf_cerradas_det' in st.session_state:
-                st.download_button("📥 Descargar Cerradas Detalle (PDF)", data=st.session_state['pdf_cerradas_det'], file_name=f"Cerradas_Detalle_{fecha_cal_sel}.pdf", mime="application/pdf", use_container_width=True, key="btn_descargar_pdf_cerradas_detalle")
+            boton_descarga("🕒 Descargar PDF de Cerradas (detalle por hora)",
+                           partial(generar_pdf_cerradas_detalle, df_cerradas_espejo, fecha_cal_sel),
+                           f"Cerradas_Detalle_{fecha_cal_sel}.pdf", use_container_width=True,
+                           key="btn_descargar_pdf_cerradas_detalle")
             st.markdown("---")
             with st.expander("Ver Lista Detallada"): st.dataframe(df_cerradas_espejo[['NUM', 'TECNICO', 'ACTIVIDAD', 'TIEMPO_REAL', 'COMENTARIO']], hide_index=True, use_container_width=True)
 

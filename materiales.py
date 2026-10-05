@@ -1,6 +1,7 @@
 import io
 import pandas as pd
 import streamlit as st
+from functools import partial
 
 from tools import read_file_robust, procesar_dataframe_base
 
@@ -30,9 +31,6 @@ ACTIVIDAD_SIN_ORDEN = 'SIN ORDEN EN CEPHEUS'
 # sesión que cruzó con una versión anterior pide volver a cruzar en vez de
 # mostrar datos incompletos o fallar por una llave que no existe.
 VERSION_RESULTADO = 4
-# Igual, pero para el formato del PDF (un PDF ya preparado en la sesión se
-# regenera si cambió su diseño).
-VERSION_PDF = 4
 
 
 def _normalizar_num(serie):
@@ -689,22 +687,14 @@ def mostrar_auditoria_materiales(*args, **kwargs):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="dl_mat_excel",
             use_container_width=True,
+            on_click="ignore",
         )
     with col_dl2:
-        id_estado_pdf = f"mat_pdf_v{VERSION_RESULTADO}.{VERSION_PDF}_{total}_{sin_metraje}_{mencionan_reserva}_{res['total_metros']:.0f}_{len(res['molex'])}"
-        if st.session_state.get('mat_estado_pdf') != id_estado_pdf:
-            if st.button("📥 Preparar Reporte PDF", key="btn_mat_pdf", use_container_width=True):
-                with st.spinner("Generando PDF..."):
-                    from tools import generar_pdf_auditoria_materiales
-                    st.session_state['mat_pdf_bytes'] = generar_pdf_auditoria_materiales(res)
-                    st.session_state['mat_estado_pdf'] = id_estado_pdf
-                st.rerun()
-        else:
-            st.download_button(
-                "⬇️ Descargar Reporte PDF",
-                data=st.session_state['mat_pdf_bytes'],
-                file_name="auditoria_materiales_sopfibra.pdf",
-                mime="application/pdf",
-                key="dl_mat_pdf",
-                use_container_width=True,
-            )
+        from tools import generar_pdf_auditoria_materiales, boton_descarga
+        boton_descarga(
+            "⬇️ Descargar Reporte PDF",
+            partial(generar_pdf_auditoria_materiales, res),
+            "auditoria_materiales_sopfibra.pdf",
+            key="dl_mat_pdf",
+            use_container_width=True,
+        )

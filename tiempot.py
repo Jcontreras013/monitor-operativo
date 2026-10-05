@@ -951,7 +951,8 @@ def mostrar_tiempos_tecnicos(es_movil=False, conn=None, df_base=None, *args, **k
                         data=pdf_bytes,
                         file_name="Reporte_Gerencial_Integral.pdf",
                         mime="application/pdf",
-                        type="primary"
+                        type="primary",
+                        on_click="ignore",
                     )
             except Exception as e:
                 st.error(f"No se pudo generar el PDF. Asegúrate de haber pegado el código en tools.py. Error: {e}")

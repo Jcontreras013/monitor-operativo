@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+from functools import partial
 from datetime import datetime, timedelta
 import pdfplumber
 
@@ -281,7 +282,7 @@ def vista_biometrico():
                         df_mostrar.columns = ['ID', 'Empleado', 'Tardanzas', 'Prom. Tardanza', 'Exc. Almuerzo', 'Prom. Exc. Almuerzo', 'Exc. Break', 'Prom. Exc. Break', 'TOTAL FALTAS']
                     else: df_mostrar = pd.DataFrame()
 
-                    st.download_button(label="📥 Descargar Resumen de Infracciones (PDF)", data=generar_pdf_infracciones(df_p), file_name=f"Resumen_Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button(label="📥 Descargar Resumen de Infracciones (PDF)", data=partial(generar_pdf_infracciones, df_p), file_name=f"Resumen_Infracciones_{datetime.now().strftime('%d_%m_%Y')}.pdf", mime="application/pdf", use_container_width=True, on_click="ignore")
 
                     t_consolidado, t_detalle = st.tabs(["📊 Tabla Consolidada", "📝 Detalle Diario"])
                     with t_consolidado:
@@ -321,7 +322,7 @@ def vista_biometrico():
         if 'pdf_final_rrhh' in st.session_state:
             st.markdown("---")
             st.markdown("### 🎉 Tu Reporte está listo")
-            st.download_button("📥 DESCARGAR REPORTE UNIFICADO (PDF)", data=st.session_state['pdf_final_rrhh'], file_name=f"Consolidado_RRHH_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True)
+            st.download_button("📥 DESCARGAR REPORTE UNIFICADO (PDF)", data=st.session_state['pdf_final_rrhh'], file_name=f"Consolidado_RRHH_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", type="primary", use_container_width=True, on_click="ignore")
             with st.expander("Ver vista previa de datos extraídos"):
                 if not st.session_state.get('df_a_prev', pd.DataFrame()).empty:
                     st.write("**Ausencias:**"); st.dataframe(st.session_state['df_a_prev'].head(5), use_container_width=True)
@@ -410,7 +411,8 @@ def vista_biometrico():
                         file_name=f"Asistencia_Tecnicos_{datetime.now().strftime('%d_%m_%Y')}.pdf",
                         mime="application/pdf",
                         type="primary",
-                        use_container_width=True
+                        use_container_width=True,
+                        on_click="ignore",
                     )
                         
                 except Exception as e:

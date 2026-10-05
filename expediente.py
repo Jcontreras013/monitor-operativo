@@ -1,4 +1,5 @@
 import streamlit as st
+from functools import partial
 import pandas as pd
 import requests
 import base64
@@ -36,6 +37,7 @@ try:
         safestr,
         cargar_auditorias_fibra,
         marcar_auditoria_fibra_convertida,
+        boton_descarga,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError:
@@ -148,6 +150,18 @@ def _bajar_bytes_documento(url):
     # Catbox rechaza peticiones sin User-Agent. Un error se lanza (no se
     # devuelve) para que st.cache_data no guarde una falla pasajera.
     r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0 (compatible; MonitorOperativo/1.0)"})
+    r.raise_for_status()
+    return r.content
+
+
+def _bajar_documento_directo(url):
+    """
+    Para el botón de descarga del repositorio: corre aparte del script (no
+    puede usar st.cache_data) y lanza el error si falla, para que el botón
+    entregue el aviso en vez de un archivo vacío.
+    """
+    r = requests.get(str(url).strip(), timeout=60,
+                     headers={"User-Agent": "Mozilla/5.0 (compatible; MonitorOperativo/1.0)"})
     r.raise_for_status()
     return r.content
 
@@ -1632,7 +1646,8 @@ def _finalizar_subida(conn, df_indice, nuevos_registros, fallidos, colaborador=N
                 data=df_rescate.to_csv(index=False).encode('utf-8'),
                 file_name=f"enlaces_rescate_{get_honduras_time().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                key=f"rescate_{get_honduras_time().strftime('%H%M%S')}"
+                key=f"rescate_{get_honduras_time().strftime('%H%M%S')}",
+                on_click="ignore",
             )
 
     if fallidos:
@@ -2040,27 +2055,15 @@ def mostrar_repositorio_documentos(conn):
                             # Descarga por el servidor: sirve para restaurar el
                             # nombre real de los archivos de Word, que en Catbox
                             # están guardados con extensión .bin.
-                            if st.button("⬇️ Preparar", key=f"repo_prep_{idx}", use_container_width=True):
-                                with st.spinner("Descargando..."):
-                                    datos, motivo_error = _descargar_documento_repositorio(fila['ENLACE'])
-
-                                if datos:
-                                    st.session_state[f"repo_datos_{idx}"] = datos
-                                else:
-                                    st.error(f"No se pudo descargar: {motivo_error}")
-                                    st.caption("Enlace directo del archivo:")
-                                    st.code(str(fila['ENLACE']), language=None)
-
-                            if st.session_state.get(f"repo_datos_{idx}"):
-                                ext_f = str(fila.get('TIPO', '')).lower()
-                                st.download_button(
-                                    "💾 Guardar",
-                                    data=st.session_state[f"repo_datos_{idx}"],
-                                    file_name=fila['NOMBRE_ARCHIVO'],
-                                    mime=MIMES_REPOSITORIO.get(ext_f, "application/octet-stream"),
-                                    key=f"repo_dl_{idx}",
-                                    use_container_width=True
-                                )
+                            ext_f = str(fila.get('TIPO', '')).lower()
+                            boton_descarga(
+                                "💾 Descargar",
+                                partial(_bajar_documento_directo, fila['ENLACE']),
+                                fila['NOMBRE_ARCHIVO'],
+                                mime=MIMES_REPOSITORIO.get(ext_f, "application/octet-stream"),
+                                key=f"repo_dl_{idx}",
+                                use_container_width=True,
+                            )
 
                         with c3:
                             if st.session_state.get(f"repo_confirmar_{idx}"):
@@ -2166,7 +2169,8 @@ def mostrar_repositorio_documentos(conn):
                     data=df_indice.to_csv(index=False).encode('utf-8'),
                     file_name=f"repositorio_expedientes_{get_honduras_time().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
-                    key="repo_backup_indice"
+                    key="repo_backup_indice",
+                    on_click="ignore",
                 )
 
 
@@ -2399,30 +2403,13 @@ def mostrar_modulo_expedientes(conn, df_base):
                             # gerencia sin forma de descargar el PDF confirmando
                             # eso mismo. generar_pdf_consolidado_mensual() ya sabe
                             # generar un PDF válido con la lista vacía.
-                            id_estado_consolidado = f"consolidado_mes_{hoy_consolidado.year}_{hoy_consolidado.month}_{len(df_mes_consolidado)}"
                             nombre_archivo_consolidado = f"Consolidado_Faltas_{nombre_mes_actual}_{hoy_consolidado.year}.pdf"
-                            if st.session_state.get('estado_pdf_consolidado_mes') == id_estado_consolidado:
-                                st.download_button(
-                                    "⬇️ Descargar Consolidado en PDF",
-                                    data=st.session_state['pdf_consolidado_mes_bytes'],
-                                    file_name=nombre_archivo_consolidado,
-                                    mime="application/pdf",
-                                    key="dl_pdf_consolidado_mes"
-                                )
-                            else:
-                                if st.button("📥 Preparar Consolidado en PDF", key="btn_pdf_consolidado_mes"):
-                                    with st.spinner("Generando PDF..."):
-                                        st.session_state['pdf_consolidado_mes_bytes'] = generar_pdf_consolidado_mensual(
-                                            df_consolidado, nombre_mes_actual, hoy_consolidado.year
-                                        )
-                                        st.session_state['estado_pdf_consolidado_mes'] = id_estado_consolidado
-                                    st.download_button(
-                                        "⬇️ Descargar Consolidado en PDF",
-                                        data=st.session_state['pdf_consolidado_mes_bytes'],
-                                        file_name=nombre_archivo_consolidado,
-                                        mime="application/pdf",
-                                        key="dl_pdf_consolidado_mes_directo"
-                                    )
+                            boton_descarga(
+                                "⬇️ Descargar Consolidado en PDF",
+                                partial(generar_pdf_consolidado_mensual, df_consolidado, nombre_mes_actual, hoy_consolidado.year),
+                                nombre_archivo_consolidado,
+                                key="dl_pdf_consolidado_mes",
+                            )
                         else:
                             st.info("No hay datos disponibles todavía para armar el consolidado.")
 
@@ -2438,35 +2425,14 @@ def mostrar_modulo_expedientes(conn, df_base):
                             nombre_corto = " ".join(filtro_nombre.split()[:2]) 
                             nombre_archivo_pdf = f"Reporte_{nombre_corto.replace(' ', '_')}.pdf"
 
-                        id_estado_pdf = f"pdf_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
-
-                        if st.session_state.get('estado_pdf_actual') == id_estado_pdf:
-                            st.download_button(
-                                label="⬇️ Descargar PDF",
-                                data=st.session_state['pdf_bytes_listo'],
-                                file_name=nombre_archivo_pdf,
-                                mime="application/pdf",
-                                use_container_width=True,
-                                type="primary"
-                            )
-                        else:
-                            # Sin st.rerun(): el botón de descarga se dibuja aquí
-                            # mismo. Antes se recargaba toda la página para poder
-                            # mostrarlo, y esa recarga completa es la que dejaba
-                            # al usuario de vuelta al inicio del módulo.
-                            if st.button("📄 Preparar PDF", key=f"btn_pdf_{tab_id}", use_container_width=True):
-                                with st.spinner("Generando PDF..."):
-                                    st.session_state['pdf_bytes_listo'] = generar_pdf_consolidado(df_mostrar, df_para_resumen_mes=df_sin_filtrar)
-                                    st.session_state['estado_pdf_actual'] = id_estado_pdf
-                                st.download_button(
-                                    label="⬇️ Descargar PDF",
-                                    data=st.session_state['pdf_bytes_listo'],
-                                    file_name=nombre_archivo_pdf,
-                                    mime="application/pdf",
-                                    use_container_width=True,
-                                    type="primary",
-                                    key=f"dl_pdf_directo_{tab_id}"
-                                )
+                        boton_descarga(
+                            "⬇️ Descargar PDF",
+                            partial(generar_pdf_consolidado, df_mostrar, df_para_resumen_mes=df_sin_filtrar),
+                            nombre_archivo_pdf,
+                            use_container_width=True,
+                            type="primary",
+                            key=f"dl_pdf_{tab_id}",
+                        )
 
                 with c_b_docx:
                     if not df_mostrar.empty:
@@ -2477,33 +2443,15 @@ def mostrar_modulo_expedientes(conn, df_base):
                                 nombre_corto = " ".join(filtro_nombre.split()[:2]) 
                                 nombre_archivo_docx = f"Reporte_{nombre_corto.replace(' ', '_')}.docx"
 
-                            id_estado_docx = f"docx_listo_{tab_id}_{filtro_nombre}_{len(df_mostrar)}"
-
-                            if st.session_state.get('estado_docx_actual') == id_estado_docx:
-                                st.download_button(
-                                    label="⬇️ Descargar Word",
-                                    data=st.session_state['docx_bytes_listo'],
-                                    file_name=nombre_archivo_docx,
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    use_container_width=True,
-                                    type="primary"
-                                )
-                            else:
-                                # Igual que el PDF: se dibuja la descarga en el
-                                # acto, sin recargar la página completa.
-                                if st.button("📝 Preparar Word", key=f"btn_docx_{tab_id}", use_container_width=True):
-                                    with st.spinner("Generando Word (.docx)..."):
-                                        st.session_state['docx_bytes_listo'] = generar_docx_consolidado(df_mostrar)
-                                        st.session_state['estado_docx_actual'] = id_estado_docx
-                                    st.download_button(
-                                        label="⬇️ Descargar Word",
-                                        data=st.session_state['docx_bytes_listo'],
-                                        file_name=nombre_archivo_docx,
-                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        use_container_width=True,
-                                        type="primary",
-                                        key=f"dl_docx_directo_{tab_id}"
-                                    )
+                            boton_descarga(
+                                "⬇️ Descargar Word",
+                                partial(generar_docx_consolidado, df_mostrar),
+                                nombre_archivo_docx,
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True,
+                                type="primary",
+                                key=f"dl_docx_{tab_id}",
+                            )
                         else:
                             st.button("📝 Word Desactivado", disabled=True, help="Agrega 'python-docx' a requirements.txt para habilitar descargas en Word", use_container_width=True, key=f"btn_docx_disabled_{tab_id}")
 

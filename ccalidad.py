@@ -1,4 +1,5 @@
 import streamlit as st
+from functools import partial
 import pandas as pd
 from datetime import timedelta
 from tools import (
@@ -507,34 +508,16 @@ def mostrar_modulo_calidad(conn, df_base):
                     )
 
                     st.markdown("#### 📥 Exportación en PDF")
-                    id_estado_pdf_ins = f"pdf_insfibra_{ini_rango_ins}_{fin_rango_ins}_{solo_pendientes_ins}_{len(df_tabla_ins)}"
-                    if st.session_state.get('estado_pdf_insfibra_actual') == id_estado_pdf_ins:
-                        st.download_button(
-                            label="⬇️ Descargar PDF",
-                            data=st.session_state['pdf_insfibra_bytes_listo'],
-                            file_name=f"Cierres_INSFIBRA_{ini_rango_ins}_a_{fin_rango_ins}.pdf",
-                            mime="application/pdf",
-                            use_container_width=True,
-                            type="primary"
-                        )
-                    else:
-                        if st.button("📄 Preparar PDF", key="btn_pdf_insfibra_cierres", use_container_width=True):
-                            with st.spinner("Generando PDF..."):
-                                from tools import generar_pdf_cierres_insfibra
-                                st.session_state['pdf_insfibra_bytes_listo'] = generar_pdf_cierres_insfibra(
-                                    df_tabla_ins, ini_rango_ins, fin_rango_ins,
-                                    total_cerradas_ins, total_llamadas_ins, total_pendientes_ins
-                                )
-                                st.session_state['estado_pdf_insfibra_actual'] = id_estado_pdf_ins
-                            st.download_button(
-                                label="⬇️ Descargar PDF",
-                                data=st.session_state['pdf_insfibra_bytes_listo'],
-                                file_name=f"Cierres_INSFIBRA_{ini_rango_ins}_a_{fin_rango_ins}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                                type="primary",
-                                key="dl_pdf_insfibra_directo"
-                            )
+                    from tools import generar_pdf_cierres_insfibra, boton_descarga
+                    boton_descarga(
+                        "⬇️ Descargar PDF",
+                        partial(generar_pdf_cierres_insfibra, df_tabla_ins, ini_rango_ins, fin_rango_ins,
+                                total_cerradas_ins, total_llamadas_ins, total_pendientes_ins),
+                        f"Cierres_INSFIBRA_{ini_rango_ins}_a_{fin_rango_ins}.pdf",
+                        use_container_width=True,
+                        type="primary",
+                        key="dl_pdf_insfibra",
+                    )
 
         # --------------------------------------------------------------------------
         # FLUJO: ENVÍO AUTOMÁTICO DE ENCUESTA DIGITAL POR WHATSAPP (WATI)
@@ -878,36 +861,19 @@ def mostrar_modulo_calidad(conn, df_base):
                             # Instalaciones o Fibra), que antes quedaba escondido bajo
                             # un rótulo que solo mencionaba "Calidad" y hacía pensar
                             # que el botón no aplicaba a las auditorías de Miguel.
-                            etiqueta_btn_pdf = "📄 GENERAR REPORTE PDF DE CALIDAD" if hoja_target == "Calidad" else f"📄 GENERAR REPORTE PDF DE {tipo_consulta.upper()}"
-                            if st.button(etiqueta_btn_pdf, use_container_width=True, type="primary", key="btn_pdf_calidad_action"):
-                                with st.spinner("Preparando archivo de reporte..."):
-                                    from tools import generar_pdf_reporte_calidad, generar_pdf_reporte_campo
-                                    if hoja_target == "Calidad":
-                                        st.session_state['pdf_calidad_data_final'] = generar_pdf_reporte_calidad(
-                                            df_filtered, 
-                                            ini_d, 
-                                            fin_d if 'fin_d' in locals() else ini_d
-                                        )
-                                    else:
-                                        st.session_state['pdf_calidad_data_final'] = generar_pdf_reporte_campo(
-                                            df_filtered,
-                                            ini_d,
-                                            fin_d if 'fin_d' in locals() else ini_d,
-                                            tipo=_TIPO_CAMPO_POR_HOJA.get(hoja_target, "instalaciones")
-                                        )
-                                        
-                            if 'pdf_calidad_data_final' in st.session_state and st.session_state['pdf_calidad_data_final'] is not None:
-                                st.download_button(
-                                    label="📥 DESCARGAR REPORTE EN PDF",
-                                    data=st.session_state['pdf_calidad_data_final'],
-                                    file_name=f"Reporte_{hoja_target}_{ini_d}.pdf",
-                                    mime="application/pdf",
-                                    use_container_width=True,
-                                    key="btn_download_calidad_actual"
-                                )
-                        
+                            etiqueta_btn_pdf = "📄 DESCARGAR REPORTE PDF DE CALIDAD" if hoja_target == "Calidad" else f"📄 DESCARGAR REPORTE PDF DE {tipo_consulta.upper()}"
+                            from tools import generar_pdf_reporte_calidad, generar_pdf_reporte_campo, boton_descarga
+                            fin_reporte = fin_d if 'fin_d' in locals() else ini_d
+                            if hoja_target == "Calidad":
+                                generar_reporte = partial(generar_pdf_reporte_calidad, df_filtered, ini_d, fin_reporte)
+                            else:
+                                generar_reporte = partial(generar_pdf_reporte_campo, df_filtered, ini_d, fin_reporte,
+                                                          tipo=_TIPO_CAMPO_POR_HOJA.get(hoja_target, "instalaciones"))
+                            boton_descarga(etiqueta_btn_pdf, generar_reporte, f"Reporte_{hoja_target}_{ini_d}.pdf",
+                                           use_container_width=True, type="primary", key="btn_download_calidad_actual")
+
                         st.markdown("---")
-                        
+
                         st.markdown("#### 🗑️ Eliminación de Registros (Uso exclusivo Gerencia)")
                         st.caption(f"Seleccione un registro del histórico para eliminarlo permanentemente de Google Sheets y GCS de la pestaña '{hoja_target}'.")
                         
