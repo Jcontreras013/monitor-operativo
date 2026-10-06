@@ -92,6 +92,7 @@ Puntos clave de este diseño:
 | `tiempot.py` | Módulo de tiempos de técnicos (rendimiento/tiempos muertos). |
 | `biometrico.py` | Procesamiento de reportes de biométrico/asistencia desde PDF. **No está enlazado al menú principal actualmente** — código auxiliar disponible pero no expuesto en la navegación de `app.py`. |
 | `ui_components.py` | Componentes de UI reutilizables (modales de detalle de orden). |
+| `ia.py` | Prueba piloto de IA: Claude lee comentarios de cierre (molex, trabajo de fibra, metros, razón de cierre) con salida en formato fijo. |
 | `sync_job.py` | Robot de sincronización: consulta Cepheus cada 15 minutos y escribe en Sheets + GCS. Corre como proceso aparte (`python sync_job.py`), no dentro de la app web. |
 | `telegram_bot.py` | Bot de Telegram para reportar faltas desde el grupo del equipo (formulario guiado por botones o texto libre), guarda en Expedientes. Corre como proceso aparte. |
 | `iniciar_sync_job.bat` / `iniciar_sync_job_oculto.vbs` | Lo mismo para el robot de sincronización: corre oculto, se vuelve a arrancar solo (espera 5 min por el límite de consultas de Cepheus) y puede quedar en `shell:startup` para arrancar con Windows. |
@@ -177,6 +178,15 @@ template_name = "..."
 ```
 
 `sync_job.py` y `telegram_bot.py` leen este mismo archivo con `toml.load()` (no usan `st.secrets`, porque corren fuera de Streamlit), así que en la PC donde se ejecutan debe existir `.streamlit/secrets.toml` junto al resto del código. 
+
+**IA (prueba piloto, opcional):** Auditoría de Materiales trae una sección "🧪 Prueba piloto" donde Claude (Anthropic, modelo `claude-opus-5-5`, módulo `ia.py`) lee los comentarios de cierre y los compara contra las reglas actuales y el metraje de Odoo. Necesita en los secretos de Streamlit (nunca en el código):
+
+```toml
+[anthropic]
+api_key = "sk-ant-..."   # console.anthropic.com -> API Keys; poner límite de gasto en Billing
+```
+
+Solo se envían actividad, razón de cierre y comentario (ningún dato del cliente). Sin la clave la sección muestra cómo activarla.
 
 **Avisos por correo** (para probar la configuración: **Configuración → 📧 Correo de alertas → Enviar correo de prueba** en la app, y `python sync_job.py --probar-correo` en la PC del robot):
 Las dos alertas las envía `sync_job.py` en cada ciclo (cada 15 min), y solo si hay algo nuevo:
