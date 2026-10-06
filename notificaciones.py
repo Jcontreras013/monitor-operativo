@@ -143,11 +143,11 @@ MINUTOS_ROBOT_DETENIDO = 35   # el ciclo es de 15 min; más de dos ciclos sin re
 def mostrar_estado_robot():
     """Resultado del último ciclo de alertas que reportó sync_job.py (lo guarda en GCS)."""
     import streamlit as st
-    from tools import leer_espejo_gcs, get_honduras_time, NOMBRE_BUCKET_SISTEMA
+    from tools import leer_estado_robot, get_honduras_time
 
     st.markdown("##### 🤖 Último ciclo de alertas del robot")
     try:
-        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, ARCHIVO_ESTADO_ALERTAS)
+        df = leer_estado_robot(ARCHIVO_ESTADO_ALERTAS)
     except Exception:
         df = None
     if df is None or df.empty:

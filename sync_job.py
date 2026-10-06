@@ -45,6 +45,8 @@ from tools import (
     PATRON_ASIGNADAS_VIVA_STR as PATRON_VIVAS,
     ACTIVIDADES_BASURA,
     completar_columnas_equivalentes,
+    GCS_ACTIVO,
+    HOJAS_ESTADO_ROBOT,
     NOMBRE_BUCKET_SISTEMA as NOMBRE_BUCKET
 )
 
@@ -55,6 +57,59 @@ CODIGOS_REINTENTABLES = (429, 500, 502, 503, 504)
 
 # Hora del último respaldo exitoso en GCS (se reporta en estado_robot.csv).
 ULTIMO_RESPALDO_GCS = None
+
+
+
+# Tiempo máximo (segundos) de cada llamada a Google Sheets. Sin esto gspread
+# espera para siempre: si la red de la PC se corta a mitad de una llamada, el
+# robot quedaba colgado sin escribir nada en el log hasta que alguien lo
+# reiniciaba a mano.
+TIMEOUT_SHEETS = 180
+
+
+def _abrir_spreadsheet():
+    """(spreadsheet, secrets_data) de la base de datos, con tiempo límite por llamada."""
+    ruta_secrets = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".streamlit", "secrets.toml")
+    secrets_data = toml.load(ruta_secrets)
+    creds = Credentials.from_service_account_info(
+        secrets_data["connections"]["gsheets"], scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    client = gspread.authorize(creds)
+    if hasattr(client, "set_timeout"):
+        client.set_timeout(TIMEOUT_SHEETS)
+    return client.open_by_url(secrets_data["url_base_datos"]), secrets_data
+
+
+def _guardar_estado(archivo, df, spreadsheet=None):
+    """
+    Estado del ciclo para la app (barra lateral y Configuración): en una hoja
+    pequeña de la base de datos (Estado_Robot / Estado_Alertas) y, si hay
+    bucket, también en GCS.
+    """
+    hoja = HOJAS_ESTADO_ROBOT[archivo]
+    try:
+        if spreadsheet is None:
+            spreadsheet, _ = _abrir_spreadsheet()
+        try:
+            ws = spreadsheet.worksheet(hoja)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = spreadsheet.add_worksheet(title=hoja, rows=20, cols=max(8, len(df.columns)))
+        ws.clear()
+        ws.update(values=[list(df.columns)] + df.astype(str).values.tolist(), range_name="A1")
+    except Exception as e:
+        print(f"[-] No se pudo guardar el estado en la hoja {hoja}: {str(e)[:200]}", flush=True)
+    sobrescribir_archivo_gcs(df, NOMBRE_BUCKET, archivo)
+
+
+def _leer_estado_previo():
+    """Último estado guardado (para no perder la última sincronización exitosa al reiniciar)."""
+    try:
+        spreadsheet, _ = _abrir_spreadsheet()
+        df = pd.DataFrame(spreadsheet.worksheet(HOJAS_ESTADO_ROBOT[ARCHIVO_ESTADO_ROBOT]).get_all_records())
+        if not df.empty:
+            return df
+    except Exception:
+        pass
+    return leer_espejo_gcs(NOMBRE_BUCKET, ARCHIVO_ESTADO_ROBOT)
 
 
 def _con_reintentos(funcion, descripcion, intentos=5, espera_inicial=5):
@@ -113,18 +168,7 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
     # 3. CONEXIÓN DIRECTA A GOOGLE SHEETS SIN STREAMLIT
     try:
-        # Leemos el archivo secrets.toml directamente
-        ruta_secrets = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".streamlit", "secrets.toml")
-        secrets_data = toml.load(ruta_secrets)
-        
-        creds_dict = secrets_data["connections"]["gsheets"]
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-
-        # Abrir la hoja por URL
-        url_bd = secrets_data["url_base_datos"]
-        spreadsheet = client.open_by_url(url_bd)
+        spreadsheet, secrets_data = _abrir_spreadsheet()
         worksheet = spreadsheet.worksheet("Sheet1")
 
         # Leer los datos de Sheets para consolidación
@@ -265,20 +309,22 @@ def ejecutar_sincronizacion_background(dias_atras=55):
     # 8. RESPALDO ESPEJO EN GCS -- se hace aunque Sheets haya fallado: la app
     # usa este respaldo cuando está más al día que Sheets (ver estado_robot.csv).
     global ULTIMO_RESPALDO_GCS
-    try:
-        gcs_ok = sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET, "historial_maestro.csv")
-        if gcs_ok:
-            ULTIMO_RESPALDO_GCS = get_honduras_time()
-            print("[+] Respaldo exitoso: Copia de alta velocidad subida a GCS.")
-        else:
-            print("[-] Error al respaldar en GCS.")
-    except Exception as e_gcs:
-        gcs_ok = False
-        print(f"[-] Error al respaldar en GCS: {e_gcs}")
+    gcs_ok = False
+    if GCS_ACTIVO:   # sin gcs_bucket en los secretos no hay respaldo en GCS
+        try:
+            gcs_ok = sobrescribir_archivo_gcs(df_final, NOMBRE_BUCKET, "historial_maestro.csv")
+            if gcs_ok:
+                ULTIMO_RESPALDO_GCS = get_honduras_time()
+                print("[+] Respaldo exitoso: Copia de alta velocidad subida a GCS.")
+            else:
+                print("[-] Error al respaldar en GCS.")
+        except Exception as e_gcs:
+            print(f"[-] Error al respaldar en GCS: {e_gcs}")
 
     if not sheets_ok:
         respaldo = ("el respaldo en GCS sí quedó al día y la app lo usa" if gcs_ok
-                    else "tampoco se pudo guardar el respaldo en GCS")
+                    else ("no hay respaldo en GCS (sin bucket)" if not GCS_ACTIVO
+                          else "tampoco se pudo guardar el respaldo en GCS"))
         return False, f"no se pudo escribir en Google Sheets ({error_sheets}); {respaldo}"
 
     # 9. ALERTAS POR CORREO: órdenes nuevas de clientes VIP y molex en
@@ -311,9 +357,9 @@ def _procesar_alertas(spreadsheet, df_depurado, secrets_data, ahora_local):
         df_estado = pd.DataFrame(
             [{"ALERTA": a, "RESULTADO": r, "DETALLE": d, "ULTIMO_CICLO": marca_ciclo} for a, r, d in estados]
         )
-        sobrescribir_archivo_gcs(df_estado, NOMBRE_BUCKET, ARCHIVO_ESTADO_ALERTAS)
+        _guardar_estado(ARCHIVO_ESTADO_ALERTAS, df_estado, spreadsheet)
     except Exception as e_estado:
-        print(f"[-] No se pudo guardar el estado de las alertas en GCS: {e_estado}")
+        print(f"[-] No se pudo guardar el estado de las alertas: {e_estado}")
 
 
 # Resultado del último ciclo de alertas, que la app muestra en Configuración.
@@ -482,7 +528,7 @@ if __name__ == '__main__':
     # no perderla si el robot se reinicia.
     ultima_sync_ok = None
     try:
-        _estado_previo = leer_espejo_gcs(NOMBRE_BUCKET, ARCHIVO_ESTADO_ROBOT)
+        _estado_previo = _leer_estado_previo()
         if _estado_previo is not None and not _estado_previo.empty:
             _previa = pd.to_datetime(_estado_previo["ULTIMA_SYNC_OK"].iloc[0], errors="coerce")
             ultima_sync_ok = None if pd.isna(_previa) else _previa.to_pydatetime()
@@ -539,15 +585,16 @@ if __name__ == '__main__':
         except Exception:
             pass
 
-        # Mismo estado en GCS, para que la app muestre por qué no hay datos nuevos.
+        # Mismo estado en la hoja Estado_Robot, para que la app muestre si el
+        # robot está vivo y por qué no hay datos nuevos.
         try:
-            sobrescribir_archivo_gcs(pd.DataFrame([{
+            _guardar_estado(ARCHIVO_ESTADO_ROBOT, pd.DataFrame([{
                 "ULTIMO_CICLO": ahora_ciclo.strftime('%Y-%m-%d %H:%M:%S'),
                 "SYNC_OK": sync_ok,
                 "MOTIVO": motivo_fallo or "",
                 "ULTIMA_SYNC_OK": ultima_sync_ok.strftime('%Y-%m-%d %H:%M:%S') if ultima_sync_ok else "",
                 "ULTIMO_RESPALDO_GCS": ULTIMO_RESPALDO_GCS.strftime('%Y-%m-%d %H:%M:%S') if ULTIMO_RESPALDO_GCS else "",
-            }]), NOMBRE_BUCKET, ARCHIVO_ESTADO_ROBOT)
+            }]))
         except Exception:
             pass
 

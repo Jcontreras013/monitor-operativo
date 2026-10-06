@@ -328,6 +328,19 @@ def _bucket_configurado():
 
 
 NOMBRE_BUCKET_SISTEMA = _bucket_configurado()
+# Sin gcs_bucket en los secretos no hay bucket (el anterior ya no existe):
+# GCS queda apagado y no se hace NINGUNA llamada de red. Antes cada lectura o
+# escritura intentaba conectarse igual; con la red inestable de la PC del
+# robot cada intento podía tardar hasta 2 minutos ("Timeout of 120.0s
+# exceeded ... Connection aborted") antes de rendirse.
+GCS_ACTIVO = NOMBRE_BUCKET_SISTEMA != BUCKET_GCS_ANTERIOR
+
+# Estado que reporta sync_job.py en cada ciclo. Va en hojas pequeñas de la
+# base de datos (antes eran CSV en GCS); la llave es el nombre del CSV viejo.
+HOJAS_ESTADO_ROBOT = {
+    "estado_robot.csv": "Estado_Robot",
+    "estado_alertas_robot.csv": "Estado_Alertas",
+}
 
 # ==============================================================================
 # IDENTIDAD DE MARCA PARA REPORTES (logo y pie de membrete)
@@ -3602,11 +3615,32 @@ def _resumen_error_gcs(e):
         return "el bucket no existe (ver gcs_bucket en los secretos)"
     return texto.splitlines()[0][:200]
 
+def leer_estado_robot(archivo):
+    """
+    Estado que reporta sync_job.py (archivo = "estado_robot.csv" o
+    "estado_alertas_robot.csv"): de su hoja en Google Sheets y, si no está,
+    del CSV en GCS. DataFrame o None.
+    """
+    hoja = HOJAS_ESTADO_ROBOT.get(archivo)
+    if hoja:
+        try:
+            from streamlit_gsheets import GSheetsConnection
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            df = conn.read(spreadsheet=st.secrets["url_base_datos"], worksheet=hoja, ttl=60).dropna(how="all")
+            if not df.empty:
+                return df
+        except Exception:
+            pass
+    return leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, archivo)
+
+
 def sobrescribir_archivo_gcs(dataframe_o_bytes, nombre_bucket, nombre_archivo_destino):
     """
     Sube un DataFrame (como CSV) o un archivo binario directo a GCS.
     Si el archivo ya existe, GCS lo borra/sobrescribe automáticamente en el acto.
     """
+    if not GCS_ACTIVO:
+        return False
     try:
         cliente = obtener_cliente_gcs_nativo()
         bucket = cliente.bucket(nombre_bucket)
@@ -3635,6 +3669,8 @@ def leer_espejo_gcs(nombre_bucket, nombre_archivo_destino):
     Descarga el archivo desde GCS en memoria RAM y lo devuelve como un DataFrame de Pandas.
     """
     import io
+    if not GCS_ACTIVO:
+        return None
     try:
         cliente = obtener_cliente_gcs_nativo()
         bucket = cliente.bucket(nombre_bucket)

@@ -91,6 +91,8 @@ try:
         COLUMNAS_VITALES_SISTEMA,
         completar_columnas_equivalentes,
         boton_descarga,
+        leer_estado_robot,
+        GCS_ACTIVO,
         NOMBRE_BUCKET_SISTEMA
     )
 except ImportError as e:
@@ -565,7 +567,7 @@ def _estado_robot():
     escribe en cada ciclo, también cuando no logra actualizar Sheets.
     """
     try:
-        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "estado_robot.csv")
+        df = leer_estado_robot("estado_robot.csv")
         if df is None or df.empty:
             return None
         fila = df.iloc[0]
@@ -589,7 +591,9 @@ def _respaldo_gcs_mas_reciente():
     Sheets pero el respaldo sí se guardó). En ese caso GCS es la fuente al día.
     """
     try:
-        df = leer_espejo_gcs(NOMBRE_BUCKET_SISTEMA, "estado_robot.csv")
+        if not GCS_ACTIVO:
+            return False
+        df = leer_estado_robot("estado_robot.csv")
         if df is None or df.empty or "ULTIMO_RESPALDO_GCS" not in df.columns:
             return False
         respaldo = pd.to_datetime(df["ULTIMO_RESPALDO_GCS"].iloc[0], errors="coerce")
