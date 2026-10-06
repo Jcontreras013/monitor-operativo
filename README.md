@@ -94,6 +94,7 @@ Puntos clave de este diseño:
 | `ui_components.py` | Componentes de UI reutilizables (modales de detalle de orden). |
 | `sync_job.py` | Robot de sincronización: consulta Cepheus cada 15 minutos y escribe en Sheets + GCS. Corre como proceso aparte (`python sync_job.py`), no dentro de la app web. |
 | `telegram_bot.py` | Bot de Telegram para reportar faltas desde el grupo del equipo (formulario guiado por botones o texto libre), guarda en Expedientes. Corre como proceso aparte. |
+| `iniciar_sync_job.bat` / `iniciar_sync_job_oculto.vbs` | Lo mismo para el robot de sincronización: corre oculto, se vuelve a arrancar solo (espera 5 min por el límite de consultas de Cepheus) y puede quedar en `shell:startup` para arrancar con Windows. |
 | `iniciar_telegram_bot.bat` / `iniciar_telegram_bot_oculto.vbs` | Lanzadores para Windows: arrancan el bot de Telegram sin ventana visible, con reinicio automático si se cae, y pueden dejarse en la carpeta de inicio de Windows para que arranquen solos. |
 | `personal_tecnico.txt` / `personal_sac.txt` | Catálogos de personal (técnicos y administrativos/SAC) usados para el matching difuso de nombres en Expedientes y el bot de Telegram. |
 
@@ -200,6 +201,10 @@ Debe correr en una PC con acceso a la red interna de MAXCOM (no funciona en Stre
 python sync_job.py                 # ciclo continuo, cada 15 minutos
 python sync_job.py --backfill 60   # trae hasta 60 días atrás una sola vez y termina
 ```
+
+**Robot en Windows (`C:\Maxcom`):** para que no dependa de una ventana abierta, usar `iniciar_sync_job_oculto.vbs` (acceso directo en `shell:startup`). El robot guarda su estado en cada ciclo en las hojas `Estado_Robot` y `Estado_Alertas` de la base de datos; la app lo muestra en la barra lateral ("el robot no reporta desde…") y en Configuración → Correo de alertas. Cada llamada a Google Sheets tiene un tiempo límite de 3 minutos, para que un corte de red no deje el robot colgado.
+
+**GCS es opcional:** solo se usa si `gcs_bucket` está en los secretos. Sin esa clave no se hace ninguna llamada a Google Cloud Storage (ni respaldo del historial ni lecturas), y todo vive en Google Sheets.
 
 ### Bot de Telegram
 
