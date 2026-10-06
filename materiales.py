@@ -524,6 +524,176 @@ def mostrar_uso_molex(res):
             st.error(f"❌ No se pudo enviar: {nota}")
 
 
+# ------------------------------------------------------------------------------
+# PRUEBA PILOTO DE IA (ia.py): la IA lee los comentarios de cierre y se compara
+# contra las reglas actuales y contra el metraje real de Odoo.
+# ------------------------------------------------------------------------------
+_REGLAS_A_IA_MOLEX = {
+    COMENTARIO_NUEVA: "Molex nueva en medio del tramo",
+    COMENTARIO_REEMPLAZO_CASA: "Molex nueva en la casa (reemplazo)",
+    COMENTARIO_EXISTENTE: "Molex de la casa (ya depurada en la instalación)",
+    COMENTARIO_AMBIGUO: "Menciona molex sin decir dónde",
+    COMENTARIO_EMPALME: "No menciona molex",
+    COMENTARIO_NADA: "No menciona molex",
+}
+_IA_A_COMENTARIO = {
+    "Molex nueva en medio del tramo": COMENTARIO_NUEVA,
+    "Molex nueva en la casa (reemplazo)": COMENTARIO_REEMPLAZO_CASA,
+    "Molex de la casa (ya depurada en la instalación)": COMENTARIO_EXISTENTE,
+    "Menciona molex sin decir dónde": COMENTARIO_AMBIGUO,
+    "No menciona molex": COMENTARIO_NADA,
+}
+COSTO_ESTIMADO_POR_ORDEN_USD = 0.015
+
+
+def _clave_api_ia():
+    try:
+        return str(st.secrets["anthropic"]["api_key"]).strip()
+    except Exception:
+        return ""
+
+
+def _ordenes_para_piloto(res):
+    """Órdenes evaluadas (razón de cierre elegida), primero las que tocan molex y las sin metraje."""
+    df = res['detalle'].copy()
+    if df.empty:
+        return df
+    molex = res['molex']
+    cajas = dict(zip(molex['ORDEN'], molex['MOLEX_DEPURADAS'])) if not molex.empty else {}
+    df['MOLEX_DEPURADAS'] = df['ORDEN'].map(cajas).fillna(0).astype(int)
+    df['_p'] = (~df['ORDEN'].isin(set(cajas))).astype(int) * 2 + (~df['SIN_METRAJE']).astype(int)
+    return df.sort_values(['_p', 'ORDEN']).drop(columns='_p').reset_index(drop=True)
+
+
+def comparar_piloto(df_ordenes, df_ia):
+    """Une las órdenes con lo que dijo la IA y marca dónde no cuadra con las reglas u Odoo."""
+    df = df_ordenes.merge(df_ia, on='ORDEN', how='inner')
+    reglas = df['COMENTARIO'].apply(clasificar_comentario_molex).str[0]
+    df['REGLAS_MOLEX'] = reglas.map(_REGLAS_A_IA_MOLEX)
+    df['COINCIDE_MOLEX'] = df['REGLAS_MOLEX'] == df['IA_MOLEX']
+    df['VEREDICTO_REGLAS'] = [veredicto_molex(c, q) or '' for c, q in zip(df['MOLEX_DEPURADAS'], reglas)]
+    df['VEREDICTO_IA'] = [veredicto_molex(c, _IA_A_COMENTARIO.get(q)) or '' if q else ''
+                          for c, q in zip(df['MOLEX_DEPURADAS'], df['IA_MOLEX'])]
+
+    cambio = df['IA_TRABAJO_FIBRA'].isin(["Cambio completo de acometida", "Cambio de un tramo / reparación con empalme"])
+    sin_cambio = df['IA_TRABAJO_FIBRA'].isin(["Solo corrió reserva (sin fibra nueva)", "Sin fibra nueva (conector, ONU, niveles...)"])
+    odoo = pd.to_numeric(df['METRAJE_ODOO'], errors='coerce').fillna(0)
+    ia_m = pd.to_numeric(df['IA_METROS_DECLARADOS'], errors='coerce')
+    hallazgos = []
+    for i in df.index:
+        h = []
+        if df.at[i, 'IA_RAZON_COINCIDE'] is False:
+            h.append("La razón de cierre no cuadra con lo que dice el comentario")
+        if cambio[i] and odoo[i] <= 0:
+            h.append("Dice que cambió fibra, pero Odoo no tiene metraje")
+        if sin_cambio[i] and odoo[i] > 0:
+            h.append(f"Odoo tiene {odoo[i]:.0f} m de fibra, pero el comentario no describe fibra nueva")
+        if pd.notna(ia_m[i]) and odoo[i] > 0 and abs(ia_m[i] - odoo[i]) > max(20, 0.2 * odoo[i]):
+            h.append(f"Declara {ia_m[i]:.0f} m y Odoo tiene {odoo[i]:.0f} m")
+        if df.at[i, 'VEREDICTO_IA'] not in ('', VEREDICTO_CUADRA):
+            h.append(f"Molex: {df.at[i, 'VEREDICTO_IA']}")
+        hallazgos.append(" · ".join(h))
+    df['HALLAZGOS_IA'] = hallazgos
+    return df
+
+
+def mostrar_piloto_ia(res):
+    with st.expander("🧪 Prueba piloto: la IA lee los comentarios de cierre", expanded=False):
+        st.caption(
+            "Claude (Anthropic) lee el comentario de cierre de cada orden evaluada y dice qué pasó con la molex, qué "
+            "trabajo de fibra hubo y cuántos metros declara el técnico. Se compara contra las reglas actuales y contra "
+            "el metraje real de Odoo. Solo se envía la actividad, la razón de cierre y el comentario (ningún dato del cliente)."
+        )
+        clave = _clave_api_ia()
+        if not clave:
+            st.info(
+                "Para activar la prueba, agrega en Streamlit → Settings → Secrets (no en el chat ni en el código):\n\n"
+                "```toml\n[anthropic]\napi_key = \"sk-ant-...\"\n```\n"
+                "La clave se crea en console.anthropic.com → API Keys. Pon un límite de gasto mensual en Billing."
+            )
+            return
+        df_ord = _ordenes_para_piloto(res)
+        if df_ord.empty:
+            st.info("No hay órdenes evaluadas para probar.")
+            return
+
+        c1, c2 = st.columns(2)
+        cuantas = c1.number_input(f"Órdenes a analizar (de {len(df_ord)})", min_value=1, max_value=len(df_ord),
+                                  value=min(30, len(df_ord)), step=10, key="ia_piloto_n",
+                                  help="Primero van las que tocan molex y las que no tienen metraje en Odoo.")
+        esfuerzo = c2.selectbox("Nivel de razonamiento", ["low", "medium"], key="ia_piloto_effort",
+                                format_func={"low": "Bajo (más barato, suele bastar)", "medium": "Medio"}.get)
+        st.caption(f"Costo estimado: ~${cuantas * COSTO_ESTIMADO_POR_ORDEN_USD:.2f} USD. El costo real se muestra al terminar.")
+
+        clave_resultado = (len(df_ord), int(cuantas), esfuerzo, tuple(df_ord['ORDEN'].head(int(cuantas))))
+        if st.button(f"🤖 Analizar {int(cuantas)} órdenes con IA", key="btn_ia_piloto", type="primary"):
+            import ia
+            barra = st.progress(0.0, text="Analizando...")
+            try:
+                df_ia, resumen = ia.ejecutar_piloto(
+                    df_ord.head(int(cuantas))[['ORDEN', 'ACTIVIDAD', 'RAZON_CIERRE', 'COMENTARIO']],
+                    clave, effort=esfuerzo,
+                    al_avanzar=lambda n, t: barra.progress(n / t, text=f"Analizando {n} de {t}..."),
+                )
+                st.session_state['mat_piloto_ia'] = (clave_resultado, comparar_piloto(df_ord, df_ia), resumen)
+            except Exception as e:
+                tipo = type(e).__name__
+                if tipo == "AuthenticationError":
+                    st.error("❌ La clave de Anthropic no es válida. Revisa [anthropic] api_key en los secretos.")
+                elif tipo == "PermissionDeniedError":
+                    st.error("❌ La clave no tiene permiso para usar el modelo. Revisa la cuenta en console.anthropic.com.")
+                else:
+                    st.error(f"❌ No se pudo completar la prueba: {e}")
+            finally:
+                barra.empty()
+
+        guardado = st.session_state.get('mat_piloto_ia')
+        if not guardado or guardado[0] != clave_resultado:
+            return
+        _, df, resumen = guardado
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Órdenes analizadas", resumen['ordenes'] - resumen['errores'])
+        k2.metric("Costo real", f"${resumen['costo_usd']:.3f}")
+        k3.metric("Costo por orden", f"${resumen['costo_usd'] / max(resumen['ordenes'], 1):.4f}")
+        k4.metric("Tiempo", f"{resumen['segundos']:.0f} s")
+        if resumen['errores']:
+            st.warning(f"⚠️ {resumen['errores']} orden(es) no se pudieron analizar (ver columna IA_ERROR en el Excel).")
+        uso = resumen['uso']
+        st.caption(f"Tokens: entrada {uso['entrada']:,} · salida {uso['salida']:,} · caché escrita "
+                   f"{uso['cache_escritura']:,} · caché leída {uso['cache_lectura']:,} · modelo {resumen['modelo']}, "
+                   f"razonamiento {resumen['effort']}. Al mes, con ~150 cierres diarios: "
+                   f"~${resumen['costo_usd'] / max(resumen['ordenes'], 1) * 150 * 30:.0f} USD.")
+
+        ok = df[df['IA_ERROR'] == '']
+        st.markdown("**IA contra reglas actuales (molex)**")
+        st.caption(f"Coinciden en {int(ok['COINCIDE_MOLEX'].sum())} de {len(ok)} órdenes. Donde no coinciden, "
+                   "revisar el comentario dice cuál de las dos acertó.")
+        st.dataframe(pd.crosstab(ok['REGLAS_MOLEX'], ok['IA_MOLEX']), use_container_width=True)
+
+        con_hallazgo = df[df['HALLAZGOS_IA'] != '']
+        st.markdown(f"**Órdenes donde la IA encontró algo para revisar: {len(con_hallazgo)}**")
+        st.dataframe(con_hallazgo[['ORDEN', 'TECNICO', 'MOLEX_DEPURADAS', 'METRAJE_ODOO', 'IA_TRABAJO_FIBRA',
+                                   'IA_METROS_DECLARADOS', 'IA_MOLEX', 'HALLAZGOS_IA']],
+                     use_container_width=True, hide_index=True)
+
+        buffer = io.BytesIO()
+        columnas = ['ORDEN', 'TECNICO', 'ACTIVIDAD', 'RAZON_CIERRE', 'FECHA_CIERRE', 'METRAJE_ODOO', 'MOLEX_DEPURADAS',
+                    'IA_TRABAJO_FIBRA', 'IA_METROS_DECLARADOS', 'IA_RAZON_COINCIDE', 'IA_MOLEX', 'REGLAS_MOLEX',
+                    'COINCIDE_MOLEX', 'VEREDICTO_IA', 'VEREDICTO_REGLAS', 'HALLAZGOS_IA', 'IA_EVIDENCIA',
+                    'IA_OBSERVACION', 'COMENTARIO', 'IA_ERROR', 'IA_COSTO_USD']
+        hoja = df[[c for c in columnas if c in df.columns]].assign(REVISION_MANUAL_IA_ACERTO="")
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            hoja.to_excel(writer, sheet_name='Piloto IA', index=False)
+            pd.DataFrame([{**{k: v for k, v in resumen.items() if k != 'uso'}, **resumen['uso']}]) \
+                .to_excel(writer, sheet_name='Resumen', index=False)
+        st.download_button("⬇️ Descargar resultado del piloto (Excel)", data=buffer.getvalue(),
+                           file_name="piloto_ia_comentarios.xlsx", key="dl_piloto_ia", on_click="ignore",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.caption("En el Excel, la columna REVISION_MANUAL_IA_ACERTO es para marcar si la IA acertó en las "
+                   "órdenes donde no coincide con las reglas: con eso medimos su precisión real.")
+
+
 # ==============================================================================
 # PANTALLA PRINCIPAL
 # ==============================================================================
@@ -635,6 +805,9 @@ def mostrar_auditoria_materiales(*args, **kwargs):
 
     # --- USO DE CAJAS MOLEX ---
     mostrar_uso_molex(res)
+
+    # --- PRUEBA PILOTO: IA SOBRE LOS COMENTARIOS DE CIERRE ---
+    mostrar_piloto_ia(res)
 
     st.divider()
 

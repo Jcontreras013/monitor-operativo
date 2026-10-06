@@ -34,3 +34,6 @@ requests
 
 pillow
 pytesseract
+
+# --- IA (prueba piloto: comentarios de cierre) ---
+anthropic>=1.11
