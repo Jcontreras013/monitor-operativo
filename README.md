@@ -147,7 +147,7 @@ client_email = "..."
 # (resto de campos estándar de un service account JSON)
 
 [credenciales.nombre_usuario]
-clave = "..."
+clave = "..."   # contraseña inicial; admin y jefe pueden cambiarla desde la app (ver abajo)
 rol = "admin"   # admin | jefe | monitoreo | llamados | ...
 
 [cepheus_api]
@@ -178,6 +178,8 @@ template_name = "..."
 ```
 
 `sync_job.py` y `telegram_bot.py` leen este mismo archivo con `toml.load()` (no usan `st.secrets`, porque corren fuera de Streamlit), así que en la PC donde se ejecutan debe existir `.streamlit/secrets.toml` junto al resto del código. 
+
+**Cambio de contraseña (admin y jefe):** en la barra lateral, "🔑 Cambiar contraseña". La app no puede escribir en los secretos de Streamlit Cloud, así que la nueva contraseña se guarda cifrada (PBKDF2-SHA256 con sal) en la hoja `Usuarios_Claves` de la base de datos y tiene prioridad sobre la `clave` de `[credenciales]`. Para volver a la contraseña de los secretos (por ejemplo, si alguien la olvida), borrar la fila de ese usuario en `Usuarios_Claves`.
 
 **IA (prueba piloto, opcional):** Auditoría de Materiales trae una sección "🧪 Prueba piloto" donde Claude (Anthropic, modelo `claude-opus-5-5`, módulo `ia.py`) lee los comentarios de cierre y los compara contra las reglas actuales y el metraje de Odoo. Necesita en los secretos de Streamlit (nunca en el código):
 
