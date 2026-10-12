@@ -213,7 +213,7 @@ def analizar_uso_molex(df_cep, df_odoo, actividades, razones):
     df = df_cep[act.isin([a.upper().strip() for a in actividades]) & (est == 'CERRADA')
                 & razon.isin([r.upper().strip() for r in razones])].drop_duplicates('NUM_NORM').copy()
 
-    columnas = ['ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_CIERRE', 'MOLEX_DEPURADAS',
+    columnas = ['ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_CIERRE', 'RAZON_CIERRE', 'MOLEX_DEPURADAS',
                 'QUE_DICE_EL_COMENTARIO', 'VEREDICTO', 'FRASE_DEL_COMENTARIO', 'COMENTARIO']
     columnas_resumen = ['TECNICO', 'ORDENES_EVALUADAS', 'MOLEX_DEPURADAS'] + ORDEN_VEREDICTOS
     if df.empty:
@@ -226,6 +226,8 @@ def analizar_uso_molex(df_cep, df_odoo, actividades, razones):
     df['FRASE_DEL_COMENTARIO'] = clasif.str[1]
     df['VEREDICTO'] = [veredicto_molex(c, q) for c, q in zip(df['MOLEX_DEPURADAS'], df['QUE_DICE_EL_COMENTARIO'])]
     df['COMENTARIO'] = comentario
+    df['RAZON_CIERRE'] = (df['RAZON_CIERRE_SOP'].astype(str).str.upper().str.strip()
+                          if 'RAZON_CIERRE_SOP' in df.columns else '')
     # El rep_actividades trae dd/mm/aaaa y Sheets aaaa-mm-dd: sin dayfirst
     # el 03/09 se leía como 9 de marzo y el 15/09 quedaba vacío.
     df['FECHA_CIERRE'] = pd.to_datetime(df['HORA_LIQ'].astype(str), format='mixed', dayfirst=True, errors='coerce') \
@@ -389,21 +391,30 @@ def procesar_auditoria_materiales(df_cepheus_crudo, df_odoo_crudo, actividades, 
 # sin esperar al archivo de Odoo: si el técnico menciona una molex en el
 # comentario de cierre de un soporte, se avisa para revisar si la usó.
 ACTIVIDADES_ALERTA_MOLEX = ('SOPFIBRA', 'SOPFIBRACORP')
+# Los correos de molex (alerta del robot y botón de Auditoría de Materiales)
+# son solo para soportes cerrados con esta razón de cierre.
+RAZON_ALERTA_MOLEX = 'CORTE DE ACOMETIDA'
+
+
+def _es_corte_de_acometida(serie):
+    return serie.astype(str).str.upper().str.strip() == RAZON_ALERTA_MOLEX
 
 
 def seleccionar_molex_en_comentarios(df_ordenes, ya_avisadas, ahora, horas=24):
     """
-    Soportes CERRADOS en las últimas `horas` cuyo comentario de cierre dice
+    SOPFIBRA/SOPFIBRACORP CERRADAS como Corte de acometida en las últimas
+    `horas` cuyo comentario de cierre dice
     que se puso una molex nueva en medio del tramo y que no se hayan avisado. La ventana evita que, al
     activar la alerta, lleguen de golpe todos los cierres viejos que siguen
     en la consulta de 55 días del robot.
     """
-    columnas = ('NUM', 'ACTIVIDAD', 'ESTADO', 'HORA_LIQ', 'COMENTARIO_CIERRE')
+    columnas = ('NUM', 'ACTIVIDAD', 'ESTADO', 'HORA_LIQ', 'COMENTARIO_CIERRE', 'RAZON_CIERRE_SOP')
     if df_ordenes is None or df_ordenes.empty or any(c not in df_ordenes.columns for c in columnas):
         return pd.DataFrame()
     df = df_ordenes.copy()
     df['NUM'] = _normalizar_num(df['NUM'])
-    es_soporte = df['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(ACTIVIDADES_ALERTA_MOLEX)
+    es_soporte = (df['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(ACTIVIDADES_ALERTA_MOLEX)
+                  & _es_corte_de_acometida(df['RAZON_CIERRE_SOP']))
     cerrada = df['ESTADO'].astype(str).str.upper().str.strip() == 'CERRADA'
     menciona = df['COMENTARIO_CIERRE'].astype(str).str.upper().str.contains('MOLEX', na=False)
     reciente = pd.to_datetime(df['HORA_LIQ'], errors='coerce') >= pd.Timestamp(ahora) - pd.Timedelta(hours=horas)
@@ -458,11 +469,20 @@ COLUMNAS_PANTALLA_MOLEX = ['ORDEN', 'TECNICO', 'ACTIVIDAD', 'CLIENTE', 'FECHA_CI
                            'QUE_DICE_EL_COMENTARIO', 'VEREDICTO']
 
 
+def ordenes_para_correo_molex(df_uso):
+    """Las que no cuadran, solo de SOPFIBRA/SOPFIBRACORP cerradas como Corte de acometida."""
+    if df_uso.empty:
+        return df_uso
+    return df_uso[(df_uso['VEREDICTO'] != VEREDICTO_CUADRA)
+                  & df_uso['ACTIVIDAD'].astype(str).str.upper().str.strip().isin(ACTIVIDADES_ALERTA_MOLEX)
+                  & _es_corte_de_acometida(df_uso['RAZON_CIERRE'])]
+
+
 def armar_correo_uso_molex(df_uso, razones):
     """(asunto, texto, html) con las órdenes cuyo uso de molex no cuadra, con la frase del comentario."""
     from notificaciones import tabla_html
 
-    df = df_uso[df_uso['VEREDICTO'] != VEREDICTO_CUADRA]
+    df = ordenes_para_correo_molex(df_uso)
     columnas = {'ORDEN': 'Orden', 'TECNICO': 'Técnico', 'FECHA_CIERRE': 'Cierre', 'MOLEX_DEPURADAS': 'Molex depuradas',
                 'VEREDICTO': 'Veredicto', 'FRASE_DEL_COMENTARIO': 'Lo que dice el comentario'}
     tabla = df[list(columnas)].rename(columns=columnas)
@@ -510,7 +530,10 @@ def mostrar_uso_molex(res):
     df_ver = df_uso[df_uso['VEREDICTO'] != VEREDICTO_CUADRA] if ocultar else df_uso
     st.dataframe(df_ver[COLUMNAS_PANTALLA_MOLEX], use_container_width=True, hide_index=True)
 
-    por_revisar = int((df_uso['VEREDICTO'] != VEREDICTO_CUADRA).sum())
+    por_revisar = len(ordenes_para_correo_molex(df_uso))
+    if not por_revisar and (df_uso['VEREDICTO'] != VEREDICTO_CUADRA).any():
+        st.caption("📧 El correo de molex es solo para SOPFIBRA / SOPFIBRACORP cerradas como Corte de acometida; "
+                   "las órdenes por revisar de esta tabla son de otra actividad o razón de cierre.")
     if por_revisar and st.button(f"📧 Enviar por correo las {por_revisar} orden(es) por revisar", key="btn_mat_molex_correo"):
         from notificaciones import config_correo_streamlit, enviar_correo, lista_destinatarios
         config = config_correo_streamlit()
