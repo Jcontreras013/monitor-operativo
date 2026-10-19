@@ -672,7 +672,48 @@ def es_falta_de_vehiculo(motivo):
     return re.search(PATRON_MOTIVO_VEHICULO, motivo_sin_acentos) is not None
 
 
+def es_motivo_llegada_tarde(motivo, comentario):
+    """La falta registrada ES la llegada tarde (lo dice el motivo, no solo el comentario)."""
+    motivo_u = str(motivo).upper()
+    return ('TARD' in motivo_u or 'RETRASO' in motivo_u) and es_llegada_tarde(motivo, comentario)
+
+
+def _mes_incidencia(fechas):
+    """'AAAA-MM' de cada FECHA_INCIDENCIA ('' si no se puede leer)."""
+    texto = fechas.astype(str).str.strip()
+    dt = pd.to_datetime(texto, format='%d/%m/%Y', errors='coerce')
+    faltantes = dt.isna()
+    if faltantes.any():
+        dt[faltantes] = pd.to_datetime(texto[faltantes], format='mixed', dayfirst=True, errors='coerce')
+    return dt.dt.strftime('%Y-%m').fillna('')
+
+
+def llegadas_tarde_del_mes(df, df_historial=None):
+    """
+    Para cada fila de `df`, cuántas llegadas tarde tiene ese colaborador en el
+    mes calendario de esa incidencia. Se cuentan en `df_historial` (el
+    historial sin filtros, para no perder las del mes que quedan fuera del
+    rango de fechas elegido); si no se da, en el mismo `df`.
+    """
+    if df.empty:
+        return pd.Series(0, index=df.index, dtype=int)
+    hist = df if df_historial is None or df_historial.empty else df_historial
+    es_tarde = hist.apply(
+        lambda r: es_llegada_tarde(str(r.get('TIPO_FALTA', '')), str(r.get('COMENTARIO', ''))), axis=1
+    ).astype(bool)
+    tardes = hist[es_tarde]
+    conteo = pd.Series(
+        list(zip(tardes['TECNICO'].astype(str).str.upper().str.strip(), _mes_incidencia(tardes['FECHA_INCIDENCIA'])))
+    ).value_counts().to_dict() if not tardes.empty else {}
+    claves = zip(df['TECNICO'].astype(str).str.upper().str.strip(), _mes_incidencia(df['FECHA_INCIDENCIA']))
+    return pd.Series([conteo.get(k, 0) for k in claves], index=df.index, dtype=int)
+
+
 def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
+    """
+    n_tardes: llegadas tarde del colaborador en el mismo mes calendario
+    (ver llegadas_tarde_del_mes). Con 3 o más, la llegada tarde pasa a GRAVE.
+    """
     motivo_u = str(motivo).upper().strip()
     com_u = str(comentario).upper().strip()
     texto = motivo_u + " " + com_u
@@ -680,6 +721,12 @@ def clasificar_grave_o_leve(motivo, comentario, n_tardes=0):
     # 0. MOTIVO SOBRE EL VEHÍCULO - SIEMPRE GRAVE
     if es_falta_de_vehiculo(motivo):
         return 'GRAVE'
+
+    # 0b. LLEGADA TARDE: se decide SOLO por la reincidencia del mes. El
+    # comentario suele traer la excusa ("por un accidente de tránsito", "se le
+    # dañó la llanta") y esas palabras no deben volverla GRAVE.
+    if es_motivo_llegada_tarde(motivo, comentario):
+        return 'GRAVE' if n_tardes >= 3 else 'LEVE'
 
     # 1. VEHÍCULO / MAL CUIDADO O DESCUIDO - SIEMPRE GRAVE
     palabras_vehiculo_neglect = [
@@ -880,29 +927,19 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
     """
     df_work = pd.DataFrame()
     df_leves = df_graves = df_otros = pd.DataFrame()
-    conteo_tardes = {}
 
     if not df.empty:
         df_work = df.copy()
 
-        # Contar llegadas tarde filtradas para la promoción por reincidencia
-        mask_tarde = df_work.apply(
-            lambda r: es_llegada_tarde(
-                str(r.get('TIPO_FALTA', '')).upper(),
-                str(r.get('COMENTARIO', '')).upper()
-            ), axis=1
-        )
-        conteo_tardes = (
-            df_work[mask_tarde]['TECNICO']
-            .astype(str).str.upper().str.strip()
-            .value_counts().to_dict()
-        )
+        # Llegadas tarde del colaborador en el mes de cada incidencia, para la
+        # promoción por reincidencia (3 en el mismo mes = GRAVE).
+        df_work['_N_TARDES'] = llegadas_tarde_del_mes(df_work, df_para_resumen_mes)
 
         df_work['_CLASIF'] = df_work.apply(
             lambda r: clasificar_grave_o_leve(
                 str(r.get('TIPO_FALTA', '')),
                 str(r.get('COMENTARIO', '')),
-                conteo_tardes.get(str(r.get('TECNICO', '')).upper().strip(), 0)
+                r['_N_TARDES']
             ), axis=1
         )
         df_leves  = df_work[df_work['_CLASIF'] == 'LEVE'].copy()
@@ -1093,7 +1130,7 @@ def generar_pdf_consolidado(df, df_para_resumen_mes=None):
             _dibujar_tabla_clasif(
                 pdf, df_graves,
                 etiqueta   = "FALTAS GRAVES",
-                desc_corta = "Mal uso o cuidado del vehiculo, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde",
+                desc_corta = "Mal uso o cuidado del vehiculo, no apertura/cierre, ordenes pendientes, insultos/irrespeto, o >=3 llegadas tarde en el mismo mes",
                 hr=180, hg=30, hb=30,
                 rr=255, rg=235, rb=235,
                 thr=255, thg=255, thb=255,
@@ -2274,19 +2311,14 @@ def mostrar_modulo_expedientes(conn, df_base):
                     if not df_mostrar.empty:
                         df_kpi = df_mostrar.copy()
                         
-                        # Contar llegadas tarde para aplicar promoción por reincidencia
-                        mask_tarde_kpi = df_kpi.apply(lambda r: es_llegada_tarde(r['TIPO_FALTA'], r['COMENTARIO']), axis=1)
-                        conteo_tardes_kpi = (
-                            df_kpi[mask_tarde_kpi]['TECNICO']
-                            .astype(str).str.upper().str.strip()
-                            .value_counts().to_dict()
-                        )
-                        
+                        # Llegadas tarde del mismo mes para la promoción por reincidencia
+                        df_kpi['_N_TARDES'] = llegadas_tarde_del_mes(df_kpi, df_sin_filtrar)
+
                         df_kpi['RUBRO'] = df_kpi.apply(
                             lambda r: asignar_rubro_automatico(
                                 r['TIPO_FALTA'], 
                                 r['COMENTARIO'], 
-                                n_tardes=conteo_tardes_kpi.get(str(r['TECNICO']).upper().strip(), 0)
+                                n_tardes=r['_N_TARDES']
                             ), axis=1
                         )
                         

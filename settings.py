@@ -180,7 +180,7 @@ MANUAL_SECCIONES = [
             ("p", "Para descargar, presiona Preparar PDF o Preparar Word y el botón de descarga aparece ahí mismo."),
             ("sub", "Cómo se clasifican las faltas"),
             ("lista", [
-                "Tres o más llegadas tarde del mismo colaborador promueven la falta a GRAVE por reincidencia.",
+                "Tres o más llegadas tarde del mismo colaborador en el mismo mes calendario promueven la falta a GRAVE por reincidencia. Con menos, la llegada tarde es LEVE aunque el comentario mencione un accidente, un daño o el vehículo (es la excusa, no la falta).",
                 "Una ausencia sin aviso o sin justificar sale GRAVE; una ausencia simple queda LEVE.",
                 "Todo motivo que tenga que ver con el vehículo (mal uso, mal cuidado, vehículo sucio, exceso de velocidad, manejo, combustible, llantas...) sale GRAVE, también si se escribe a mano en \"Otro\".",
             ]),
