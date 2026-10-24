@@ -55,6 +55,15 @@ from tools import (
 FILAS_POR_LOTE_SHEETS = 2000
 CODIGOS_REINTENTABLES = (429, 500, 502, 503, 504)
 
+# Cortes de red ("Connection aborted", WinError 10054, tiempo agotado): no
+# traen código HTTP, pero casi siempre pasan si se vuelve a intentar.
+try:
+    import requests
+    ERRORES_DE_RED = (ConnectionError, TimeoutError, requests.exceptions.ConnectionError,
+                      requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError)
+except ImportError:
+    ERRORES_DE_RED = (ConnectionError, TimeoutError)
+
 # Hora del último respaldo exitoso en GCS (se reporta en estado_robot.csv).
 ULTIMO_RESPALDO_GCS = None
 
@@ -87,14 +96,15 @@ def _guardar_estado(archivo, df, spreadsheet=None):
     """
     hoja = HOJAS_ESTADO_ROBOT[archivo]
     try:
-        if spreadsheet is None:
-            spreadsheet, _ = _abrir_spreadsheet()
-        try:
-            ws = spreadsheet.worksheet(hoja)
-        except gspread.exceptions.WorksheetNotFound:
-            ws = spreadsheet.add_worksheet(title=hoja, rows=20, cols=max(8, len(df.columns)))
-        ws.clear()
-        ws.update(values=[list(df.columns)] + df.astype(str).values.tolist(), range_name="A1")
+        def escribir():
+            libro = spreadsheet if spreadsheet is not None else _abrir_spreadsheet()[0]
+            try:
+                ws = libro.worksheet(hoja)
+            except gspread.exceptions.WorksheetNotFound:
+                ws = libro.add_worksheet(title=hoja, rows=20, cols=max(8, len(df.columns)))
+            ws.clear()
+            ws.update(values=[list(df.columns)] + df.astype(str).values.tolist(), range_name="A1")
+        _con_reintentos(escribir, f"guardar la hoja {hoja}", intentos=3)
     except Exception as e:
         print(f"[-] No se pudo guardar el estado en la hoja {hoja}: {str(e)[:200]}", flush=True)
     sobrescribir_archivo_gcs(df, NOMBRE_BUCKET, archivo)
@@ -113,17 +123,18 @@ def _leer_estado_previo():
 
 
 def _con_reintentos(funcion, descripcion, intentos=5, espera_inicial=5):
-    """Ejecuta una llamada a Google Sheets reintentando ante 429/5xx, con espera creciente."""
+    """Ejecuta una llamada a Google Sheets reintentando ante 429/5xx o cortes de red, con espera creciente."""
     espera = espera_inicial
     for intento in range(1, intentos + 1):
         try:
             return funcion()
         except Exception as e:
             codigo = getattr(getattr(e, "response", None), "status_code", None)
-            reintentable = codigo in CODIGOS_REINTENTABLES or "UNAVAILABLE" in str(e)
+            reintentable = (codigo in CODIGOS_REINTENTABLES or "UNAVAILABLE" in str(e)
+                            or isinstance(e, ERRORES_DE_RED))
             if not reintentable or intento == intentos:
                 raise
-            print(f"  -> [!] Google Sheets respondió {codigo or 'con error'} al {descripcion}; "
+            print(f"  -> [!] Google Sheets respondió {codigo or type(e).__name__} al {descripcion}; "
                   f"reintento {intento}/{intentos - 1} en {espera} s...", flush=True)
             time.sleep(espera)
             espera *= 2
@@ -168,11 +179,11 @@ def ejecutar_sincronizacion_background(dias_atras=55):
 
     # 3. CONEXIÓN DIRECTA A GOOGLE SHEETS SIN STREAMLIT
     try:
-        spreadsheet, secrets_data = _abrir_spreadsheet()
-        worksheet = spreadsheet.worksheet("Sheet1")
+        spreadsheet, secrets_data = _con_reintentos(_abrir_spreadsheet, "abrir la base de datos", intentos=4)
+        worksheet = _con_reintentos(lambda: spreadsheet.worksheet("Sheet1"), "abrir Sheet1", intentos=4)
 
         # Leer los datos de Sheets para consolidación
-        registros_crudos = worksheet.get_all_records()
+        registros_crudos = _con_reintentos(worksheet.get_all_records, "leer Sheet1", intentos=4)
         df_sheets_master = pd.DataFrame(registros_crudos)
     except Exception as e_sheets:
         print(f"[-] Fallo al conectar o leer desde Google Sheets: {e_sheets}")
