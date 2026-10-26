@@ -2388,6 +2388,25 @@ def forzar_columnas_unicas(df):
     df.columns = cols
     return df
 
+def _texto_de_bytes(content):
+    try:
+        return content.decode('utf-8')
+    except UnicodeDecodeError:
+        return content.decode('latin1')
+
+
+def _es_csv_con_barras(content):
+    lineas = [l for l in _texto_de_bytes(content).splitlines() if l.strip()][:15]
+    return bool(lineas) and sum('|' in l for l in lineas) >= len(lineas) * 0.8
+
+
+def _leer_csv_con_barras(content):
+    filas = [l.split('|') for l in _texto_de_bytes(content).splitlines() if l.strip()]
+    ancho = max(len(f) for f in filas)
+    df = pd.DataFrame([f + [''] * (ancho - len(f)) for f in filas]).replace('', None)
+    return df.dropna(axis=1, how='all')
+
+
 def read_file_robust(uploaded_file):
     filename = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
@@ -2419,10 +2438,15 @@ def read_file_robust(uploaded_file):
             df = max(dfs, key=len)
     else:
         uploaded_file.seek(0)
-        if filename.endswith('.xlsx'): 
+        if filename.endswith('.xlsx'):
             df = pd.read_excel(uploaded_file, engine='openpyxl')
+        elif _es_csv_con_barras(content):
+            # El Informe Estadístico del GPS en CSV viene separado por "|" y
+            # con títulos de distinto ancho arriba: se lee línea por línea,
+            # igual que se vería el .xls, para no perder las filas de datos.
+            df = _leer_csv_con_barras(content)
         else:
-            try: 
+            try:
                 df = pd.read_csv(uploaded_file, encoding='utf-8', on_bad_lines='skip')
             except UnicodeDecodeError:
                 uploaded_file.seek(0)

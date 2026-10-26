@@ -464,7 +464,9 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             if df_matriz is not None:
                                 dict_promedios = {}
                                 col_placa_matriz = df_matriz.columns[0]
-                                placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
+                                # Algunas placas vienen con un "-" delante ("-HDV2997 - Alias: ..."):
+                                # se quita antes de cortar en el guion, o la placa quedaba vacía.
+                                placas_validas = [p for p in df_matriz[col_placa_matriz].astype(str).str.strip().str.lstrip('-').str.split('-').str[0].str.strip().str.upper().unique() if p]
                                 
                                 if archivos_detallados:
                                     for file_det in archivos_detallados:
@@ -501,7 +503,7 @@ def mostrar_auditoria(es_movil=False, conn=None):
                                                         dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
                                         except Exception: pass
                                             
-                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
+                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.strip().str.lstrip('-').str.split('-').str[0].str.strip().str.upper()
                                 df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios).fillna("-")
                                 df_matriz = df_matriz.drop(columns=['Placa_Match'])
 
