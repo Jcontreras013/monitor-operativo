@@ -2646,6 +2646,60 @@ def procesar_auditoria_semanal(df_input):
         return forzar_columnas_unicas(final_diario), forzar_columnas_unicas(final_semanal), "OK", f_inicio, f_fin
     except Exception as e: return None, None, str(e), None, None
 
+def normalizar_placa(texto):
+    """Placa sin espacios, guiones ni puntos, en mayúsculas ('HAA-1234 ' -> 'HAA1234')."""
+    return re.sub(r'[^A-Z0-9]', '', str(texto).upper())
+
+
+def placa_de_detallado(df_d, nombre_archivo, placas):
+    """
+    Placa del informe principal a la que pertenece un archivo detallado del
+    GPS. Se busca en las celdas YA LEÍDAS (no en los bytes del archivo: en un
+    .xls binario el texto puede venir en UTF-16 y no aparece tal cual) y en el
+    nombre del archivo. Primero coincidencia exacta de celda, luego contenida.
+    """
+    placas = [p for p in dict.fromkeys(normalizar_placa(p) for p in placas) if len(p) >= 3]
+    celdas = {normalizar_placa(c) for c in df_d.columns}
+    celdas |= {normalizar_placa(v) for v in df_d.head(40).astype(str).values.ravel()}
+    celdas.discard('')
+    for p in placas:
+        if p in celdas:
+            return p
+    texto = ' '.join(celdas) + ' ' + normalizar_placa(nombre_archivo)
+    # Las más largas primero, para que 'HAA123' no gane sobre 'HAA1234'.
+    for p in sorted(placas, key=len, reverse=True):
+        if p in texto:
+            return p
+    return None
+
+
+def promedio_excesos_detallado(df_d, limite_vel):
+    """
+    (promedio, motivo) de las velocidades mayores a `limite_vel` de un archivo
+    detallado. promedio es None si no hubo excesos o no se encontró la columna.
+    """
+    patron_vel = r'VELOCIDAD|KM/H|SPEED'
+    col_vel = next((c for c in df_d.columns if re.search(patron_vel, str(c), re.I)), None)
+    if col_vel is None:
+        # El encabezado puede venir más abajo (títulos del reporte arriba).
+        for i in range(min(30, len(df_d))):
+            fila = [str(x).strip().upper() for x in df_d.iloc[i].values]
+            if any(re.search(patron_vel, x) for x in fila):
+                df_d = df_d.iloc[i + 1:].copy()
+                df_d.columns = fila
+                df_d = forzar_columnas_unicas(df_d)
+                col_vel = next(c for c in df_d.columns if re.search(patron_vel, str(c), re.I))
+                break
+    if col_vel is None:
+        return None, "no tiene columna de velocidad"
+    vel = pd.to_numeric(
+        df_d[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0], errors='coerce')
+    excesos = vel[vel > limite_vel]
+    if excesos.empty:
+        return None, f"sin velocidades mayores a {limite_vel} km/h (máxima: {vel.max() if vel.notna().any() else 'sin datos'})"
+    return round(float(excesos.mean()), 2), f"{len(excesos)} registros sobre {limite_vel} km/h"
+
+
 def procesar_matriz_telemetria(df_raw):
     if df_raw is None or df_raw.empty:
         return None, "No se pudo leer el archivo Informe Estadístico."
