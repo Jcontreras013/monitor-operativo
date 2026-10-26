@@ -2388,6 +2388,43 @@ def forzar_columnas_unicas(df):
     df.columns = cols
     return df
 
+def leer_xls(content):
+    """
+    Excel antiguo (.xls) a DataFrame, con la primera fila como encabezado,
+    igual que pd.read_excel. Si pandas rechaza la versión de xlrd instalada
+    (pasa en Streamlit Cloud cuando conserva una xlrd vieja), se lee con xlrd
+    directamente, que sí sabe leer el archivo.
+    """
+    try:
+        return pd.read_excel(io.BytesIO(content), engine='xlrd')
+    except ImportError as e_pandas:
+        try:
+            import xlrd
+        except ImportError:
+            raise e_pandas
+        libro = xlrd.open_workbook(file_contents=content)
+        hoja = libro.sheet_by_index(0)
+
+        def valor(celda):
+            if celda.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                return None
+            if celda.ctype == xlrd.XL_CELL_DATE:
+                fecha = xlrd.xldate_as_datetime(celda.value, libro.datemode)
+                # Solo hora (sin fecha): pandas la devuelve como time, no como 1899-12-31.
+                return fecha.time() if celda.value < 1 else fecha
+            if celda.ctype == xlrd.XL_CELL_NUMBER and float(celda.value).is_integer():
+                return int(celda.value)
+            if celda.ctype == xlrd.XL_CELL_BOOLEAN:
+                return bool(celda.value)
+            return celda.value
+
+        filas = [[valor(c) for c in hoja.row(i)] for i in range(hoja.nrows)]
+        if not filas:
+            return pd.DataFrame()
+        columnas = [str(c) if c is not None else f"Unnamed: {i}" for i, c in enumerate(filas[0])]
+        return pd.DataFrame(filas[1:], columns=columnas)
+
+
 def _texto_de_bytes(content):
     try:
         return content.decode('utf-8')
@@ -2414,8 +2451,7 @@ def read_file_robust(uploaded_file):
     
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
-            uploaded_file.seek(0)
-            df = pd.read_excel(uploaded_file, engine='xlrd')
+            df = leer_xls(content)
         except ImportError as e:
             # Falta xlrd o la instalada es más vieja de lo que pide pandas.
             if st: st.error(f"No se pudo leer el Excel antiguo (.xls) '{uploaded_file.name}': {e}")

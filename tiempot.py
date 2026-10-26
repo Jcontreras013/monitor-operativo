@@ -75,7 +75,8 @@ def read_file_robust_local(uploaded_file):
 
     if content.startswith(b'\xd0\xcf\x11\xe0'):
         try:
-            return forzar_columnas_unicas_local(pd.read_excel(uploaded_file, engine='xlrd'))
+            from tools import leer_xls
+            return forzar_columnas_unicas_local(leer_xls(content))
         except:
             pass
 
