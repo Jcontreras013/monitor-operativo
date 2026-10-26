@@ -19,6 +19,9 @@ try:
         procesar_auditoria_vehiculos,
         procesar_auditoria_semanal,
         procesar_matriz_telemetria,
+        normalizar_placa,
+        placa_de_detallado,
+        promedio_excesos_detallado,
         generar_pdf_auditoria_tiempos,
         generar_pdf_semanal_tiempos,
         generar_pdf_telemetria_matriz,
@@ -464,44 +467,35 @@ def mostrar_auditoria(es_movil=False, conn=None):
                             if df_matriz is not None:
                                 dict_promedios = {}
                                 col_placa_matriz = df_matriz.columns[0]
-                                placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper().unique()
-                                
-                                if archivos_detallados:
-                                    for file_det in archivos_detallados:
-                                        try:
-                                            file_det.seek(0)
-                                            raw_text = file_det.getvalue().decode('utf-8', errors='ignore').upper()
-                                            if len(raw_text) < 100: raw_text = file_det.getvalue().decode('latin1', errors='ignore').upper()
-                                            
-                                            placa_encontrada = None
-                                            for p in placas_validas:
-                                                if str(p) in raw_text or str(p) in file_det.name.upper():
-                                                    placa_encontrada = str(p); break
-                                            
-                                            if not placa_encontrada: continue 
-                                            
-                                            df_d = read_file_robust(file_det)
-                                            header_idx = None
-                                            for i in range(min(20, len(df_d))):
-                                                row_str = " ".join([str(x) for x in df_d.iloc[i].values]).upper()
-                                                if 'VELOCIDAD' in row_str or 'KM/H' in row_str:
-                                                    header_idx = i; break
-                                            
-                                            if header_idx is not None:
-                                                df_d.columns = [str(x).strip().upper() for x in df_d.iloc[header_idx].values]
-                                                from tools import forzar_columnas_unicas
-                                                df_d = forzar_columnas_unicas(df_d) 
-                                                df_d = df_d.iloc[header_idx + 1:]
-                                                
-                                                col_vel = next((c for c in df_d.columns if re.search(r'VELOCIDAD|KM/H|SPEED', str(c), re.I)), None)
-                                                if col_vel:
-                                                    df_d['Vel_Num'] = df_d[col_vel].astype(str).str.replace(',', '.').str.extract(r'(\d+\.?\d*)')[0].astype(float)
-                                                    df_excesos = df_d[df_d['Vel_Num'] > limite_vel]
-                                                    if not df_excesos.empty:
-                                                        dict_promedios[placa_encontrada] = round(df_excesos['Vel_Num'].mean(), 2)
-                                        except Exception: pass
-                                            
-                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].str.strip().str.upper()
+                                placas_validas = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].map(normalizar_placa).unique()
+                                cruce = []
+
+                                for file_det in archivos_detallados:
+                                    try:
+                                        file_det.seek(0)
+                                        df_d = read_file_robust(file_det)
+                                        if df_d is None or df_d.empty:
+                                            cruce.append((file_det.name, "", "no se pudo leer o viene vacío"))
+                                            continue
+                                        placa_encontrada = placa_de_detallado(df_d, file_det.name, placas_validas)
+                                        if not placa_encontrada:
+                                            cruce.append((file_det.name, "", "su placa no está entre los vehículos con excesos del Informe Estadístico"))
+                                            continue
+                                        promedio, detalle = promedio_excesos_detallado(df_d, limite_vel)
+                                        if promedio is not None:
+                                            dict_promedios[placa_encontrada] = promedio
+                                        cruce.append((file_det.name, placa_encontrada, detalle))
+                                    except Exception as e_det:
+                                        cruce.append((file_det.name, "", f"error al procesar: {e_det}"))
+
+                                if cruce:
+                                    with st.expander(f"🔎 Cruce de archivos detallados ({len(dict_promedios)} de {len(cruce)} con excesos)",
+                                                     expanded=not dict_promedios):
+                                        st.dataframe(pd.DataFrame(cruce, columns=["Archivo", "Placa", "Resultado"]),
+                                                     hide_index=True, use_container_width=True)
+                                        st.caption(f"Placas con excesos en el Informe Estadístico: {', '.join(placas_validas) or 'ninguna'}")
+
+                                df_matriz['Placa_Match'] = df_matriz[col_placa_matriz].astype(str).str.split('-').str[0].map(normalizar_placa)
                                 df_matriz['Promedio Vel. (km/h)'] = df_matriz['Placa_Match'].map(dict_promedios).fillna("-")
                                 df_matriz = df_matriz.drop(columns=['Placa_Match'])
 
