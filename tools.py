@@ -2397,8 +2397,9 @@ def read_file_robust(uploaded_file):
         try:
             uploaded_file.seek(0)
             df = pd.read_excel(uploaded_file, engine='xlrd')
-        except ImportError:
-            if st: st.error("Falta librería xlrd para Excel antiguo.")
+        except ImportError as e:
+            # Falta xlrd o la instalada es más vieja de lo que pide pandas.
+            if st: st.error(f"No se pudo leer el Excel antiguo (.xls) '{uploaded_file.name}': {e}")
     elif content.startswith(b'PK\x03\x04'):
         # Un .xlsx real es un ZIP -- se detecta por su firma ANTES de husmear
         # "<table"/"<html" en el contenido crudo. Algunos exportadores (ej. el
@@ -2646,6 +2647,8 @@ def procesar_auditoria_semanal(df_input):
     except Exception as e: return None, None, str(e), None, None
 
 def procesar_matriz_telemetria(df_raw):
+    if df_raw is None or df_raw.empty:
+        return None, "No se pudo leer el archivo Informe Estadístico."
     try:
         header_idx = None
         for i in range(min(20, len(df_raw))):
