@@ -397,8 +397,21 @@ def mensaje_error_412_catbox(userhash):
         "cuenta, copiado completo y sin espacios ni comillas de más."
     )
 
-@st.cache_data(show_spinner=False)
+def _version_archivo(filepath):
+    """Fecha de modificación del archivo: entra en la clave de caché para que
+    un cambio en la lista de personal se vea sin reiniciar la app."""
+    try:
+        return os.path.getmtime(filepath)
+    except OSError:
+        return None
+
+
 def cargar_personal(filepath="personal_tecnico.txt"):
+    return _cargar_personal(filepath, _version_archivo(filepath))
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_personal(filepath, version_archivo):
     try:
         if not os.path.exists(filepath): return []
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -413,8 +426,12 @@ def cargar_personal(filepath="personal_tecnico.txt"):
         return sorted(list(set(nombres)))
     except: return []
 
-@st.cache_data(show_spinner=False)
 def cargar_personal_admin(filepath="personal_sac.txt"):
+    return _cargar_personal_admin(filepath, _version_archivo(filepath))
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_personal_admin(filepath, version_archivo):
     personal = {}
     try:
         if not os.path.exists(filepath): return personal
